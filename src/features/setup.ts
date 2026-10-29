@@ -5,6 +5,7 @@ import {
   PermissionFlagsBits,
   SlashCommandBuilder,
   type ChatInputCommandInteraction,
+  type GuildBasedChannel,
 } from 'discord.js';
 import { DEFAULT_ENV, DEFAULTS, setSetting, setting, storedSetting, type SettingKey } from '../settings.ts';
 import type { Feature } from '../types.ts';
@@ -31,6 +32,7 @@ const LABELS: Record<SettingKey, string> = {
   sessionGraceMin: 'Session ends after empty for',
   steamCountry: 'Steam price region',
   freeGames: 'Free game alerts',
+  freeGamesChannel: 'Free games channel',
   gameNightReminderMin: 'Game night reminder',
 };
 
@@ -54,11 +56,20 @@ function show(key: SettingKey, value: unknown): string {
       return String(value).toUpperCase();
     case 'freeGames':
       return value ? 'on' : 'off';
+    case 'freeGamesChannel':
+      return value ? `<#${value}>` : 'the announce channel';
     case 'gameNightReminderMin':
       return value ? `${value} min before` : 'off';
     default:
       return String(value);
   }
+}
+
+/** Why the bot can't post in a channel, or null if it can */
+function cantPost(i: ChatInputCommandInteraction<'cached'>, channel: GuildBasedChannel): string | null {
+  const perms = channel.permissionsFor(i.guild.members.me!);
+  const missing = ANNOUNCE_PERMISSIONS.filter(([flag]) => !perms?.has(flag)).map(([, name]) => name);
+  return missing.length ? `I can’t post in ${channel} yet. Give my role **${missing.join('**, **')}** there, then run this again.` : null;
 }
 
 function source(guildId: string, key: SettingKey): string {
@@ -92,7 +103,7 @@ export const setup: Feature = {
         .addSubcommand((s) =>
           s
             .setName('announce-channel')
-            .setDescription('Where hop-on pings, recaps, leaderboards, sale and free game alerts are posted')
+            .setDescription('Where hop-on pings, recaps, leaderboards and sale alerts are posted')
             .addChannelOption((o) =>
               o.setName('channel').setDescription('Text channel').setRequired(true).addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement),
             ),
@@ -146,8 +157,14 @@ export const setup: Feature = {
         .addSubcommand((s) =>
           s
             .setName('free-games')
-            .setDescription('Post free-to-keep games on Steam, Epic and GOG')
-            .addBooleanOption((o) => o.setName('enabled').setDescription('On or off').setRequired(true)),
+            .setDescription('Post free-to-keep games on Steam, Epic and GOG (off by default)')
+            .addBooleanOption((o) => o.setName('enabled').setDescription('On or off').setRequired(true))
+            .addChannelOption((o) =>
+              o
+                .setName('channel')
+                .setDescription('Post them here instead of the announce channel')
+                .addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement),
+            ),
         )
         .addSubcommand((s) =>
           s
@@ -182,14 +199,8 @@ export const setup: Feature = {
 
         if (sub === 'announce-channel') {
           const channel = i.options.getChannel('channel', true, [ChannelType.GuildText, ChannelType.GuildAnnouncement]);
-          const perms = channel.permissionsFor(me);
-          const missing = ANNOUNCE_PERMISSIONS.filter(([flag]) => !perms.has(flag)).map(([, name]) => name);
-          if (missing.length) {
-            return i.reply({
-              content: `I can’t post in ${channel} yet. Give my role **${missing.join('**, **')}** there, then run this again.`,
-              flags: MessageFlags.Ephemeral,
-            });
-          }
+          const problem = cantPost(i, channel);
+          if (problem) return i.reply({ content: problem, flags: MessageFlags.Ephemeral });
           return apply(i, [['announceChannel', channel.id]]);
         }
 
@@ -243,7 +254,15 @@ export const setup: Feature = {
           if (!/^[a-z]{2}$/.test(country)) return i.reply({ content: 'Use a two-letter country code, like us or gb.', flags: MessageFlags.Ephemeral });
           return apply(i, [['steamCountry', country]]);
         }
-        if (sub === 'free-games') return apply(i, [['freeGames', i.options.getBoolean('enabled', true)]]);
+        if (sub === 'free-games') {
+          const channel = i.options.getChannel('channel', false, [ChannelType.GuildText, ChannelType.GuildAnnouncement]);
+          const problem = channel && cantPost(i, channel);
+          if (problem) return i.reply({ content: problem, flags: MessageFlags.Ephemeral });
+          return apply(i, [
+            ['freeGames', i.options.getBoolean('enabled', true)],
+            ['freeGamesChannel', channel?.id ?? null],
+          ]);
+        }
         if (sub === 'gamenight-reminder') return apply(i, [['gameNightReminderMin', i.options.getInteger('minutes', true)]]);
 
         if (sub === 'reset') {
@@ -262,7 +281,7 @@ export const setup: Feature = {
           .setDescription(
             (Object.keys(DEFAULTS) as SettingKey[])
               .map((key) => {
-                const value = key === 'announceChannel' || key === 'hopOnRole' ? setting(i.guildId, key) || null : setting(i.guildId, key);
+                const value = key === 'announceChannel' || key === 'hopOnRole' || key === 'freeGamesChannel' ? setting(i.guildId, key) || null : setting(i.guildId, key);
                 return `**${LABELS[key]}:** ${show(key, value)} · -# ${source(i.guildId, key)}`;
               })
               .join('\n'),
