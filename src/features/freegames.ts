@@ -70,7 +70,7 @@ async function check(client: Client<true>) {
     if (!setting(guild.id, 'freeGames')) continue;
     const fresh = giveaways.filter((g) => !posted.get(guild.id, g.id)).slice(0, MAX_POSTS);
     if (!fresh.length) continue;
-    const out = await announceChannel(client, guild.id);
+    const out = (await announceChannel(client, guild.id, 'freeGamesChannel')) ?? (await announceChannel(client, guild.id));
     if (!out) continue;
     for (const g of fresh) {
       await out.send({ embeds: [embed(g)] });

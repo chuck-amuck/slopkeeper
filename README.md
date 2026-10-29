@@ -41,7 +41,7 @@ Everything happens through slash commands (type `/` in any channel, or run `/hel
 4. Throughout the night, people spam the soundboard panel.
 5. Everyone leaves at 1 AM. Five minutes after the channel empties, the bot posts a recap: the session lasted 4h, Sam was there for 4h, Alex for 3h 40m, and so on, plus the games people were playing.
 6. On Sunday evening, the bot posts the week's voice leaderboard. `/gamestats` shows the server put 31 hours into Lethal Company this month, and `/gamestats user:@Alex` shows where Alex's evenings went.
-7. Days later, Helldivers 2 goes 40% off. The bot posts the sale and pings Jordan, the only one who doesn't own it. The same week, it posts that a game is free to keep on Epic.
+7. Days later, Helldivers 2 goes 40% off. The bot posts the sale and pings Jordan, the only one who doesn't own it. The same week, it posts in #free-games that a game is free to keep on Epic.
 
 ## Getting started (for everyone in the server)
 
@@ -176,7 +176,9 @@ The "group" here is the server's members who have linked Steam or marked at leas
 
 ### Free games
 
-Every 3 hours, the bot checks [GamerPower](https://www.gamerpower.com) for full games that are free to keep on Steam, Epic Games Store or GOG, and posts each new one in the announce channel once. Each post has the store link, what the game normally costs and when the offer ends. DLC, betas and in-game loot are left out. Turn it off with `/setup free-games enabled:False`.
+Every 3 hours, the bot checks [GamerPower](https://www.gamerpower.com) for full games that are free to keep on Steam, Epic Games Store or GOG, and posts each new one once. Each post has the store link, what the game normally costs and when the offer ends. DLC, betas and in-game loot are left out.
+
+It's **off by default**. A server admin turns it on with `/setup free-games enabled:True`, optionally with `channel:#free-games` to keep the posts out of the announce channel. Without a channel, they go to the announce channel. When it's first turned on, the bot posts whatever is free at that moment (up to 5), then only new ones.
 
 | Command | What it does |
 | --- | --- |
@@ -292,14 +294,14 @@ Every setting has a sensible default, so only the announce channel needs setting
 | Command | What it does |
 | --- | --- |
 | `/setup show` | Lists every setting, its current value and where it comes from: **set here** (with `/setup`), **host default** (the host's `.env`) or **default**. |
-| `/setup announce-channel channel` | Sets where hop-on pings, session recaps, the weekly leaderboard, sale alerts and free games are posted. Until it's set, the bot works but posts nothing. It checks that it can post in the channel and tells you which permission is missing if not. |
+| `/setup announce-channel channel` | Sets where hop-on pings, session recaps, the weekly leaderboard and sale alerts are posted, and free games unless they have their own channel. Until it's set, the bot works but posts nothing. It checks that it can post in the channel and tells you which permission is missing if not. |
 | `/setup hopon-role [role]` | Sets the role that hop-on pings ping, which `/notify` hands out. Leave `role` empty to post hop-on pings without pinging that role. It warns you if its own role is below this one, since Discord then won't let it hand the role out. |
 | `/setup hopon [min_people] [cooldown_minutes]` | How many people a voice channel needs before a hop-on ping, and how long to wait before the next one. |
 | `/setup sessions [recap_min_minutes] [grace_minutes]` | The shortest session that gets a recap, and how long a channel stays empty before its session ends. |
 | `/setup leaderboard [day] [hour]` | When the weekly voice leaderboard is posted. |
 | `/setup timezone zone` | The server's time zone, used for the weekly post, counting "nights" on leaderboards, and reading game night times. Autocompletes, e.g. `America/Chicago`, `Europe/London`. |
 | `/setup steam-region country` | Steam store region for sale prices, as a two-letter country code. |
-| `/setup free-games enabled` | Turns free game posts on or off. |
+| `/setup free-games enabled [channel]` | Turns free game posts on or off. `channel` gives them their own channel; without it they go to the announce channel. To move them back to the announce channel, use `/setup reset setting:Free games channel`. |
 | `/setup gamenight-reminder minutes` | How long before a game night to remind the people who are in. `0` turns reminders off. |
 | `/setup reset setting` | Puts one setting back to its default. |
 
@@ -311,6 +313,7 @@ Examples:
 /setup hopon-role role:@hop-on
 /setup hopon min_people:3 cooldown_minutes:60
 /setup timezone zone:Europe/London
+/setup free-games enabled:True channel:#free-games
 /setup leaderboard day:Friday hour:22
 /setup reset setting:Hop-on cooldown
 ```
@@ -336,7 +339,8 @@ So the host can change a default for every server at once, and each server can s
 | Weekly leaderboard hour | `leaderboard` | `WEEKLY_POST_HOUR` | 20 |
 | Time zone | `timezone` | `TZ` | UTC |
 | Steam store region | `steam-region` | `STEAM_CC` | `us` |
-| Free game posts | `free-games` | `FREE_GAMES` (`false` to turn off) | on |
+| Free game posts | `free-games` | `FREE_GAMES` (`true` to turn on) | off |
+| Free games channel | `free-games` | | the announce channel |
 | Game night reminder (minutes before) | `gamenight-reminder` | `GAMENIGHT_REMINDER_MIN` | 15 |
 
 ## Multiple servers
@@ -418,11 +422,12 @@ For the server admin. You need the **Manage Server** permission in the server.
    - **Create Events** lets game nights show up in the server's Events list.
 
    If the bot was added with an older invite link, its role is missing **Create Events**. Either open the new link again (it updates the permissions without removing the bot), or tick **Create Events** on the bot's role in **Server Settings → Roles**.
-2. **Pick the announce channel:** `/setup announce-channel channel:#somewhere`. This is where hop-on pings, session recaps, the weekly leaderboard, sale alerts and free games are posted. If the bot can't post there, it tells you which permission to give its role.
+2. **Pick the announce channel:** `/setup announce-channel channel:#somewhere`. This is where hop-on pings, session recaps, the weekly leaderboard and sale alerts are posted. If the bot can't post there, it tells you which permission to give its role.
 3. **Make the hop-on role** (optional, for `/notify`).
    - In **Server Settings → Roles**, create a role such as `hop-on`, and drag the bot's role (**Slopkeeper**) **above** it. Discord only lets a bot hand out roles below its own.
    - Then run `/setup hopon-role role:@hop-on`.
 4. **Set the time zone** if it isn't the host's: `/setup timezone zone:Europe/London`.
+   Want free game posts? They're off until you run `/setup free-games enabled:True`, optionally with `channel:#free-games`.
 5. **Add game pings** (optional) for the games your server plays: `/gamerole add game:Valheim`, and so on. Then `/gamerole menu` in a channel people will see, so they can pick theirs.
 6. **Check voice channels.** The bot needs **Connect** and **Speak** in any voice channel you want the soundboard in. That's automatic unless the channel overrides permissions.
 7. **Check it:** `/setup show`. Anything you haven't set uses a default, which is listed there.

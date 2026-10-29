@@ -19,7 +19,10 @@ export const DEFAULTS = {
   recapMinMinutes: num('RECAP_MIN_MINUTES', 15),
   sessionGraceMin: num('SESSION_GRACE_MIN', 5),
   steamCountry: process.env.STEAM_CC || 'us',
-  freeGames: process.env.FREE_GAMES !== 'false',
+  // Off until a server turns it on, since not every server wants a post every few days
+  freeGames: process.env.FREE_GAMES === 'true',
+  // Unset posts free games in the announce channel
+  freeGamesChannel: null as string | null,
   gameNightReminderMin: num('GAMENIGHT_REMINDER_MIN', 15),
 };
 
@@ -75,8 +78,10 @@ export function setSetting(guildId: string, key: SettingKey, value: string | num
   }
 }
 
+export type IdSettingKey = 'announceChannel' | 'hopOnRole' | 'freeGamesChannel';
+
 /** Channel and role settings store '' for "deliberately none", which reads back as null */
-export const idSetting = (guildId: string, key: 'announceChannel' | 'hopOnRole') => setting(guildId, key) || null;
+export const idSetting = (guildId: string, key: IdSettingKey) => setting(guildId, key) || null;
 
 /** With ALLOWED_GUILD_IDS set, the bot leaves any other server that adds it */
 export const isAllowed = (guildId: string) => !config.allowedGuildIds || config.allowedGuildIds.includes(guildId);
