@@ -293,6 +293,12 @@ export const soundboard: Feature = {
   ],
   buttonPrefix: 'sb',
   async onButton(i) {
+    const receivedAt = Date.now();
+    const isSound = !i.customId.startsWith('sb:#');
+    // Discord greys the button out until the click is acknowledged, so do that before anything else
+    if (isSound || i.customId === STOP) await i.deferUpdate();
+    const ackedAt = Date.now();
+
     // Adopt panels posted before tracking existed, so they update on the next change too
     db.prepare('INSERT INTO sound_panels (message_id, channel_id) VALUES (?, ?) ON CONFLICT(message_id) DO NOTHING').run(i.message.id, i.channelId);
 
@@ -304,17 +310,19 @@ export const soundboard: Feature = {
       return i.update(panel(page));
     }
 
-    if (i.customId === STOP) {
-      stopPlayback();
-      return i.deferUpdate();
-    }
+    if (i.customId === STOP) return stopPlayback();
 
     const sound = findSound(i.customId.slice('sb:'.length));
-    if (!sound) return i.reply({ content: 'That sound was removed.', flags: MessageFlags.Ephemeral });
+    if (!sound) return i.followUp({ content: 'That sound was removed.', flags: MessageFlags.Ephemeral });
     if (!i.inCachedGuild() || !i.member.voice.channel) {
-      return i.reply({ content: 'Join a voice channel first.', flags: MessageFlags.Ephemeral });
+      return i.followUp({ content: 'Join a voice channel first.', flags: MessageFlags.Ephemeral });
     }
-    await i.deferUpdate();
     await play(i.member.voice.channel, sound.file);
+    // Temporary timing log for button lag: click→bot is Discord delivering the click (from the interaction's
+    // snowflake timestamp, so it includes any clock skew), ack is the deferUpdate round trip
+    console.log(
+      `Sound click ${sound.name}: click→bot ${receivedAt - i.createdTimestamp} ms, ack ${ackedAt - receivedAt} ms, ` +
+        `ack→playing ${Date.now() - ackedAt} ms`,
+    );
   },
 };
