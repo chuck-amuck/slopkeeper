@@ -1,0 +1,16 @@
+services:
+  discord-bot:
+    build: .
+    container_name: discord-bot
+    restart: unless-stopped
+    init: true
+    env_file: .env
+    volumes:
+      - discord-bot-data:/data
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+
+volumes:
+  discord-bot-data:
