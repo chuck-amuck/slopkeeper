@@ -2,6 +2,7 @@ import type { Client, Guild } from 'discord.js';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { config } from '../config.ts';
 import { db } from '../db.ts';
+import { setting } from '../settings.ts';
 import type { Feature } from '../types.ts';
 import { announceChannel, servedGuilds } from '../util.ts';
 import { allGames, groupMembers, ownersOf } from './games.ts';
@@ -12,8 +13,8 @@ interface PriceOverview {
   final_formatted: string;
 }
 
-async function fetchPrice(appid: number): Promise<PriceOverview | null> {
-  const res = await fetch(`https://store.steampowered.com/api/appdetails?appids=${appid}&cc=${config.steamCountry}&filters=price_overview`);
+async function fetchPrice(appid: number, country: string): Promise<PriceOverview | null> {
+  const res = await fetch(`https://store.steampowered.com/api/appdetails?appids=${appid}&cc=${country}&filters=price_overview`);
   if (!res.ok) throw new Error(`Steam appdetails ${appid}: HTTP ${res.status}`);
   const body = (await res.json()) as Record<string, { success: boolean; data?: { price_overview?: PriceOverview } | [] }>;
   const entry = body[String(appid)];
@@ -23,12 +24,12 @@ async function fetchPrice(appid: number): Promise<PriceOverview | null> {
 }
 
 async function checkSales(client: Client<true>) {
-  // Several servers can have the same game; ask Steam once per check
-  const prices = new Map<number, PriceOverview | null | undefined>();
+  // Several servers can have the same game; ask Steam once per check and store region
+  const prices = new Map<string, PriceOverview | null | undefined>();
   for (const guild of servedGuilds(client)) await checkGuild(client, guild, prices);
 }
 
-async function checkGuild(client: Client<true>, guild: Guild, prices: Map<number, PriceOverview | null | undefined>) {
+async function checkGuild(client: Client<true>, guild: Guild, prices: Map<string, PriceOverview | null | undefined>) {
   const out = await announceChannel(client, guild.id);
   if (!out) return;
   const group = groupMembers(guild);
@@ -38,11 +39,13 @@ async function checkGuild(client: Client<true>, guild: Guild, prices: Map<number
     const needers = group.filter((id) => !owners.has(id));
     if (group.length && !needers.length) continue; // everyone already has it
 
-    if (!prices.has(game.steam_appid)) {
-      prices.set(game.steam_appid, await fetchPrice(game.steam_appid).catch((err) => (console.error(err), undefined)));
+    const country = setting(guild.id, 'steamCountry');
+    const key = `${country}:${game.steam_appid}`;
+    if (!prices.has(key)) {
+      prices.set(key, await fetchPrice(game.steam_appid, country).catch((err) => (console.error(err), undefined)));
       await sleep(1500); // stay well under Steam's store API rate limit
     }
-    const price = prices.get(game.steam_appid);
+    const price = prices.get(key);
     if (price === undefined) continue;
 
     const discount = price?.discount_percent ?? 0;

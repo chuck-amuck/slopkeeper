@@ -1,6 +1,7 @@
 import { EmbedBuilder, MessageFlags, SlashCommandBuilder } from 'discord.js';
 import { config } from '../config.ts';
 import { db } from '../db.ts';
+import { DEFAULTS } from '../settings.ts';
 import type { Feature } from '../types.ts';
 
 // Steam category ids: 1 Multi-player, 36 Online PvP, 38 Online Co-op
@@ -122,7 +123,7 @@ export async function ensureAppInfo(appids: number[]) {
     }>('/IStoreBrowseService/GetItems/v1/', {
       input_json: JSON.stringify({
         ids: chunk.map((appid) => ({ appid })),
-        context: { language: 'english', country_code: config.steamCountry.toUpperCase() },
+        context: { language: 'english', country_code: DEFAULTS.steamCountry.toUpperCase() },
         data_request: { include_basic_info: false },
       }),
     });
@@ -147,6 +148,7 @@ const PRIVACY_HELP =
   'Their Steam game details are private, so I can\'t see their library. Fix: Steam → profile → Edit Profile → Privacy Settings → **Game details: Public**, then run `/steam refresh`.';
 
 export const steam: Feature = {
+  title: 'Steam',
   commands: [
     {
       data: new SlashCommandBuilder()

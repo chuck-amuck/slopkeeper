@@ -6,8 +6,8 @@ import { config } from './config.ts';
 mkdirSync(config.dataDir, { recursive: true });
 
 const DB_FILE = path.join(config.dataDir, 'bot.db');
-// 2: every per-server table has a guild_id
-const SCHEMA_VERSION = 2;
+// 2: every per-server table has a guild_id. 3: guild_settings is key/value
+const SCHEMA_VERSION = 3;
 
 export const db = new DatabaseSync(DB_FILE);
 db.exec('PRAGMA journal_mode = WAL;');
@@ -60,14 +60,17 @@ const TABLES = {
 const version = (db.prepare('PRAGMA user_version').get() as { user_version: number }).user_version;
 const hasTable = (name: string) => db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(name) !== undefined;
 if (version < 2 && hasTable('games')) migrateToMultiServer();
+if (version < 3 && hasTable('guild_settings')) settingsToKeyValue();
 
 db.exec(`
   PRAGMA foreign_keys = ON;
 
+  -- Only values changed with /setup; anything missing uses the default in settings.ts
   CREATE TABLE IF NOT EXISTS guild_settings (
-    guild_id TEXT PRIMARY KEY,
-    announce_channel_id TEXT,
-    hopon_role_id TEXT
+    guild_id TEXT NOT NULL,
+    key TEXT NOT NULL,
+    value TEXT NOT NULL,
+    PRIMARY KEY (guild_id, key)
   );
 
   CREATE TABLE IF NOT EXISTS sessions ${TABLES.sessions};
@@ -118,6 +121,55 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS sound_emoji ${TABLES.sound_emoji};
   CREATE TABLE IF NOT EXISTS discord_sounds ${TABLES.discord_sounds};
   CREATE TABLE IF NOT EXISTS sound_panels ${TABLES.sound_panels};
+
+  CREATE TABLE IF NOT EXISTS free_game_posts (
+    guild_id TEXT NOT NULL,
+    giveaway_id INTEGER NOT NULL,
+    PRIMARY KEY (guild_id, giveaway_id)
+  );
+
+  CREATE TABLE IF NOT EXISTS game_roles (
+    role_id TEXT PRIMARY KEY,
+    guild_id TEXT NOT NULL,
+    name TEXT NOT NULL COLLATE NOCASE,
+    -- 1 when the bot made the role, so removing the game deletes it too
+    created INTEGER NOT NULL DEFAULT 0,
+    UNIQUE (guild_id, name)
+  );
+
+  CREATE TABLE IF NOT EXISTS game_nights (
+    id INTEGER PRIMARY KEY,
+    guild_id TEXT NOT NULL,
+    channel_id TEXT NOT NULL,
+    message_id TEXT,
+    event_id TEXT,
+    game TEXT NOT NULL,
+    details TEXT,
+    voice_channel_id TEXT,
+    starts_at INTEGER NOT NULL,
+    created_by TEXT NOT NULL,
+    reminded INTEGER NOT NULL DEFAULT 0,
+    -- Discord event: 0 scheduled, 1 started, 2 ended
+    event_stage INTEGER NOT NULL DEFAULT 0,
+    cancelled INTEGER NOT NULL DEFAULT 0
+  );
+  CREATE TABLE IF NOT EXISTS game_night_rsvps (
+    night_id INTEGER NOT NULL REFERENCES game_nights(id) ON DELETE CASCADE,
+    user_id TEXT NOT NULL,
+    status TEXT NOT NULL,
+    PRIMARY KEY (night_id, user_id)
+  );
+
+  -- Time spent playing each game, from Discord activity status
+  CREATE TABLE IF NOT EXISTS game_plays (
+    id INTEGER PRIMARY KEY,
+    guild_id TEXT NOT NULL,
+    user_id TEXT NOT NULL,
+    game TEXT NOT NULL,
+    started_at INTEGER NOT NULL,
+    ended_at INTEGER NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS game_plays_by_guild ON game_plays (guild_id, started_at);
 
   CREATE TABLE IF NOT EXISTS kv (
     key TEXT PRIMARY KEY,
@@ -183,6 +235,26 @@ function migrateToMultiServer() {
   for (const file of readdirSync(soundDir)) {
     const from = path.join(soundDir, file);
     if (statSync(from).isFile()) renameSync(from, path.join(target, file));
+  }
+}
+
+/** v2 → v3: guild_settings went from one column per setting to key/value rows */
+function settingsToKeyValue() {
+  const columns = (db.prepare('PRAGMA table_info(guild_settings)').all() as { name: string }[]).map((c) => c.name);
+  if (!columns.includes('announce_channel_id')) return;
+  db.exec('BEGIN');
+  try {
+    db.exec('ALTER TABLE guild_settings RENAME TO guild_settings_v2');
+    db.exec('CREATE TABLE guild_settings (guild_id TEXT NOT NULL, key TEXT NOT NULL, value TEXT NOT NULL, PRIMARY KEY (guild_id, key))');
+    db.exec(`
+      INSERT INTO guild_settings SELECT guild_id, 'announceChannel', announce_channel_id FROM guild_settings_v2 WHERE announce_channel_id IS NOT NULL;
+      INSERT INTO guild_settings SELECT guild_id, 'hopOnRole', hopon_role_id FROM guild_settings_v2 WHERE hopon_role_id IS NOT NULL;
+      DROP TABLE guild_settings_v2;
+    `);
+    db.exec('COMMIT');
+  } catch (err) {
+    db.exec('ROLLBACK');
+    throw err;
   }
 }
 

@@ -4,23 +4,13 @@ function required(name: string): string {
   return value;
 }
 
-function num(name: string, fallback: number): number {
-  const value = process.env[name];
-  return value ? Number(value) : fallback;
-}
-
+// What only the host can provide. Per-server settings and their env defaults are in settings.ts
 export const config = {
   token: required('DISCORD_TOKEN'),
   // Servers allowed to use the bot; unset allows any server that adds it
   allowedGuildIds: process.env.ALLOWED_GUILD_IDS?.split(',').map((id) => id.trim()).filter(Boolean) ?? null,
-  hopOnMinPeople: num('HOPON_MIN_PEOPLE', 2),
-  hopOnCooldownMin: num('HOPON_COOLDOWN_MIN', 120),
-  recapMinMinutes: num('RECAP_MIN_MINUTES', 15),
-  sessionGraceMin: num('SESSION_GRACE_MIN', 5),
-  saleCheckHours: num('SALE_CHECK_HOURS', 6),
   steamApiKey: process.env.STEAM_API_KEY || null,
-  steamCountry: process.env.STEAM_CC ?? 'us',
-  weeklyPostDay: num('WEEKLY_POST_DAY', 0),
-  weeklyPostHour: num('WEEKLY_POST_HOUR', 20),
+  // One price check covers every server, so this isn't a per-server setting
+  saleCheckHours: Number(process.env.SALE_CHECK_HOURS || 6),
   dataDir: process.env.DATA_DIR ?? './data',
 };

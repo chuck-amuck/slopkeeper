@@ -1,8 +1,8 @@
 import { Events, MessageFlags, SlashCommandBuilder, type Client, type VoiceState } from 'discord.js';
-import { config } from '../config.ts';
-import { guildSettings, isAllowed } from '../settings.ts';
+import { idSetting, isAllowed, setting } from '../settings.ts';
 import type { Feature } from '../types.ts';
 import { announceChannel, humansIn, listNames, playingGames } from '../util.ts';
+import { rolesForGames } from './gameroles.ts';
 
 /** Server id → when it was last pinged */
 const lastPingAt = new Map<string, number>();
@@ -15,8 +15,8 @@ async function onVoiceState(client: Client<true>, oldState: VoiceState, newState
 
   // Joins add one person at a time, so this fires exactly once as the channel crosses the threshold
   const humans = humansIn(channel);
-  if (humans.length !== config.hopOnMinPeople) return;
-  if (Date.now() - (lastPingAt.get(guildId) ?? 0) < config.hopOnCooldownMin * 60_000) return;
+  if (humans.length !== setting(guildId, 'hopOnMinPeople')) return;
+  if (Date.now() - (lastPingAt.get(guildId) ?? 0) < setting(guildId, 'hopOnCooldownMin') * 60_000) return;
   const out = await announceChannel(client, guildId);
   if (!out) return;
   lastPingAt.set(guildId, Date.now());
@@ -25,18 +25,21 @@ async function onVoiceState(client: Client<true>, oldState: VoiceState, newState
   let text = `🎮 ${listNames(humans.map((m) => `**${m.displayName}**`))} are in ${channel}`;
   if (games.length) text += `, playing ${listNames(games.map((g) => `**${g}**`))}`;
   text += '. Hop on!';
-  const roleId = guildSettings(guildId).hopOnRoleId;
-  if (roleId) text = `<@&${roleId}> ${text}`;
-  await out.send({ content: text, allowedMentions: { roles: roleId ? [roleId] : [] } });
+  // The hop-on role plus the ping role of each game being played
+  const hopOnRole = idSetting(guildId, 'hopOnRole');
+  const roles = [...new Set([...(hopOnRole ? [hopOnRole] : []), ...rolesForGames(guildId, games)])];
+  if (roles.length) text = `${roles.map((id) => `<@&${id}>`).join(' ')} ${text}`;
+  await out.send({ content: text, allowedMentions: { roles } });
 }
 
 export const hopOn: Feature = {
+  title: 'Hop-on pings',
   commands: [
     {
       data: new SlashCommandBuilder().setName('notify').setDescription('Toggle getting pinged when people hop in voice'),
       async run(i) {
         if (!i.inCachedGuild()) return i.reply({ content: 'Use this in a server.', flags: MessageFlags.Ephemeral });
-        const roleId = guildSettings(i.guildId).hopOnRoleId;
+        const roleId = idSetting(i.guildId, 'hopOnRole');
         if (!roleId) {
           return i.reply({ content: 'This server has no hop-on role. A server admin can set one with `/setup hopon-role`.', flags: MessageFlags.Ephemeral });
         }
