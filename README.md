@@ -51,7 +51,7 @@ Each friend's Steam profile needs **Privacy Settings → Game details: Public**,
 
 1. https://discord.com/developers/applications → New Application.
 2. **Bot** tab: Reset Token → copy into `.env` as `DISCORD_TOKEN`. Enable **Presence Intent** and **Server Members Intent**.
-3. **OAuth2 → URL Generator**: scopes `bot` + `applications.commands`; permissions View Channels, Send Messages, Embed Links, Connect, Speak, Manage Roles. Open the URL and add the bot to the server.
+3. **OAuth2 → URL Generator**: scopes `bot` + `applications.commands`; permissions View Channels, Send Messages, Embed Links, Connect, Speak, Manage Roles, Create Expressions (for syncing to Discord's soundboard). Open the URL and add the bot to the server.
 4. Create a role (e.g. `hop-on`) and drag the bot's role **above** it so `/notify` can assign it.
 5. Get a Steam Web API key at https://steamcommunity.com/dev/apikey (any domain name works) and set `STEAM_API_KEY`.
 6. Discord settings → Advanced → Developer Mode, then right-click to copy the server, channel and role IDs into `.env`.
