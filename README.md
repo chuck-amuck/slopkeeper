@@ -18,6 +18,7 @@ Keeper of the slop. Discord bot for the friends server: hop-on pings, voice sess
 | `/game list` | Library, who owns what, who still needs it |
 | `/game remove name` / `/game unhide name` | Remove a game / undo "Never suggest" |
 | `/sound play/add/emoji/remove/stop/panel` | Soundboard. `panel` posts clickable buttons that update themselves as sounds change |
+| `/sound discord-add name [start]` / `discord-remove` / `discord-sync` | Copy sounds into Discord's own soundboard, take them out again, or fill its free slots |
 
 Automatic posts in `ANNOUNCE_CHANNEL_ID`:
 - **Hop-on ping** when a voice channel reaches `HOPON_MIN_PEOPLE` (cooldown `HOPON_COOLDOWN_MIN`).
@@ -28,6 +29,15 @@ Automatic posts in `ANNOUNCE_CHANNEL_ID`:
 ## Soundboard
 
 `/sound panel` posts a grid of buttons, 20 per page with ◀ ▶ to flip pages and ⏹ to stop. The bot remembers every panel it posts and edits them whenever a sound is added, removed or given an emoji, so there's no need to re-post one. Pin it if you want it easy to find.
+
+The bot holds the full library, and Discord's own soundboard (the speaker button in a voice call) holds whichever of those fit. Discord's buttons play straight from the Discord app with no round trip through the bot, so they can be spammed, and the sound comes from whoever pressed it. Its limits: about 5 seconds per sound, and 8 / 24 / 36 / 48 slots at boost level 0–3, shared with sounds people upload there themselves.
+
+- `/sound add` copies a sound to Discord's soundboard when it's short enough and a slot is free; otherwise it stays bot-only.
+- `/sound discord-add` copies one over by hand. For longer sounds, `start:` picks the 5 seconds to use.
+- `/sound discord-remove` frees a slot; the sound stays in the bot and can go back later.
+- `/sound discord-sync` fills free slots with every short bot-only sound.
+- Blue panel buttons are on both soundboards. Removing a sound, or changing its emoji, updates both. Deleting one in Discord's UI turns it back to bot-only.
+- The bot's role needs **Create Expressions** to upload. The bot never touches sounds it didn't upload.
 
 Sounds layer like Discord's own soundboard: clicking while something is playing mixes the new sound in instead of cutting the old one off, up to 12 at once (past that the oldest is dropped). Give a sound a button emoji with `/sound add ... emoji:` or `/sound emoji`; custom emoji have to be from this server.
 

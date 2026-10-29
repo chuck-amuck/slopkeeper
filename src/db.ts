@@ -74,6 +74,10 @@ db.exec(`
     name TEXT PRIMARY KEY,
     emoji TEXT NOT NULL
   );
+  CREATE TABLE IF NOT EXISTS discord_sounds (
+    name TEXT PRIMARY KEY,
+    sound_id TEXT NOT NULL UNIQUE
+  );
   CREATE TABLE IF NOT EXISTS sound_panels (
     message_id TEXT PRIMARY KEY,
     channel_id TEXT NOT NULL,

@@ -14,6 +14,7 @@ import {
   ButtonBuilder,
   ButtonStyle,
   DiscordAPIError,
+  Events,
   MessageFlags,
   RESTJSONErrorCodes,
   SlashCommandBuilder,
@@ -25,6 +26,7 @@ import { mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { config } from '../config.ts';
 import { db } from '../db.ts';
+import * as discordBoard from '../discordSounds.ts';
 import { Mixer } from '../mixer.ts';
 import type { Feature } from '../types.ts';
 
@@ -49,9 +51,11 @@ interface Sound {
   name: string;
   file: string;
   emoji?: string;
+  onDiscord: boolean;
 }
 
 function listSounds(): Sound[] {
+  const onDiscord = discordBoard.synced();
   const emojis = new Map(
     (db.prepare('SELECT name, emoji FROM sound_emoji').all() as { name: string; emoji: string }[]).map((r) => [r.name, r.emoji]),
   );
@@ -59,7 +63,7 @@ function listSounds(): Sound[] {
     .filter((f) => EXTENSIONS.includes(path.extname(f).toLowerCase()))
     .map((f) => {
       const name = path.parse(f).name;
-      return { name, file: path.join(SOUND_DIR, f), emoji: emojis.get(name) };
+      return { name, file: path.join(SOUND_DIR, f), emoji: emojis.get(name), onDiscord: onDiscord.has(name) };
     })
     .sort((a, b) => a.name.localeCompare(b.name));
 }
@@ -131,7 +135,10 @@ function panel(page: number) {
     rows.push(
       new ActionRowBuilder<ButtonBuilder>().addComponents(
         shown.slice(idx, idx + 5).map((s) => {
-          const button = new ButtonBuilder().setCustomId(`sb:${s.name}`).setLabel(s.name).setStyle(ButtonStyle.Secondary);
+          const button = new ButtonBuilder()
+            .setCustomId(`sb:${s.name}`)
+            .setLabel(s.name)
+            .setStyle(s.onDiscord ? ButtonStyle.Primary : ButtonStyle.Secondary);
           return s.emoji ? button.setEmoji(s.emoji) : button;
         }),
       ),
@@ -141,14 +148,16 @@ function panel(page: number) {
   const controls = new ActionRowBuilder<ButtonBuilder>();
   if (pages > 1) {
     controls.addComponents(
-      new ButtonBuilder().setCustomId(PREV).setEmoji('◀️').setStyle(ButtonStyle.Primary),
-      new ButtonBuilder().setCustomId(NEXT).setEmoji('▶️').setStyle(ButtonStyle.Primary),
+      new ButtonBuilder().setCustomId(PREV).setEmoji('◀️').setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId(NEXT).setEmoji('▶️').setStyle(ButtonStyle.Secondary),
     );
   }
   controls.addComponents(new ButtonBuilder().setCustomId(STOP).setEmoji('⏹️').setLabel('Stop').setStyle(ButtonStyle.Danger));
   rows.push(controls);
 
-  return { content: pages > 1 ? `🔊 **Soundboard** · page ${page + 1} of ${pages}` : '🔊 **Soundboard**', components: rows };
+  const title = pages > 1 ? `🔊 **Soundboard** · page ${page + 1} of ${pages}` : '🔊 **Soundboard**';
+  const legend = sounds.some((s) => s.onDiscord) ? '\n-# Blue sounds are also in Discord’s own soundboard, for instant spamming' : '';
+  return { content: title + legend, components: rows };
 }
 
 function trackPanel(messageId: string, channelId: string, page: number) {
@@ -210,6 +219,22 @@ export const soundboard: Feature = {
             .setDescription('Delete a sound')
             .addStringOption((o) => o.setName('name').setDescription('Sound').setRequired(true).setAutocomplete(true)),
         )
+        .addSubcommand((s) =>
+          s
+            .setName('discord-add')
+            .setDescription('Copy a sound into Discord’s own soundboard')
+            .addStringOption((o) => o.setName('name').setDescription('Sound').setRequired(true).setAutocomplete(true))
+            .addNumberOption((o) =>
+              o.setName('start').setDescription(`For sounds over ${discordBoard.CLIP_SECONDS} s: second to start the clip at`).setMinValue(0),
+            ),
+        )
+        .addSubcommand((s) =>
+          s
+            .setName('discord-remove')
+            .setDescription('Take a sound out of Discord’s soundboard (the bot keeps it)')
+            .addStringOption((o) => o.setName('name').setDescription('Sound').setRequired(true).setAutocomplete(true)),
+        )
+        .addSubcommand((s) => s.setName('discord-sync').setDescription('Copy every short sound into Discord’s soundboard while there are free slots'))
         .addSubcommand((s) => s.setName('stop').setDescription('Stop playback and leave voice'))
         .addSubcommand((s) => s.setName('panel').setDescription('Post a soundboard panel in this channel; it updates itself as sounds change')),
       async autocomplete(i) {
@@ -218,7 +243,10 @@ export const soundboard: Feature = {
           listSounds()
             .filter((s) => s.name.includes(query))
             .slice(0, 25)
-            .map((s) => ({ name: s.emoji && !s.emoji.startsWith('<') ? `${s.emoji} ${s.name}` : s.name, value: s.name })),
+            .map((s) => ({
+              name: `${s.emoji && !s.emoji.startsWith('<') ? `${s.emoji} ` : ''}${s.name}${s.onDiscord ? ' (on Discord’s soundboard)' : ''}`,
+              value: s.name,
+            })),
         );
       },
       async run(i) {
@@ -254,7 +282,13 @@ export const soundboard: Feature = {
           writeFileSync(path.join(SOUND_DIR, name + ext), Buffer.from(await res.arrayBuffer()));
           // Replacing a sound keeps its emoji unless a new one was given
           if (emoji) setEmoji(name, emoji.emoji);
-          await i.editReply(`${existing ? '♻️ Replaced' : '➕ Added'} sound ${emoji ? emoji.emoji + ' ' : ''}**${name}**.`);
+
+          const sound = findSound(name)!;
+          const problem = await discordBoard.upload(i.guild, sound, VOLUME);
+          // A replaced sound that no longer fits mustn't leave the old audio on Discord's soundboard
+          if (problem) await discordBoard.remove(i.guild, name).catch(() => {});
+          const note = problem ? `\nBot soundboard only: ${problem}.` : '\n🟦 Also added to Discord’s soundboard.';
+          await i.editReply(`${existing ? '♻️ Replaced' : '➕ Added'} sound ${emoji ? emoji.emoji + ' ' : ''}**${name}**.${note}`);
           return refreshPanels(i.client);
         }
 
@@ -266,16 +300,84 @@ export const soundboard: Feature = {
           const emoji = emojiInput ? await parseEmoji(i, emojiInput) : null;
           if (emoji && 'error' in emoji) return i.reply({ content: emoji.error, ...ephemeral });
           setEmoji(sound.name, emoji?.emoji ?? null);
+          await discordBoard.setEmoji(i.guild, sound.name, emoji?.emoji ?? null);
           await i.reply({ content: emoji ? `${emoji.emoji} set on **${sound.name}**.` : `Cleared the emoji on **${sound.name}**.`, ...ephemeral });
           return refreshPanels(i.client);
         }
 
         if (sub === 'remove') {
+          if (!i.inCachedGuild()) return i.reply({ content: 'Use this in the server.', ...ephemeral });
           const sound = findSound(i.options.getString('name', true));
           if (!sound) return i.reply({ content: 'No sound by that name.', ...ephemeral });
+          const problem = await discordBoard.remove(i.guild, sound.name).then(
+            () => null,
+            (err: Error) => err.message,
+          );
           rmSync(sound.file);
           setEmoji(sound.name, null);
-          await i.reply(`🗑️ Removed sound **${sound.name}**.`);
+          await i.reply(`🗑️ Removed sound **${sound.name}**.${problem ? `\nCouldn’t remove it from Discord’s soundboard: ${problem}.` : ''}`);
+          return refreshPanels(i.client);
+        }
+
+        if (sub === 'discord-add') {
+          if (!i.inCachedGuild()) return i.reply({ content: 'Use this in the server.', ...ephemeral });
+          const sound = findSound(i.options.getString('name', true));
+          if (!sound) return i.reply({ content: 'No sound by that name.', ...ephemeral });
+          await i.deferReply();
+          const problem = await discordBoard.upload(i.guild, sound, VOLUME, i.options.getNumber('start') ?? undefined);
+          if (problem) return i.editReply(`Couldn’t add **${sound.name}** to Discord’s soundboard: ${problem}.`);
+          const { used, total } = await discordBoard.slots(i.guild);
+          await i.editReply(`🟦 **${sound.name}** is on Discord’s soundboard (${used}/${total} slots used).`);
+          return refreshPanels(i.client);
+        }
+
+        if (sub === 'discord-remove') {
+          if (!i.inCachedGuild()) return i.reply({ content: 'Use this in the server.', ...ephemeral });
+          const sound = findSound(i.options.getString('name', true));
+          if (!sound) return i.reply({ content: 'No sound by that name.', ...ephemeral });
+          if (!sound.onDiscord) return i.reply({ content: `**${sound.name}** isn’t on Discord’s soundboard.`, ...ephemeral });
+          await i.deferReply();
+          await discordBoard.remove(i.guild, sound.name);
+          const { used, total } = await discordBoard.slots(i.guild);
+          await i.editReply(`Took **${sound.name}** off Discord’s soundboard; it’s still on the bot’s (${used}/${total} slots used).`);
+          return refreshPanels(i.client);
+        }
+
+        if (sub === 'discord-sync') {
+          if (!i.inCachedGuild()) return i.reply({ content: 'Use this in the server.', ...ephemeral });
+          await i.deferReply();
+          await discordBoard.reconcile(i.guild);
+          const added: string[] = [];
+          const tooLong: string[] = [];
+          const failed: string[] = [];
+          const waiting: string[] = [];
+          let blocker: string | null = null;
+          for (const sound of listSounds().filter((s) => !s.onDiscord)) {
+            if (blocker) {
+              waiting.push(sound.name);
+              continue;
+            }
+            if (!discordBoard.fits(await discordBoard.durationOf(sound.file).catch(() => Infinity))) {
+              tooLong.push(sound.name);
+              continue;
+            }
+            const problem = await discordBoard.upload(i.guild, sound, VOLUME);
+            if (!problem) added.push(sound.name);
+            else if (problem === discordBoard.FULL || problem === discordBoard.NO_PERMISSION) {
+              blocker = problem;
+              waiting.push(sound.name);
+            } else failed.push(`${sound.name} (${problem})`);
+          }
+
+          const { used, total } = await discordBoard.slots(i.guild);
+          const lines = [
+            added.length ? `🟦 Added to Discord’s soundboard: ${added.join(', ')}` : 'Nothing new to add to Discord’s soundboard.',
+            blocker && `Stopped because ${blocker}. Still bot-only: ${waiting.join(', ')}`,
+            tooLong.length && `Over ${discordBoard.CLIP_SECONDS} s, so bot-only unless you pick a part with \`/sound discord-add start:\`: ${tooLong.join(', ')}`,
+            failed.length && `Failed: ${failed.join(', ')}`,
+            `${used}/${total} Discord soundboard slots used.`,
+          ];
+          await i.editReply(lines.filter(Boolean).join('\n'));
           return refreshPanels(i.client);
         }
 
@@ -291,6 +393,14 @@ export const soundboard: Feature = {
       },
     },
   ],
+  async setup(client) {
+    const guild = await client.guilds.fetch(config.guildId);
+    await discordBoard.reconcile(guild).catch((err) => console.error('Soundboard reconcile failed:', err.message));
+    client.on(Events.GuildSoundboardSoundDelete, (sound) => {
+      if (discordBoard.forget(sound.soundId)) void refreshPanels(client);
+    });
+    await refreshPanels(client);
+  },
   buttonPrefix: 'sb',
   async onButton(i) {
     const receivedAt = Date.now();
