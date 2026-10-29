@@ -219,6 +219,7 @@ async function refreshPanels(client: Client, guildId: string) {
 }
 
 export const soundboard: Feature = {
+  title: 'Soundboard',
   commands: [
     {
       data: new SlashCommandBuilder()
@@ -430,7 +431,7 @@ export const soundboard: Feature = {
       if (discordBoard.forget(sound.soundId) && sound.guildId) void refreshPanels(client, sound.guildId);
     });
   },
-  buttonPrefix: 'sb',
+  componentPrefix: 'sb',
   async onButton(i) {
     if (!i.inCachedGuild()) return;
     // Discord greys the button out until the click is acknowledged, so do that before anything else

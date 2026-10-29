@@ -1,9 +1,8 @@
 import { EmbedBuilder, Events, MessageFlags, SlashCommandBuilder, type Client, type GuildMember, type VoiceBasedChannel } from 'discord.js';
-import { config } from '../config.ts';
 import { db, getKv, setKv } from '../db.ts';
-import { isAllowed } from '../settings.ts';
+import { isAllowed, setting } from '../settings.ts';
 import type { Feature } from '../types.ts';
-import { announceChannel, formatDuration, humansIn, playingGames, servedGuilds } from '../util.ts';
+import { announceChannel, formatDuration, humansIn, playingGames, servedGuilds, zonedDate, zonedParts } from '../util.ts';
 
 interface LiveSession {
   guildId: string;
@@ -45,7 +44,7 @@ function leave(client: Client<true>, channelId: string, userId: string, now: num
   if (s.present.size === 0) {
     // Grace period so a quick disconnect/reconnect doesn't split the night into two sessions
     s.emptySince = now;
-    s.endTimer = setTimeout(() => void finish(client, channelId).catch(console.error), config.sessionGraceMin * 60_000);
+    s.endTimer = setTimeout(() => void finish(client, channelId).catch(console.error), setting(s.guildId, 'sessionGraceMin') * 60_000);
   }
 }
 
@@ -56,7 +55,7 @@ async function finish(client: Client<true>, channelId: string) {
 
   const endedAt = s.emptySince ?? Date.now();
   const duration = endedAt - s.startedAt;
-  if (duration < config.recapMinMinutes * 60_000 || s.totals.size < 2) return;
+  if (duration < setting(s.guildId, 'recapMinMinutes') * 60_000 || s.totals.size < 2) return;
 
   db.exec('BEGIN');
   try {
@@ -85,15 +84,26 @@ async function finish(client: Client<true>, channelId: string) {
 }
 
 function leaderboard(guildId: string, sinceMs: number, title: string): EmbedBuilder | null {
-  const people = db
+  const rows = db
     .prepare(
-      `SELECT sm.user_id AS userId, SUM(sm.seconds) AS secs,
-              COUNT(DISTINCT date(s.started_at / 1000, 'unixepoch', 'localtime')) AS nights
+      `SELECT sm.user_id AS userId, sm.seconds AS secs, s.started_at AS startedAt
        FROM session_members sm JOIN sessions s ON s.id = sm.session_id
-       WHERE s.guild_id = ? AND s.started_at >= ?
-       GROUP BY sm.user_id ORDER BY secs DESC LIMIT 10`,
+       WHERE s.guild_id = ? AND s.started_at >= ?`,
     )
-    .all(guildId, sinceMs) as { userId: string; secs: number; nights: number }[];
+    .all(guildId, sinceMs) as { userId: string; secs: number; startedAt: number }[];
+  // Nights are counted by the server's own calendar, so this happens here instead of in SQL
+  const timeZone = setting(guildId, 'timezone');
+  const byUser = new Map<string, { userId: string; secs: number; dates: Set<string> }>();
+  for (const r of rows) {
+    const entry = byUser.get(r.userId) ?? { userId: r.userId, secs: 0, dates: new Set<string>() };
+    entry.secs += r.secs;
+    entry.dates.add(zonedDate(r.startedAt, timeZone));
+    byUser.set(r.userId, entry);
+  }
+  const people = [...byUser.values()]
+    .sort((a, b) => b.secs - a.secs)
+    .slice(0, 10)
+    .map((p) => ({ userId: p.userId, secs: p.secs, nights: p.dates.size }));
   if (!people.length) return null;
 
   const games = db
@@ -121,10 +131,11 @@ function leaderboard(guildId: string, sinceMs: number, title: string): EmbedBuil
 }
 
 async function maybePostWeekly(client: Client<true>) {
-  const now = new Date();
-  if (now.getDay() !== config.weeklyPostDay || now.getHours() < config.weeklyPostHour) return;
-  const today = now.toLocaleDateString('en-CA');
   for (const guild of servedGuilds(client)) {
+    // Each server's own day, hour and time zone
+    const now = zonedParts(Date.now(), setting(guild.id, 'timezone'));
+    if (now.weekday !== setting(guild.id, 'weeklyPostDay') || now.hour < setting(guild.id, 'weeklyPostHour')) continue;
+    const today = `${now.year}-${now.month}-${now.day}`;
     const key = `weekly_post:${guild.id}`;
     if (getKv(key) === today) continue;
     const out = await announceChannel(client, guild.id);
@@ -136,6 +147,7 @@ async function maybePostWeekly(client: Client<true>) {
 }
 
 export const sessions: Feature = {
+  title: 'Voice sessions',
   commands: [
     {
       data: new SlashCommandBuilder()

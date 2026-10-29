@@ -174,6 +174,7 @@ async function buildPick(guild: Guild, here: string[]) {
 }
 
 export const games: Feature = {
+  title: 'Game library',
   commands: [
     {
       data: new SlashCommandBuilder()
@@ -283,7 +284,7 @@ export const games: Feature = {
       },
     },
   ],
-  buttonPrefix: 'wdp',
+  componentPrefix: 'wdp',
   async onButton(i) {
     if (!i.inCachedGuild() || !i.member.voice.channel) {
       return i.reply({ content: 'Join a voice channel first.', flags: MessageFlags.Ephemeral });

@@ -1,18 +1,25 @@
 import { Client, Events, GatewayIntentBits, MessageFlags, type Guild } from 'discord.js';
 import { config } from './config.ts';
 import { db } from './db.ts';
+import { freeGames } from './features/freegames.ts';
+import { gameNights } from './features/gamenight.ts';
+import { gamePings } from './features/gameroles.ts';
 import { games } from './features/games.ts';
+import { gameStats } from './features/gamestats.ts';
+import { help } from './features/help.ts';
 import { hopOn } from './features/hopon.ts';
 import { sales } from './features/sales.ts';
 import { sessions } from './features/sessions.ts';
 import { setup } from './features/setup.ts';
 import { soundboard } from './features/soundboard.ts';
 import { steam } from './features/steam.ts';
-import { guildSettings, isAllowed } from './settings.ts';
+import { idSetting, isAllowed } from './settings.ts';
 import type { Feature } from './types.ts';
 import { servedGuilds } from './util.ts';
 
-const features: Feature[] = [setup, hopOn, sessions, steam, games, sales, soundboard];
+// In /help order
+const features: Feature[] = [hopOn, gamePings, gameNights, sessions, gameStats, games, steam, freeGames, sales, soundboard, setup];
+features.unshift(help(features));
 const commands = new Map(features.flatMap((f) => f.commands ?? []).map((c) => [c.data.name, c]));
 
 const client = new Client({
@@ -35,12 +42,12 @@ async function join(guild: Guild, isNew: boolean) {
   // Guild-scoped commands update instantly, unlike global ones
   await guild.commands.set([...commands.values()].map((cmd) => cmd.data.toJSON()));
   console.log(`${commands.size} commands registered in ${guild.name} (${guild.id})`);
-  if (guildSettings(guild.id).announceChannelId) return;
+  if (idSetting(guild.id, 'announceChannel')) return;
   console.log(`${guild.name} has no announce channel yet; a server admin needs to run /setup announce-channel`);
   // Nothing gets announced until an admin picks a channel, so tell a newly joined server where it'll see it
   if (isNew) {
     await guild.systemChannel
-      ?.send('👋 Slopkeeper is here. A server admin needs to run `/setup announce-channel` to finish setting up, and optionally `/setup hopon-role`.')
+      ?.send('👋 Slopkeeper is here. A server admin needs to run `/setup announce-channel` to finish setting up, and then `/setup show` lists everything else. `/help` shows what the bot does.')
       .catch(() => {});
   }
 }
@@ -58,9 +65,9 @@ client.on(Events.InteractionCreate, async (i) => {
   try {
     if (i.isChatInputCommand()) await commands.get(i.commandName)?.run(i);
     else if (i.isAutocomplete()) await commands.get(i.commandName)?.autocomplete?.(i);
-    else if (i.isButton()) {
-      const prefix = i.customId.split(':')[0];
-      await features.find((f) => f.buttonPrefix === prefix)?.onButton?.(i);
+    else if (i.isButton() || i.isStringSelectMenu()) {
+      const feature = features.find((f) => f.componentPrefix === i.customId.split(':')[0]);
+      await (i.isButton() ? feature?.onButton?.(i) : feature?.onSelect?.(i));
     }
   } catch (err) {
     console.error(err);
@@ -72,6 +79,7 @@ client.on(Events.InteractionCreate, async (i) => {
 
 for (const signal of ['SIGINT', 'SIGTERM']) {
   process.on(signal, async () => {
+    for (const feature of features) feature.shutdown?.();
     await client.destroy();
     db.close();
     process.exit(0);
