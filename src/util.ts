@@ -1,5 +1,5 @@
-import { ActivityType, type Client, type GuildMember, type SendableChannels, type VoiceBasedChannel } from 'discord.js';
-import { config } from './config.ts';
+import { ActivityType, type Client, type Guild, type GuildMember, type SendableChannels, type VoiceBasedChannel } from 'discord.js';
+import { guildSettings, isAllowed } from './settings.ts';
 
 export function humansIn(channel: VoiceBasedChannel): GuildMember[] {
   return [...channel.members.values()].filter((m) => !m.user.bot);
@@ -22,8 +22,17 @@ export function listNames(names: string[]): string {
   return `${names.slice(0, -1).join(', ')} and ${names.at(-1)}`;
 }
 
-export async function announceChannel(client: Client<true>): Promise<SendableChannels> {
-  const channel = await client.channels.fetch(config.announceChannelId);
-  if (!channel?.isSendable()) throw new Error(`ANNOUNCE_CHANNEL_ID ${config.announceChannelId} is not a sendable channel`);
-  return channel;
+/** Servers the bot works in: every one it's in, minus any it's leaving for not being allowed */
+export function servedGuilds(client: Client<true>): Guild[] {
+  return [...client.guilds.cache.values()].filter((g) => isAllowed(g.id));
+}
+
+/** The server's announce channel, or null if /setup hasn't picked one (or it's gone) */
+export async function announceChannel(client: Client<true>, guildId: string): Promise<SendableChannels | null> {
+  const id = guildSettings(guildId).announceChannelId;
+  if (!id) return null;
+  const channel = await client.channels.fetch(id).catch(() => null);
+  if (channel?.isSendable()) return channel;
+  console.error(`Announce channel ${id} in server ${guildId} is gone or the bot can't post there; run /setup announce-channel`);
+  return null;
 }

@@ -11,9 +11,8 @@ function num(name: string, fallback: number): number {
 
 export const config = {
   token: required('DISCORD_TOKEN'),
-  guildId: required('GUILD_ID'),
-  announceChannelId: required('ANNOUNCE_CHANNEL_ID'),
-  hopOnRoleId: process.env.HOPON_ROLE_ID || null,
+  // Servers allowed to use the bot; unset allows any server that adds it
+  allowedGuildIds: process.env.ALLOWED_GUILD_IDS?.split(',').map((id) => id.trim()).filter(Boolean) ?? null,
   hopOnMinPeople: num('HOPON_MIN_PEOPLE', 2),
   hopOnCooldownMin: num('HOPON_COOLDOWN_MIN', 120),
   recapMinMinutes: num('RECAP_MIN_MINUTES', 15),

@@ -199,14 +199,16 @@ export const steam: Feature = {
           return i.editReply('🔄 Steam libraries refreshed.');
         }
 
-        const links = db
+        const allLinks = db
           .prepare(
             `SELECT l.user_id, l.steam_id, l.private, COUNT(o.appid) AS games
              FROM steam_links l LEFT JOIN steam_owned o ON o.steam_id = l.steam_id
              GROUP BY l.user_id`,
           )
           .all() as { user_id: string; steam_id: string; private: number; games: number }[];
-        if (!links.length) return i.reply('Nobody has linked Steam yet. Use `/steam link`.');
+        // Links are shared between servers; only list this server's members
+        const links = i.inCachedGuild() ? allLinks.filter((l) => i.guild.members.cache.has(l.user_id)) : [];
+        if (!links.length) return i.reply('Nobody here has linked Steam yet. Use `/steam link`.');
         const lines = links.map(
           (l) =>
             `<@${l.user_id}> · [profile](https://steamcommunity.com/profiles/${l.steam_id}) · ${l.private ? '🔒 game details private' : `${l.games} games`}`,

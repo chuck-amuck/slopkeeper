@@ -1,10 +1,12 @@
-import { EmbedBuilder, Events, SlashCommandBuilder, type Client, type GuildMember, type VoiceBasedChannel } from 'discord.js';
+import { EmbedBuilder, Events, MessageFlags, SlashCommandBuilder, type Client, type GuildMember, type VoiceBasedChannel } from 'discord.js';
 import { config } from '../config.ts';
 import { db, getKv, setKv } from '../db.ts';
+import { isAllowed } from '../settings.ts';
 import type { Feature } from '../types.ts';
-import { announceChannel, formatDuration, humansIn, playingGames } from '../util.ts';
+import { announceChannel, formatDuration, humansIn, playingGames, servedGuilds } from '../util.ts';
 
 interface LiveSession {
+  guildId: string;
   startedAt: number;
   /** userId -> time they joined (only people currently in the channel) */
   present: Map<string, number>;
@@ -22,7 +24,7 @@ function join(channel: VoiceBasedChannel, member: GuildMember, now: number) {
   if (channel.id === channel.guild.afkChannelId) return;
   let s = live.get(channel.id);
   if (!s) {
-    s = { startedAt: now, present: new Map(), totals: new Map(), games: new Set() };
+    s = { guildId: channel.guild.id, startedAt: now, present: new Map(), totals: new Map(), games: new Set() };
     live.set(channel.id, s);
   }
   if (s.endTimer) {
@@ -59,8 +61,8 @@ async function finish(client: Client<true>, channelId: string) {
   db.exec('BEGIN');
   try {
     const { lastInsertRowid: id } = db
-      .prepare('INSERT INTO sessions (channel_id, started_at, ended_at) VALUES (?, ?, ?)')
-      .run(channelId, s.startedAt, endedAt);
+      .prepare('INSERT INTO sessions (guild_id, channel_id, started_at, ended_at) VALUES (?, ?, ?, ?)')
+      .run(s.guildId, channelId, s.startedAt, endedAt);
     const addMember = db.prepare('INSERT INTO session_members (session_id, user_id, seconds) VALUES (?, ?, ?)');
     for (const [userId, ms] of s.totals) addMember.run(id, userId, Math.round(ms / 1000));
     const addGame = db.prepare('INSERT INTO session_games (session_id, game) VALUES (?, ?)');
@@ -79,30 +81,29 @@ async function finish(client: Client<true>, channelId: string) {
     .setTimestamp(endedAt);
   if (s.games.size) embed.addFields({ name: 'Played', value: [...s.games].join(', ') });
 
-  const out = await announceChannel(client);
-  await out.send({ embeds: [embed] });
+  await (await announceChannel(client, s.guildId))?.send({ embeds: [embed] });
 }
 
-function leaderboard(sinceMs: number, title: string): EmbedBuilder | null {
+function leaderboard(guildId: string, sinceMs: number, title: string): EmbedBuilder | null {
   const people = db
     .prepare(
       `SELECT sm.user_id AS userId, SUM(sm.seconds) AS secs,
               COUNT(DISTINCT date(s.started_at / 1000, 'unixepoch', 'localtime')) AS nights
        FROM session_members sm JOIN sessions s ON s.id = sm.session_id
-       WHERE s.started_at >= ?
+       WHERE s.guild_id = ? AND s.started_at >= ?
        GROUP BY sm.user_id ORDER BY secs DESC LIMIT 10`,
     )
-    .all(sinceMs) as { userId: string; secs: number; nights: number }[];
+    .all(guildId, sinceMs) as { userId: string; secs: number; nights: number }[];
   if (!people.length) return null;
 
   const games = db
     .prepare(
       `SELECT sg.game AS game, COUNT(*) AS n
        FROM session_games sg JOIN sessions s ON s.id = sg.session_id
-       WHERE s.started_at >= ?
+       WHERE s.guild_id = ? AND s.started_at >= ?
        GROUP BY sg.game ORDER BY n DESC LIMIT 5`,
     )
-    .all(sinceMs) as { game: string; n: number }[];
+    .all(guildId, sinceMs) as { game: string; n: number }[];
 
   const medals = ['🥇', '🥈', '🥉'];
   const embed = new EmbedBuilder()
@@ -123,10 +124,15 @@ async function maybePostWeekly(client: Client<true>) {
   const now = new Date();
   if (now.getDay() !== config.weeklyPostDay || now.getHours() < config.weeklyPostHour) return;
   const today = now.toLocaleDateString('en-CA');
-  if (getKv('weekly_post') === today) return;
-  setKv('weekly_post', today);
-  const embed = leaderboard(Date.now() - 7 * DAY, '🏆 This week in voice');
-  if (embed) await (await announceChannel(client)).send({ embeds: [embed] });
+  for (const guild of servedGuilds(client)) {
+    const key = `weekly_post:${guild.id}`;
+    if (getKv(key) === today) continue;
+    const out = await announceChannel(client, guild.id);
+    if (!out) continue;
+    setKv(key, today);
+    const embed = leaderboard(guild.id, Date.now() - 7 * DAY, '🏆 This week in voice');
+    if (embed) await out.send({ embeds: [embed] });
+  }
 }
 
 export const sessions: Feature = {
@@ -142,25 +148,27 @@ export const sessions: Feature = {
             .addChoices({ name: 'Past week', value: 'week' }, { name: 'Past month', value: 'month' }, { name: 'All time', value: 'all' }),
         ),
       async run(i) {
+        if (!i.inGuild()) return i.reply({ content: 'Use this in a server.', flags: MessageFlags.Ephemeral });
         const period = i.options.getString('period') ?? 'week';
         const since = period === 'week' ? Date.now() - 7 * DAY : period === 'month' ? Date.now() - 30 * DAY : 0;
         const label = period === 'week' ? 'past week' : period === 'month' ? 'past month' : 'all time';
-        const embed = leaderboard(since, `🏆 Voice leaderboard · ${label}`);
+        const embed = leaderboard(i.guildId, since, `🏆 Voice leaderboard · ${label}`);
         return i.reply(embed ? { embeds: [embed] } : { content: `No recorded sessions in the ${label} yet.` });
       },
     },
   ],
   setup(client) {
     // Pick up anyone already in voice when the bot starts
-    const guild = client.guilds.cache.get(config.guildId);
     const now = Date.now();
-    for (const channel of guild?.channels.cache.values() ?? []) {
-      if (channel.isVoiceBased()) for (const member of humansIn(channel)) join(channel, member, now);
+    for (const guild of servedGuilds(client)) {
+      for (const channel of guild.channels.cache.values()) {
+        if (channel.isVoiceBased()) for (const member of humansIn(channel)) join(channel, member, now);
+      }
     }
 
     client.on(Events.VoiceStateUpdate, (oldState, newState) => {
       const member = newState.member;
-      if (!member || member.user.bot || newState.guild.id !== config.guildId) return;
+      if (!member || member.user.bot || !isAllowed(newState.guild.id)) return;
       if (oldState.channelId === newState.channelId) return; // mute/deafen/stream toggles
       const now = Date.now();
       if (oldState.channelId) leave(client, oldState.channelId, member.id, now);

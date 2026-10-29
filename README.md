@@ -2,7 +2,7 @@
 
 # Slopkeeper
 
-Keeper of the slop. A Discord bot for a friends server that helps people get together, figure out what to play once they're there, and remember the night afterwards.
+Keeper of the slop. A Discord bot for friends servers that helps people get together, figure out what to play once they're there, and remember the night afterwards. One running bot can serve several servers, each with its own settings and data.
 
 - **Getting together:** pings people who opted in when a voice channel fills up.
 - **Picking a game:** knows everyone's Steam library and picks a multiplayer game that the people in voice all own.
@@ -10,7 +10,20 @@ Keeper of the slop. A Discord bot for a friends server that helps people get tog
 - **Remembering the night:** recaps each voice session and keeps a weekly leaderboard.
 - **Messing around:** a soundboard that layers sounds like Discord's own, with short clips mirrored into Discord's soundboard.
 
-Everything happens through slash commands (type `/` in any channel) and through automatic posts in one announce channel.
+Everything happens through slash commands (type `/` in any channel) and through automatic posts in each server's announce channel.
+
+**Contents**
+
+- [A typical night](#a-typical-night)
+- [Getting started](#getting-started-for-everyone-in-the-server)
+- [Getting together](#getting-together): [hop-on pings](#hop-on-pings)
+- [Playing games](#playing-games): [Steam accounts](#steam-accounts) · [What do we play?](#what-do-we-play) · [Game library](#game-library) · [Sale alerts](#sale-alerts)
+- [Voice stats](#voice-stats): [session recaps](#session-recaps) · [leaderboards](#leaderboards)
+- [Soundboard](#soundboard): [playing sounds](#playing-sounds) · [managing sounds](#managing-sounds) · [Discord's soundboard](#discords-soundboard)
+- [Server settings](#server-settings)
+- [Multiple servers](#multiple-servers)
+- [Configuration](#configuration)
+- [Setup](#setup): [hosting the bot](#hosting-the-bot) · [adding the bot to a server](#adding-the-bot-to-a-server)
 
 ## A typical night
 
@@ -41,7 +54,7 @@ Everything happens through slash commands (type `/` in any channel) and through 
 
 ### Hop-on pings
 
-When a voice channel reaches `HOPON_MIN_PEOPLE` people (default 2), the bot posts in the announce channel. The post names who's there and what they're playing, and pings the hop-on role. It fires once as the channel reaches that number, not on every join after. It then waits `HOPON_COOLDOWN_MIN` (default 2 hours) before pinging again, so a busy evening doesn't spam. The AFK channel and bots don't count.
+When a voice channel reaches `HOPON_MIN_PEOPLE` people (default 2), the bot posts in the announce channel. The post names who's there and what they're playing, and pings the hop-on role (set with [`/setup hopon-role`](#server-settings)). It fires once as the channel reaches that number, not on every join after. It then waits `HOPON_COOLDOWN_MIN` (default 2 hours) before pinging again, so a busy evening doesn't spam. The AFK channel and bots don't count.
 
 | Command | What it does |
 | --- | --- |
@@ -112,7 +125,7 @@ Examples:
 
 Every `SALE_CHECK_HOURS` (default 6), the bot checks the Steam price of every library game that has a Steam ID. It posts in the announce channel when a game goes on sale, or when an ongoing sale gets a deeper discount. The post shows the discount, the old and new price, and the store link, and pings the people who don't own the game yet. Games everyone already owns are skipped.
 
-The "group" here is everyone who has linked Steam or marked at least one game as owned. Prices use the `STEAM_CC` store region (default `us`).
+The "group" here is the server's members who have linked Steam or marked at least one game as owned. Prices use the `STEAM_CC` store region (default `us`).
 
 ---
 
@@ -194,19 +207,46 @@ Examples:
 
 ---
 
+## Server settings
+
+Server admins (anyone with **Manage Server**) set the bot up for their server from Discord. Nobody else sees `/setup`. To let other roles use it, go to **Server Settings → Integrations → Slopkeeper**.
+
+| Command | What it does |
+| --- | --- |
+| `/setup show` | Shows this server's announce channel and hop-on role. |
+| `/setup announce-channel channel` | Sets where hop-on pings, session recaps, the weekly leaderboard and sale alerts are posted. Until it's set, the bot works but posts nothing. It checks that it can post in the channel and tells you which permission is missing if not. |
+| `/setup hopon-role [role]` | Sets the role that hop-on pings ping, which `/notify` hands out. Leave `role` empty to post hop-on pings without pinging anyone. It warns you if its own role is below this one, since Discord then won't let it hand the role out. |
+
+Examples:
+```
+/setup announce-channel channel:#bot-stuff
+/setup hopon-role role:@hop-on
+```
+
+## Multiple servers
+
+One running bot can serve several servers. Each server gets its own:
+- settings (`/setup`),
+- game library, ownership marks and hidden games,
+- voice sessions, recaps and leaderboards,
+- sounds, emoji, panels and Discord soundboard sync,
+- hop-on cooldown and sale alerts.
+
+**Steam links are shared.** Your Steam account is the same everywhere, so you link it once with `/steam link` and every server you're in can use it. In each server, the bot only counts people who are members there. Someone in another server never shows up in your picker, game list or sale pings.
+
+**Choosing which servers can use it:** with `ALLOWED_GUILD_IDS` set, the bot leaves any server that isn't on the list as soon as it's added. Without it, anyone with the invite link can add the bot. Set it if the bot is public (see [Setup](#setup)).
+
 ## Configuration
 
-Set in `.env` (see `.env.example`):
+Set in `.env` (see `.env.example`). Per-server settings are set in Discord with [`/setup`](#server-settings).
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `DISCORD_TOKEN` | required | Bot token |
-| `GUILD_ID` | required | The server the bot runs in |
-| `ANNOUNCE_CHANNEL_ID` | required | Where hop-on pings, recaps, leaderboards and sale alerts go |
-| `HOPON_ROLE_ID` | none | Role pinged by hop-on alerts; `/notify` toggles it |
 | `STEAM_API_KEY` | none | Needed for `/steam` and the picker's Steam data |
+| `ALLOWED_GUILD_IDS` | any server | Comma-separated server IDs allowed to use the bot; it leaves any other server |
 | `HOPON_MIN_PEOPLE` | 2 | People in a channel before the hop-on ping |
-| `HOPON_COOLDOWN_MIN` | 120 | Minutes between hop-on pings |
+| `HOPON_COOLDOWN_MIN` | 120 | Minutes between hop-on pings, per server |
 | `RECAP_MIN_MINUTES` | 15 | Shortest session that gets a recap |
 | `SESSION_GRACE_MIN` | 5 | Minutes a channel stays empty before its session ends |
 | `SALE_CHECK_HOURS` | 6 | How often Steam prices are checked |
@@ -215,18 +255,21 @@ Set in `.env` (see `.env.example`):
 | `WEEKLY_POST_HOUR` | 20 | Hour of the weekly leaderboard |
 | `TZ` | | Time zone for the weekly post, e.g. `America/Chicago` |
 
+**Upgrading from a single-server version:** older versions took `GUILD_ID`, `ANNOUNCE_CHANNEL_ID` and `HOPON_ROLE_ID` from `.env`. Keep them for the first start of the new version. The bot then:
+- saves a copy of the database as `bot.db.pre-multiserver`,
+- moves all existing data and sounds to the `GUILD_ID` server,
+- turns the channel and role into that server's `/setup` settings.
+
+After that they're ignored and can be removed.
+
 ## Setup
 
 Setting up involves two people, who can be the same person:
 
 - **The host** runs the bot. They own the Discord application, keep its token and Steam key, and run the container.
-- **The server admin** adds the bot to their server and sets up the role and channel it uses.
+- **The server admin** adds the bot to their server and runs `/setup` there.
 
-One running bot serves one server, the one in `GUILD_ID`. The order matters: the bot has to be in the server before the host starts it.
-
-1. The host creates the application and sends the admin an invite link (**Hosting the bot**, steps 1–3).
-2. The admin adds the bot and sends back three IDs (**Adding the bot to a server**).
-3. The host fills in `.env` and starts the bot (**Hosting the bot**, steps 4–5).
+The two parts can happen in either order. The bot sets up any server it's added to, whether it's already running or not.
 
 ### Hosting the bot
 
@@ -237,41 +280,34 @@ For whoever runs the bot.
    - Enable **Presence Intent** and **Server Members Intent**. The bot crashes on startup with `Used disallowed intents` without them.
    - If someone else is adding the bot to their server, turn **Public Bot** on. Otherwise only you can add it. Leave **Requires OAuth2 Code Grant** off.
 2. **Get a Steam Web API key** at https://steamcommunity.com/dev/apikey (any domain name works) and set `STEAM_API_KEY`.
-3. **Make the invite link** and send it to the server admin. Either use **OAuth2 → URL Generator** with scopes `bot` + `applications.commands` and the permissions View Channels, Send Messages, Embed Links, Connect, Speak, Manage Roles and Create Expressions, or fill your application ID (from **General Information**) into this link:
-   ```
-   https://discord.com/oauth2/authorize?client_id=YOUR_APPLICATION_ID&scope=bot+applications.commands&permissions=8796364622848
-   ```
-4. **Fill in `.env`** once the admin sends back the IDs from their part of the setup:
-   ```sh
-   cp .env.example .env
-   # GUILD_ID, ANNOUNCE_CHANNEL_ID, HOPON_ROLE_ID from the server admin; see Configuration for the rest
-   ```
-5. **Start it:**
+3. **Fill in `.env`** (`cp .env.example .env`). If **Public Bot** is on, set `ALLOWED_GUILD_IDS` to the servers you expect. Server admins can send you their server ID (right-click the server icon → **Copy Server ID**, with Developer Mode on).
+4. **Start it:**
    ```sh
    docker compose up -d --build
    docker compose logs -f slopkeeper
    ```
-   The log should end with `Logged in as Slopkeeper#1234, 6 commands registered in <server name>`, and the commands then show up in the server right away.
+   The log lists each server it registered commands in, then `Logged in as Slopkeeper#1234 in N servers`.
+5. **Send the invite link** to each server admin. Either use **OAuth2 → URL Generator** with scopes `bot` + `applications.commands` and the permissions View Channels, Send Messages, Embed Links, Connect, Speak, Manage Roles and Create Expressions, or fill your application ID (from **General Information**) into this link:
+   ```
+   https://discord.com/oauth2/authorize?client_id=YOUR_APPLICATION_ID&scope=bot+applications.commands&permissions=8796364622848
+   ```
 
 Local dev (Node 24+): `npm install && npm run dev`. `npm run typecheck` runs tsc.
 
-Data (SQLite DB and uploaded sounds) lives in the `slopkeeper-data` volume at `/data`. Back that volume up if you move the bot. In-progress voice sessions are kept in memory, so restarting the bot mid-session drops that session's stats.
+Data (SQLite DB and uploaded sounds) lives in the `slopkeeper-data` volume at `/data`, with each server's sounds in `sounds/<server id>/`. Back that volume up if you move the bot. In-progress voice sessions are kept in memory, so restarting the bot mid-session drops that session's stats.
 
 ### Adding the bot to a server
 
 For the server admin. You need the **Manage Server** permission in the server.
 
-1. **Add the bot.** Open the invite link from the host, pick your server, leave every permission ticked and click **Authorize**. The bot shows up offline until the host starts it.
+1. **Add the bot.** Open the invite link from the host, pick your server, leave every permission ticked and click **Authorize**. If the bot is running, it posts a short hello in your server's system channel.
    - **Manage Roles** lets `/notify` hand out the hop-on role.
    - **Create Expressions** lets the bot copy sounds into the server's soundboard.
-2. **Make the hop-on role.** In **Server Settings → Roles**, create a role for hop-on pings, e.g. `hop-on`. Then drag the bot's role (**Slopkeeper**) **above** it. Discord only lets a bot give out roles below its own.
-3. **Pick the announce channel.** This is where hop-on pings, session recaps, the weekly leaderboard and sale alerts are posted. If the channel is private or has permission overrides, give the bot's role **View Channel**, **Send Messages** and **Embed Links** there.
+2. **Pick the announce channel:** `/setup announce-channel channel:#somewhere`. This is where hop-on pings, session recaps, the weekly leaderboard and sale alerts are posted. If the bot can't post there, it tells you which permission to give its role.
+3. **Make the hop-on role** (optional, for `/notify`).
+   - In **Server Settings → Roles**, create a role such as `hop-on`, and drag the bot's role (**Slopkeeper**) **above** it. Discord only lets a bot hand out roles below its own.
+   - Then run `/setup hopon-role role:@hop-on`.
 4. **Check voice channels.** The bot needs **Connect** and **Speak** in any voice channel you want the soundboard in. That's automatic unless the channel overrides permissions.
-5. **Send the host three IDs.** Turn on **User Settings → Advanced → Developer Mode**, then right-click and choose **Copy … ID**:
-   - **Server ID:** right-click the server icon → `GUILD_ID`
-   - **Announce channel ID:** right-click the channel → `ANNOUNCE_CHANNEL_ID`
-   - **Hop-on role ID:** Server Settings → Roles, right-click the role → `HOPON_ROLE_ID`
+5. **Check it:** `/setup show`.
 
-   These IDs aren't secret; they're only useful together with the bot's token.
-
-Once the host starts the bot, tell people to run `/steam link` and `/notify` (see [Getting started](#getting-started-for-everyone-in-the-server)), and post a `/sound panel` somewhere handy.
+Then tell people to run `/steam link` and `/notify` (see [Getting started](#getting-started-for-everyone-in-the-server)), and post a `/sound panel` somewhere handy.

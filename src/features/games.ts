@@ -6,6 +6,7 @@ import {
   MessageFlags,
   SlashCommandBuilder,
   type AutocompleteInteraction,
+  type Guild,
 } from 'discord.js';
 import { db } from '../db.ts';
 import type { Feature } from '../types.ts';
@@ -19,12 +20,12 @@ export interface GameRow {
   max_players: number | null;
 }
 
-export function allGames(): GameRow[] {
-  return db.prepare('SELECT id, name, steam_appid, max_players FROM games ORDER BY name').all() as unknown as GameRow[];
+export function allGames(guildId: string): GameRow[] {
+  return db.prepare('SELECT id, name, steam_appid, max_players FROM games WHERE guild_id = ? ORDER BY name').all(guildId) as unknown as GameRow[];
 }
 
-/** Owners from manual /game own marks plus linked Steam libraries */
-export function ownersOf(game: GameRow): Set<string> {
+/** Owners from manual /game own marks plus linked Steam libraries, among the server's members */
+export function ownersOf(game: GameRow, guild: Guild): Set<string> {
   const rows = db
     .prepare(
       `SELECT user_id FROM game_owners WHERE game_id = ?
@@ -32,22 +33,29 @@ export function ownersOf(game: GameRow): Set<string> {
        SELECT l.user_id FROM steam_links l JOIN steam_owned o ON o.steam_id = l.steam_id WHERE o.appid = ?`,
     )
     .all(game.id, game.steam_appid) as { user_id: string }[];
-  return new Set(rows.map((r) => r.user_id));
+  // Steam links are shared between servers, so owners elsewhere have to be filtered out
+  return new Set(rows.map((r) => r.user_id).filter((id) => guild.members.cache.has(id)));
 }
 
-/** The group is everyone who has linked Steam or marked at least one game as owned */
-export function groupMembers(): string[] {
-  const rows = db.prepare('SELECT user_id FROM game_owners UNION SELECT user_id FROM steam_links').all() as { user_id: string }[];
-  return rows.map((r) => r.user_id);
+/** The group is the server's members who have linked Steam or marked at least one of its games as owned */
+export function groupMembers(guild: Guild): string[] {
+  const rows = db
+    .prepare('SELECT o.user_id FROM game_owners o JOIN games g ON g.id = o.game_id WHERE g.guild_id = ? UNION SELECT user_id FROM steam_links')
+    .all(guild.id) as { user_id: string }[];
+  return rows.map((r) => r.user_id).filter((id) => guild.members.cache.has(id));
 }
 
-function manualGameIds(userId: string): Set<number> {
-  const rows = db.prepare('SELECT game_id FROM game_owners WHERE user_id = ?').all(userId) as { game_id: number }[];
+function manualGameIds(userId: string, guildId: string): Set<number> {
+  const rows = db
+    .prepare('SELECT o.game_id FROM game_owners o JOIN games g ON g.id = o.game_id WHERE o.user_id = ? AND g.guild_id = ?')
+    .all(userId, guildId) as { game_id: number }[];
   return new Set(rows.map((r) => r.game_id));
 }
 
-function findGame(name: string): GameRow | undefined {
-  return db.prepare('SELECT id, name, steam_appid, max_players FROM games WHERE name = ?').get(name) as GameRow | undefined;
+function findGame(guildId: string, name: string): GameRow | undefined {
+  return db.prepare('SELECT id, name, steam_appid, max_players FROM games WHERE guild_id = ? AND name = ?').get(guildId, name) as
+    | GameRow
+    | undefined;
 }
 
 function parseSteamAppId(input: string): number | null {
@@ -58,8 +66,8 @@ function parseSteamAppId(input: string): number | null {
 async function autocomplete(i: AutocompleteInteraction) {
   const table = i.options.getSubcommand() === 'unhide' ? 'hidden_apps' : 'games';
   const rows = db
-    .prepare(`SELECT name FROM ${table} WHERE name LIKE ? ORDER BY name LIMIT 25`)
-    .all(`%${i.options.getFocused()}%`) as { name: string }[];
+    .prepare(`SELECT name FROM ${table} WHERE guild_id = ? AND name LIKE ? ORDER BY name LIMIT 25`)
+    .all(i.guildId, `%${i.options.getFocused()}%`) as { name: string }[];
   return i.respond(rows.map((r) => ({ name: r.name, value: r.name })));
 }
 
@@ -73,12 +81,12 @@ interface Candidate {
   playtime: number;
 }
 
-async function buildPick(here: string[]) {
+async function buildPick(guild: Guild, here: string[]) {
   await refreshStale(here, 3_600_000);
 
-  const library = allGames();
+  const library = allGames(guild.id);
   const libByApp = new Map(library.filter((g) => g.steam_appid !== null).map((g) => [g.steam_appid!, g]));
-  const manual = new Map(here.map((id) => [id, manualGameIds(id)]));
+  const manual = new Map(here.map((id) => [id, manualGameIds(id, guild.id)]));
   const steamLibs = new Map<string, Map<number, OwnedGame>>(here.map((id) => [id, ownedSteamGames(id)]));
 
   // People with no Steam link and no manual marks would block every game, so leave them out and say so
@@ -107,7 +115,7 @@ async function buildPick(here: string[]) {
   await ensureAppInfo(steamCands.map((c) => c.appid)).catch(console.error);
 
   const info = appInfo();
-  const hidden = new Set((db.prepare('SELECT appid FROM hidden_apps').all() as { appid: number }[]).map((r) => r.appid));
+  const hidden = new Set((db.prepare('SELECT appid FROM hidden_apps WHERE guild_id = ?').all(guild.id) as { appid: number }[]).map((r) => r.appid));
   const candidates: Candidate[] = [];
 
   for (const { appid, missing } of steamCands) {
@@ -201,6 +209,7 @@ export const games: Feature = {
         ),
       autocomplete,
       async run(i) {
+        if (!i.inCachedGuild()) return i.reply({ content: 'Use this in a server.', flags: MessageFlags.Ephemeral });
         const sub = i.options.getSubcommand();
 
         if (sub === 'add') {
@@ -210,8 +219,9 @@ export const games: Feature = {
           if (steamInput && appid === null) {
             return i.reply({ content: "Couldn't find a Steam app ID in that. Paste the store URL or the number.", flags: MessageFlags.Ephemeral });
           }
-          if (findGame(name)) return i.reply({ content: `**${name}** is already in the library.`, flags: MessageFlags.Ephemeral });
-          db.prepare('INSERT INTO games (name, steam_appid, max_players, added_by) VALUES (?, ?, ?, ?)').run(
+          if (findGame(i.guildId, name)) return i.reply({ content: `**${name}** is already in the library.`, flags: MessageFlags.Ephemeral });
+          db.prepare('INSERT INTO games (guild_id, name, steam_appid, max_players, added_by) VALUES (?, ?, ?, ?, ?)').run(
+            i.guildId,
             name,
             appid,
             i.options.getInteger('max_players'),
@@ -222,11 +232,11 @@ export const games: Feature = {
 
         if (sub === 'unhide') {
           const name = i.options.getString('name', true);
-          const { changes } = db.prepare('DELETE FROM hidden_apps WHERE name = ?').run(name);
+          const { changes } = db.prepare('DELETE FROM hidden_apps WHERE guild_id = ? AND name = ?').run(i.guildId, name);
           return i.reply(changes ? `👀 **${name}** can be suggested again.` : { content: 'That game is not hidden.', flags: MessageFlags.Ephemeral });
         }
 
-        const game = sub === 'list' ? undefined : findGame(i.options.getString('name', true));
+        const game = sub === 'list' ? undefined : findGame(i.guildId, i.options.getString('name', true));
         if (sub !== 'list' && !game) return i.reply({ content: 'No game by that name.', flags: MessageFlags.Ephemeral });
 
         if (sub === 'own' && game) {
@@ -234,7 +244,7 @@ export const games: Feature = {
           if (game.steam_appid !== null && ownedSteamGames(user.id).has(game.steam_appid)) {
             return i.reply({ content: `${user} already owns **${game.name}** on Steam.`, allowedMentions: { parse: [] } });
           }
-          const owned = manualGameIds(user.id).has(game.id);
+          const owned = manualGameIds(user.id, i.guildId).has(game.id);
           if (owned) db.prepare('DELETE FROM game_owners WHERE game_id = ? AND user_id = ?').run(game.id, user.id);
           else db.prepare('INSERT INTO game_owners (game_id, user_id) VALUES (?, ?)').run(game.id, user.id);
           return i.reply({
@@ -248,11 +258,11 @@ export const games: Feature = {
           return i.reply(`🗑️ Removed **${game.name}**.`);
         }
 
-        const rows = allGames();
+        const rows = allGames(i.guildId);
         if (!rows.length) return i.reply('Library is empty. Add something with `/game add`.');
-        const group = groupMembers();
+        const group = groupMembers(i.guild);
         const lines = rows.map((g) => {
-          const owners = ownersOf(g);
+          const owners = ownersOf(g, i.guild);
           const missing = group.filter((id) => !owners.has(id));
           let line = `**${g.name}**${g.max_players ? ` · up to ${g.max_players}` : ''}`;
           if (owners.size) line += `\n  owned: ${mentions(owners)}`;
@@ -269,7 +279,7 @@ export const games: Feature = {
           return i.reply({ content: 'Join a voice channel first, then I can check what everyone owns.', flags: MessageFlags.Ephemeral });
         }
         await i.deferReply();
-        return i.editReply(await buildPick(humansIn(i.member.voice.channel).map((m) => m.id)));
+        return i.editReply(await buildPick(i.guild, humansIn(i.member.voice.channel).map((m) => m.id)));
       },
     },
   ],
@@ -281,9 +291,9 @@ export const games: Feature = {
     const [, action, appid] = i.customId.split(':');
     if (action === 'hide') {
       const title = i.message.embeds[0]?.title?.replace(/^🎲 /, '') ?? `App ${appid}`;
-      db.prepare('INSERT OR IGNORE INTO hidden_apps (appid, name, hidden_by) VALUES (?, ?, ?)').run(Number(appid), title, i.user.id);
+      db.prepare('INSERT OR IGNORE INTO hidden_apps (guild_id, appid, name, hidden_by) VALUES (?, ?, ?, ?)').run(i.guildId, Number(appid), title, i.user.id);
     }
     await i.deferUpdate();
-    return i.editReply(await buildPick(humansIn(i.member.voice.channel).map((m) => m.id)));
+    return i.editReply(await buildPick(i.guild, humansIn(i.member.voice.channel).map((m) => m.id)));
   },
 };
