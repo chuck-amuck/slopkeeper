@@ -1,6 +1,8 @@
-# discord-bot
+<img src="assets/logo.png" width="160" align="right" alt="Slopkeeper logo">
 
-Bot for the friends server: hop-on pings, voice session recaps and leaderboards, a shared game library with a "what do we play" picker, Steam sale alerts, and a soundboard.
+# Slopkeeper
+
+Keeper of the slop. Discord bot for the friends server: hop-on pings, voice session recaps and leaderboards, a shared game library with a "what do we play" picker, Steam sale alerts, and a soundboard.
 
 ## Commands
 
@@ -43,9 +45,9 @@ Each friend's Steam profile needs **Privacy Settings → Game details: Public**,
 ```sh
 cp .env.example .env   # fill it in
 docker compose up -d --build
-docker compose logs -f
+docker compose logs -f slopkeeper
 ```
 
 Local dev (Node 24+): `npm install && npm run dev`. `npm run typecheck` runs tsc.
 
-Data (SQLite DB and uploaded sounds) lives in the `discord-bot-data` volume at `/data`. In-progress voice sessions are kept in memory, so restarting the bot mid-session drops that session's stats.
+Data (SQLite DB and uploaded sounds) lives in the `slopkeeper-data` volume at `/data`. In-progress voice sessions are kept in memory, so restarting the bot mid-session drops that session's stats.
