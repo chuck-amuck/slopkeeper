@@ -19,8 +19,8 @@ export interface SyncSound {
 }
 
 /** Bot sound name → id of its copy in the server's Discord soundboard */
-export function synced(): Map<string, string> {
-  const rows = db.prepare('SELECT name, sound_id FROM discord_sounds').all() as { name: string; sound_id: string }[];
+export function synced(guildId: string): Map<string, string> {
+  const rows = db.prepare('SELECT name, sound_id FROM discord_sounds WHERE guild_id = ?').all(guildId) as { name: string; sound_id: string }[];
   return new Map(rows.map((r) => [r.name, r.sound_id]));
 }
 
@@ -89,7 +89,7 @@ export async function upload(guild: Guild, sound: SyncSound, volume: number, sta
       emojiId: emojiId ?? undefined,
       emojiName: emojiName ?? undefined,
     });
-    db.prepare('INSERT INTO discord_sounds (name, sound_id) VALUES (?, ?)').run(sound.name, created.soundId);
+    db.prepare('INSERT INTO discord_sounds (guild_id, name, sound_id) VALUES (?, ?, ?)').run(guild.id, sound.name, created.soundId);
     return null;
   } catch (err) {
     return explain(err);
@@ -98,7 +98,7 @@ export async function upload(guild: Guild, sound: SyncSound, volume: number, sta
 
 /** Takes a sound out of the Discord soundboard; the bot keeps its own copy */
 export async function remove(guild: Guild, name: string) {
-  const id = synced().get(name);
+  const id = synced(guild.id).get(name);
   if (!id) return;
   try {
     await guild.soundboardSounds.delete(id);
@@ -110,7 +110,7 @@ export async function remove(guild: Guild, name: string) {
 }
 
 export async function setEmoji(guild: Guild, name: string, emoji: string | null) {
-  const id = synced().get(name);
+  const id = synced(guild.id).get(name);
   if (id) await guild.soundboardSounds.edit(id, emojiFields(emoji)).catch((err) => console.error(`Soundboard emoji sync for ${name} failed:`, explain(err)));
 }
 
@@ -122,5 +122,5 @@ export function forget(soundId: string): boolean {
 /** Forgets copies deleted from Discord while the bot wasn't watching */
 export async function reconcile(guild: Guild) {
   const live = await guild.soundboardSounds.fetch();
-  for (const id of synced().values()) if (!live.has(id)) forget(id);
+  for (const id of synced(guild.id).values()) if (!live.has(id)) forget(id);
 }

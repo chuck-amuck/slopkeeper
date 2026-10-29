@@ -1,9 +1,9 @@
-import type { Client } from 'discord.js';
+import type { Client, Guild } from 'discord.js';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { config } from '../config.ts';
 import { db } from '../db.ts';
 import type { Feature } from '../types.ts';
-import { announceChannel } from '../util.ts';
+import { announceChannel, servedGuilds } from '../util.ts';
 import { allGames, groupMembers, ownersOf } from './games.ts';
 
 interface PriceOverview {
@@ -23,15 +23,26 @@ async function fetchPrice(appid: number): Promise<PriceOverview | null> {
 }
 
 async function checkSales(client: Client<true>) {
-  const group = groupMembers();
-  for (const game of allGames()) {
+  // Several servers can have the same game; ask Steam once per check
+  const prices = new Map<number, PriceOverview | null | undefined>();
+  for (const guild of servedGuilds(client)) await checkGuild(client, guild, prices);
+}
+
+async function checkGuild(client: Client<true>, guild: Guild, prices: Map<number, PriceOverview | null | undefined>) {
+  const out = await announceChannel(client, guild.id);
+  if (!out) return;
+  const group = groupMembers(guild);
+  for (const game of allGames(guild.id)) {
     if (game.steam_appid === null) continue;
-    const owners = ownersOf(game);
+    const owners = ownersOf(game, guild);
     const needers = group.filter((id) => !owners.has(id));
     if (group.length && !needers.length) continue; // everyone already has it
 
-    const price = await fetchPrice(game.steam_appid).catch((err) => (console.error(err), undefined));
-    await sleep(1500); // stay well under Steam's store API rate limit
+    if (!prices.has(game.steam_appid)) {
+      prices.set(game.steam_appid, await fetchPrice(game.steam_appid).catch((err) => (console.error(err), undefined)));
+      await sleep(1500); // stay well under Steam's store API rate limit
+    }
+    const price = prices.get(game.steam_appid);
     if (price === undefined) continue;
 
     const discount = price?.discount_percent ?? 0;
@@ -46,7 +57,7 @@ async function checkSales(client: Client<true>) {
     let text = `💸 **${game.name}** is **${discount}% off**: ~~${price.initial_formatted}~~ **${price.final_formatted}**`;
     if (needers.length) text += `\nStill need it: ${needers.map((id) => `<@${id}>`).join(' ')}`;
     text += `\nhttps://store.steampowered.com/app/${game.steam_appid}`;
-    await (await announceChannel(client)).send({ content: text, allowedMentions: { users: needers } });
+    await out.send({ content: text, allowedMentions: { users: needers } });
   }
 }
 
