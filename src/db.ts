@@ -70,6 +70,16 @@ db.exec(`
     hidden_by TEXT NOT NULL
   );
 
+  CREATE TABLE IF NOT EXISTS sound_emoji (
+    name TEXT PRIMARY KEY,
+    emoji TEXT NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS sound_panels (
+    message_id TEXT PRIMARY KEY,
+    channel_id TEXT NOT NULL,
+    page INTEGER NOT NULL DEFAULT 0
+  );
+
   CREATE TABLE IF NOT EXISTS kv (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
