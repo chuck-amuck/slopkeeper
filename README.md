@@ -215,23 +215,63 @@ Set in `.env` (see `.env.example`):
 | `WEEKLY_POST_HOUR` | 20 | Hour of the weekly leaderboard |
 | `TZ` | | Time zone for the weekly post, e.g. `America/Chicago` |
 
-## Discord setup
+## Setup
 
-1. https://discord.com/developers/applications → New Application.
-2. **Bot** tab: Reset Token → copy into `.env` as `DISCORD_TOKEN`. Enable **Presence Intent** and **Server Members Intent**.
-3. **OAuth2 → URL Generator**: scopes `bot` + `applications.commands`; permissions View Channels, Send Messages, Embed Links, Connect, Speak, Manage Roles, Create Expressions (for syncing to Discord's soundboard). Open the URL and add the bot to the server.
-4. Create a role (e.g. `hop-on`) and drag the bot's role **above** it so `/notify` can assign it.
-5. Get a Steam Web API key at https://steamcommunity.com/dev/apikey (any domain name works) and set `STEAM_API_KEY`.
-6. Discord settings → Advanced → Developer Mode, then right-click to copy the server, channel and role IDs into `.env`.
+Setting up involves two people, who can be the same person:
 
-## Run
+- **The host** runs the bot. They own the Discord application, keep its token and Steam key, and run the container.
+- **The server admin** adds the bot to their server and sets up the role and channel it uses.
 
-```sh
-cp .env.example .env   # fill it in
-docker compose up -d --build
-docker compose logs -f slopkeeper
-```
+One running bot serves one server, the one in `GUILD_ID`. The order matters: the bot has to be in the server before the host starts it.
+
+1. The host creates the application and sends the admin an invite link (**Hosting the bot**, steps 1–3).
+2. The admin adds the bot and sends back three IDs (**Adding the bot to a server**).
+3. The host fills in `.env` and starts the bot (**Hosting the bot**, steps 4–5).
+
+### Hosting the bot
+
+For whoever runs the bot.
+
+1. **Create the application.** Go to https://discord.com/developers/applications → **New Application**. Then, on the **Bot** tab:
+   - **Reset Token** and copy it into `.env` as `DISCORD_TOKEN`. Keep it secret: anyone with the token can control the bot.
+   - Enable **Presence Intent** and **Server Members Intent**. The bot crashes on startup with `Used disallowed intents` without them.
+   - If someone else is adding the bot to their server, turn **Public Bot** on. Otherwise only you can add it. Leave **Requires OAuth2 Code Grant** off.
+2. **Get a Steam Web API key** at https://steamcommunity.com/dev/apikey (any domain name works) and set `STEAM_API_KEY`.
+3. **Make the invite link** and send it to the server admin. Either use **OAuth2 → URL Generator** with scopes `bot` + `applications.commands` and the permissions View Channels, Send Messages, Embed Links, Connect, Speak, Manage Roles and Create Expressions, or fill your application ID (from **General Information**) into this link:
+   ```
+   https://discord.com/oauth2/authorize?client_id=YOUR_APPLICATION_ID&scope=bot+applications.commands&permissions=8796364622848
+   ```
+4. **Fill in `.env`** once the admin sends back the IDs from their part of the setup:
+   ```sh
+   cp .env.example .env
+   # GUILD_ID, ANNOUNCE_CHANNEL_ID, HOPON_ROLE_ID from the server admin; see Configuration for the rest
+   ```
+5. **Start it:**
+   ```sh
+   docker compose up -d --build
+   docker compose logs -f slopkeeper
+   ```
+   The log should end with `Logged in as Slopkeeper#1234, 6 commands registered in <server name>`, and the commands then show up in the server right away.
 
 Local dev (Node 24+): `npm install && npm run dev`. `npm run typecheck` runs tsc.
 
-Data (SQLite DB and uploaded sounds) lives in the `slopkeeper-data` volume at `/data`. In-progress voice sessions are kept in memory, so restarting the bot mid-session drops that session's stats.
+Data (SQLite DB and uploaded sounds) lives in the `slopkeeper-data` volume at `/data`. Back that volume up if you move the bot. In-progress voice sessions are kept in memory, so restarting the bot mid-session drops that session's stats.
+
+### Adding the bot to a server
+
+For the server admin. You need the **Manage Server** permission in the server.
+
+1. **Add the bot.** Open the invite link from the host, pick your server, leave every permission ticked and click **Authorize**. The bot shows up offline until the host starts it.
+   - **Manage Roles** lets `/notify` hand out the hop-on role.
+   - **Create Expressions** lets the bot copy sounds into the server's soundboard.
+2. **Make the hop-on role.** In **Server Settings → Roles**, create a role for hop-on pings, e.g. `hop-on`. Then drag the bot's role (**Slopkeeper**) **above** it. Discord only lets a bot give out roles below its own.
+3. **Pick the announce channel.** This is where hop-on pings, session recaps, the weekly leaderboard and sale alerts are posted. If the channel is private or has permission overrides, give the bot's role **View Channel**, **Send Messages** and **Embed Links** there.
+4. **Check voice channels.** The bot needs **Connect** and **Speak** in any voice channel you want the soundboard in. That's automatic unless the channel overrides permissions.
+5. **Send the host three IDs.** Turn on **User Settings → Advanced → Developer Mode**, then right-click and choose **Copy … ID**:
+   - **Server ID:** right-click the server icon → `GUILD_ID`
+   - **Announce channel ID:** right-click the channel → `ANNOUNCE_CHANNEL_ID`
+   - **Hop-on role ID:** Server Settings → Roles, right-click the role → `HOPON_ROLE_ID`
+
+   These IDs aren't secret; they're only useful together with the bot's token.
+
+Once the host starts the bot, tell people to run `/steam link` and `/notify` (see [Getting started](#getting-started-for-everyone-in-the-server)), and post a `/sound panel` somewhere handy.
