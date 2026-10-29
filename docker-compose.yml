@@ -1,16 +1,16 @@
 services:
-  discord-bot:
+  slopkeeper:
     build: .
-    container_name: discord-bot
+    container_name: slopkeeper
     restart: unless-stopped
     init: true
     env_file: .env
     volumes:
-      - discord-bot-data:/data
+      - slopkeeper-data:/data
     deploy:
       resources:
         limits:
           memory: 256M
 
 volumes:
-  discord-bot-data:
+  slopkeeper-data:

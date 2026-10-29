@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <rect width="512" height="512" fill="#2a1b3d"/>
+  <circle cx="256" cy="256" r="220" fill="#36244f"/>
+
+  <!-- shadow -->
+  <ellipse cx="256" cy="426" rx="112" ry="14" fill="#1c1229"/>
+
+  <!-- bucket body -->
+  <path d="M124 236 L388 236 L356 420 Q256 432 156 420 Z" fill="#8a93a6"/>
+  <path d="M124 236 L170 236 L188 424 Q170 423 156 420 Z" fill="#a3abbd"/>
+  <path d="M134 292 L378 292 L375 308 L137 308 Z" fill="#6b7385"/>
+  <path d="M146 368 L366 368 L363 384 L149 384 Z" fill="#6b7385"/>
+
+  <!-- slop -->
+  <path d="M118 238
+           C112 202 146 188 164 192
+           C162 158 204 146 222 164
+           C232 126 288 124 298 158
+           C318 142 358 156 352 190
+           C378 188 398 210 394 238 Z" fill="#8fd14f"/>
+  <path d="M150 206 C160 184 196 178 210 190" fill="none" stroke="#b9f27f" stroke-width="8" stroke-linecap="round"/>
+  <path d="M236 150 C248 138 272 136 282 148" fill="none" stroke="#b9f27f" stroke-width="7" stroke-linecap="round"/>
+
+  <!-- eyes -->
+  <ellipse cx="226" cy="196" rx="17" ry="20" fill="#fff"/>
+  <ellipse cx="290" cy="194" rx="17" ry="20" fill="#fff"/>
+  <circle cx="230" cy="201" r="9" fill="#1a1024"/>
+  <circle cx="294" cy="199" r="9" fill="#1a1024"/>
+  <circle cx="233" cy="197" r="3" fill="#fff"/>
+  <circle cx="297" cy="195" r="3" fill="#fff"/>
+
+  <!-- bubbles -->
+  <circle cx="182" cy="216" r="6" fill="#b9f27f"/>
+  <circle cx="336" cy="210" r="5" fill="#b9f27f"/>
+  <circle cx="318" cy="118" r="9" fill="none" stroke="#8fd14f" stroke-width="4"/>
+  <circle cx="342" cy="92" r="5" fill="none" stroke="#8fd14f" stroke-width="3"/>
+
+  <!-- front lip -->
+  <path d="M122 236 Q256 262 390 236" fill="none" stroke="#b4bccc" stroke-width="12" stroke-linecap="round"/>
+
+  <!-- drips over the lip -->
+  <path d="M168 228 v72 a11 11 0 0 0 22 0 v-72 z" fill="#8fd14f"/>
+  <path d="M286 228 v60 a10 10 0 0 0 20 0 v-60 z" fill="#8fd14f"/>
+  <path d="M340 228 v106 a10 10 0 0 0 20 0 v-106 z" fill="#8fd14f"/>
+  <circle cx="179" cy="326" r="6" fill="#8fd14f"/>
+  <circle cx="350" cy="360" r="5" fill="#8fd14f"/>
+</svg>
