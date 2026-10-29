@@ -17,13 +17,19 @@ Keeper of the slop. Discord bot for the friends server: hop-on pings, voice sess
 | `/game own name [user]` | Mark ownership by hand (non-Steam games, Steam Family Sharing) |
 | `/game list` | Library, who owns what, who still needs it |
 | `/game remove name` / `/game unhide name` | Remove a game / undo "Never suggest" |
-| `/sound play/add/remove/stop/panel` | Soundboard. `panel` posts clickable buttons |
+| `/sound play/add/emoji/remove/stop/panel` | Soundboard. `panel` posts clickable buttons that update themselves as sounds change |
 
 Automatic posts in `ANNOUNCE_CHANNEL_ID`:
 - **Hop-on ping** when a voice channel reaches `HOPON_MIN_PEOPLE` (cooldown `HOPON_COOLDOWN_MIN`).
 - **Session recap** once a channel has been empty for `SESSION_GRACE_MIN`, if the session lasted at least `RECAP_MIN_MINUTES` with 2+ people.
 - **Weekly leaderboard** on `WEEKLY_POST_DAY` at `WEEKLY_POST_HOUR` (local `TZ`).
 - **Sale alert** when a library game with a Steam ID goes on sale (or gets a deeper discount) and someone in the group doesn't own it yet. The group is everyone who has marked at least one game as owned.
+
+## Soundboard
+
+`/sound panel` posts a grid of buttons, 20 per page with ◀ ▶ to flip pages and ⏹ to stop. The bot remembers every panel it posts and edits them whenever a sound is added, removed or given an emoji, so there's no need to re-post one. Pin it if you want it easy to find.
+
+Sounds layer like Discord's own soundboard: clicking while something is playing mixes the new sound in instead of cutting the old one off, up to 12 at once (past that the oldest is dropped). Give a sound a button emoji with `/sound add ... emoji:` or `/sound emoji`; custom emoji have to be from this server.
 
 ## How the picker works
 
