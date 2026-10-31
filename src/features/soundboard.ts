@@ -138,7 +138,7 @@ async function play(channel: VoiceBasedChannel, file: string) {
     connection.subscribe(a.player);
   }
   await entersState(connection, VoiceConnectionStatus.Ready, 15_000);
-  // Layer onto whatever is already playing; a fresh mixer is only needed once the last one has gone quiet
+  // Layer onto whatever is already playing (or restart this sound if it's one of them); a fresh mixer is only needed once the last one has gone quiet
   if (a.mixer && !a.mixer.finished) return a.mixer.add(file);
   a.mixer = new Mixer(VOLUME, MAX_VOICES);
   a.mixer.add(file);
