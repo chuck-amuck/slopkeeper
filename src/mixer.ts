@@ -6,15 +6,23 @@ const FRAME_MS = 20;
 const FRAME_BYTES = (48_000 * 2 * 2 * FRAME_MS) / 1000;
 // How far mixing runs ahead of playback. A sound added mid-stream is heard after roughly this long
 const MAX_LEAD_MS = 60;
+// Audio a new sound buffers before it's mixed in, enough to cover the lead
+const START_BYTES = FRAME_BYTES * 4;
 
 /** One playing sound, decoded to raw PCM by its own ffmpeg process */
 class Voice {
   readonly proc: ChildProcess;
   readonly pcm: Readable;
+  readonly file: string;
   ended = false;
+  /** Whether any of its audio has been mixed in yet */
+  heard = false;
+  /** Earlier copies of the same sound, cut off once this one has audio */
+  replaces: Voice[] = [];
   private stopped = false;
 
   constructor(file: string) {
+    this.file = file;
     this.proc = spawn('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-i', file, '-f', 's16le', '-ar', '48000', '-ac', '2', 'pipe:1'], {
       stdio: ['ignore', 'pipe', 'pipe'],
     });
@@ -36,6 +44,14 @@ class Voice {
     });
   }
 
+  /**
+   * Whether enough audio is buffered to start mixing it in. ffmpeg's first chunk can arrive a little ahead of the rest,
+   * and starting on it alone plays a blip, then silence until the rest catches up
+   */
+  ready(): boolean {
+    return this.pcm.readableLength >= START_BYTES || this.proc.exitCode !== null;
+  }
+
   /** Next frame, a shorter final chunk, or null if ffmpeg hasn't caught up yet */
   read(): Buffer | null {
     return this.pcm.read(FRAME_BYTES) as Buffer | null;
@@ -51,8 +67,8 @@ class Voice {
 }
 
 /**
- * Raw PCM stream that sums every sound added to it, so sounds layer like Discord's soundboard
- * instead of replacing each other. Ends once all of its sounds have finished.
+ * Raw PCM stream that sums every sound added to it, so different sounds layer like Discord's soundboard.
+ * Adding a sound that's already playing restarts it instead. Ends once all of its sounds have finished.
  */
 export class Mixer extends Readable {
   private readonly volume: number;
@@ -74,9 +90,21 @@ export class Mixer extends Readable {
   }
 
   add(file: string) {
-    // Spam past the cap drops the oldest sound rather than piling up ffmpeg processes
+    const voice = new Voice(file);
+    // A restart keeps the playing copy going until the new one has audio, so spamming leaves no gap while ffmpeg starts.
+    // A copy from an earlier click that hasn't started yet is dropped, since this one supersedes it
+    for (const old of this.voices) {
+      if (old.file !== file || old.ended) continue;
+      if (old.heard) voice.replaces.push(old);
+      else {
+        voice.replaces.push(...old.replaces);
+        old.stop();
+      }
+    }
+    this.voices = this.voices.filter((v) => !v.ended);
+    // Past the cap, the oldest sound is dropped rather than piling up ffmpeg processes
     if (this.voices.length >= this.maxVoices) this.voices.shift()!.stop();
-    this.voices.push(new Voice(file));
+    this.voices.push(voice);
   }
 
   stopAll() {
@@ -111,11 +139,32 @@ export class Mixer extends Readable {
 
     const sum = new Int32Array(FRAME_BYTES / 2);
     let heard = false;
+    const mix = (chunk: Buffer, fadeOut = false) => {
+      heard = true;
+      const samples = chunk.length >> 1;
+      for (let s = 0; s < samples; s++) sum[s] += fadeOut ? chunk.readInt16LE(s * 2) * (1 - s / samples) : chunk.readInt16LE(s * 2);
+    };
+    // New sounds first: once a restarted copy has audio, the old one fades out over this frame instead of clicking off
+    const starting = new Set<Voice>();
     for (const voice of this.voices) {
+      if (voice.heard || voice.ended || !voice.ready()) continue;
       const chunk = voice.read();
       if (!chunk) continue;
-      heard = true;
-      for (let s = 0; s < chunk.length >> 1; s++) sum[s] += chunk.readInt16LE(s * 2);
+      voice.heard = true;
+      starting.add(voice);
+      mix(chunk);
+      for (const old of voice.replaces) {
+        if (old.ended) continue;
+        const last = old.read();
+        if (last) mix(last, true);
+        old.stop();
+      }
+      voice.replaces = [];
+    }
+    for (const voice of this.voices) {
+      if (!voice.heard || voice.ended || starting.has(voice)) continue;
+      const chunk = voice.read();
+      if (chunk) mix(chunk);
     }
     // Hold off until ffmpeg delivers the first sound, rather than leading with silence while it starts up
     if (!this.started) {

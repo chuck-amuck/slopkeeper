@@ -8,7 +8,7 @@ Keeper of the slop. A Discord bot for friends servers that helps people get toge
 - **Picking a game:** knows everyone's Steam library and picks a multiplayer game that the people in voice all own.
 - **Getting games:** posts when a game the group wants goes on sale, pinging whoever still needs it, and when a game is free to keep on Steam, Epic or GOG.
 - **Remembering the night:** recaps each voice session, keeps a weekly leaderboard, and tracks what everyone plays, per person and for the whole server.
-- **Messing around:** a soundboard that layers sounds like Discord's own, with short clips mirrored into Discord's soundboard.
+- **Messing around:** a soundboard that layers different sounds like Discord's own and restarts a spammed one without a gap, with short clips mirrored into Discord's soundboard.
 
 Everything happens through slash commands (type `/` in any channel, or run `/help`) and through automatic posts in each server's announce channel.
 
@@ -227,7 +227,7 @@ Examples:
 
 ## Soundboard
 
-The bot holds a library of uploaded sounds and plays them in your voice channel. Sounds layer like Discord's own soundboard: clicking while something is playing mixes the new sound in instead of cutting the old one off. That includes spamming the same button. Up to 12 sounds play at once; past that, the oldest is dropped. The bot leaves voice after 5 minutes of silence.
+The bot holds a library of uploaded sounds and plays them in your voice channel. Different sounds layer like Discord's own soundboard: clicking one while another is playing mixes it in instead of cutting the other off. Clicking a sound that's already playing restarts it from the top, with no gap, so spamming one button rapid-fires it instead of stacking copies. Up to 12 sounds play at once; past that, the oldest is dropped. The bot leaves voice after 5 minutes of silence.
 
 ### Playing sounds
 
