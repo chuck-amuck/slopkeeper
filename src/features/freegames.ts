@@ -2,7 +2,7 @@ import { EmbedBuilder, SlashCommandBuilder, type Client } from 'discord.js';
 import { db } from '../db.ts';
 import { setting } from '../settings.ts';
 import type { Feature } from '../types.ts';
-import { announceChannel, servedGuilds } from '../util.ts';
+import { announceChannel, eachGuild } from '../util.ts';
 
 // GamerPower tracks free-to-keep games; this asks for full games only, not DLC, betas or loot
 const FEED = 'https://www.gamerpower.com/api/filter?platform=steam.epic-games-store.gog&type=game';
@@ -62,21 +62,21 @@ function embed(g: Giveaway): EmbedBuilder {
   return e;
 }
 
-async function check(client: Client<true>) {
+export async function check(client: Client<true>) {
   const giveaways = await current();
   const posted = db.prepare('SELECT 1 FROM free_game_posts WHERE guild_id = ? AND giveaway_id = ?');
   const markPosted = db.prepare('INSERT OR IGNORE INTO free_game_posts (guild_id, giveaway_id) VALUES (?, ?)');
-  for (const guild of servedGuilds(client)) {
-    if (!setting(guild.id, 'freeGames')) continue;
+  await eachGuild(client, 'Free game check', async (guild) => {
+    if (!setting(guild.id, 'freeGames')) return;
     const fresh = giveaways.filter((g) => !posted.get(guild.id, g.id)).slice(0, MAX_POSTS);
-    if (!fresh.length) continue;
+    if (!fresh.length) return;
     const out = (await announceChannel(client, guild.id, 'freeGamesChannel')) ?? (await announceChannel(client, guild.id));
-    if (!out) continue;
+    if (!out) return;
     for (const g of fresh) {
       await out.send({ embeds: [embed(g)] });
       markPosted.run(guild.id, g.id);
     }
-  }
+  });
 }
 
 export const freeGames: Feature = {

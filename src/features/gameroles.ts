@@ -7,6 +7,7 @@ import {
   PermissionFlagsBits,
   SlashCommandBuilder,
   StringSelectMenuBuilder,
+  type Guild,
   type GuildMember,
 } from 'discord.js';
 import { db } from '../db.ts';
@@ -31,9 +32,11 @@ export function rolesForGames(guildId: string, games: string[]): string[] {
   return games.flatMap((game) => (find.get(guildId, game) as { role_id: string } | undefined)?.role_id ?? []);
 }
 
-/** Up to five select menus of 25 games each, with the member's current pings ticked */
-function pickers(member: GuildMember) {
-  const roles = gameRoles(member.guild.id).filter((r) => member.guild.roles.cache.has(r.role_id));
+const heldBy = (member: GuildMember) => new Set(member.roles.cache.keys());
+
+/** Up to five select menus of 25 games each, with the roles in `held` ticked */
+function pickers(guild: Guild, held: Set<string>) {
+  const roles = gameRoles(guild.id).filter((r) => guild.roles.cache.has(r.role_id));
   const rows: ActionRowBuilder<StringSelectMenuBuilder>[] = [];
   for (let n = 0; n * 25 < roles.length && n < 5; n++) {
     const chunk = roles.slice(n * 25, n * 25 + 25);
@@ -42,21 +45,21 @@ function pickers(member: GuildMember) {
       .setPlaceholder(roles.length > 25 ? `Games ${n * 25 + 1}–${n * 25 + chunk.length}` : 'Games you want pings for')
       .setMinValues(0)
       .setMaxValues(chunk.length)
-      .addOptions(chunk.map((r) => ({ label: r.name.slice(0, 100), value: r.role_id, default: member.roles.cache.has(r.role_id) })));
+      .addOptions(chunk.map((r) => ({ label: r.name.slice(0, 100), value: r.role_id, default: held.has(r.role_id) })));
     rows.push(new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu));
   }
   return rows;
 }
 
-function pingSummary(member: GuildMember): string {
-  const mine = gameRoles(member.guild.id).filter((r) => member.roles.cache.has(r.role_id));
+function pingSummary(guild: Guild, held: Set<string>): string {
+  const mine = gameRoles(guild.id).filter((r) => held.has(r.role_id));
   return mine.length ? `🔔 You get pings for ${listNames(mine.map((r) => `**${r.name}**`))}.` : '🔕 You don’t get any game pings.';
 }
 
-function pickerReply(member: GuildMember) {
-  const components = pickers(member);
+function pickerReply(guild: Guild, held: Set<string>) {
+  const components = pickers(guild, held);
   if (!components.length) return { content: 'This server has no game pings yet. A server admin can add some with `/gamerole add`.' };
-  return { content: `${pingSummary(member)}\nPick the games you want to be pinged for:`, components };
+  return { content: `${pingSummary(guild, held)}\nPick the games you want to be pinged for:`, components };
 }
 
 export const gamePings: Feature = {
@@ -67,7 +70,7 @@ export const gamePings: Feature = {
       data: new SlashCommandBuilder().setName('pings').setDescription('Choose which games you get pinged for'),
       async run(i) {
         if (!i.inCachedGuild()) return i.reply({ content: 'Use this in a server.', flags: MessageFlags.Ephemeral });
-        return i.reply({ ...pickerReply(i.member), flags: MessageFlags.Ephemeral });
+        return i.reply({ ...pickerReply(i.guild, heldBy(i.member)), flags: MessageFlags.Ephemeral });
       },
     },
     {
@@ -161,22 +164,33 @@ export const gamePings: Feature = {
   ],
   async onButton(i) {
     if (!i.inCachedGuild()) return;
-    return i.reply({ ...pickerReply(i.member), flags: MessageFlags.Ephemeral });
+    return i.reply({ ...pickerReply(i.guild, heldBy(i.member)), flags: MessageFlags.Ephemeral });
   },
   async onSelect(i) {
     if (!i.inCachedGuild()) return;
+    await i.deferUpdate();
+    // The cached member lags behind role changes, so a quick second pick would otherwise work from old roles
+    const member = await i.guild.members.fetch({ user: i.user.id, force: true });
     // Each menu only covers its own games, so only those are added or removed
     const offered = i.component.options.map((o) => o.value);
     const chosen = new Set(i.values);
-    const add = offered.filter((id) => chosen.has(id) && !i.member.roles.cache.has(id));
-    const remove = offered.filter((id) => !chosen.has(id) && i.member.roles.cache.has(id));
+    const held = heldBy(member);
+    const add = offered.filter((id) => chosen.has(id) && !held.has(id));
+    const remove = offered.filter((id) => !chosen.has(id) && held.has(id));
     try {
-      if (add.length) await i.member.roles.add(add, 'Picked with /pings');
-      if (remove.length) await i.member.roles.remove(remove, 'Picked with /pings');
+      // One role at a time: passing a list makes discord.js send the member's whole role list, built from that lagging cache
+      for (const id of add) {
+        await member.roles.add(id, 'Picked with /pings');
+        held.add(id);
+      }
+      for (const id of remove) {
+        await member.roles.remove(id, 'Picked with /pings');
+        held.delete(id);
+      }
     } catch {
-      return i.update({ content: 'I couldn’t change your roles. A server admin needs to move my role above the game roles.', components: [] });
+      return i.editReply({ content: 'I couldn’t change your roles. My role needs **Manage Roles** and has to be above the game roles.', components: [] });
     }
-    return i.update(pickerReply(i.member));
+    return i.editReply(pickerReply(i.guild, held));
   },
   setup(client) {
     client.on(Events.GuildRoleDelete, (role) => {

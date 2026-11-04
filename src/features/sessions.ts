@@ -2,7 +2,7 @@ import { EmbedBuilder, Events, MessageFlags, SlashCommandBuilder, type Client, t
 import { db, getKv, setKv } from '../db.ts';
 import { isAllowed, setting } from '../settings.ts';
 import type { Feature } from '../types.ts';
-import { announceChannel, formatDuration, humansIn, playingGames, servedGuilds, zonedDate, zonedParts } from '../util.ts';
+import { announceChannel, eachGuild, formatDuration, humansIn, playingGames, servedGuilds, zonedDate, zonedParts } from '../util.ts';
 
 interface LiveSession {
   guildId: string;
@@ -130,20 +130,21 @@ function leaderboard(guildId: string, sinceMs: number, title: string): EmbedBuil
   return embed;
 }
 
-async function maybePostWeekly(client: Client<true>) {
-  for (const guild of servedGuilds(client)) {
+export async function maybePostWeekly(client: Client<true>) {
+  await eachGuild(client, 'Weekly leaderboard', async (guild) => {
     // Each server's own day, hour and time zone
     const now = zonedParts(Date.now(), setting(guild.id, 'timezone'));
-    if (now.weekday !== setting(guild.id, 'weeklyPostDay') || now.hour < setting(guild.id, 'weeklyPostHour')) continue;
+    if (now.weekday !== setting(guild.id, 'weeklyPostDay') || now.hour < setting(guild.id, 'weeklyPostHour')) return;
     const today = `${now.year}-${now.month}-${now.day}`;
     const key = `weekly_post:${guild.id}`;
-    if (getKv(key) === today) continue;
+    if (getKv(key) === today) return;
     const out = await announceChannel(client, guild.id);
-    if (!out) continue;
-    setKv(key, today);
+    if (!out) return;
     const embed = leaderboard(guild.id, Date.now() - 7 * DAY, '🏆 This week in voice');
     if (embed) await out.send({ embeds: [embed] });
-  }
+    // Afterwards, so a post that fails is tried again on the next check
+    setKv(key, today);
+  });
 }
 
 export const sessions: Feature = {
