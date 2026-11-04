@@ -207,11 +207,11 @@ async function advance(client: Client<true>, guild: Guild, night: Night, now: nu
     const channel = await client.channels.fetch(night.channel_id).catch(() => null);
     if (now < night.starts_at && going.length && channel?.isSendable()) {
       const where = night.voice_channel_id ? ` in <#${night.voice_channel_id}>` : '';
+      const card = night.message_id ? ` · [RSVP](https://discord.com/channels/${night.guild_id}/${night.channel_id}/${night.message_id})` : '';
       await channel
         .send({
-          content: `⏰ **${night.game} night** starts <t:${Math.floor(night.starts_at / 1000)}:R>${where}: ${going.map((id) => `<@${id}>`).join(' ')}`,
+          content: `⏰ **${night.game} night** starts <t:${Math.floor(night.starts_at / 1000)}:R>${where}: ${going.map((id) => `<@${id}>`).join(' ')}${card}`,
           allowedMentions: { users: going },
-          reply: night.message_id ? { messageReference: night.message_id, failIfNotExists: false } : undefined,
         })
         .catch((err) => {
           db.prepare('UPDATE game_nights SET reminded = 0 WHERE id = ?').run(night.id);

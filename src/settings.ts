@@ -43,14 +43,6 @@ export const DEFAULT_ENV: Partial<Record<SettingKey, string>> = {
 export type SettingKey = keyof typeof DEFAULTS;
 type SettingValue<K extends SettingKey> = (typeof DEFAULTS)[K];
 
-// GUILD_ID, ANNOUNCE_CHANNEL_ID and HOPON_ROLE_ID are from the single-server version; they only seed that server once
-const legacyGuild = process.env.GUILD_ID;
-if (legacyGuild) {
-  const seed = db.prepare('INSERT OR IGNORE INTO guild_settings (guild_id, key, value) VALUES (?, ?, ?)');
-  if (process.env.ANNOUNCE_CHANNEL_ID) seed.run(legacyGuild, 'announceChannel', process.env.ANNOUNCE_CHANNEL_ID);
-  if (process.env.HOPON_ROLE_ID) seed.run(legacyGuild, 'hopOnRole', process.env.HOPON_ROLE_ID);
-}
-
 /** The raw /setup value, or undefined when the server uses the default */
 export function storedSetting(guildId: string, key: SettingKey): string | undefined {
   const row = db.prepare('SELECT value FROM guild_settings WHERE guild_id = ? AND key = ?').get(guildId, key) as { value: string } | undefined;

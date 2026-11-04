@@ -50,6 +50,21 @@ function night(guildId: string, startsIn: number) {
 }
 const reminded = (id: number) => (db.prepare('SELECT reminded FROM game_nights WHERE id = ?').get(id) as { reminded: number }).reminded;
 
+test('a reminder is a plain message, so it doesn’t need Read Message History', async () => {
+  const id = night('plain', 600_000);
+  db.prepare(`UPDATE game_nights SET message_id = 'card' WHERE id = ?`).run(id);
+  const sent: Record<string, unknown>[] = [];
+  await tick(
+    fakeClient([{ id: 'plain', name: 'Plain' }], async (_guild, message) => {
+      sent.push(message);
+    }),
+  );
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].reply, undefined);
+  assert.match(String(sent[0].content), /<@host>/);
+  assert.match(String(sent[0].content), /channels\/plain\/channel-plain\/card/);
+});
+
 test('a reminder that fails doesn’t hold up other servers, and is tried again', async () => {
   mock.method(console, 'error', () => {});
   const broken = night('a', 600_000);

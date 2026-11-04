@@ -1,4 +1,4 @@
-import { Events, MessageFlags, SlashCommandBuilder, type Client, type VoiceState } from 'discord.js';
+import { DiscordAPIError, Events, MessageFlags, RESTJSONErrorCodes, SlashCommandBuilder, type Client, type VoiceState } from 'discord.js';
 import { idSetting, isAllowed, setting } from '../settings.ts';
 import type { Feature } from '../types.ts';
 import { announceChannel, humansIn, listNames, playingGames } from '../util.ts';
@@ -43,12 +43,17 @@ export const hopOn: Feature = {
         if (!roleId) {
           return i.reply({ content: 'This server has no hop-on role. A server admin can set one with `/setup hopon-role`.', flags: MessageFlags.Ephemeral });
         }
-        if (i.member.roles.cache.has(roleId)) {
-          await i.member.roles.remove(roleId);
-          return i.reply({ content: '🔕 You will no longer be pinged when people hop on.', flags: MessageFlags.Ephemeral });
+        try {
+          if (i.member.roles.cache.has(roleId)) {
+            await i.member.roles.remove(roleId);
+            return await i.reply({ content: '🔕 You will no longer be pinged when people hop on.', flags: MessageFlags.Ephemeral });
+          }
+          await i.member.roles.add(roleId);
+          return await i.reply({ content: '🔔 You will be pinged when people hop on.', flags: MessageFlags.Ephemeral });
+        } catch (err) {
+          if (!(err instanceof DiscordAPIError && err.code === RESTJSONErrorCodes.MissingPermissions)) throw err;
+          return i.reply({ content: `I couldn’t change your roles. My role needs **Manage Roles** and has to be above <@&${roleId}>.`, flags: MessageFlags.Ephemeral });
         }
-        await i.member.roles.add(roleId);
-        return i.reply({ content: '🔔 You will be pinged when people hop on.', flags: MessageFlags.Ephemeral });
       },
     },
   ],

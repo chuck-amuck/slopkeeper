@@ -3,6 +3,7 @@ import { config } from '../config.ts';
 import { db } from '../db.ts';
 import { DEFAULTS } from '../settings.ts';
 import type { Feature } from '../types.ts';
+import { requestTimeout } from '../util.ts';
 
 // Steam category ids: 1 Multi-player, 36 Online PvP, 38 Online Co-op
 const MULTIPLAYER_CATEGORIES = new Set([1, 36, 38]);
@@ -24,7 +25,7 @@ export interface OwnedGame {
 async function steamGet<T>(endpoint: string, params: Record<string, string>): Promise<T> {
   const url = new URL(endpoint, 'https://api.steampowered.com');
   for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
-  const res = await fetch(url);
+  const res = await fetch(url, { signal: requestTimeout() });
   if (!res.ok) throw new Error(`Steam ${endpoint}: HTTP ${res.status}`);
   return (await res.json()) as T;
 }

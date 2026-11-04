@@ -9,7 +9,7 @@ import {
 } from 'discord.js';
 import { DEFAULT_ENV, DEFAULTS, setSetting, setting, storedSetting, type SettingKey } from '../settings.ts';
 import type { Feature } from '../types.ts';
-import { isTimeZone } from '../util.ts';
+import { isTimeZone, pingWarning } from '../util.ts';
 
 const ANNOUNCE_PERMISSIONS = [
   [PermissionFlagsBits.ViewChannel, 'View Channel'],
@@ -218,7 +218,7 @@ export const setup: Feature = {
           }
           setSetting(i.guildId, 'hopOnRole', role.id);
           return i.reply({
-            content: `✅ Hop-on pings now ping ${role}; people opt in with \`/notify\`.${problems.length ? `\n⚠️ Before /notify works: ${problems.join(', and ')}.` : ''}`,
+            content: `✅ Hop-on pings now ping ${role}; people opt in with \`/notify\`.${problems.length ? `\n⚠️ Before /notify works: ${problems.join(', and ')}.` : ''}${pingWarning(role)}`,
             flags: MessageFlags.Ephemeral,
             allowedMentions: { parse: [] },
           });
@@ -282,7 +282,7 @@ export const setup: Feature = {
             (Object.keys(DEFAULTS) as SettingKey[])
               .map((key) => {
                 const value = key === 'announceChannel' || key === 'hopOnRole' || key === 'freeGamesChannel' ? setting(i.guildId, key) || null : setting(i.guildId, key);
-                return `**${LABELS[key]}:** ${show(key, value)} · -# ${source(i.guildId, key)}`;
+                return `**${LABELS[key]}:** ${show(key, value)} · *${source(i.guildId, key)}*`;
               })
               .join('\n'),
           )

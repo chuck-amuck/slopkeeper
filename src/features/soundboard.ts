@@ -8,6 +8,7 @@ import {
   createAudioResource,
   entersState,
   getVoiceConnection,
+  getVoiceConnections,
   joinVoiceChannel,
   type VoiceConnection,
 } from '@discordjs/voice';
@@ -23,16 +24,18 @@ import {
   SlashCommandBuilder,
   type ChatInputCommandInteraction,
   type Client,
+  type Guild,
   type VoiceBasedChannel,
 } from 'discord.js';
-import { mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { config } from '../config.ts';
 import { db } from '../db.ts';
 import * as discordBoard from '../discordSounds.ts';
 import { Mixer } from '../mixer.ts';
+import { isAllowed } from '../settings.ts';
 import type { Feature } from '../types.ts';
-import { servedGuilds } from '../util.ts';
+import { humansIn, requestTimeout, servedGuilds } from '../util.ts';
 
 const EXTENSIONS = ['.mp3', '.ogg', '.wav', '.m4a', '.opus', '.webm', '.flac'];
 const MAX_BYTES = 5 * 1024 * 1024;
@@ -97,6 +100,36 @@ function setEmoji(guildId: string, name: string, emoji: string | null) {
       emoji,
     );
   } else db.prepare('DELETE FROM sound_emoji WHERE guild_id = ? AND name = ?').run(guildId, name);
+}
+
+/** Clears custom emoji the server no longer has, since one on a button stops its whole panel posting. Returns whether any were */
+export function dropMissingEmoji(guild: Guild): boolean {
+  const rows = db.prepare('SELECT name, emoji FROM sound_emoji WHERE guild_id = ?').all(guild.id) as { name: string; emoji: string }[];
+  const missing = rows.filter((r) => {
+    const id = CUSTOM_EMOJI.exec(r.emoji)?.[1];
+    return id && !guild.emojis.cache.has(id);
+  });
+  for (const r of missing) setEmoji(guild.id, r.name, null);
+  return missing.length > 0;
+}
+
+/**
+ * Stores an upload as a sound, replacing any sound of that name, unless it isn't audio. It only takes the place of
+ * the old file once it's known to be good, so a bad upload can't cost the sound it was replacing.
+ */
+export async function saveUpload(guildId: string, name: string, ext: string, data: Buffer): Promise<boolean> {
+  const target = path.join(soundDir(guildId), name + ext);
+  const upload = `${target}.upload`;
+  writeFileSync(upload, data);
+  if (!(await discordBoard.hasAudio(upload))) {
+    rmSync(upload);
+    return false;
+  }
+  const existing = findSound(guildId, name);
+  renameSync(upload, target);
+  // The new file may have a different extension
+  if (existing && existing.file !== target) rmSync(existing.file);
+  return true;
 }
 
 /** Returns the emoji to store, or an error message for the user */
@@ -205,6 +238,19 @@ function stopPlayback(guildId: string) {
   const a = audio.get(guildId);
   a?.mixer?.stopAll();
   a?.player.stop(true);
+}
+
+function leaveVoice(guildId: string) {
+  stopPlayback(guildId);
+  const connection = getVoiceConnection(guildId);
+  if (connection) destroy(connection);
+}
+
+/** Leaves voice once the last person has gone, rather than sitting there alone until the idle timer */
+export function leaveIfAlone(guild: Guild) {
+  const channelId = getVoiceConnection(guild.id)?.joinConfig.channelId;
+  const channel = channelId ? guild.channels.cache.get(channelId) : undefined;
+  if (channel?.isVoiceBased() && !humansIn(channel).length) leaveVoice(guild.id);
 }
 
 const pageCount = (sounds: Sound[]) => Math.max(1, Math.ceil(sounds.length / PAGE_SIZE));
@@ -365,11 +411,12 @@ export const soundboard: Feature = {
           if (emoji && 'error' in emoji) return i.reply({ content: emoji.error, ...ephemeral });
 
           await i.deferReply();
-          const res = await fetch(file.url);
+          const res = await fetch(file.url, { signal: requestTimeout() });
           if (!res.ok) return i.editReply(`Download failed (HTTP ${res.status}).`);
           const existing = findSound(i.guildId, name);
-          if (existing) rmSync(existing.file);
-          writeFileSync(path.join(soundDir(i.guildId), name + ext), Buffer.from(await res.arrayBuffer()));
+          if (!(await saveUpload(i.guildId, name, ext, Buffer.from(await res.arrayBuffer())))) {
+            return i.editReply(`**${file.name}** doesn’t have any audio I can read, so I didn’t save it.`);
+          }
           // Replacing a sound keeps its emoji unless a new one was given
           if (emoji) setEmoji(i.guildId, name, emoji.emoji);
 
@@ -467,8 +514,7 @@ export const soundboard: Feature = {
         }
 
         if (sub === 'stop') {
-          stopPlayback(i.guildId);
-          getVoiceConnection(i.guildId)?.destroy();
+          leaveVoice(i.guildId);
           return i.reply({ content: '⏹️ Stopped.', ...ephemeral });
         }
 
@@ -481,11 +527,21 @@ export const soundboard: Feature = {
   async setup(client) {
     for (const guild of servedGuilds(client)) {
       await discordBoard.reconcile(guild).catch((err) => console.error(`Soundboard reconcile failed in ${guild.name}:`, err.message));
+      dropMissingEmoji(guild);
       await refreshPanels(client, guild.id);
     }
+    client.on(Events.GuildEmojiDelete, (emoji) => {
+      if (isAllowed(emoji.guild.id) && dropMissingEmoji(emoji.guild)) void refreshPanels(client, emoji.guild.id);
+    });
+    client.on(Events.VoiceStateUpdate, (_old, state) => {
+      if (isAllowed(state.guild.id)) leaveIfAlone(state.guild);
+    });
     client.on(Events.GuildSoundboardSoundDelete, (sound) => {
       if (discordBoard.forget(sound.soundId) && sound.guildId) void refreshPanels(client, sound.guildId);
     });
+  },
+  shutdown() {
+    for (const guildId of getVoiceConnections().keys()) leaveVoice(guildId);
   },
   componentPrefix: 'sb',
   async onButton(i) {

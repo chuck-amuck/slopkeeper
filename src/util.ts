@@ -1,5 +1,8 @@
-import { ActivityType, type Client, type Guild, type GuildMember, type SendableChannels, type VoiceBasedChannel } from 'discord.js';
+import { ActivityType, PermissionFlagsBits, type Client, type Guild, type GuildMember, type Role, type SendableChannels, type VoiceBasedChannel } from 'discord.js';
 import { idSetting, isAllowed, type IdSettingKey } from './settings.ts';
+
+/** For outside services, so a stalled one can't hold a command or a scheduled job for minutes */
+export const requestTimeout = () => AbortSignal.timeout(30_000);
 
 export function humansIn(channel: VoiceBasedChannel): GuildMember[] {
   return [...channel.members.values()].filter((m) => !m.user.bot);
@@ -20,6 +23,27 @@ export function formatDuration(ms: number): string {
 export function listNames(names: string[]): string {
   if (names.length <= 1) return names.join('');
   return `${names.slice(0, -1).join(', ')} and ${names.at(-1)}`;
+}
+
+/** Splits lines into pages that each fit in `maxChars` once joined with newlines */
+export function paginate(lines: string[], maxChars: number): string[][] {
+  const pages: string[][] = [];
+  let size = 0;
+  for (const line of lines) {
+    if (!pages.length || size + line.length + 1 > maxChars) {
+      pages.push([]);
+      size = 0;
+    }
+    pages.at(-1)!.push(line);
+    size += line.length + 1;
+  }
+  return pages;
+}
+
+/** A warning to add to a reply when mentioning a role won't notify anyone; bots need the role to allow it or Mention Everyone */
+export function pingWarning(role: Role): string {
+  if (role.mentionable || role.guild.members.me?.permissions.has(PermissionFlagsBits.MentionEveryone)) return '';
+  return `\n⚠️ Pings for ${role} won’t notify anyone yet. Turn on **Allow anyone to @mention this role** in Server Settings → Roles.`;
 }
 
 /** Servers the bot works in: every one it's in, minus any it's leaving for not being allowed */

@@ -19,7 +19,7 @@ interface LiveSession {
 const live = new Map<string, LiveSession>();
 const DAY = 86_400_000;
 
-function join(channel: VoiceBasedChannel, member: GuildMember, now: number) {
+export function join(channel: VoiceBasedChannel, member: GuildMember, now: number) {
   if (channel.id === channel.guild.afkChannelId) return;
   let s = live.get(channel.id);
   if (!s) {
@@ -54,8 +54,23 @@ async function finish(client: Client<true>, channelId: string) {
   live.delete(channelId);
 
   const endedAt = s.emptySince ?? Date.now();
+  if (!save(s, channelId, endedAt)) return;
   const duration = endedAt - s.startedAt;
-  if (duration < setting(s.guildId, 'recapMinMinutes') * 60_000 || s.totals.size < 2) return;
+
+  const ranked = [...s.totals].sort((a, b) => b[1] - a[1]);
+  const embed = new EmbedBuilder()
+    .setTitle(`📼 Session recap · ${formatDuration(duration)}`)
+    .setDescription(ranked.map(([userId, ms]) => `<@${userId}> · ${formatDuration(ms)}`).join('\n'))
+    .setColor(0x5865f2)
+    .setTimestamp(endedAt);
+  if (s.games.size) embed.addFields({ name: 'Played', value: [...s.games].join(', ') });
+
+  await (await announceChannel(client, s.guildId))?.send({ embeds: [embed] });
+}
+
+/** Records a session if it was long and busy enough to count. Returns whether it was */
+function save(s: LiveSession, channelId: string, endedAt: number): boolean {
+  if (endedAt - s.startedAt < setting(s.guildId, 'recapMinMinutes') * 60_000 || s.totals.size < 2) return false;
 
   db.exec('BEGIN');
   try {
@@ -71,16 +86,27 @@ async function finish(client: Client<true>, channelId: string) {
     db.exec('ROLLBACK');
     throw err;
   }
+  return true;
+}
 
-  const ranked = [...s.totals].sort((a, b) => b[1] - a[1]);
-  const embed = new EmbedBuilder()
-    .setTitle(`📼 Session recap · ${formatDuration(duration)}`)
-    .setDescription(ranked.map(([userId, ms]) => `<@${userId}> · ${formatDuration(ms)}`).join('\n'))
-    .setColor(0x5865f2)
-    .setTimestamp(endedAt);
-  if (s.games.size) embed.addFields({ name: 'Played', value: [...s.games].join(', ') });
+/** Starts sessions for anyone in voice that isn't tracked yet */
+function pickUp(client: Client<true>, now: number) {
+  for (const guild of servedGuilds(client)) {
+    for (const channel of guild.channels.cache.values()) {
+      if (channel.isVoiceBased()) for (const member of humansIn(channel)) join(channel, member, now);
+    }
+  }
+}
 
-  await (await announceChannel(client, s.guildId))?.send({ embeds: [embed] });
+/** After a reconnect that couldn't catch up on missed events: without this, someone who left meanwhile keeps their session open */
+export function resync(client: Client<true>) {
+  const now = Date.now();
+  for (const [channelId, s] of live) {
+    const channel = client.channels.cache.get(channelId);
+    const here = new Set(channel?.isVoiceBased() ? humansIn(channel).map((m) => m.id) : []);
+    for (const userId of [...s.present.keys()]) if (!here.has(userId)) leave(client, channelId, userId, now);
+  }
+  pickUp(client, now);
 }
 
 function leaderboard(guildId: string, sinceMs: number, title: string): EmbedBuilder | null {
@@ -172,12 +198,9 @@ export const sessions: Feature = {
   ],
   setup(client) {
     // Pick up anyone already in voice when the bot starts
-    const now = Date.now();
-    for (const guild of servedGuilds(client)) {
-      for (const channel of guild.channels.cache.values()) {
-        if (channel.isVoiceBased()) for (const member of humansIn(channel)) join(channel, member, now);
-      }
-    }
+    pickUp(client, Date.now());
+    // Only fires for later reconnects: this listener is added after the first one
+    client.on(Events.ShardReady, () => resync(client));
 
     client.on(Events.VoiceStateUpdate, (oldState, newState) => {
       const member = newState.member;
@@ -195,5 +218,15 @@ export const sessions: Feature = {
     });
 
     setInterval(() => void maybePostWeekly(client).catch(console.error), 10 * 60_000);
+  },
+  shutdown() {
+    // There's no time left to post a recap, but the stats shouldn't go down with the bot
+    const now = Date.now();
+    for (const [channelId, s] of live) {
+      clearTimeout(s.endTimer);
+      for (const [userId, joinedAt] of s.present) s.totals.set(userId, (s.totals.get(userId) ?? 0) + now - joinedAt);
+      save(s, channelId, s.emptySince ?? now);
+    }
+    live.clear();
   },
 };

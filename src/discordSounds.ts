@@ -29,6 +29,16 @@ export async function durationOf(file: string): Promise<number> {
   return Number(stdout.trim());
 }
 
+/** Whether ffprobe finds audio in a file, so an upload that only has the right extension can be turned down */
+export async function hasAudio(file: string): Promise<boolean> {
+  try {
+    const { stdout } = await exec('ffprobe', ['-v', 'error', '-select_streams', 'a', '-show_entries', 'stream=codec_type', '-of', 'csv=p=0', file]);
+    return stdout.includes('audio');
+  } catch {
+    return false;
+  }
+}
+
 export async function slots(guild: Guild): Promise<{ used: number; total: number }> {
   const sounds = await guild.soundboardSounds.fetch();
   return { used: sounds.size, total: SLOTS_BY_TIER[guild.premiumTier] ?? SLOTS_BY_TIER[0] };

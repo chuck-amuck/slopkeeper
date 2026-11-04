@@ -4,7 +4,7 @@ import { config } from '../config.ts';
 import { db } from '../db.ts';
 import { setting } from '../settings.ts';
 import type { Feature } from '../types.ts';
-import { announceChannel, eachGuild } from '../util.ts';
+import { announceChannel, eachGuild, requestTimeout } from '../util.ts';
 import { allGames, groupMembers, ownersOf } from './games.ts';
 
 interface PriceOverview {
@@ -14,7 +14,7 @@ interface PriceOverview {
 }
 
 async function fetchPrice(appid: number, country: string): Promise<PriceOverview | null> {
-  const res = await fetch(`https://store.steampowered.com/api/appdetails?appids=${appid}&cc=${country}&filters=price_overview`);
+  const res = await fetch(`https://store.steampowered.com/api/appdetails?appids=${appid}&cc=${country}&filters=price_overview`, { signal: requestTimeout() });
   if (!res.ok) throw new Error(`Steam appdetails ${appid}: HTTP ${res.status}`);
   const body = (await res.json()) as Record<string, { success: boolean; data?: { price_overview?: PriceOverview } | [] }>;
   const entry = body[String(appid)];
