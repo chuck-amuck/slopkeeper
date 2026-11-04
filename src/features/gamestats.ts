@@ -1,8 +1,8 @@
-import { EmbedBuilder, Events, MessageFlags, SlashCommandBuilder, type GuildMember } from 'discord.js';
+import { EmbedBuilder, Events, MessageFlags, SlashCommandBuilder, type Client, type GuildMember } from 'discord.js';
 import { db } from '../db.ts';
 import { isAllowed } from '../settings.ts';
 import type { Feature } from '../types.ts';
-import { formatDuration, playingGames, servedGuilds } from '../util.ts';
+import { eachGuild, formatDuration, playingGames, servedGuilds } from '../util.ts';
 
 const DAY = 86_400_000;
 /** Plays shorter than this (launchers, crashes) aren't kept */
@@ -38,6 +38,24 @@ function sync(member: GuildMember, now: number) {
   else open.delete(key);
 }
 
+/** Matches open plays to every member's presence, picking up anyone already playing */
+function syncAll(client: Client<true>) {
+  const now = Date.now();
+  for (const guild of servedGuilds(client)) for (const member of guild.members.cache.values()) sync(member, now);
+}
+
+/**
+ * After a reconnect that couldn't catch up on missed events. Discord only sends who's online, so anyone who
+ * went offline meanwhile would stay cached as playing, and their play would grow until they next came online.
+ */
+export async function resync(client: Client<true>) {
+  await eachGuild(client, 'Presence resync', async (guild) => {
+    guild.presences.cache.clear();
+    await guild.members.fetch({ withPresences: true });
+  });
+  syncAll(client);
+}
+
 /** Brings open plays up to now, so stats include games in progress and a crash loses at most a few minutes */
 function checkpoint() {
   const now = Date.now();
@@ -55,7 +73,7 @@ interface Totals {
 export function stats(guildId: string, since: number, filter: 'user' | 'game' | 'both' | 'none', groupBy: 'game' | 'user_id', user?: string, game?: string) {
   const where = ['guild_id = :guild', 'ended_at > :since'];
   if (filter === 'user' || filter === 'both') where.push('user_id = :user');
-  if (filter === 'game' || filter === 'both') where.push('game = :game');
+  if (filter === 'game' || filter === 'both') where.push('game = :game COLLATE NOCASE');
   const other = groupBy === 'game' ? 'user_id' : 'game';
   return db
     .prepare(
@@ -77,6 +95,9 @@ const PERIODS = {
 };
 
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
+const countPeople = (n: number) => `${n} ${n === 1 ? 'person' : 'people'}`;
+/** Keeps the top-10 lists inside Discord's limit on embed fields, whatever a game calls itself */
+const short = (name: string) => (name.length > 60 ? `${name.slice(0, 59)}…` : name);
 const rank = (idx: number) => ['🥇', '🥈', '🥉'][idx] ?? `${idx + 1}.`;
 const ago = (ms: number) => `<t:${Math.floor(ms / 1000)}:R>`;
 
@@ -88,7 +109,7 @@ export const gameStats: Feature = {
         .setName('gamestats')
         .setDescription('What this server plays, from Discord’s “Playing” status: overall, per person or per game')
         .addUserOption((o) => o.setName('user').setDescription('Just this person'))
-        .addStringOption((o) => o.setName('game').setDescription('Just this game').setAutocomplete(true))
+        .addStringOption((o) => o.setName('game').setDescription('Just this game').setMaxLength(100).setAutocomplete(true))
         .addStringOption((o) =>
           o
             .setName('period')
@@ -109,6 +130,7 @@ export const gameStats: Feature = {
         const period = PERIODS[(i.options.getString('period') ?? 'month') as keyof typeof PERIODS];
         const since = Number.isFinite(period.ms) ? Date.now() - period.ms : 0;
         const user = i.options.getUser('user');
+        const name = i.options.getMember('user')?.displayName ?? user?.displayName;
         const game = i.options.getString('game')?.trim();
         const isMember = (id: string) => i.guild.members.cache.has(id);
         const embed = new EmbedBuilder().setColor(0x57f287).setFooter({ text: `${period.label} · from Discord activity status` });
@@ -117,15 +139,15 @@ export const gameStats: Feature = {
         if (user && game) {
           const players = stats(i.guildId, since, 'game', 'user_id', undefined, game).filter((r) => isMember(r.key));
           const idx = players.findIndex((r) => r.key === user.id);
-          if (idx < 0) return nothing(`${game} for ${user.displayName}`);
+          if (idx < 0) return nothing(`${game} for ${name}`);
           const sessions = (
-            db.prepare('SELECT COUNT(*) AS n FROM game_plays WHERE guild_id = ? AND user_id = ? AND game = ? AND ended_at > ?').get(i.guildId, user.id, game, since) as {
+            db.prepare('SELECT COUNT(*) AS n FROM game_plays WHERE guild_id = ? AND user_id = ? AND game = ? COLLATE NOCASE AND ended_at > ?').get(i.guildId, user.id, game, since) as {
               n: number;
             }
           ).n;
           const me = players[idx];
           embed
-            .setTitle(`🎮 ${user.displayName} · ${game}`)
+            .setTitle(`🎮 ${name} · ${game}`)
             .setDescription(
               `**${formatDuration(me.ms)}** over ${plural(sessions, 'session')}, last played ${ago(me.last)}\n` +
                 `${rank(idx)} of ${plural(players.length, 'player')} here`,
@@ -135,16 +157,16 @@ export const gameStats: Feature = {
 
         if (user) {
           const games = stats(i.guildId, since, 'user', 'game', user.id);
-          if (!games.length) return nothing(`games for ${user.displayName}`);
+          if (!games.length) return nothing(`games for ${name}`);
           const total = games.reduce((sum, g) => sum + g.ms, 0);
           embed
-            .setTitle(`🎮 ${user.displayName}’s games`)
+            .setTitle(`🎮 ${name}’s games`)
             .setThumbnail(user.displayAvatarURL())
             .setDescription(
               `**${formatDuration(total)}** across ${plural(games.length, 'game')}\n\n` +
                 games
                   .slice(0, 15)
-                  .map((g, idx) => `${rank(idx)} **${g.key}** · ${formatDuration(g.ms)} · ${ago(g.last)}`)
+                  .map((g, idx) => `${rank(idx)} **${short(g.key)}** · ${formatDuration(g.ms)} · ${ago(g.last)}`)
                   .join('\n'),
             );
           return i.reply({ embeds: [embed] });
@@ -157,7 +179,7 @@ export const gameStats: Feature = {
           embed
             .setTitle(`🎮 ${game}`)
             .setDescription(
-              `**${formatDuration(total)}** played by ${plural(players.length, 'person')}\n\n` +
+              `**${formatDuration(total)}** played by ${countPeople(players.length)}\n\n` +
                 players
                   .slice(0, 15)
                   .map((p, idx) => `${rank(idx)} <@${p.key}> · ${formatDuration(p.ms)} · ${ago(p.last)}`)
@@ -172,13 +194,13 @@ export const gameStats: Feature = {
         const total = games.reduce((sum, g) => sum + g.ms, 0);
         embed
           .setTitle('🎮 Game stats')
-          .setDescription(`**${formatDuration(total)}** across ${plural(games.length, 'game')} by ${plural(people.length, 'person')}`)
+          .setDescription(`**${formatDuration(total)}** across ${plural(games.length, 'game')} by ${countPeople(people.length)}`)
           .addFields(
             {
               name: 'Most played',
               value: games
                 .slice(0, 10)
-                .map((g, idx) => `${rank(idx)} **${g.key}** · ${formatDuration(g.ms)} · ${plural(g.n, 'player')}`)
+                .map((g, idx) => `${rank(idx)} **${short(g.key)}** · ${formatDuration(g.ms)} · ${plural(g.n, 'player')}`)
                 .join('\n'),
             },
             {
@@ -195,10 +217,9 @@ export const gameStats: Feature = {
     },
   ],
   setup(client) {
-    const now = Date.now();
-    for (const guild of servedGuilds(client)) {
-      for (const presence of guild.presences.cache.values()) if (presence.member) sync(presence.member, now);
-    }
+    syncAll(client);
+    // Only fires for later reconnects: this listener is added after the first one
+    client.on(Events.ShardReady, () => void resync(client).catch(console.error));
     client.on(Events.PresenceUpdate, (_old, presence) => {
       if (presence.member && presence.guild && isAllowed(presence.guild.id)) sync(presence.member, Date.now());
     });

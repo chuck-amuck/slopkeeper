@@ -10,7 +10,7 @@ import {
 } from 'discord.js';
 import { db } from '../db.ts';
 import type { Feature } from '../types.ts';
-import { humansIn } from '../util.ts';
+import { humansIn, paginate } from '../util.ts';
 import { appInfo, ensureAppInfo, linkFor, ownedSteamGames, refreshStale, type OwnedGame } from './steam.ts';
 
 export interface GameRow {
@@ -71,6 +71,13 @@ async function autocomplete(i: AutocompleteInteraction) {
   return i.respond(rows.map((r) => ({ name: r.name, value: r.name })));
 }
 
+/** A random game, other than the one on screen when there's a choice */
+export function choose<T extends { name: string }>(ready: T[], avoid?: string): T {
+  const others = ready.filter((c) => c.name !== avoid);
+  const from = others.length ? others : ready;
+  return from[Math.floor(Math.random() * from.length)];
+}
+
 const mentions = (ids: Iterable<string>) => [...ids].map((id) => `<@${id}>`).join(' ');
 
 interface Candidate {
@@ -81,7 +88,7 @@ interface Candidate {
   playtime: number;
 }
 
-async function buildPick(guild: Guild, here: string[]) {
+async function buildPick(guild: Guild, here: string[], avoid?: string) {
   await refreshStale(here, 3_600_000);
 
   const library = allGames(guild.id);
@@ -148,7 +155,7 @@ async function buildPick(guild: Guild, here: string[]) {
 
   let pick: Candidate | undefined;
   if (ready.length) {
-    pick = ready[Math.floor(Math.random() * ready.length)];
+    pick = choose(ready, avoid);
     embed.setTitle(`🎲 ${pick.name}`).setDescription([`All ${counted.length} of you own it.`, ...notes].join('\n'));
     if (pick.appid) embed.setURL(`https://store.steampowered.com/app/${pick.appid}`);
     const others = ready.filter((c) => c !== pick).sort(byPlaytime);
@@ -171,6 +178,34 @@ async function buildPick(guild: Guild, here: string[]) {
     buttons.addComponents(new ButtonBuilder().setCustomId(`wdp:hide:${pick.appid}`).setLabel('Never suggest this').setStyle(ButtonStyle.Secondary));
   }
   return { content: '', embeds: [embed], components: [buttons], allowedMentions: { parse: [] } };
+}
+
+const LIST_PAGE_CHARS = 4000; // embed descriptions stop at 4096
+
+function libraryPage(guild: Guild, wanted: number) {
+  const rows = allGames(guild.id);
+  if (!rows.length) return { content: 'Library is empty. Add something with `/game add`.', embeds: [], components: [] };
+  const group = groupMembers(guild);
+  const lines = rows.map((g) => {
+    const owners = ownersOf(g, guild);
+    const missing = group.filter((id) => !owners.has(id));
+    let line = `**${g.name}**${g.max_players ? ` · up to ${g.max_players}` : ''}`;
+    if (owners.size) line += `\n  owned: ${mentions(owners)}`;
+    if (missing.length) line += `\n  needs it: ${mentions(missing)}`;
+    return line;
+  });
+  const pages = paginate(lines, LIST_PAGE_CHARS);
+  const page = Math.min(Math.max(wanted, 0), pages.length - 1);
+  const embed = new EmbedBuilder().setTitle('📚 Game library').setDescription(pages[page].join('\n')).setColor(0x57f287);
+  if (pages.length === 1) return { embeds: [embed], components: [] };
+  embed.setFooter({ text: `Page ${page + 1} of ${pages.length}` });
+  const turn = (target: number, emoji: string) =>
+    new ButtonBuilder()
+      .setCustomId(`wdp:list:${target}`)
+      .setEmoji(emoji)
+      .setStyle(ButtonStyle.Secondary)
+      .setDisabled(target < 0 || target >= pages.length);
+  return { embeds: [embed], components: [new ActionRowBuilder<ButtonBuilder>().addComponents(turn(page - 1, '◀️'), turn(page + 1, '▶️'))] };
 }
 
 export const games: Feature = {
@@ -259,18 +294,7 @@ export const games: Feature = {
           return i.reply(`🗑️ Removed **${game.name}**.`);
         }
 
-        const rows = allGames(i.guildId);
-        if (!rows.length) return i.reply('Library is empty. Add something with `/game add`.');
-        const group = groupMembers(i.guild);
-        const lines = rows.map((g) => {
-          const owners = ownersOf(g, i.guild);
-          const missing = group.filter((id) => !owners.has(id));
-          let line = `**${g.name}**${g.max_players ? ` · up to ${g.max_players}` : ''}`;
-          if (owners.size) line += `\n  owned: ${mentions(owners)}`;
-          if (missing.length) line += `\n  needs it: ${mentions(missing)}`;
-          return line;
-        });
-        return i.reply({ embeds: [new EmbedBuilder().setTitle('📚 Game library').setDescription(lines.join('\n').slice(0, 4096)).setColor(0x57f287)] });
+        return i.reply(libraryPage(i.guild, 0));
       },
     },
     {
@@ -286,15 +310,17 @@ export const games: Feature = {
   ],
   componentPrefix: 'wdp',
   async onButton(i) {
+    const [, action, target] = i.customId.split(':');
+    if (i.inCachedGuild() && action === 'list') return i.update(libraryPage(i.guild, Number(target)));
     if (!i.inCachedGuild() || !i.member.voice.channel) {
       return i.reply({ content: 'Join a voice channel first.', flags: MessageFlags.Ephemeral });
     }
-    const [, action, appid] = i.customId.split(':');
+    const shown = i.message.embeds[0]?.title?.replace(/^🎲 /, '');
     if (action === 'hide') {
-      const title = i.message.embeds[0]?.title?.replace(/^🎲 /, '') ?? `App ${appid}`;
-      db.prepare('INSERT OR IGNORE INTO hidden_apps (guild_id, appid, name, hidden_by) VALUES (?, ?, ?, ?)').run(i.guildId, Number(appid), title, i.user.id);
+      const title = shown ?? `App ${target}`;
+      db.prepare('INSERT OR IGNORE INTO hidden_apps (guild_id, appid, name, hidden_by) VALUES (?, ?, ?, ?)').run(i.guildId, Number(target), title, i.user.id);
     }
     await i.deferUpdate();
-    return i.editReply(await buildPick(i.guild, humansIn(i.member.voice.channel).map((m) => m.id)));
+    return i.editReply(await buildPick(i.guild, humansIn(i.member.voice.channel).map((m) => m.id), shown));
   },
 };

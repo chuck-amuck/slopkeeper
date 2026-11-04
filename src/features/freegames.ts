@@ -2,7 +2,7 @@ import { EmbedBuilder, SlashCommandBuilder, type Client } from 'discord.js';
 import { db } from '../db.ts';
 import { setting } from '../settings.ts';
 import type { Feature } from '../types.ts';
-import { announceChannel, eachGuild } from '../util.ts';
+import { announceChannel, eachGuild, requestTimeout } from '../util.ts';
 
 // GamerPower tracks free-to-keep games; this asks for full games only, not DLC, betas or loot
 const FEED = 'https://www.gamerpower.com/api/filter?platform=steam.epic-games-store.gog&type=game';
@@ -42,7 +42,7 @@ let cache: { at: number; giveaways: Giveaway[] } | null = null;
 
 async function current(): Promise<Giveaway[]> {
   if (cache && Date.now() - cache.at < 10 * 60_000) return cache.giveaways;
-  const res = await fetch(FEED);
+  const res = await fetch(FEED, { signal: requestTimeout() });
   if (!res.ok) throw new Error(`GamerPower: HTTP ${res.status}`);
   cache = { at: Date.now(), giveaways: parseFeed(await res.json()) };
   return cache.giveaways;

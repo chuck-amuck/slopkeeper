@@ -13,12 +13,12 @@ export interface FakeGuild {
 }
 
 /** Just enough of a client for the scheduled jobs: its servers, plus a channel that records or rejects what's sent */
-export function fakeClient(guilds: FakeGuild[], send: (guildId: string, message: { content?: string }) => Promise<unknown>) {
+export function fakeClient(guilds: FakeGuild[], send: (guildId: string, message: Record<string, unknown>) => Promise<unknown>) {
   const byChannel = new Map(guilds.map((g) => [`channel-${g.id}`, g.id]));
   return {
     guilds: { cache: new Map(guilds.map((g) => [g.id, g])) },
     channels: {
-      fetch: async (id: string) => ({ isSendable: () => true, send: (m: { content?: string }) => send(byChannel.get(id)!, m) }),
+      fetch: async (id: string) => ({ isSendable: () => true, send: (m: Record<string, unknown>) => send(byChannel.get(id)!, m) }),
     },
   } as never;
 }

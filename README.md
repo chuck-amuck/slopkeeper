@@ -92,7 +92,7 @@ The card shows the time in everyone's own time zone, the host, the voice channel
 
 What happens after that:
 - The game's [ping role](#game-pings) is pinged when the night is planned.
-- 15 minutes before the start, the bot replies to the card and pings everyone who's **In** or **Maybe**. Change or turn this off with `/setup gamenight-reminder`.
+- 15 minutes before the start, the bot posts in the same channel, with a link to the card, and pings everyone who's **In** or **Maybe**. Change or turn this off with `/setup gamenight-reminder`.
 - At the start time, the Discord event goes live. It ends 3 hours later, or once its voice channel empties, whichever is later.
 - **Cancel night** (host, or anyone with Manage Events) greys out the card, deletes the event and lets the people who were in know.
 
@@ -156,7 +156,7 @@ The library is the group's shared list of games it cares about. Add a game to th
 | --- | --- |
 | `/game add name [steam] [max_players]` | Adds a game. `steam` takes the store URL or app ID and turns on sale alerts and automatic Steam ownership. `max_players` is the most people one lobby holds. |
 | `/game own name [user]` | Marks a game as owned by you, or by `user`, for non-Steam games and Family Sharing. Run it again to unmark it. It's not needed if Steam already shows the person owning the game. |
-| `/game list` | Shows every library game, its player cap, who owns it and who still needs it. |
+| `/game list` | Shows every library game, its player cap, who owns it and who still needs it, with ◀ ▶ buttons once it's too long for one page. |
 | `/game remove name` | Removes a game from the library, along with its manual ownership marks. |
 | `/game unhide name` | Lets `/whatdoweplay` suggest a game that was hidden with **Never suggest this**. |
 
@@ -227,7 +227,7 @@ Examples:
 
 ## Soundboard
 
-The bot holds a library of uploaded sounds and plays them in your voice channel. Different sounds layer like Discord's own soundboard: clicking one while another is playing mixes it in instead of cutting the other off. Clicking a sound that's already playing restarts it from the top, with no gap, so spamming one button rapid-fires it instead of stacking copies. Up to 12 sounds play at once; past that, the oldest is dropped. The bot leaves voice after 5 minutes of silence.
+The bot holds a library of uploaded sounds and plays them in your voice channel. Different sounds layer like Discord's own soundboard: clicking one while another is playing mixes it in instead of cutting the other off. Clicking a sound that's already playing restarts it from the top, with no gap, so spamming one button rapid-fires it instead of stacking copies. Up to 12 sounds play at once; past that, the oldest is dropped. The bot leaves voice after 5 minutes of silence, or as soon as everyone else has left.
 
 ### Playing sounds
 
@@ -243,7 +243,7 @@ You have to be in a voice channel to play a sound. The bot joins whichever chann
 
 | Command | What it does |
 | --- | --- |
-| `/sound add name file [emoji]` | Uploads a sound. Names use lowercase letters, numbers, `-` and `_` (up to 32 characters). The file can be mp3, ogg, wav, m4a, opus, webm or flac, up to 5 MB. Using an existing name replaces that sound and keeps its emoji unless you give a new one. |
+| `/sound add name file [emoji]` | Uploads a sound. Names use lowercase letters, numbers, `-` and `_` (up to 32 characters). The file can be mp3, ogg, wav, m4a, opus, webm or flac, up to 5 MB, and the bot turns it down if it can't find audio in it. Using an existing name replaces that sound and keeps its emoji unless you give a new one. |
 | `/sound emoji name [emoji]` | Sets the emoji on a sound's button. Leave `emoji` empty to clear it. Custom emoji have to be from this server. |
 | `/sound remove name` | Deletes a sound from the bot, and from Discord's soundboard if it's there. |
 
@@ -371,13 +371,6 @@ Set in `.env` (see `.env.example`).
 
 Everything else is a per-server setting. Servers set their own with `/setup`; the variables in [Settings and defaults](#settings-and-defaults) change the default for servers that haven't. For example, `HOPON_MIN_PEOPLE=3` makes every server wait for 3 people unless it ran `/setup hopon`.
 
-**Upgrading from a single-server version:** older versions took `GUILD_ID`, `ANNOUNCE_CHANNEL_ID` and `HOPON_ROLE_ID` from `.env`. Keep them for the first start of the new version. The bot then:
-- saves a copy of the database as `bot.db.pre-multiserver`,
-- moves all existing data and sounds to the `GUILD_ID` server,
-- turns the channel and role into that server's `/setup` settings.
-
-After that they're ignored and can be removed.
-
 ## Setup
 
 Setting up involves two people, who can be the same person:
@@ -410,7 +403,9 @@ For whoever runs the bot.
 
 Local dev (Node 24+): `npm install && npm run dev`. `npm run typecheck` runs tsc, and `npm test` runs the tests (the audio ones need ffmpeg and are skipped without it). GitHub Actions runs both on every push, and the image is only built if they pass.
 
-Data (SQLite DB and uploaded sounds) lives in the `slopkeeper-data` volume at `/data`, with each server's sounds in `sounds/<server id>/`. Back that volume up if you move the bot. In-progress voice sessions are kept in memory, so restarting the bot mid-session drops that session's stats. Game stats are saved every 5 minutes and when the bot stops, so a crash loses at most a few minutes of them.
+Data (SQLite DB and uploaded sounds) lives in the `slopkeeper-data` volume at `/data`, with each server's sounds in `sounds/<server id>/`. The bot copies its database to `backups/` in that volume once a day and keeps the last 7 copies. Those guard against a bad update or a damaged database, not against losing the disk, and they don't include sounds, so back the volume up elsewhere too.
+
+Voice sessions in progress are saved when the bot stops, without a recap, so a restart mid-session splits it in two. A crash loses them. Game stats are saved every 5 minutes and when the bot stops, so a crash loses at most a few minutes of them.
 
 ### Adding the bot to a server
 

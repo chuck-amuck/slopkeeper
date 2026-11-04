@@ -13,7 +13,7 @@ import {
 import { db } from '../db.ts';
 import { isAllowed } from '../settings.ts';
 import type { Feature } from '../types.ts';
-import { listNames } from '../util.ts';
+import { listNames, pingWarning } from '../util.ts';
 import { allGames } from './games.ts';
 
 interface GameRole {
@@ -155,7 +155,7 @@ export const gamePings: Feature = {
         role ??= await i.guild.roles.create({ name: game.slice(0, 100), mentionable: true, reason: `/gamerole add by ${i.user.tag}` });
         db.prepare('INSERT INTO game_roles (role_id, guild_id, name, created) VALUES (?, ?, ?, ?)').run(role.id, i.guildId, game, created ? 1 : 0);
         return i.reply({
-          content: `✅ ${created ? 'Made' : 'Using'} ${role} for **${game}**. People pick it with \`/pings\`.`,
+          content: `✅ ${created ? 'Made' : 'Using'} ${role} for **${game}**. People pick it with \`/pings\`.${pingWarning(role)}`,
           flags: MessageFlags.Ephemeral,
           allowedMentions: { parse: [] },
         });

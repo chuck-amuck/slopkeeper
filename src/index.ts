@@ -1,4 +1,6 @@
 import { Events, MessageFlags, type Guild, type Interaction } from 'discord.js';
+import { setTimeout as sleep } from 'node:timers/promises';
+import { backups } from './backup.ts';
 import { client } from './client.ts';
 import { config } from './config.ts';
 import { db } from './db.ts';
@@ -19,7 +21,7 @@ import type { Feature } from './types.ts';
 import { servedGuilds } from './util.ts';
 
 // In /help order
-const features: Feature[] = [hopOn, gamePings, gameNights, sessions, gameStats, games, steam, freeGames, sales, soundboard, setup];
+const features: Feature[] = [hopOn, gamePings, gameNights, sessions, gameStats, games, steam, freeGames, sales, soundboard, setup, backups];
 features.unshift(help(features));
 const commands = new Map(features.flatMap((f) => f.commands ?? []).map((c) => [c.data.name, c]));
 
@@ -87,6 +89,8 @@ client.on(Events.InteractionCreate, async (i) => {
 for (const signal of ['SIGINT', 'SIGTERM']) {
   process.on(signal, async () => {
     for (const feature of features) feature.shutdown?.();
+    // Leaving voice is queued on the gateway connection, so it needs a moment before that closes
+    await sleep(250);
     await client.destroy();
     db.close();
     process.exit(0);
