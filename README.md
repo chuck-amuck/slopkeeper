@@ -408,7 +408,7 @@ For whoever runs the bot.
    https://discord.com/oauth2/authorize?client_id=YOUR_APPLICATION_ID&scope=bot+applications.commands&permissions=26388550667264
    ```
 
-Local dev (Node 24+): `npm install && npm run dev`. `npm run typecheck` runs tsc.
+Local dev (Node 24+): `npm install && npm run dev`. `npm run typecheck` runs tsc, and `npm test` runs the tests (the audio ones need ffmpeg and are skipped without it). GitHub Actions runs both on every push, and the image is only built if they pass.
 
 Data (SQLite DB and uploaded sounds) lives in the `slopkeeper-data` volume at `/data`, with each server's sounds in `sounds/<server id>/`. Back that volume up if you move the bot. In-progress voice sessions are kept in memory, so restarting the bot mid-session drops that session's stats. Game stats are saved every 5 minutes and when the bot stops, so a crash loses at most a few minutes of them.
 
@@ -429,7 +429,7 @@ For the server admin. You need the **Manage Server** permission in the server.
 4. **Set the time zone** if it isn't the host's: `/setup timezone zone:Europe/London`.
    Want free game posts? They're off until you run `/setup free-games enabled:True`, optionally with `channel:#free-games`.
 5. **Add game pings** (optional) for the games your server plays: `/gamerole add game:Valheim`, and so on. Then `/gamerole menu` in a channel people will see, so they can pick theirs.
-6. **Check voice channels.** The bot needs **Connect** and **Speak** in any voice channel you want the soundboard in. That's automatic unless the channel overrides permissions.
+6. **Check voice channels.** The bot needs **Connect** and **Speak** in any voice channel you want the soundboard in. That's automatic unless the channel overrides permissions. If a channel blocks it, a sound click tells you which permission is missing.
 7. **Check it:** `/setup show`. Anything you haven't set uses a default, which is listed there.
 
 Then tell people to run `/steam link`, `/notify` and `/pings` (see [Getting started](#getting-started-for-everyone-in-the-server)), and post a `/sound panel` somewhere handy.

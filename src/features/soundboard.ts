@@ -9,6 +9,7 @@ import {
   entersState,
   getVoiceConnection,
   joinVoiceChannel,
+  type VoiceConnection,
 } from '@discordjs/voice';
 import {
   ActionRowBuilder,
@@ -17,6 +18,7 @@ import {
   DiscordAPIError,
   Events,
   MessageFlags,
+  PermissionFlagsBits,
   RESTJSONErrorCodes,
   SlashCommandBuilder,
   type ChatInputCommandInteraction,
@@ -37,10 +39,17 @@ const MAX_BYTES = 5 * 1024 * 1024;
 const VOLUME = 0.5;
 const MAX_VOICES = 12;
 const IDLE_LEAVE_MS = 5 * 60_000;
+const CONNECT_TIMEOUT_MS = 15_000;
+const RECONNECT_TIMEOUT_MS = 5_000;
 const NAME_PATTERN = /^[a-z0-9_-]{1,32}$/;
 const PAGE_SIZE = 20; // 4 rows of 5 buttons; the fifth row holds the controls
 const CUSTOM_EMOJI = /^<a?:\w{2,32}:(\d{17,20})>$/;
 const UNICODE_EMOJI = /^\p{RGI_Emoji}$/v;
+const VOICE_PERMISSIONS = [
+  [PermissionFlagsBits.ViewChannel, 'View Channel'],
+  [PermissionFlagsBits.Connect, 'Connect'],
+  [PermissionFlagsBits.Speak, 'Speak'],
+] as const;
 // Control button ids use '#', which sound names can't contain
 const PREV = 'sb:#prev';
 const NEXT = 'sb:#next';
@@ -124,25 +133,72 @@ function audioFor(guildId: string): GuildAudio {
   return a;
 }
 
-async function play(channel: VoiceBasedChannel, file: string) {
+/** Why the bot can't play in a channel, or null if it can */
+export function cantJoin(channel: VoiceBasedChannel): string | null {
+  const perms = channel.permissionsFor(channel.guild.members.me!);
+  const missing = VOICE_PERMISSIONS.filter(([flag]) => !perms?.has(flag)).map(([, name]) => name);
+  if (missing.length) return `I can’t play in ${channel}. A server admin needs to give my role **${missing.join('**, **')}** there.`;
+  return channel.joinable ? null : `I can’t join ${channel}, it’s full.`;
+}
+
+function destroy(connection: VoiceConnection) {
+  if (connection.state.status !== VoiceConnectionStatus.Destroyed) connection.destroy();
+}
+
+function watch(connection: VoiceConnection, guildId: string) {
+  // Without a listener, a voice network error would be thrown and take the whole bot down
+  connection.on('error', (err) => console.error(`Voice connection error in server ${guildId}:`, err.message));
+  connection.on(VoiceConnectionStatus.Disconnected, async () => {
+    try {
+      // Being dragged to another channel also lands here, and reconnects by itself
+      await Promise.race([
+        entersState(connection, VoiceConnectionStatus.Signalling, RECONNECT_TIMEOUT_MS),
+        entersState(connection, VoiceConnectionStatus.Connecting, RECONNECT_TIMEOUT_MS),
+      ]);
+    } catch {
+      // Disconnected by someone, or the channel went away. Nothing else clears this, and every click would wait on it
+      destroy(connection);
+    }
+  });
+}
+
+/** Plays a sound in a channel. Returns null on success or the reason it couldn't, for the user */
+export async function play(channel: VoiceBasedChannel, file: string): Promise<string | null> {
+  const problem = cantJoin(channel);
+  if (problem) return problem;
+
   const a = audioFor(channel.guild.id);
   clearTimeout(a.idleTimer);
   let connection = getVoiceConnection(channel.guild.id);
-  if (connection?.joinConfig.channelId !== channel.id) {
+  // Joining again also revives a connection that dropped, which is otherwise only cleared up a few seconds later
+  if (!connection || connection.joinConfig.channelId !== channel.id || connection.state.status === VoiceConnectionStatus.Disconnected) {
+    const isNew = !connection;
     connection = joinVoiceChannel({
       channelId: channel.id,
       guildId: channel.guild.id,
       adapterCreator: channel.guild.voiceAdapterCreator,
       selfDeaf: true,
     });
+    if (isNew) watch(connection, channel.guild.id);
     connection.subscribe(a.player);
   }
-  await entersState(connection, VoiceConnectionStatus.Ready, 15_000);
+  try {
+    await entersState(connection, VoiceConnectionStatus.Ready, CONNECT_TIMEOUT_MS);
+  } catch {
+    console.error(`Voice connection to ${channel.name} in ${channel.guild.name} (${channel.guild.id}) timed out in state ${connection.state.status}`);
+    // Left in place it would be reused, and every later click would time out as well
+    destroy(connection);
+    return `I couldn’t connect to ${channel}. Try again in a moment.`;
+  }
   // Layer onto whatever is already playing (or restart this sound if it's one of them); a fresh mixer is only needed once the last one has gone quiet
-  if (a.mixer && !a.mixer.finished) return a.mixer.add(file);
+  if (a.mixer && !a.mixer.finished) {
+    a.mixer.add(file);
+    return null;
+  }
   a.mixer = new Mixer(VOLUME, MAX_VOICES);
   a.mixer.add(file);
   a.player.play(createAudioResource(a.mixer, { inputType: StreamType.Raw }));
+  return null;
 }
 
 function stopPlayback(guildId: string) {
@@ -293,8 +349,8 @@ export const soundboard: Feature = {
           if (!sound) return i.reply({ content: 'No sound by that name.', ...ephemeral });
           if (!i.member.voice.channel) return i.reply({ content: 'Join a voice channel first.', ...ephemeral });
           await i.deferReply(ephemeral);
-          await play(i.member.voice.channel, sound.file);
-          return i.editReply(`🔊 ${sound.name}`);
+          const problem = await play(i.member.voice.channel, sound.file);
+          return i.editReply(problem ?? `🔊 ${sound.name}`);
         }
 
         if (sub === 'add') {
@@ -459,6 +515,7 @@ export const soundboard: Feature = {
     if (!i.member.voice.channel) {
       return i.followUp({ content: 'Join a voice channel first.', flags: MessageFlags.Ephemeral });
     }
-    await play(i.member.voice.channel, sound.file);
+    const problem = await play(i.member.voice.channel, sound.file);
+    if (problem) return i.followUp({ content: problem, flags: MessageFlags.Ephemeral });
   },
 };

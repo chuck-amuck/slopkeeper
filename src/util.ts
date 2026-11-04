@@ -27,6 +27,13 @@ export function servedGuilds(client: Client<true>): Guild[] {
   return [...client.guilds.cache.values()].filter((g) => isAllowed(g.id));
 }
 
+/** Runs a scheduled job for every server; one server failing doesn't stop the rest */
+export async function eachGuild(client: Client<true>, job: string, run: (guild: Guild) => Promise<unknown>) {
+  for (const guild of servedGuilds(client)) {
+    await run(guild).catch((err) => console.error(`${job} failed in ${guild.name} (${guild.id}):`, err));
+  }
+}
+
 /** The server's announce channel (or another channel setting), or null if /setup hasn't picked one (or it's gone) */
 export async function announceChannel(
   client: Client<true>,

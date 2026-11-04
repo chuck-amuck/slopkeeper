@@ -183,7 +183,7 @@ async function createEvent(guild: Guild, night: Omit<Night, 'id' | 'event_id' | 
 }
 
 /** Reminders, plus starting and ending the Discord events, once a minute */
-async function tick(client: Client<true>) {
+export async function tick(client: Client<true>) {
   const now = Date.now();
   const nights = db
     .prepare('SELECT * FROM game_nights WHERE cancelled = 0 AND (reminded = 0 OR (event_id IS NOT NULL AND event_stage < 2)) AND starts_at < ?')
@@ -192,34 +192,44 @@ async function tick(client: Client<true>) {
   for (const night of nights) {
     const guild = served.get(night.guild_id);
     if (!guild) continue;
+    await advance(client, guild, night, now).catch((err) => console.error(`Game night ${night.id} in ${guild.name} (${guild.id}):`, err));
+  }
+}
 
-    const remindMin = setting(guild.id, 'gameNightReminderMin');
-    if (!night.reminded && remindMin > 0 && now >= night.starts_at - remindMin * 60_000) {
-      db.prepare('UPDATE game_nights SET reminded = 1 WHERE id = ?').run(night.id);
-      const people = rsvps(night.id);
-      const going = [...people.in, ...people.maybe];
-      const channel = await client.channels.fetch(night.channel_id).catch(() => null);
-      if (now < night.starts_at && going.length && channel?.isSendable()) {
-        const where = night.voice_channel_id ? ` in <#${night.voice_channel_id}>` : '';
-        await channel.send({
+/** Does whatever is due for one night, so a problem with it doesn't hold up the others */
+async function advance(client: Client<true>, guild: Guild, night: Night, now: number) {
+  const remindMin = setting(guild.id, 'gameNightReminderMin');
+  if (!night.reminded && remindMin > 0 && now >= night.starts_at - remindMin * 60_000) {
+    // Claimed before sending so a slow send can't overlap the next tick's; put back below if it fails
+    db.prepare('UPDATE game_nights SET reminded = 1 WHERE id = ?').run(night.id);
+    const people = rsvps(night.id);
+    const going = [...people.in, ...people.maybe];
+    const channel = await client.channels.fetch(night.channel_id).catch(() => null);
+    if (now < night.starts_at && going.length && channel?.isSendable()) {
+      const where = night.voice_channel_id ? ` in <#${night.voice_channel_id}>` : '';
+      await channel
+        .send({
           content: `⏰ **${night.game} night** starts <t:${Math.floor(night.starts_at / 1000)}:R>${where}: ${going.map((id) => `<@${id}>`).join(' ')}`,
           allowedMentions: { users: going },
           reply: night.message_id ? { messageReference: night.message_id, failIfNotExists: false } : undefined,
+        })
+        .catch((err) => {
+          db.prepare('UPDATE game_nights SET reminded = 0 WHERE id = ?').run(night.id);
+          throw err;
         });
-      }
     }
+  }
 
-    if (!night.event_id) continue;
-    if (night.event_stage === 0 && now >= night.starts_at) {
-      await guild.scheduledEvents.edit(night.event_id, { status: GuildScheduledEventStatus.Active }).catch(() => {});
-      db.prepare('UPDATE game_nights SET event_stage = 1 WHERE id = ?').run(night.id);
-    } else if (night.event_stage === 1 && now >= night.starts_at + EVENT_LENGTH) {
-      // Leave the event running while people are still in its channel
-      const voice = night.voice_channel_id ? guild.channels.cache.get(night.voice_channel_id) : undefined;
-      if (voice?.isVoiceBased() && humansIn(voice).length) continue;
-      await guild.scheduledEvents.edit(night.event_id, { status: GuildScheduledEventStatus.Completed }).catch(() => {});
-      db.prepare('UPDATE game_nights SET event_stage = 2 WHERE id = ?').run(night.id);
-    }
+  if (!night.event_id) return;
+  if (night.event_stage === 0 && now >= night.starts_at) {
+    await guild.scheduledEvents.edit(night.event_id, { status: GuildScheduledEventStatus.Active }).catch(() => {});
+    db.prepare('UPDATE game_nights SET event_stage = 1 WHERE id = ?').run(night.id);
+  } else if (night.event_stage === 1 && now >= night.starts_at + EVENT_LENGTH) {
+    // Leave the event running while people are still in its channel
+    const voice = night.voice_channel_id ? guild.channels.cache.get(night.voice_channel_id) : undefined;
+    if (voice?.isVoiceBased() && humansIn(voice).length) return;
+    await guild.scheduledEvents.edit(night.event_id, { status: GuildScheduledEventStatus.Completed }).catch(() => {});
+    db.prepare('UPDATE game_nights SET event_stage = 2 WHERE id = ?').run(night.id);
   }
 }
 

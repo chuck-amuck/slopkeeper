@@ -4,7 +4,7 @@ import { config } from '../config.ts';
 import { db } from '../db.ts';
 import { setting } from '../settings.ts';
 import type { Feature } from '../types.ts';
-import { announceChannel, servedGuilds } from '../util.ts';
+import { announceChannel, eachGuild } from '../util.ts';
 import { allGames, groupMembers, ownersOf } from './games.ts';
 
 interface PriceOverview {
@@ -23,10 +23,10 @@ async function fetchPrice(appid: number, country: string): Promise<PriceOverview
   return entry.data.price_overview ?? null;
 }
 
-async function checkSales(client: Client<true>) {
+export async function checkSales(client: Client<true>) {
   // Several servers can have the same game; ask Steam once per check and store region
   const prices = new Map<string, PriceOverview | null | undefined>();
-  for (const guild of servedGuilds(client)) await checkGuild(client, guild, prices);
+  await eachGuild(client, 'Sale check', (guild) => checkGuild(client, guild, prices));
 }
 
 async function checkGuild(client: Client<true>, guild: Guild, prices: Map<string, PriceOverview | null | undefined>) {
@@ -50,17 +50,23 @@ async function checkGuild(client: Client<true>, guild: Guild, prices: Map<string
 
     const discount = price?.discount_percent ?? 0;
     const prev = (db.prepare('SELECT discount FROM sale_state WHERE game_id = ?').get(game.id) as { discount: number } | undefined)?.discount ?? 0;
-    db.prepare('INSERT INTO sale_state (game_id, discount) VALUES (?, ?) ON CONFLICT(game_id) DO UPDATE SET discount = excluded.discount').run(
-      game.id,
-      discount,
-    );
+    const remember = () =>
+      db.prepare('INSERT INTO sale_state (game_id, discount) VALUES (?, ?) ON CONFLICT(game_id) DO UPDATE SET discount = excluded.discount').run(
+        game.id,
+        discount,
+      );
     // Only announce new or deeper sales, not every check while a sale is running
-    if (!price || discount <= prev) continue;
+    if (!price || discount <= prev) {
+      remember();
+      continue;
+    }
 
     let text = `💸 **${game.name}** is **${discount}% off**: ~~${price.initial_formatted}~~ **${price.final_formatted}**`;
     if (needers.length) text += `\nStill need it: ${needers.map((id) => `<@${id}>`).join(' ')}`;
     text += `\nhttps://store.steampowered.com/app/${game.steam_appid}`;
     await out.send({ content: text, allowedMentions: { users: needers } });
+    // Afterwards, so a post that fails is tried again on the next check
+    remember();
   }
 }
 

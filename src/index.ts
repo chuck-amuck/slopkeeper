@@ -1,4 +1,5 @@
-import { Client, Events, GatewayIntentBits, MessageFlags, type Guild } from 'discord.js';
+import { Events, MessageFlags, type Guild, type Interaction } from 'discord.js';
+import { client } from './client.ts';
 import { config } from './config.ts';
 import { db } from './db.ts';
 import { freeGames } from './features/freegames.ts';
@@ -21,16 +22,6 @@ import { servedGuilds } from './util.ts';
 const features: Feature[] = [hopOn, gamePings, gameNights, sessions, gameStats, games, steam, freeGames, sales, soundboard, setup];
 features.unshift(help(features));
 const commands = new Map(features.flatMap((f) => f.commands ?? []).map((c) => [c.data.name, c]));
-
-const client = new Client({
-  intents: [
-    GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildVoiceStates,
-    GatewayIntentBits.GuildExpressions, // soundboard sound create/delete events
-    GatewayIntentBits.GuildMembers, // privileged: enable "Server Members Intent" in the developer portal
-    GatewayIntentBits.GuildPresences, // privileged: enable "Presence Intent" (used to see what game people are playing)
-  ],
-});
 
 /** Registers the commands in a server, or leaves it if it isn't allowed */
 async function join(guild: Guild, isNew: boolean) {
@@ -59,7 +50,23 @@ client.once(Events.ClientReady, async (c) => {
   console.log(`Logged in as ${c.user.tag} in ${count} server${count === 1 ? '' : 's'}`);
 });
 
-client.on(Events.GuildCreate, (guild) => void join(guild, true).catch(console.error));
+client.on(Events.GuildCreate, (guild) => {
+  console.log(`Added to ${guild.name} (${guild.id})`);
+  void join(guild, true).catch(console.error);
+});
+
+client.on(Events.GuildDelete, (guild) => console.log(`No longer in ${guild.name} (${guild.id})`));
+
+/** Who did what where, for the log */
+function describe(i: Interaction): string {
+  const where = i.guild ? `${i.guild.name} (${i.guildId})` : (i.guildId ?? 'a DM');
+  let what = 'Interaction';
+  if (i.isChatInputCommand() || i.isAutocomplete()) {
+    what = [`/${i.commandName}`, i.options.getSubcommand(false)].filter(Boolean).join(' ');
+    if (i.isAutocomplete()) what += ' autocomplete';
+  } else if (i.isButton() || i.isStringSelectMenu()) what = `Component ${i.customId}`;
+  return `${what} by ${i.user.tag} in ${where}`;
+}
 
 client.on(Events.InteractionCreate, async (i) => {
   try {
@@ -70,7 +77,7 @@ client.on(Events.InteractionCreate, async (i) => {
       await (i.isButton() ? feature?.onButton?.(i) : feature?.onSelect?.(i));
     }
   } catch (err) {
-    console.error(err);
+    console.error(`${describe(i)} failed:`, err);
     if (!i.isRepliable()) return;
     const msg = { content: 'Something broke. Check the bot logs.', flags: MessageFlags.Ephemeral } as const;
     await (i.replied || i.deferred ? i.followUp(msg) : i.reply(msg)).catch(() => {});

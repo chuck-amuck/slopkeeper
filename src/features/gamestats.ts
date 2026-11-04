@@ -52,7 +52,7 @@ interface Totals {
   n: number;
 }
 
-function stats(guildId: string, since: number, filter: 'user' | 'game' | 'both' | 'none', groupBy: 'game' | 'user_id', user?: string, game?: string) {
+export function stats(guildId: string, since: number, filter: 'user' | 'game' | 'both' | 'none', groupBy: 'game' | 'user_id', user?: string, game?: string) {
   const where = ['guild_id = :guild', 'ended_at > :since'];
   if (filter === 'user' || filter === 'both') where.push('user_id = :user');
   if (filter === 'game' || filter === 'both') where.push('game = :game');
