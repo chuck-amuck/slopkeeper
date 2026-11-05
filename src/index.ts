@@ -1,5 +1,6 @@
 import { Events, MessageFlags, type Guild, type Interaction } from 'discord.js';
 import { setTimeout as sleep } from 'node:timers/promises';
+import { webApi } from './api.ts';
 import { backups } from './backup.ts';
 import { client } from './client.ts';
 import { config } from './config.ts';
@@ -23,7 +24,7 @@ import type { Feature } from './types.ts';
 import { servedGuilds } from './util.ts';
 
 // In /help order
-const features: Feature[] = [hopOn, gamePings, gameNights, sessions, gameStats, recap, games, gameVotes, steam, freeGames, sales, soundboard, setup, backups];
+const features: Feature[] = [hopOn, gamePings, gameNights, sessions, gameStats, recap, games, gameVotes, steam, freeGames, sales, soundboard, setup, backups, webApi];
 features.unshift(help(features));
 const commands = new Map(features.flatMap((f) => f.commands ?? []).map((c) => [c.data.name, c]));
 

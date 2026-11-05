@@ -55,6 +55,9 @@ export const NO_PERMISSION = 'the bot’s role needs the Create Expressions perm
 
 export const fits = (seconds: number) => seconds <= MAX_SECONDS;
 
+/** The way to add a long sound from Discord, which the web UI swaps for its own */
+export const PICK_A_PART = `use \`/sound discord-add\` with \`start:\` to pick a part`;
+
 function explain(err: unknown): string {
   if (err instanceof DiscordAPIError) {
     if (err.code === RESTJSONErrorCodes.MaximumNumberOfSoundboardSoundsReached) return FULL;
@@ -78,7 +81,7 @@ export async function upload(guild: Guild, sound: SyncSound, volume: number, sta
   try {
     const length = await durationOf(sound.file);
     if (start === undefined && !fits(length)) {
-      return `it’s ${length.toFixed(1)} s long and Discord allows ${CLIP_SECONDS} s; use \`/sound discord-add\` with \`start:\` to pick a part`;
+      return `it’s ${length.toFixed(1)} s long and Discord allows ${CLIP_SECONDS} s; ${PICK_A_PART}`;
     }
     if (start !== undefined && start >= length) return `it’s only ${length.toFixed(1)} s long`;
 
@@ -117,6 +120,25 @@ export async function remove(guild: Guild, name: string) {
     if (!(err instanceof DiscordAPIError && err.status === 404)) throw new Error(explain(err));
   }
   forget(id);
+}
+
+/** Renames a sound's copy on Discord's soundboard, if it has one. Returns null on success or the reason it couldn't */
+export async function rename(guild: Guild, name: string, newName: string): Promise<string | null> {
+  const id = synced(guild.id).get(name);
+  if (!id) return null;
+  if (newName.length < 2) return 'Discord needs names of at least 2 characters';
+  try {
+    await guild.soundboardSounds.edit(id, { name: newName });
+  } catch (err) {
+    // Someone may have deleted it in Discord already
+    if (err instanceof DiscordAPIError && err.status === 404) {
+      forget(id);
+      return null;
+    }
+    return explain(err);
+  }
+  db.prepare('UPDATE OR REPLACE discord_sounds SET name = ? WHERE sound_id = ?').run(newName, id);
+  return null;
 }
 
 export async function setEmoji(guild: Guild, name: string, emoji: string | null) {

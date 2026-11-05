@@ -19,4 +19,7 @@ export const config = {
   // One price check covers every server, so this isn't a per-server setting
   saleCheckHours: Number(process.env.SALE_CHECK_HOURS || 6),
   dataDir: process.env.DATA_DIR ?? './data',
+  // Turns on the management API that the web UI uses. Only for other containers: never publish its port
+  apiToken: process.env.API_TOKEN || null,
+  apiPort: Number(process.env.API_PORT || 8787),
 };

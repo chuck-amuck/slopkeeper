@@ -65,14 +65,14 @@ function soundDir(guildId: string): string {
   return dir;
 }
 
-interface Sound {
+export interface Sound {
   name: string;
   file: string;
   emoji?: string;
   onDiscord: boolean;
 }
 
-function listSounds(guildId: string): Sound[] {
+export function listSounds(guildId: string): Sound[] {
   const dir = soundDir(guildId);
   const onDiscord = discordBoard.synced(guildId);
   const emojis = new Map(
@@ -90,7 +90,7 @@ function listSounds(guildId: string): Sound[] {
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 
-const findSound = (guildId: string, name: string) => listSounds(guildId).find((s) => s.name === name);
+export const findSound = (guildId: string, name: string) => listSounds(guildId).find((s) => s.name === name);
 
 function setEmoji(guildId: string, name: string, emoji: string | null) {
   if (emoji) {
@@ -132,14 +132,94 @@ export async function saveUpload(guildId: string, name: string, ext: string, dat
   return true;
 }
 
+/** Why an upload can't be stored, or null if it can */
+export function uploadProblem(name: string, ext: string, size: number): string | null {
+  if (!NAME_PATTERN.test(name)) return 'Name can only use lowercase letters, numbers, - and _.';
+  if (!EXTENSIONS.includes(ext)) return `Unsupported file type. Use one of: ${EXTENSIONS.join(', ')}`;
+  return size > MAX_BYTES ? 'File is over 5 MB.' : null;
+}
+
+/**
+ * Stores a sound and copies it into Discord's soundboard if it can. Returns null if the file isn't audio,
+ * otherwise whether it replaced a sound and why it isn't on Discord, if it isn't.
+ */
+export async function addSound(guild: Guild, name: string, ext: string, data: Buffer, emoji?: string) {
+  const replaced = !!findSound(guild.id, name);
+  if (!(await saveUpload(guild.id, name, ext, data))) return null;
+  // Replacing a sound keeps its emoji unless a new one was given
+  if (emoji) setEmoji(guild.id, name, emoji);
+  const problem = await discordBoard.upload(guild, findSound(guild.id, name)!, VOLUME);
+  // A replaced sound that no longer fits mustn't leave the old audio on Discord's soundboard
+  if (problem) await discordBoard.remove(guild, name).catch(() => {});
+  return { replaced, problem };
+}
+
+/** Deletes a sound. Returns why it couldn't come off Discord's soundboard, if it couldn't */
+export async function removeSound(guild: Guild, sound: Sound): Promise<string | null> {
+  const problem = await discordBoard.remove(guild, sound.name).then(
+    () => null,
+    (err: Error) => err.message,
+  );
+  rmSync(sound.file);
+  setEmoji(guild.id, sound.name, null);
+  return problem;
+}
+
+export async function changeEmoji(guild: Guild, name: string, emoji: string | null) {
+  setEmoji(guild.id, name, emoji);
+  await discordBoard.setEmoji(guild, name, emoji);
+}
+
+/** Renames a sound everywhere, keeping its play counts. Returns null on success or the reason it couldn't */
+export async function renameSound(guild: Guild, sound: Sound, name: string): Promise<string | null> {
+  if (!NAME_PATTERN.test(name)) return 'Name can only use lowercase letters, numbers, - and _.';
+  if (findSound(guild.id, name)) return `There’s already a sound called **${name}**.`;
+  // First, since it's the one step that can fail
+  const problem = await discordBoard.rename(guild, sound.name, name);
+  if (problem) return problem;
+  renameSync(sound.file, path.join(path.dirname(sound.file), name + path.extname(sound.file)));
+  db.prepare('UPDATE OR REPLACE sound_emoji SET name = ? WHERE guild_id = ? AND name = ?').run(name, guild.id, sound.name);
+  db.prepare('UPDATE sound_plays SET name = ? WHERE guild_id = ? AND name = ?').run(name, guild.id, sound.name);
+  return null;
+}
+
+export const addToDiscord = (guild: Guild, sound: Sound, start?: number) => discordBoard.upload(guild, sound, VOLUME, start);
+
+/** Copies every sound that fits into Discord's soundboard, until it's full */
+export async function syncToDiscord(guild: Guild) {
+  await discordBoard.reconcile(guild);
+  const added: string[] = [];
+  const tooLong: string[] = [];
+  const failed: string[] = [];
+  const waiting: string[] = [];
+  let blocker: string | null = null;
+  for (const sound of listSounds(guild.id).filter((s) => !s.onDiscord)) {
+    if (blocker) {
+      waiting.push(sound.name);
+      continue;
+    }
+    if (!discordBoard.fits(await discordBoard.durationOf(sound.file).catch(() => Infinity))) {
+      tooLong.push(sound.name);
+      continue;
+    }
+    const problem = await discordBoard.upload(guild, sound, VOLUME);
+    if (!problem) added.push(sound.name);
+    else if (problem === discordBoard.FULL || problem === discordBoard.NO_PERMISSION) {
+      blocker = problem;
+      waiting.push(sound.name);
+    } else failed.push(`${sound.name} (${problem})`);
+  }
+  return { added, tooLong, failed, waiting, blocker };
+}
+
 /** Returns the emoji to store, or an error message for the user */
-async function parseEmoji(i: ChatInputCommandInteraction<'cached'>, input: string): Promise<{ emoji: string } | { error: string }> {
+export async function parseEmoji(guild: Guild, input: string): Promise<{ emoji: string } | { error: string }> {
   const trimmed = input.trim();
   if (UNICODE_EMOJI.test(trimmed)) return { emoji: trimmed };
   const custom = CUSTOM_EMOJI.exec(trimmed);
   if (!custom) return { error: 'That isn’t a single emoji. Pick one from the emoji picker.' };
   // Bots can only show custom emoji from servers they're in
-  const found = await i.guild.emojis.fetch(custom[1]).catch(() => null);
+  const found = await guild.emojis.fetch(custom[1]).catch(() => null);
   return found ? { emoji: trimmed } : { error: 'Custom emoji have to be from this server.' };
 }
 
@@ -304,7 +384,7 @@ function trackPanel(messageId: string, guildId: string, channelId: string, page:
 }
 
 /** Re-renders a server's posted panels after its sound list changes */
-async function refreshPanels(client: Client, guildId: string) {
+export async function refreshPanels(client: Client, guildId: string) {
   const panels = db.prepare('SELECT message_id, channel_id, page FROM sound_panels WHERE guild_id = ?').all(guildId) as {
     message_id: string;
     channel_id: string;
@@ -410,28 +490,18 @@ export const soundboard: Feature = {
           const file = i.options.getAttachment('file', true);
           const emojiInput = i.options.getString('emoji');
           const ext = path.extname(file.name).toLowerCase();
-          if (!NAME_PATTERN.test(name)) return i.reply({ content: 'Name can only use lowercase letters, numbers, - and _.', ...ephemeral });
-          if (!EXTENSIONS.includes(ext)) return i.reply({ content: `Unsupported file type. Use one of: ${EXTENSIONS.join(', ')}`, ...ephemeral });
-          if (file.size > MAX_BYTES) return i.reply({ content: 'File is over 5 MB.', ...ephemeral });
-          const emoji = emojiInput ? await parseEmoji(i, emojiInput) : null;
+          const problem = uploadProblem(name, ext, file.size);
+          if (problem) return i.reply({ content: problem, ...ephemeral });
+          const emoji = emojiInput ? await parseEmoji(i.guild, emojiInput) : null;
           if (emoji && 'error' in emoji) return i.reply({ content: emoji.error, ...ephemeral });
 
           await i.deferReply();
           const res = await fetch(file.url, { signal: requestTimeout() });
           if (!res.ok) return i.editReply(`Download failed (HTTP ${res.status}).`);
-          const existing = findSound(i.guildId, name);
-          if (!(await saveUpload(i.guildId, name, ext, Buffer.from(await res.arrayBuffer())))) {
-            return i.editReply(`**${file.name}** doesn’t have any audio I can read, so I didn’t save it.`);
-          }
-          // Replacing a sound keeps its emoji unless a new one was given
-          if (emoji) setEmoji(i.guildId, name, emoji.emoji);
-
-          const sound = findSound(i.guildId, name)!;
-          const problem = await discordBoard.upload(i.guild, sound, VOLUME);
-          // A replaced sound that no longer fits mustn't leave the old audio on Discord's soundboard
-          if (problem) await discordBoard.remove(i.guild, name).catch(() => {});
-          const note = problem ? `\nBot soundboard only: ${problem}.` : '\n🟦 Also added to Discord’s soundboard.';
-          await i.editReply(`${existing ? '♻️ Replaced' : '➕ Added'} sound ${emoji ? emoji.emoji + ' ' : ''}**${name}**.${note}`);
+          const added = await addSound(i.guild, name, ext, Buffer.from(await res.arrayBuffer()), emoji?.emoji);
+          if (!added) return i.editReply(`**${file.name}** doesn’t have any audio I can read, so I didn’t save it.`);
+          const note = added.problem ? `\nBot soundboard only: ${added.problem}.` : '\n🟦 Also added to Discord’s soundboard.';
+          await i.editReply(`${added.replaced ? '♻️ Replaced' : '➕ Added'} sound ${emoji ? emoji.emoji + ' ' : ''}**${name}**.${note}`);
           return refreshPanels(i.client, i.guildId);
         }
 
@@ -439,10 +509,9 @@ export const soundboard: Feature = {
           const sound = findSound(i.guildId, i.options.getString('name', true));
           if (!sound) return i.reply({ content: 'No sound by that name.', ...ephemeral });
           const emojiInput = i.options.getString('emoji');
-          const emoji = emojiInput ? await parseEmoji(i, emojiInput) : null;
+          const emoji = emojiInput ? await parseEmoji(i.guild, emojiInput) : null;
           if (emoji && 'error' in emoji) return i.reply({ content: emoji.error, ...ephemeral });
-          setEmoji(i.guildId, sound.name, emoji?.emoji ?? null);
-          await discordBoard.setEmoji(i.guild, sound.name, emoji?.emoji ?? null);
+          await changeEmoji(i.guild, sound.name, emoji?.emoji ?? null);
           await i.reply({ content: emoji ? `${emoji.emoji} set on **${sound.name}**.` : `Cleared the emoji on **${sound.name}**.`, ...ephemeral });
           return refreshPanels(i.client, i.guildId);
         }
@@ -450,12 +519,7 @@ export const soundboard: Feature = {
         if (sub === 'remove') {
           const sound = findSound(i.guildId, i.options.getString('name', true));
           if (!sound) return i.reply({ content: 'No sound by that name.', ...ephemeral });
-          const problem = await discordBoard.remove(i.guild, sound.name).then(
-            () => null,
-            (err: Error) => err.message,
-          );
-          rmSync(sound.file);
-          setEmoji(i.guildId, sound.name, null);
+          const problem = await removeSound(i.guild, sound);
           await i.reply(`🗑️ Removed sound **${sound.name}**.${problem ? `\nCouldn’t remove it from Discord’s soundboard: ${problem}.` : ''}`);
           return refreshPanels(i.client, i.guildId);
         }
@@ -464,7 +528,7 @@ export const soundboard: Feature = {
           const sound = findSound(i.guildId, i.options.getString('name', true));
           if (!sound) return i.reply({ content: 'No sound by that name.', ...ephemeral });
           await i.deferReply();
-          const problem = await discordBoard.upload(i.guild, sound, VOLUME, i.options.getNumber('start') ?? undefined);
+          const problem = await addToDiscord(i.guild, sound, i.options.getNumber('start') ?? undefined);
           if (problem) return i.editReply(`Couldn’t add **${sound.name}** to Discord’s soundboard: ${problem}.`);
           const { used, total } = await discordBoard.slots(i.guild);
           await i.editReply(`🟦 **${sound.name}** is on Discord’s soundboard (${used}/${total} slots used).`);
@@ -484,29 +548,7 @@ export const soundboard: Feature = {
 
         if (sub === 'discord-sync') {
           await i.deferReply();
-          await discordBoard.reconcile(i.guild);
-          const added: string[] = [];
-          const tooLong: string[] = [];
-          const failed: string[] = [];
-          const waiting: string[] = [];
-          let blocker: string | null = null;
-          for (const sound of listSounds(i.guildId).filter((s) => !s.onDiscord)) {
-            if (blocker) {
-              waiting.push(sound.name);
-              continue;
-            }
-            if (!discordBoard.fits(await discordBoard.durationOf(sound.file).catch(() => Infinity))) {
-              tooLong.push(sound.name);
-              continue;
-            }
-            const problem = await discordBoard.upload(i.guild, sound, VOLUME);
-            if (!problem) added.push(sound.name);
-            else if (problem === discordBoard.FULL || problem === discordBoard.NO_PERMISSION) {
-              blocker = problem;
-              waiting.push(sound.name);
-            } else failed.push(`${sound.name} (${problem})`);
-          }
-
+          const { added, tooLong, failed, waiting, blocker } = await syncToDiscord(i.guild);
           const { used, total } = await discordBoard.slots(i.guild);
           const lines = [
             added.length ? `🟦 Added to Discord’s soundboard: ${added.join(', ')}` : 'Nothing new to add to Discord’s soundboard.',

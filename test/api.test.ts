@@ -1,0 +1,414 @@
+import './helpers.ts';
+import { ChannelType, Collection, PermissionFlagsBits } from 'discord.js';
+import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { request } from 'node:http';
+import { after, before, beforeEach, mock, test } from 'node:test';
+import path from 'node:path';
+import type { AddressInfo } from 'node:net';
+import { createApi, webApi } from '../src/api.ts';
+import { config } from '../src/config.ts';
+import { db } from '../src/db.ts';
+import { setting, setSetting } from '../src/settings.ts';
+
+const TOKEN = 'secret';
+const GUILD = 'g1';
+const soundFolder = path.join(process.env.DATA_DIR!, 'sounds', GUILD);
+
+const wav = (seconds = 0.2) =>
+  execFileSync('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', `sine=frequency=440:duration=${seconds}`, '-f', 'wav', 'pipe:1'], {
+    maxBuffer: 16 * 1024 * 1024,
+  });
+
+let discordSounds: Map<string, { name: string }>;
+let nextSoundId = 0;
+let panelEdits: unknown[][];
+let permitted: bigint[];
+
+const channel = (id: string, name: string, type: ChannelType, rawPosition: number) => ({
+  id,
+  name,
+  type,
+  rawPosition,
+  parent: { name: 'Chat' },
+  permissionsFor: () => ({ has: (flag: bigint) => permitted.includes(flag) }),
+  toString: () => `<#${id}>`,
+});
+const role = (id: string, name: string, position: number, extra = {}) => ({ id, name, position, managed: false, mentionable: true, guild: null as unknown, toString: () => `<@&${id}>`, ...extra });
+
+const roles = new Map([
+  [GUILD, role(GUILD, '@everyone', 0)],
+  ['r1', role('r1', 'Gamers', 1)],
+  ['r2', role('r2', 'Bot role', 2, { managed: true })],
+  ['333', role('333', 'Mods', 5)],
+]);
+const me = { permissions: { has: () => true }, roles: { highest: { name: 'Slopkeeper', position: 3 } } };
+for (const r of roles.values()) r.guild = { members: { me } };
+
+const guild = {
+  id: GUILD,
+  name: 'Test server',
+  iconURL: () => null,
+  premiumTier: 0,
+  members: { me },
+  channels: {
+    cache: new Map([
+      ['c2', channel('c2', 'second', ChannelType.GuildText, 2)],
+      ['111', channel('111', 'first', ChannelType.GuildAnnouncement, 1)],
+      ['v1', channel('v1', 'voice', ChannelType.GuildVoice, 3)],
+    ]),
+  },
+  roles: { cache: roles },
+  emojis: {
+    cache: new Collection([['123456789012345678', { id: '123456789012345678', name: 'slop', animated: false, toString: () => '<:slop:123456789012345678>' }]]),
+    fetch: async (id: string) => {
+      if (id !== '123456789012345678') throw new Error('Unknown Emoji');
+      return { id };
+    },
+  },
+  soundboardSounds: {
+    fetch: async () => new Map(discordSounds),
+    create: async ({ name }: { name: string }) => {
+      const soundId = `s${++nextSoundId}`;
+      discordSounds.set(soundId, { name });
+      return { soundId };
+    },
+    edit: async (id: string, data: { name?: string }) => {
+      const sound = discordSounds.get(id)!;
+      if (data.name) sound.name = data.name;
+    },
+    delete: async (id: string) => void discordSounds.delete(id),
+  },
+};
+
+const client = {
+  guilds: { cache: new Map([[GUILD, guild]]) },
+  channels: {
+    fetch: async () => ({
+      isTextBased: () => true,
+      messages: { edit: async (...args: unknown[]) => void panelEdits.push(args) },
+    }),
+  },
+} as never;
+
+const server = createApi(client, TOKEN);
+let base: string;
+
+before(async () => {
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  mock.method(console, 'log', () => {});
+});
+after(() => {
+  server.close();
+  server.closeAllConnections();
+  mock.restoreAll();
+});
+
+beforeEach(() => {
+  discordSounds = new Map();
+  panelEdits = [];
+  permitted = [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.EmbedLinks];
+  db.exec('DELETE FROM sound_emoji; DELETE FROM discord_sounds; DELETE FROM sound_plays; DELETE FROM guild_settings; DELETE FROM sound_panels');
+  db.prepare("INSERT INTO sound_panels (message_id, guild_id, channel_id, page) VALUES ('m', ?, '111', 0)").run(GUILD);
+  if (existsSync(soundFolder)) for (const f of readdirSync(soundFolder)) execFileSync('rm', [path.join(soundFolder, f)]);
+});
+
+function call(url: string, init: RequestInit & { json?: unknown } = {}) {
+  const { json, ...rest } = init;
+  return fetch(base + url, {
+    ...rest,
+    headers: { authorization: `Bearer ${TOKEN}`, ...rest.headers },
+    ...(json !== undefined && { body: JSON.stringify(json) }),
+  });
+}
+
+async function ok(url: string, init?: RequestInit & { json?: unknown }) {
+  const res = await call(url, init);
+  const body = (await res.json()) as any;
+  assert.equal(res.status, 200, JSON.stringify(body));
+  return body;
+}
+
+async function refused(status: number, url: string, init?: RequestInit & { json?: unknown }): Promise<string> {
+  const res = await call(url, init);
+  const body = (await res.json()) as any;
+  assert.equal(res.status, status, JSON.stringify(body));
+  return body.error;
+}
+
+const upload = (name: string, file = 'clip.wav', body: BodyInit = wav() as BodyInit) => call(`/guilds/${GUILD}/sounds/${name}?file=${file}`, { method: 'PUT', body });
+const sounds = async () => (await ok(`/guilds/${GUILD}/sounds`)).sounds as any[];
+
+test('every route needs the token', async () => {
+  for (const authorization of [undefined, 'Bearer wrong', TOKEN]) {
+    const res = await fetch(`${base}/guilds`, { headers: authorization ? { authorization } : {} });
+    assert.equal(res.status, 401);
+  }
+  const res = await fetch(`${base}/guilds/${GUILD}/settings/timezone`, { method: 'PUT', body: '{"value":"UTC"}' });
+  assert.equal(res.status, 401);
+  assert.notEqual(setting(GUILD, 'timezone'), 'UTC');
+});
+
+test('lists servers, and refuses one the bot isn’t in', async () => {
+  assert.deepEqual((await ok('/guilds')).guilds, [{ id: GUILD, name: 'Test server', icon: null }]);
+  assert.match(await refused(404, '/guilds/other/sounds'), /isn’t in that server/);
+});
+
+test('uploads a sound, copies it to Discord and updates the posted panels', async () => {
+  const res = await upload('horn');
+  assert.deepEqual(await res.json(), { replaced: false, discordProblem: null });
+  assert.equal(res.status, 200);
+  const [sound] = await sounds();
+  assert.equal(sound.name, 'horn');
+  assert.equal(sound.onDiscord, true);
+  assert.equal(sound.fitsDiscord, true);
+  assert.ok(Math.abs(sound.seconds - 0.2) < 0.05);
+  assert.equal(discordSounds.size, 1);
+  assert.equal(panelEdits.length, 1);
+});
+
+test('replacing keeps the sound and says so', async () => {
+  await upload('horn', 'a.wav');
+  const res = await upload('horn', 'b.wav');
+  assert.equal(((await res.json()) as any).replaced, true);
+  assert.equal((await sounds()).length, 1);
+});
+
+test('a sound too long for Discord stays on the bot, with a reason in plain text', async () => {
+  const res = await upload('long', 'long.wav', wav(7) as BodyInit);
+  const { discordProblem } = (await res.json()) as any;
+  assert.equal(discordProblem, 'it’s 7.0 s long and Discord allows 5 s; turn on its Discord switch to pick a part');
+  const [sound] = await sounds();
+  assert.equal(sound.onDiscord, false);
+  assert.equal(sound.fitsDiscord, false);
+});
+
+test('turns down uploads the /sound command would', async () => {
+  assert.match(await (await upload('Bad%20Name')).json().then((b: any) => b.error), /lowercase/);
+  assert.match(await (await upload('ok', 'notes.txt')).json().then((b: any) => b.error), /Unsupported/);
+  const fake = await upload('fake', 'fake.mp3', Buffer.from('not audio') as BodyInit);
+  assert.equal(fake.status, 400);
+  assert.equal((await sounds()).length, 0);
+});
+
+test('a name can’t reach outside the server’s sound folder', async () => {
+  assert.equal((await upload('..%2F..%2Fescape')).status, 400);
+  assert.equal(existsSync(path.join(process.env.DATA_DIR!, 'escape.wav')), false);
+  await refused(404, `/guilds/${GUILD}/sounds/..%2F..%2Fbot.db/audio`);
+  await upload('horn');
+  const res = await call(`/guilds/${GUILD}/sounds/horn`, { method: 'PATCH', json: { name: '../escape' } });
+  assert.equal(res.status, 400);
+  assert.equal((await sounds())[0].name, 'horn');
+});
+
+test('an oversized upload is refused without being stored', async () => {
+  const res = await upload('big', 'big.wav', Buffer.alloc(6 * 1024 * 1024) as BodyInit);
+  assert.equal(res.status, 400);
+  assert.match(((await res.json()) as any).error, /over 5 MB/);
+  assert.equal((await sounds()).length, 0);
+});
+
+test('an upload that doesn’t declare its size is cut off at the limit', async () => {
+  const status = await new Promise((resolve, reject) => {
+    const req = request(`${base}/guilds/${GUILD}/sounds/big?file=big.wav`, { method: 'PUT', headers: { authorization: `Bearer ${TOKEN}` } }, (res) => {
+      res.resume();
+      resolve(res.statusCode);
+    });
+    req.on('error', reject);
+    // Written separately, or Node would declare the size
+    req.write(Buffer.alloc(6 * 1024 * 1024));
+    req.end();
+  });
+  assert.equal(status, 413);
+  assert.equal((await sounds()).length, 0);
+});
+
+test('refuses a server that isn’t on the allowed list, even if the bot is still in it', async () => {
+  Object.assign(config, { allowedGuildIds: ['someone-else'] });
+  await refused(404, `/guilds/${GUILD}/sounds`);
+  assert.deepEqual((await ok('/guilds')).guilds, []);
+  Object.assign(config, { allowedGuildIds: null });
+});
+
+test('serves a sound’s audio', async () => {
+  const data = wav();
+  await upload('horn', 'horn.wav', data as BodyInit);
+  const res = await call(`/guilds/${GUILD}/sounds/horn/audio`);
+  assert.equal(res.headers.get('content-type'), 'audio/wav');
+  assert.deepEqual(Buffer.from(await res.arrayBuffer()), Buffer.from(data));
+});
+
+test('renames a sound everywhere and keeps its play counts', async () => {
+  await upload('horn');
+  await ok(`/guilds/${GUILD}/sounds/horn`, { method: 'PATCH', json: { emoji: '🎺' } });
+  db.prepare('INSERT INTO sound_plays (guild_id, user_id, name, played_at) VALUES (?, ?, ?, ?)').run(GUILD, 'u', 'horn', 1);
+  panelEdits = [];
+
+  await ok(`/guilds/${GUILD}/sounds/horn`, { method: 'PATCH', json: { name: 'trumpet' } });
+
+  const [sound] = await sounds();
+  assert.equal(sound.name, 'trumpet');
+  assert.equal(sound.emoji, '🎺');
+  assert.equal(sound.onDiscord, true);
+  assert.equal([...discordSounds.values()][0].name, 'trumpet');
+  assert.deepEqual(readdirSync(soundFolder), ['trumpet.wav']);
+  assert.equal((db.prepare('SELECT name FROM sound_plays').get() as any).name, 'trumpet');
+  assert.equal(panelEdits.length, 1);
+});
+
+test('a rename Discord refuses changes nothing', async () => {
+  await upload('horn');
+  const error = await refused(400, `/guilds/${GUILD}/sounds/horn`, { method: 'PATCH', json: { name: 'x' } });
+  assert.match(error, /at least 2/);
+  assert.deepEqual(readdirSync(soundFolder), ['horn.wav']);
+  assert.equal([...discordSounds.values()][0].name, 'horn');
+});
+
+test('won’t rename onto another sound', async () => {
+  await upload('horn', 'horn.wav');
+  await upload('bell', 'bell.wav');
+  assert.match(await refused(400, `/guilds/${GUILD}/sounds/horn`, { method: 'PATCH', json: { name: 'bell' } }), /already a sound called bell/);
+  assert.equal((await sounds()).length, 2);
+});
+
+test('sets and clears emoji, with the same rules as /sound emoji', async () => {
+  await upload('horn');
+  const patch = (emoji: unknown) => ({ method: 'PATCH', json: { emoji } });
+  await ok(`/guilds/${GUILD}/sounds/horn`, patch('<:slop:123456789012345678>'));
+  assert.equal((await sounds())[0].emoji, '<:slop:123456789012345678>');
+  assert.match(await refused(400, `/guilds/${GUILD}/sounds/horn`, patch('<:other:999999999999999999>')), /from this server/);
+  assert.match(await refused(400, `/guilds/${GUILD}/sounds/horn`, patch('words')), /single emoji/);
+  await ok(`/guilds/${GUILD}/sounds/horn`, patch(null));
+  assert.equal((await sounds())[0].emoji, null);
+});
+
+test('deletes a sound from the bot and from Discord', async () => {
+  await upload('horn');
+  await ok(`/guilds/${GUILD}/sounds/horn`, { method: 'DELETE' });
+  assert.equal((await sounds()).length, 0);
+  assert.equal(discordSounds.size, 0);
+  await refused(404, `/guilds/${GUILD}/sounds/horn`, { method: 'DELETE' });
+});
+
+test('takes a sound off Discord and puts part of a long one on', async () => {
+  await upload('horn');
+  await ok(`/guilds/${GUILD}/sounds/horn/discord`, { method: 'DELETE' });
+  assert.equal((await sounds())[0].onDiscord, false);
+  assert.equal(discordSounds.size, 0);
+
+  await upload('long', 'long.wav', wav(7) as BodyInit);
+  assert.match(await refused(400, `/guilds/${GUILD}/sounds/long/discord`, { method: 'PUT', json: {} }), /7\.0 s long/);
+  await ok(`/guilds/${GUILD}/sounds/long/discord`, { method: 'PUT', json: { start: 1 } });
+  assert.equal(discordSounds.size, 1);
+  await refused(400, `/guilds/${GUILD}/sounds/long/discord`, { method: 'PUT', json: { start: 'soon' } });
+});
+
+test('syncs what fits and reports the rest', async () => {
+  await upload('horn', 'horn.wav');
+  await upload('long', 'long.wav', wav(7) as BodyInit);
+  discordSounds.clear();
+  const result = await ok(`/guilds/${GUILD}/discord-sync`, { method: 'POST' });
+  assert.deepEqual(result.added, ['horn']);
+  assert.deepEqual(result.tooLong, ['long']);
+  assert.equal(result.blocker, null);
+});
+
+test('reports each setting with where it comes from', async () => {
+  setSetting(GUILD, 'hopOnMinPeople', 4);
+  const { settings, channels, roles: listed, timeZones } = await ok(`/guilds/${GUILD}/settings`);
+  const min = settings.find((s: any) => s.key === 'hopOnMinPeople');
+  assert.deepEqual([min.value, min.default, min.source, min.limits], [4, 2, 'set here', [2, 25]]);
+  assert.equal(settings.find((s: any) => s.key === 'recapMinMinutes').source, 'default');
+  assert.deepEqual(channels.map((c: any) => c.name), ['first', 'second']);
+  assert.deepEqual(listed.map((r: any) => r.name), ['Mods', 'Gamers']);
+  assert.ok(timeZones.includes('America/Chicago'));
+});
+
+test('changes and resets a setting', async () => {
+  await ok(`/guilds/${GUILD}/settings/hopOnMinPeople`, { method: 'PUT', json: { value: 5 } });
+  assert.equal(setting(GUILD, 'hopOnMinPeople'), 5);
+  await ok(`/guilds/${GUILD}/settings/hopOnMinPeople`, { method: 'DELETE' });
+  assert.equal(setting(GUILD, 'hopOnMinPeople'), 2);
+});
+
+test('holds settings to the limits /setup has', async () => {
+  const put = (key: string, value: unknown) => ({ url: `/guilds/${GUILD}/settings/${key}`, init: { method: 'PUT', json: { value } } });
+  for (const [key, value] of [
+    ['hopOnMinPeople', 1],
+    ['hopOnMinPeople', 26],
+    ['hopOnMinPeople', 2.5],
+    ['hopOnMinPeople', '3'],
+    ['weeklyPostDay', 7],
+    ['weeklyPostHour', 24],
+    ['sessionGraceMin', 0],
+    ['recapMinMinutes', 601],
+    ['gameNightReminderMin', -1],
+    ['timezone', 'Mars/Olympus'],
+    ['steamCountry', 'usa'],
+    ['freeGames', 'yes'],
+    ['announceChannel', 'v1'],
+    ['announceChannel', 'nope'],
+    ['hopOnRole', GUILD],
+    ['hopOnRole', 'r2'],
+    ['hopOnRole', 'nope'],
+  ] as const) {
+    const { url, init } = put(key, value);
+    await refused(400, url, init);
+    assert.equal((db.prepare('SELECT COUNT(*) AS n FROM guild_settings').get() as any).n, 0, `${key} ${value}`);
+  }
+  await refused(404, `/guilds/${GUILD}/settings/constructor`, { method: 'PUT', json: { value: 1 } });
+  await refused(400, `/guilds/${GUILD}/settings/hopOnMinPeople`, { method: 'PUT', body: 'not json' });
+});
+
+test('refuses a channel the bot can’t post in, naming it in plain text', async () => {
+  permitted = [PermissionFlagsBits.ViewChannel];
+  const error = await refused(400, `/guilds/${GUILD}/settings/announceChannel`, { method: 'PUT', json: { value: '111' } });
+  assert.equal(error, 'I can’t post in #first yet. Give my role Send Messages, Embed Links there, then run this again.');
+});
+
+test('warns about a role the bot can’t hand out yet', async () => {
+  const { warning } = await ok(`/guilds/${GUILD}/settings/hopOnRole`, { method: 'PUT', json: { value: '333' } });
+  assert.match(warning, /above @Mods/);
+  assert.equal(setting(GUILD, 'hopOnRole'), '333');
+  assert.equal((await ok(`/guilds/${GUILD}/settings/hopOnRole`, { method: 'PUT', json: { value: 'r1' } })).warning, undefined);
+});
+
+test('stores values in the form /setup does', async () => {
+  await ok(`/guilds/${GUILD}/settings/steamCountry`, { method: 'PUT', json: { value: 'GB' } });
+  assert.equal(setting(GUILD, 'steamCountry'), 'gb');
+  await ok(`/guilds/${GUILD}/settings/freeGames`, { method: 'PUT', json: { value: true } });
+  assert.equal(setting(GUILD, 'freeGames'), true);
+  await ok(`/guilds/${GUILD}/settings/monthlyRecap`, { method: 'PUT', json: { value: false } });
+  assert.equal(setting(GUILD, 'monthlyRecap'), false);
+  await ok(`/guilds/${GUILD}/settings/timezone`, { method: 'PUT', json: { value: ' Europe/London ' } });
+  assert.equal(setting(GUILD, 'timezone'), 'Europe/London');
+});
+
+test('stays off without a token', async () => {
+  const listening = mock.fn();
+  await webApi.setup?.({ ...(client as object), on: listening } as never);
+  await assert.rejects(fetch(`http://127.0.0.1:${config.apiPort}/guilds`, { headers: { authorization: `Bearer ${TOKEN}` } }));
+  webApi.shutdown?.();
+});
+
+test('listens on the configured port with a token, and stops on shutdown', async () => {
+  const url = 'http://127.0.0.1:18787/guilds';
+  Object.assign(config, { apiToken: TOKEN, apiPort: 18787 });
+  await webApi.setup?.(client);
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.equal((await fetch(url, { headers: { authorization: `Bearer ${TOKEN}` } })).status, 200);
+  webApi.shutdown?.();
+  Object.assign(config, { apiToken: null });
+  await assert.rejects(fetch(url));
+});
+
+test('a read never changes anything', async () => {
+  await upload('horn');
+  panelEdits = [];
+  await sounds();
+  await ok(`/guilds/${GUILD}/settings`);
+  assert.equal(panelEdits.length, 0);
+  assert.ok(readFileSync(path.join(soundFolder, 'horn.wav')).length > 0);
+});

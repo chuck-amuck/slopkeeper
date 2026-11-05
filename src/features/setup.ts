@@ -5,7 +5,9 @@ import {
   PermissionFlagsBits,
   SlashCommandBuilder,
   type ChatInputCommandInteraction,
+  type Guild,
   type GuildBasedChannel,
+  type Role,
 } from 'discord.js';
 import { DEFAULT_ENV, DEFAULTS, setSetting, setting, storedSetting, type SettingKey } from '../settings.ts';
 import type { Feature } from '../types.ts';
@@ -17,10 +19,21 @@ const ANNOUNCE_PERMISSIONS = [
   [PermissionFlagsBits.EmbedLinks, 'Embed Links'],
 ] as const;
 
+// Discord enforces these on the /setup options; checkSetting does for anything else
+export const LIMITS = {
+  weeklyPostDay: [0, 6],
+  weeklyPostHour: [0, 23],
+  hopOnMinPeople: [2, 25],
+  hopOnCooldownMin: [0, 1440],
+  recapMinMinutes: [1, 600],
+  sessionGraceMin: [1, 60],
+  gameNightReminderMin: [0, 1440],
+} as const;
+
 const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 const TIME_ZONES = Intl.supportedValuesOf('timeZone');
 
-const LABELS: Record<SettingKey, string> = {
+export const LABELS: Record<SettingKey, string> = {
   announceChannel: 'Announce channel',
   hopOnRole: 'Hop-on role',
   timezone: 'Time zone',
@@ -68,13 +81,66 @@ function show(key: SettingKey, value: unknown): string {
 }
 
 /** Why the bot can't post in a channel, or null if it can */
-function cantPost(i: ChatInputCommandInteraction<'cached'>, channel: GuildBasedChannel): string | null {
-  const perms = channel.permissionsFor(i.guild.members.me!);
+function cantPost(guild: Guild, channel: GuildBasedChannel): string | null {
+  const perms = channel.permissionsFor(guild.members.me!);
   const missing = ANNOUNCE_PERMISSIONS.filter(([flag]) => !perms?.has(flag)).map(([, name]) => name);
   return missing.length ? `I can’t post in ${channel} yet. Give my role **${missing.join('**, **')}** there, then run this again.` : null;
 }
 
-function source(guildId: string, key: SettingKey): string {
+/** Why a role can't be the hop-on role, or null if it can */
+function cantHandOut(guild: Guild, role: Role): string | null {
+  return role.id === guild.id || role.managed ? `${role} can’t be handed out. Make a normal role for hop-on pings.` : null;
+}
+
+/** What has to change before people can opt in to a role */
+function roleWarning(guild: Guild, role: Role): string {
+  // Discord only lets a bot give out roles below its own highest role
+  const me = guild.members.me!;
+  const problems: string[] = [];
+  if (!me.permissions.has(PermissionFlagsBits.ManageRoles)) problems.push('my role needs the **Manage Roles** permission');
+  if (role.position >= me.roles.highest.position) {
+    problems.push(`drag my role (**${me.roles.highest.name}**) above ${role} in Server Settings → Roles`);
+  }
+  return `${problems.length ? `\n⚠️ Before /notify works: ${problems.join(', and ')}.` : ''}${pingWarning(role)}`;
+}
+
+type Checked = { value: string | number | boolean; warning?: string } | { error: string };
+
+/** Checks a setting's value by the same rules as /setup. Returns what to store, or why it can't be */
+export function checkSetting(guild: Guild, key: SettingKey, value: unknown): Checked {
+  if (key in LIMITS) {
+    const [min, max] = LIMITS[key as keyof typeof LIMITS];
+    if (!Number.isInteger(value) || (value as number) < min || (value as number) > max) return { error: `${LABELS[key]} has to be a whole number from ${min} to ${max}.` };
+    return { value: value as number };
+  }
+  switch (key) {
+    case 'announceChannel':
+    case 'freeGamesChannel': {
+      const channel = guild.channels.cache.get(String(value));
+      if (channel?.type !== ChannelType.GuildText && channel?.type !== ChannelType.GuildAnnouncement) return { error: 'Pick a text channel.' };
+      const problem = cantPost(guild, channel);
+      return problem ? { error: problem } : { value: channel.id };
+    }
+    case 'hopOnRole': {
+      const role = guild.roles.cache.get(String(value));
+      if (!role) return { error: 'Pick a role.' };
+      const problem = cantHandOut(guild, role);
+      return problem ? { error: problem } : { value: role.id, warning: roleWarning(guild, role).trim() || undefined };
+    }
+    case 'timezone': {
+      const zone = String(value).trim();
+      return isTimeZone(zone) ? { value: zone } : { error: `**${zone}** isn’t a time zone I know. Pick one from the list, e.g. America/Chicago.` };
+    }
+    case 'steamCountry': {
+      const country = String(value).toLowerCase();
+      return /^[a-z]{2}$/.test(country) ? { value: country } : { error: 'Use a two-letter country code, like us or gb.' };
+    }
+    default:
+      return typeof value === 'boolean' ? { value } : { error: `${LABELS[key]} is either on or off.` };
+  }
+}
+
+export function source(guildId: string, key: SettingKey): string {
   if (storedSetting(guildId, key) !== undefined) return 'set here';
   const env = DEFAULT_ENV[key];
   return env && process.env[env] ? `host default (${env})` : 'default';
@@ -120,16 +186,16 @@ export const setup: Feature = {
           s
             .setName('hopon')
             .setDescription('When hop-on pings go out')
-            .addIntegerOption((o) => o.setName('min_people').setDescription('People in a voice channel before pinging').setMinValue(2).setMaxValue(25))
-            .addIntegerOption((o) => o.setName('cooldown_minutes').setDescription('Minutes between pings').setMinValue(0).setMaxValue(1440)),
+            .addIntegerOption((o) => o.setName('min_people').setDescription('People in a voice channel before pinging').setMinValue(LIMITS.hopOnMinPeople[0]).setMaxValue(LIMITS.hopOnMinPeople[1]))
+            .addIntegerOption((o) => o.setName('cooldown_minutes').setDescription('Minutes between pings').setMinValue(LIMITS.hopOnCooldownMin[0]).setMaxValue(LIMITS.hopOnCooldownMin[1])),
         )
         .addSubcommand((s) =>
           s
             .setName('sessions')
             .setDescription('Voice session recaps')
-            .addIntegerOption((o) => o.setName('recap_min_minutes').setDescription('Shortest session that gets a recap').setMinValue(1).setMaxValue(600))
+            .addIntegerOption((o) => o.setName('recap_min_minutes').setDescription('Shortest session that gets a recap').setMinValue(LIMITS.recapMinMinutes[0]).setMaxValue(LIMITS.recapMinMinutes[1]))
             .addIntegerOption((o) =>
-              o.setName('grace_minutes').setDescription('Minutes a channel stays empty before its session ends').setMinValue(1).setMaxValue(60),
+              o.setName('grace_minutes').setDescription('Minutes a channel stays empty before its session ends').setMinValue(LIMITS.sessionGraceMin[0]).setMaxValue(LIMITS.sessionGraceMin[1]),
             ),
         )
         .addSubcommand((s) =>
@@ -142,7 +208,7 @@ export const setup: Feature = {
                 .setDescription('Day of the week')
                 .addChoices(...DAYS.map((name, value) => ({ name, value }))),
             )
-            .addIntegerOption((o) => o.setName('hour').setDescription('Hour, 0–23, in the server’s time zone').setMinValue(0).setMaxValue(23)),
+            .addIntegerOption((o) => o.setName('hour').setDescription('Hour, 0–23, in the server’s time zone').setMinValue(LIMITS.weeklyPostHour[0]).setMaxValue(LIMITS.weeklyPostHour[1])),
         )
         .addSubcommand((s) =>
           s
@@ -172,7 +238,7 @@ export const setup: Feature = {
           s
             .setName('gamenight-reminder')
             .setDescription('How long before a game night to ping the people who are in')
-            .addIntegerOption((o) => o.setName('minutes').setDescription('0 turns reminders off').setRequired(true).setMinValue(0).setMaxValue(1440)),
+            .addIntegerOption((o) => o.setName('minutes').setDescription('0 turns reminders off').setRequired(true).setMinValue(LIMITS.gameNightReminderMin[0]).setMaxValue(LIMITS.gameNightReminderMin[1])),
         )
         .addSubcommand((s) =>
           s
@@ -203,11 +269,10 @@ export const setup: Feature = {
       async run(i) {
         if (!i.inCachedGuild()) return i.reply({ content: 'Use this in a server.', flags: MessageFlags.Ephemeral });
         const sub = i.options.getSubcommand();
-        const me = i.guild.members.me!;
 
         if (sub === 'announce-channel') {
           const channel = i.options.getChannel('channel', true, [ChannelType.GuildText, ChannelType.GuildAnnouncement]);
-          const problem = cantPost(i, channel);
+          const problem = cantPost(i.guild, channel);
           if (problem) return i.reply({ content: problem, flags: MessageFlags.Ephemeral });
           return apply(i, [['announceChannel', channel.id]]);
         }
@@ -215,18 +280,11 @@ export const setup: Feature = {
         if (sub === 'hopon-role') {
           const role = i.options.getRole('role');
           if (!role) return apply(i, [['hopOnRole', '']]);
-          if (role.id === i.guildId || role.managed) {
-            return i.reply({ content: `${role} can’t be handed out. Make a normal role for hop-on pings.`, flags: MessageFlags.Ephemeral });
-          }
-          // Discord only lets a bot give out roles below its own highest role
-          const problems: string[] = [];
-          if (!me.permissions.has(PermissionFlagsBits.ManageRoles)) problems.push('my role needs the **Manage Roles** permission');
-          if (role.position >= me.roles.highest.position) {
-            problems.push(`drag my role (**${me.roles.highest.name}**) above ${role} in Server Settings → Roles`);
-          }
+          const problem = cantHandOut(i.guild, role as Role);
+          if (problem) return i.reply({ content: problem, flags: MessageFlags.Ephemeral });
           setSetting(i.guildId, 'hopOnRole', role.id);
           return i.reply({
-            content: `✅ Hop-on pings now ping ${role}; people opt in with \`/notify\`.${problems.length ? `\n⚠️ Before /notify works: ${problems.join(', and ')}.` : ''}${pingWarning(role)}`,
+            content: `✅ Hop-on pings now ping ${role}; people opt in with \`/notify\`.${roleWarning(i.guild, role as Role)}`,
             flags: MessageFlags.Ephemeral,
             allowedMentions: { parse: [] },
           });
@@ -251,20 +309,16 @@ export const setup: Feature = {
           ]);
         }
         if (sub === 'timezone') {
-          const zone = i.options.getString('zone', true).trim();
-          if (!isTimeZone(zone)) {
-            return i.reply({ content: `**${zone}** isn’t a time zone I know. Pick one from the list, e.g. America/Chicago.`, flags: MessageFlags.Ephemeral });
-          }
-          return apply(i, [['timezone', zone]]);
+          const zone = checkSetting(i.guild, 'timezone', i.options.getString('zone', true));
+          return 'error' in zone ? i.reply({ content: zone.error, flags: MessageFlags.Ephemeral }) : apply(i, [['timezone', zone.value]]);
         }
         if (sub === 'steam-region') {
-          const country = i.options.getString('country', true).toLowerCase();
-          if (!/^[a-z]{2}$/.test(country)) return i.reply({ content: 'Use a two-letter country code, like us or gb.', flags: MessageFlags.Ephemeral });
-          return apply(i, [['steamCountry', country]]);
+          const country = checkSetting(i.guild, 'steamCountry', i.options.getString('country', true));
+          return 'error' in country ? i.reply({ content: country.error, flags: MessageFlags.Ephemeral }) : apply(i, [['steamCountry', country.value]]);
         }
         if (sub === 'free-games') {
           const channel = i.options.getChannel('channel', false, [ChannelType.GuildText, ChannelType.GuildAnnouncement]);
-          const problem = channel && cantPost(i, channel);
+          const problem = channel && cantPost(i.guild, channel);
           if (problem) return i.reply({ content: problem, flags: MessageFlags.Ephemeral });
           return apply(i, [
             ['freeGames', i.options.getBoolean('enabled', true)],
