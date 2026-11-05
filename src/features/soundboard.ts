@@ -26,14 +26,17 @@ import {
   type Client,
   type Guild,
   type VoiceBasedChannel,
+  type VoiceState,
 } from 'discord.js';
 import { mkdirSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import { logActivity } from '../activity.ts';
 import { config } from '../config.ts';
 import { db } from '../db.ts';
 import * as discordBoard from '../discordSounds.ts';
+import { measureGain } from '../loudness.ts';
 import { Mixer } from '../mixer.ts';
-import { isAllowed } from '../settings.ts';
+import { isAllowed, setting } from '../settings.ts';
 import type { Feature } from '../types.ts';
 import { humansIn, requestTimeout, servedGuilds } from '../util.ts';
 
@@ -45,6 +48,7 @@ const IDLE_LEAVE_MS = 5 * 60_000;
 const CONNECT_TIMEOUT_MS = 15_000;
 const RECONNECT_TIMEOUT_MS = 5_000;
 const NAME_PATTERN = /^[a-z0-9_-]{1,32}$/;
+export const VOLUME_PERCENT = [25, 200] as const;
 const PAGE_SIZE = 20; // 4 rows of 5 buttons; the fifth row holds the controls
 const CUSTOM_EMOJI = /^<a?:\w{2,32}:(\d{17,20})>$/;
 const UNICODE_EMOJI = /^\p{RGI_Emoji}$/v;
@@ -139,16 +143,76 @@ export function uploadProblem(name: string, ext: string, size: number): string |
   return size > MAX_BYTES ? 'File is over 5 MB.' : null;
 }
 
+/** Each sound's measured gain and picked volume, by name */
+export function soundLevels(guildId: string): Map<string, { gainDb: number | null; percent: number }> {
+  const rows = db.prepare('SELECT name, gain_db, percent FROM sound_levels WHERE guild_id = ?').all(guildId) as { name: string; gain_db: number | null; percent: number }[];
+  return new Map(rows.map((r) => [r.name, { gainDb: r.gain_db, percent: r.percent }]));
+}
+
+/** What a sound's samples get multiplied by. The file itself is never changed, so all of this can be undone */
+export function soundGain(guildId: string, name: string): number {
+  const level = soundLevels(guildId).get(name);
+  const levelled = setting(guildId, 'evenVolume') ? (level?.gainDb ?? 0) : 0;
+  return 10 ** (levelled / 20) * ((level?.percent ?? 100) / 100);
+}
+
+/** Discord's own volume for a sound's copy. It can't go over 1, so that's as far as it can be turned up there */
+export const discordVolume = (guildId: string, name: string) => Math.min(1, Math.round(VOLUME * soundGain(guildId, name) * 100) / 100);
+
+/** Measures a sound, starting from its picked volume being reset, since that was for the audio it had before */
+async function levelSound(guildId: string, sound: Sound, keepPercent = false) {
+  const gain = await measureGain(sound.file).catch((err: Error) => {
+    console.error(`Couldn’t measure ${sound.name} in server ${guildId}:`, err.message);
+    return 0;
+  });
+  db.prepare(
+    `INSERT INTO sound_levels (guild_id, name, gain_db) VALUES (?, ?, ?)
+     ON CONFLICT(guild_id, name) DO UPDATE SET gain_db = excluded.gain_db, percent = ${keepPercent ? 'percent' : 100}`,
+  ).run(guildId, sound.name, gain);
+}
+
+/** Measures sounds from before levelling existed, one at a time so it doesn't get in the way of playback */
+export async function levelLibrary(client: Client<true>) {
+  for (const guild of servedGuilds(client)) {
+    const known = soundLevels(guild.id);
+    const waiting = listSounds(guild.id).filter((s) => (known.get(s.name)?.gainDb ?? null) === null);
+    for (const sound of waiting) {
+      await levelSound(guild.id, sound, true);
+      await discordBoard.setVolume(guild, sound.name, discordVolume(guild.id, sound.name));
+    }
+    if (waiting.length) console.log(`Measured ${waiting.length} sound${waiting.length === 1 ? '' : 's'} in ${guild.name}`);
+  }
+}
+
+/** Sets how loud a sound plays, here and on Discord's soundboard */
+export async function setSoundVolume(guild: Guild, name: string, percent: number) {
+  db.prepare('INSERT INTO sound_levels (guild_id, name, percent) VALUES (?, ?, ?) ON CONFLICT(guild_id, name) DO UPDATE SET percent = excluded.percent').run(guild.id, name, percent);
+  await discordBoard.setVolume(guild, name, discordVolume(guild.id, name));
+}
+
+/** Brings the Discord copies in line after levelling is turned on or off */
+export async function applyLevels(guild: Guild) {
+  for (const name of discordBoard.synced(guild.id).keys()) await discordBoard.setVolume(guild, name, discordVolume(guild.id, name));
+}
+
+export const volumeProblem = (percent: unknown) =>
+  Number.isInteger(percent) && (percent as number) >= VOLUME_PERCENT[0] && (percent as number) <= VOLUME_PERCENT[1] ? null : `Volume has to be a whole number from ${VOLUME_PERCENT[0]} to ${VOLUME_PERCENT[1]}.`;
+
 /**
- * Stores a sound and copies it into Discord's soundboard if it can. Returns null if the file isn't audio,
- * otherwise whether it replaced a sound and why it isn't on Discord, if it isn't.
+ * Stores a sound and copies it into Discord's soundboard if it can, unless told not to. A sound already there is
+ * always updated, or Discord would keep the old audio. Returns null if the file isn't audio, otherwise whether it
+ * replaced a sound and why it isn't on Discord, if it isn't.
  */
-export async function addSound(guild: Guild, name: string, ext: string, data: Buffer, emoji?: string) {
-  const replaced = !!findSound(guild.id, name);
+export async function addSound(guild: Guild, name: string, ext: string, data: Buffer, emoji?: string, toDiscord = true) {
+  const previous = findSound(guild.id, name);
+  const replaced = !!previous;
   if (!(await saveUpload(guild.id, name, ext, data))) return null;
   // Replacing a sound keeps its emoji unless a new one was given
   if (emoji) setEmoji(guild.id, name, emoji);
-  const problem = await discordBoard.upload(guild, findSound(guild.id, name)!, VOLUME);
+  const sound = findSound(guild.id, name)!;
+  await levelSound(guild.id, sound);
+  if (!toDiscord && !previous?.onDiscord) return { replaced, problem: null };
+  const problem = await discordBoard.upload(guild, sound, discordVolume(guild.id, name));
   // A replaced sound that no longer fits mustn't leave the old audio on Discord's soundboard
   if (problem) await discordBoard.remove(guild, name).catch(() => {});
   return { replaced, problem };
@@ -163,6 +227,8 @@ export async function removeSound(guild: Guild, sound: Sound): Promise<string | 
   rmSync(sound.file);
   setEmoji(guild.id, sound.name, null);
   setFavourite(guild.id, sound.name, false);
+  db.prepare('DELETE FROM sound_levels WHERE guild_id = ? AND name = ?').run(guild.id, sound.name);
+  db.prepare('DELETE FROM join_sounds WHERE guild_id = ? AND name = ?').run(guild.id, sound.name);
   return problem;
 }
 
@@ -198,10 +264,12 @@ export async function renameSound(guild: Guild, sound: Sound, name: string): Pro
   db.prepare('UPDATE OR REPLACE sound_emoji SET name = ? WHERE guild_id = ? AND name = ?').run(name, guild.id, sound.name);
   db.prepare('UPDATE sound_plays SET name = ? WHERE guild_id = ? AND name = ?').run(name, guild.id, sound.name);
   db.prepare('UPDATE OR REPLACE sound_favourites SET name = ? WHERE guild_id = ? AND name = ?').run(name, guild.id, sound.name);
+  db.prepare('UPDATE OR REPLACE sound_levels SET name = ? WHERE guild_id = ? AND name = ?').run(name, guild.id, sound.name);
+  db.prepare('UPDATE join_sounds SET name = ? WHERE guild_id = ? AND name = ?').run(name, guild.id, sound.name);
   return null;
 }
 
-export const addToDiscord = (guild: Guild, sound: Sound, start?: number) => discordBoard.upload(guild, sound, VOLUME, start);
+export const addToDiscord = (guild: Guild, sound: Sound, start?: number) => discordBoard.upload(guild, sound, discordVolume(guild.id, sound.name), start);
 
 /** Copies every sound that fits into Discord's soundboard, until it's full */
 export async function syncToDiscord(guild: Guild) {
@@ -220,7 +288,7 @@ export async function syncToDiscord(guild: Guild) {
       tooLong.push(sound.name);
       continue;
     }
-    const problem = await discordBoard.upload(guild, sound, VOLUME);
+    const problem = await discordBoard.upload(guild, sound, discordVolume(guild.id, sound.name));
     if (!problem) added.push(sound.name);
     else if (problem === discordBoard.FULL || problem === discordBoard.NO_PERMISSION) {
       blocker = problem;
@@ -294,7 +362,7 @@ function watch(connection: VoiceConnection, guildId: string) {
 }
 
 /** Plays a sound in a channel. Returns null on success or the reason it couldn't, for the user */
-export async function play(channel: VoiceBasedChannel, file: string): Promise<string | null> {
+export async function play(channel: VoiceBasedChannel, file: string, gain = 1): Promise<string | null> {
   const problem = cantJoin(channel);
   if (problem) return problem;
 
@@ -323,11 +391,11 @@ export async function play(channel: VoiceBasedChannel, file: string): Promise<st
   }
   // Layer onto whatever is already playing (or restart this sound if it's one of them); a fresh mixer is only needed once the last one has gone quiet
   if (a.mixer && !a.mixer.finished) {
-    a.mixer.add(file);
+    a.mixer.add(file, gain);
     return null;
   }
   a.mixer = new Mixer(VOLUME, MAX_VOICES);
-  a.mixer.add(file);
+  a.mixer.add(file, gain);
   a.player.play(createAudioResource(a.mixer, { inputType: StreamType.Raw }));
   return null;
 }
@@ -339,9 +407,42 @@ function recordPlay(guildId: string, userId: string, name: string) {
 
 /** Plays a sound for the web UI, which has nobody to credit. It still counts towards the recap's top sounds */
 export async function playFromWeb(channel: VoiceBasedChannel, sound: Sound): Promise<string | null> {
-  const problem = await play(channel, sound.file);
+  const problem = await play(channel, sound.file, soundGain(channel.guild.id, sound.name));
   if (!problem) recordPlay(channel.guild.id, 'web', sound.name);
   return problem;
+}
+
+/** Everyone's join sounds in a server */
+export function joinSounds(guildId: string) {
+  return db.prepare('SELECT user_id, name FROM join_sounds WHERE guild_id = ? ORDER BY name').all(guildId) as { user_id: string; name: string }[];
+}
+
+export function setJoinSound(guildId: string, userId: string, name: string | null) {
+  if (name) db.prepare('INSERT INTO join_sounds (guild_id, user_id, name) VALUES (?, ?, ?) ON CONFLICT(guild_id, user_id) DO UPDATE SET name = excluded.name').run(guildId, userId, name);
+  else db.prepare('DELETE FROM join_sounds WHERE guild_id = ? AND user_id = ?').run(guildId, userId);
+}
+
+/** Server and person → when their join sound last played */
+const lastJoinSound = new Map<string, number>();
+
+/** Plays someone's join sound as they connect to voice. These aren't clicks, so they stay out of the recap's top sounds */
+export async function playJoinSound(oldState: VoiceState, newState: VoiceState) {
+  const { channel, guild } = newState;
+  // Coming from another channel, or muting, is not joining
+  if (!channel || oldState.channelId || newState.member?.user.bot || channel.id === guild.afkChannelId) return;
+  if (!setting(guild.id, 'joinSounds')) return;
+  const name = joinSounds(guild.id).find((r) => r.user_id === newState.id)?.name;
+  const sound = name && findSound(guild.id, name);
+  if (!sound) return;
+  // One person arriving shouldn't pull the bot away from people using it in another channel
+  const botChannel = getVoiceConnection(guild.id)?.joinConfig.channelId;
+  if (botChannel && botChannel !== channel.id) return;
+  const key = `${guild.id}:${newState.id}`;
+  const now = Date.now();
+  if (now - (lastJoinSound.get(key) ?? -Infinity) < setting(guild.id, 'joinSoundCooldownMin') * 60_000) return;
+  lastJoinSound.set(key, now);
+  const problem = await play(channel, sound.file, soundGain(guild.id, sound.name));
+  if (problem) console.log(`Join sound ${sound.name} in ${guild.name} didn’t play: ${problem}`);
 }
 
 export function stopPlayback(guildId: string) {
@@ -466,6 +567,19 @@ export const soundboard: Feature = {
         )
         .addSubcommand((s) =>
           s
+            .setName('volume')
+            .setDescription('Set how loud one sound plays, for any that even volume doesn’t get right')
+            .addStringOption((o) => o.setName('name').setDescription('Sound').setRequired(true).setAutocomplete(true))
+            .addIntegerOption((o) => o.setName('percent').setDescription('100 is normal').setRequired(true).setMinValue(VOLUME_PERCENT[0]).setMaxValue(VOLUME_PERCENT[1])),
+        )
+        .addSubcommand((s) =>
+          s
+            .setName('join')
+            .setDescription('Pick a sound that plays when you join voice')
+            .addStringOption((o) => o.setName('name').setDescription('Leave empty to stop having one').setAutocomplete(true)),
+        )
+        .addSubcommand((s) =>
+          s
             .setName('discord-add')
             .setDescription('Copy a sound into Discord’s own soundboard')
             .addStringOption((o) => o.setName('name').setDescription('Sound').setRequired(true).setAutocomplete(true))
@@ -505,7 +619,7 @@ export const soundboard: Feature = {
           if (!sound) return i.reply({ content: 'No sound by that name.', ...ephemeral });
           if (!i.member.voice.channel) return i.reply({ content: 'Join a voice channel first.', ...ephemeral });
           await i.deferReply(ephemeral);
-          const problem = await play(i.member.voice.channel, sound.file);
+          const problem = await play(i.member.voice.channel, sound.file, soundGain(i.guildId, sound.name));
           if (!problem) recordPlay(i.guildId, i.user.id, sound.name);
           return i.editReply(problem ?? `🔊 ${sound.name}`);
         }
@@ -525,6 +639,7 @@ export const soundboard: Feature = {
           if (!res.ok) return i.editReply(`Download failed (HTTP ${res.status}).`);
           const added = await addSound(i.guild, name, ext, Buffer.from(await res.arrayBuffer()), emoji?.emoji);
           if (!added) return i.editReply(`**${file.name}** doesn’t have any audio I can read, so I didn’t save it.`);
+          logActivity(i.guildId, i.user.id, `${added.replaced ? 'Replaced' : 'Added'} sound **${name}**`);
           const note = added.problem ? `\nBot soundboard only: ${added.problem}.` : '\n🟦 Also added to Discord’s soundboard.';
           await i.editReply(`${added.replaced ? '♻️ Replaced' : '➕ Added'} sound ${emoji ? emoji.emoji + ' ' : ''}**${name}**.${note}`);
           return refreshPanels(i.client, i.guildId);
@@ -537,6 +652,7 @@ export const soundboard: Feature = {
           const emoji = emojiInput ? await parseEmoji(i.guild, emojiInput) : null;
           if (emoji && 'error' in emoji) return i.reply({ content: emoji.error, ...ephemeral });
           await changeEmoji(i.guild, sound.name, emoji?.emoji ?? null);
+          logActivity(i.guildId, i.user.id, emoji ? `Set the emoji on **${sound.name}**` : `Cleared the emoji on **${sound.name}**`);
           await i.reply({ content: emoji ? `${emoji.emoji} set on **${sound.name}**.` : `Cleared the emoji on **${sound.name}**.`, ...ephemeral });
           return refreshPanels(i.client, i.guildId);
         }
@@ -545,8 +661,34 @@ export const soundboard: Feature = {
           const sound = findSound(i.guildId, i.options.getString('name', true));
           if (!sound) return i.reply({ content: 'No sound by that name.', ...ephemeral });
           const problem = await removeSound(i.guild, sound);
+          logActivity(i.guildId, i.user.id, `Removed sound **${sound.name}**`);
           await i.reply(`🗑️ Removed sound **${sound.name}**.${problem ? `\nCouldn’t remove it from Discord’s soundboard: ${problem}.` : ''}`);
           return refreshPanels(i.client, i.guildId);
+        }
+
+        if (sub === 'volume') {
+          const sound = findSound(i.guildId, i.options.getString('name', true));
+          if (!sound) return i.reply({ content: 'No sound by that name.', ...ephemeral });
+          const percent = i.options.getInteger('percent', true);
+          await i.deferReply(ephemeral);
+          await setSoundVolume(i.guild, sound.name, percent);
+          logActivity(i.guildId, i.user.id, `Set the volume of **${sound.name}** to ${percent}%`);
+          return i.editReply(`🔉 **${sound.name}** plays at ${percent}% now.`);
+        }
+
+        if (sub === 'join') {
+          const name = i.options.getString('name');
+          if (!name) {
+            setJoinSound(i.guildId, i.user.id, null);
+            logActivity(i.guildId, i.user.id, 'Cleared their join sound');
+            return i.reply({ content: 'You don’t have a join sound any more.', ...ephemeral });
+          }
+          const sound = findSound(i.guildId, name);
+          if (!sound) return i.reply({ content: 'No sound by that name.', ...ephemeral });
+          setJoinSound(i.guildId, i.user.id, sound.name);
+          logActivity(i.guildId, i.user.id, `Set their join sound to **${sound.name}**`);
+          const off = setting(i.guildId, 'joinSounds') ? '' : ' Join sounds are turned off in this server for now, so it won’t play until an admin turns them on.';
+          return i.reply({ content: `🚪 **${sound.name}** plays when you join voice.${off}`, ...ephemeral });
         }
 
         if (sub === 'discord-add') {
@@ -555,6 +697,7 @@ export const soundboard: Feature = {
           await i.deferReply();
           const problem = await addToDiscord(i.guild, sound, i.options.getNumber('start') ?? undefined);
           if (problem) return i.editReply(`Couldn’t add **${sound.name}** to Discord’s soundboard: ${problem}.`);
+          logActivity(i.guildId, i.user.id, `Added **${sound.name}** to Discord’s soundboard`);
           const { used, total } = await discordBoard.slots(i.guild);
           await i.editReply(`🟦 **${sound.name}** is on Discord’s soundboard (${used}/${total} slots used).`);
           return refreshPanels(i.client, i.guildId);
@@ -566,6 +709,7 @@ export const soundboard: Feature = {
           if (!sound.onDiscord) return i.reply({ content: `**${sound.name}** isn’t on Discord’s soundboard.`, ...ephemeral });
           await i.deferReply();
           await discordBoard.remove(i.guild, sound.name);
+          logActivity(i.guildId, i.user.id, `Took **${sound.name}** off Discord’s soundboard`);
           const { used, total } = await discordBoard.slots(i.guild);
           await i.editReply(`Took **${sound.name}** off Discord’s soundboard; it’s still on the bot’s (${used}/${total} slots used).`);
           return refreshPanels(i.client, i.guildId);
@@ -574,6 +718,7 @@ export const soundboard: Feature = {
         if (sub === 'discord-sync') {
           await i.deferReply();
           const { added, tooLong, failed, waiting, blocker } = await syncToDiscord(i.guild);
+          if (added.length) logActivity(i.guildId, i.user.id, `Copied ${added.length} sound${added.length === 1 ? '' : 's'} to Discord’s soundboard`);
           const { used, total } = await discordBoard.slots(i.guild);
           const lines = [
             added.length ? `🟦 Added to Discord’s soundboard: ${added.join(', ')}` : 'Nothing new to add to Discord’s soundboard.',
@@ -606,12 +751,16 @@ export const soundboard: Feature = {
     client.on(Events.GuildEmojiDelete, (emoji) => {
       if (isAllowed(emoji.guild.id) && dropMissingEmoji(emoji.guild)) void refreshPanels(client, emoji.guild.id);
     });
-    client.on(Events.VoiceStateUpdate, (_old, state) => {
-      if (isAllowed(state.guild.id)) leaveIfAlone(state.guild);
+    client.on(Events.VoiceStateUpdate, (old, state) => {
+      if (!isAllowed(state.guild.id)) return;
+      leaveIfAlone(state.guild);
+      void playJoinSound(old, state).catch(console.error);
     });
     client.on(Events.GuildSoundboardSoundDelete, (sound) => {
       if (discordBoard.forget(sound.soundId) && sound.guildId) void refreshPanels(client, sound.guildId);
     });
+    // Not waited for: a whole library takes a while the first time, and nothing else depends on it
+    void levelLibrary(client).catch(console.error);
   },
   shutdown() {
     for (const guildId of getVoiceConnections().keys()) leaveVoice(guildId);
@@ -644,7 +793,7 @@ export const soundboard: Feature = {
     if (!i.member.voice.channel) {
       return i.followUp({ content: 'Join a voice channel first.', flags: MessageFlags.Ephemeral });
     }
-    const problem = await play(i.member.voice.channel, sound.file);
+    const problem = await play(i.member.voice.channel, sound.file, soundGain(i.guildId, sound.name));
     if (problem) return i.followUp({ content: problem, flags: MessageFlags.Ephemeral });
     recordPlay(i.guildId, i.user.id, sound.name);
   },

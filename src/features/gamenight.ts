@@ -13,6 +13,7 @@ import {
   type Client,
   type Guild,
 } from 'discord.js';
+import { logActivity } from '../activity.ts';
 import { db } from '../db.ts';
 import { setting } from '../settings.ts';
 import type { Feature } from '../types.ts';
@@ -244,15 +245,28 @@ function newNightPing(guildId: string, game: string) {
   return { content: roles.length ? `${roles.map((r) => `<@&${r}>`).join(' ')} new game night` : undefined, allowedMentions: { roles } };
 }
 
+/** Makes a night and posts its card, for when there's no slash command to reply to */
+async function postNight(client: Client<true>, guild: Guild, fields: NewNight) {
+  const channel = await client.channels.fetch(fields.channel_id).catch(() => null);
+  if (!channel?.isSendable()) throw new Error(`can't post in channel ${fields.channel_id}`);
+
+  const { id, eventId, eventNote } = await addNight(guild, fields);
+  const message = await channel.send({ ...newNightPing(guild.id, fields.game), ...view(getNight(id)!) }).catch(async (err) => {
+    // Otherwise each retry would leave another event behind
+    db.prepare('DELETE FROM game_nights WHERE id = ?').run(id);
+    if (eventId) await guild.scheduledEvents.delete(eventId).catch(() => {});
+    throw err;
+  });
+  db.prepare('UPDATE game_nights SET message_id = ? WHERE id = ?').run(message.id, id);
+  return eventNote;
+}
+
 /** Puts up the next card of a repeating night */
 async function postNext(client: Client<true>, guild: Guild, series: Series, now: number) {
   const timeZone = setting(guild.id, 'timezone');
   // If the bot was down long enough to miss one, go on to the next that's still ahead
   const startsAt = series.next_at > now + 60_000 ? series.next_at : nextOccurrence(series.next_at, series.every_days, now + 60_000, timeZone);
-  const channel = await client.channels.fetch(series.channel_id).catch(() => null);
-  if (!channel?.isSendable()) throw new Error(`can't post in channel ${series.channel_id}`);
-
-  const { id, eventId } = await addNight(guild, {
+  await postNight(client, guild, {
     guild_id: series.guild_id,
     channel_id: series.channel_id,
     game: series.game,
@@ -262,13 +276,6 @@ async function postNext(client: Client<true>, guild: Guild, series: Series, now:
     created_by: series.created_by,
     series_id: series.id,
   });
-  const message = await channel.send({ ...newNightPing(guild.id, series.game), ...view(getNight(id)!) }).catch(async (err) => {
-    // Otherwise each retry would leave another event behind
-    db.prepare('DELETE FROM game_nights WHERE id = ?').run(id);
-    if (eventId) await guild.scheduledEvents.delete(eventId).catch(() => {});
-    throw err;
-  });
-  db.prepare('UPDATE game_nights SET message_id = ? WHERE id = ?').run(message.id, id);
   const next = nextOccurrence(startsAt, series.every_days, startsAt, timeZone);
   db.prepare('UPDATE game_night_series SET next_at = ?, post_at = ? WHERE id = ?').run(next, next - SERIES_LEAD, series.id);
 }
@@ -363,30 +370,61 @@ export function upcomingNights(guildId: string, now: number) {
   };
 }
 
-/** Cancels a night from the web UI, the way its Cancel button does. Returns whether this server has that night */
-export async function cancelNight(client: Client<true>, guild: Guild, id: number): Promise<boolean> {
+/** How a typed time reads in a server, for the web UI to show before anything is posted */
+export function readWhen(guildId: string, text: string) {
+  const timeZone = setting(guildId, 'timezone');
+  const at = parseWhen(text, Date.now(), timeZone);
+  return at === null ? null : { at, label: describe(at, timeZone), passed: at < Date.now() + 60_000 };
+}
+
+function addSeries(fields: Omit<NewNight, 'series_id'>, everyDays: number, timeZone: string): number {
+  const next = nextOccurrence(fields.starts_at, everyDays, fields.starts_at, timeZone);
+  return Number(
+    db
+      .prepare(
+        `INSERT INTO game_night_series (guild_id, channel_id, game, details, voice_channel_id, created_by, every_days, next_at, post_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(fields.guild_id, fields.channel_id, fields.game, fields.details, fields.voice_channel_id, fields.created_by, everyDays, next, next - SERIES_LEAD).lastInsertRowid,
+  );
+}
+
+/** Plans a night from the web UI, the way /gamenight plan does. Returns a note if the Discord event couldn't be made */
+export async function planNight(client: Client<true>, guild: Guild, fields: Omit<NewNight, 'guild_id' | 'series_id'>, everyDays: number | null) {
+  const night = { ...fields, guild_id: guild.id };
+  const seriesId = everyDays ? addSeries(night, everyDays, setting(guild.id, 'timezone')) : null;
+  return postNight(client, guild, { ...night, series_id: seriesId }).catch((err) => {
+    // Otherwise a night that never got posted would start repeating
+    if (seriesId) db.prepare('DELETE FROM game_night_series WHERE id = ?').run(seriesId);
+    throw err;
+  });
+}
+
+/** Cancels a night from the web UI, the way its Cancel button does. Returns the game, or null if this server has no such night */
+export async function cancelNight(client: Client<true>, guild: Guild, id: number): Promise<string | null> {
   const night = getNight(id);
-  if (night?.guild_id !== guild.id) return false;
-  if (night.cancelled) return true;
+  if (night?.guild_id !== guild.id) return null;
+  if (night.cancelled) return night.game;
   await markCancelled(guild, night);
   await refreshCard(client, getNight(id)!);
   const going = rsvps(id).in;
   const channel = await client.channels.fetch(night.channel_id).catch(() => null);
   if (night.starts_at > Date.now() && going.length && channel?.isSendable()) await channel.send(offNotice(night, going));
-  return true;
+  return night.game;
 }
 
-/** Ends a series from the web UI. Nights it already posted stay on. Returns whether this server has that series */
-export async function stopSeries(client: Client<true>, guild: Guild, id: number): Promise<boolean> {
-  if (getSeries(id)?.guild_id !== guild.id) return false;
+/** Ends a series from the web UI. Nights it already posted stay on. Returns the game, or null if this server has no such series */
+export async function stopSeries(client: Client<true>, guild: Guild, id: number): Promise<string | null> {
+  const series = getSeries(id);
+  if (series?.guild_id !== guild.id) return null;
   db.prepare('DELETE FROM game_night_series WHERE id = ?').run(id);
   // Their cards still have the Repeats line and the Stop repeating button
   const nights = db.prepare('SELECT * FROM game_nights WHERE series_id = ? AND starts_at > ?').all(id, Date.now() - 12 * HOUR) as unknown as Night[];
   for (const night of nights) await refreshCard(client, night);
-  return true;
+  return series.game;
 }
 
-function gameNames(guildId: string): string[] {
+export function gameNames(guildId: string): string[] {
   const played = db.prepare('SELECT DISTINCT game FROM game_plays WHERE guild_id = ?').all(guildId) as { game: string }[];
   return [...new Set([...allGames(guildId).map((g) => g.name), ...played.map((r) => r.game)])].sort();
 }
@@ -463,31 +501,13 @@ export const gameNights: Feature = {
         const details = i.options.getString('details');
         const voiceId = i.options.getChannel('voice')?.id ?? null;
         const everyDays = i.options.getInteger('repeat');
-        let seriesId: number | null = null;
-        if (everyDays) {
-          const next = nextOccurrence(startsAt, everyDays, startsAt, timeZone);
-          seriesId = Number(
-            db
-              .prepare(
-                `INSERT INTO game_night_series (guild_id, channel_id, game, details, voice_channel_id, created_by, every_days, next_at, post_at)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-              )
-              .run(i.guildId, i.channelId, game, details, voiceId, i.user.id, everyDays, next, next - SERIES_LEAD).lastInsertRowid,
-          );
-        }
-        const { id, eventNote } = await addNight(i.guild, {
-          guild_id: i.guildId,
-          channel_id: i.channelId,
-          game,
-          details,
-          voice_channel_id: voiceId,
-          starts_at: startsAt,
-          created_by: i.user.id,
-          series_id: seriesId,
-        });
+        const fields = { guild_id: i.guildId, channel_id: i.channelId, game, details, voice_channel_id: voiceId, starts_at: startsAt, created_by: i.user.id };
+        const seriesId = everyDays ? addSeries(fields, everyDays, timeZone) : null;
+        const { id, eventNote } = await addNight(i.guild, { ...fields, series_id: seriesId });
 
         const message = await i.editReply({ ...newNightPing(i.guildId, game), ...view(getNight(id)!) });
         db.prepare('UPDATE game_nights SET message_id = ? WHERE id = ?').run(message.id, id);
+        logActivity(i.guildId, i.user.id, `Planned **${game}** night for ${describe(startsAt, timeZone)}`);
         if (eventNote) await i.followUp({ content: eventNote, flags: MessageFlags.Ephemeral });
       },
     },
@@ -502,6 +522,7 @@ export const gameNights: Feature = {
     if (action === 'stop') {
       if (!canManage) return i.reply({ content: 'Only the host or someone with Manage Events can stop this.', flags: MessageFlags.Ephemeral });
       db.prepare('DELETE FROM game_night_series WHERE id = ?').run(night.series_id);
+      logActivity(night.guild_id, i.user.id, `Stopped **${night.game}** night repeating`);
       return i.update(view(night));
     }
     if (night.cancelled) return i.update({ components: [] });
@@ -509,6 +530,7 @@ export const gameNights: Feature = {
     if (action === 'cancel') {
       if (!canManage) return i.reply({ content: 'Only the host or someone with Manage Events can cancel this.', flags: MessageFlags.Ephemeral });
       await markCancelled(i.guild, night);
+      logActivity(night.guild_id, i.user.id, `Cancelled **${night.game}** night`);
       await i.update(view(getNight(night.id)!));
       const going = rsvps(night.id).in.filter((id) => id !== i.user.id);
       if (night.starts_at > Date.now() && going.length) await i.followUp(offNotice(night, going));

@@ -7,7 +7,9 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { mock, test } from 'node:test';
 import { db } from '../src/db.ts';
-import { cantJoin, dropMissingEmoji, leaveIfAlone, play, saveUpload, soundboard } from '../src/features/soundboard.ts';
+import { recentActivity } from '../src/activity.ts';
+import { cantJoin, dropMissingEmoji, joinSounds, leaveIfAlone, play, playJoinSound, saveUpload, setJoinSound, soundboard, soundGain } from '../src/features/soundboard.ts';
+import { setSetting } from '../src/settings.ts';
 
 /** A voice channel that never answers, like one the bot gets no reply from */
 function channel(guildId: string, options: { missing?: bigint[]; joinable?: boolean } = {}) {
@@ -188,4 +190,137 @@ test('plays are counted for the recap, whether from a panel or /sound play, and 
   await click('blocked', blocked);
   await type('blocked', blocked);
   assert.deepEqual(plays(), ['clicker:horn', 'typer:horn']);
+});
+
+/** A server with a sound called horn, which is someone's join sound. Nothing answers the bot, so a play never finishes: whether it started is the thing to check */
+async function joiner(t: { after(fn: () => void): void }, guildId: string) {
+  await saveUpload(guildId, 'horn', '.wav', wav());
+  setJoinSound(guildId, 'person', 'horn');
+  const voice = channel(guildId) as any;
+  voice.guild.afkChannelId = 'afk';
+  t.after(() => getVoiceConnection(guildId)?.destroy());
+  const state = (channelId: string | null, bot = false) => ({ id: 'person', channelId, channel: channelId ? { ...voice, id: channelId } : null, guild: voice.guild, member: { user: { bot } } }) as never;
+  /** Whether this change of voice state makes the bot head for a channel, and which */
+  const headsFor = async (from: string | null, to: string | null, bot = false) => {
+    void playJoinSound(state(from, bot), state(to, bot));
+    await new Promise((resolve) => setImmediate(resolve));
+    const connection = getVoiceConnection(guildId);
+    const target = connection?.joinConfig.channelId ?? null;
+    connection?.destroy();
+    return target;
+  };
+  return { headsFor };
+}
+
+function wav() {
+  return execFileSync('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', 'sine=frequency=440:duration=0.1', '-f', 'wav', 'pipe:1']);
+}
+
+test('joining voice plays your join sound', async (t) => {
+  const { headsFor } = await joiner(t, 'join-plays');
+  assert.equal(await headsFor(null, 'voice'), 'voice');
+});
+
+for (const [what, from, to, bot] of [
+  ['switching channels', 'voice', 'other', false],
+  ['muting', 'voice', 'voice', false],
+  ['leaving', 'voice', null, false],
+  ['the AFK channel', null, 'afk', false],
+  ['a bot joining', null, 'voice', true],
+] as const) {
+  test(`${what} doesn’t play it`, async (t) => {
+    const { headsFor } = await joiner(t, `join-not-${what.replaceAll(' ', '-')}`);
+    assert.equal(await headsFor(from, to, bot), null);
+  });
+}
+
+test('nothing plays with join sounds turned off', async (t) => {
+  const { headsFor } = await joiner(t, 'join-off');
+  setSetting('join-off', 'joinSounds', false);
+  assert.equal(await headsFor(null, 'voice'), null);
+  setSetting('join-off', 'joinSounds', true);
+  assert.equal(await headsFor(null, 'voice'), 'voice');
+});
+
+test('nothing plays for someone without a join sound', async (t) => {
+  const { headsFor } = await joiner(t, 'join-none');
+  setJoinSound('join-none', 'person', null);
+  assert.equal(await headsFor(null, 'voice'), null);
+});
+
+test('the cooldown stops hopping in and out from spamming it', async (t) => {
+  const { headsFor } = await joiner(t, 'join-cooldown');
+  assert.equal(await headsFor(null, 'voice'), 'voice');
+  assert.equal(await headsFor(null, 'voice'), null);
+});
+
+test('a cooldown of zero means every time', async (t) => {
+  const { headsFor } = await joiner(t, 'join-always');
+  setSetting('join-always', 'joinSoundCooldownMin', 0);
+  assert.equal(await headsFor(null, 'voice'), 'voice');
+  assert.equal(await headsFor(null, 'voice'), 'voice');
+});
+
+test('it won’t pull the bot away from another channel', async (t) => {
+  const { headsFor } = await joiner(t, 'join-busy');
+  // Discord is what moves the bot, so what counts is whether it gets asked to
+  const asked: (string | null)[] = [];
+  const sendPayload = (payload: any) => {
+    asked.push(payload.d.channel_id);
+    return true;
+  };
+  joinVoiceChannel({ channelId: 'elsewhere', guildId: 'join-busy', adapterCreator: () => ({ sendPayload, destroy() {} }) });
+  await headsFor(null, 'voice');
+  assert.equal(asked.includes('voice'), false, String(asked));
+  assert.ok(asked.includes('elsewhere'));
+});
+
+test('it plays if the bot is already in that channel', async (t) => {
+  const { headsFor } = await joiner(t, 'join-same');
+  joinVoiceChannel({ channelId: 'voice', guildId: 'join-same', adapterCreator: () => ({ sendPayload: () => true, destroy() {} }) });
+  const spawned = mock.method(console, 'error', () => {});
+  assert.equal(await headsFor(null, 'voice'), 'voice');
+  spawned.mock.restore();
+  assert.equal(await headsFor(null, 'voice'), null, 'the first one counted towards the cooldown');
+});
+
+/** Runs a /sound subcommand and returns what it replied */
+async function slash(guildId: string, sub: string, values: Record<string, unknown>) {
+  let reply: any;
+  const answer = async (r: unknown) => void (reply = r);
+  await soundboard.commands![0].run({
+    inCachedGuild: () => true,
+    guildId,
+    guild: { id: guildId },
+    user: { id: 'person' },
+    options: { getSubcommand: () => sub, getString: (name: string) => values[name] ?? null, getInteger: (name: string) => values[name] ?? null },
+    reply: answer,
+    deferReply: async () => {},
+    editReply: answer,
+  } as never);
+  return (reply.content ?? reply) as string;
+}
+
+test('/sound join sets, changes and clears your own join sound, and it’s recorded', async () => {
+  await saveUpload('slash-join', 'horn', '.wav', wav());
+  assert.match(await slash('slash-join', 'join', { name: 'horn' }), /horn\*\* plays when you join/);
+  assert.deepEqual(joinSounds('slash-join').map((r) => [r.user_id, r.name]), [['person', 'horn']]);
+  assert.match(await slash('slash-join', 'join', { name: 'nope' }), /No sound by that name/);
+  assert.deepEqual(joinSounds('slash-join').map((r) => [r.user_id, r.name]), [['person', 'horn']]);
+  assert.match(await slash('slash-join', 'join', {}), /don’t have a join sound/);
+  assert.deepEqual(joinSounds('slash-join'), []);
+  assert.deepEqual(recentActivity('slash-join', 5).map((r) => [r.actor, r.action]), [['person', 'Cleared their join sound'], ['person', 'Set their join sound to **horn**']]);
+});
+
+test('/sound join says when the server has them turned off', async () => {
+  await saveUpload('slash-off', 'horn', '.wav', wav());
+  setSetting('slash-off', 'joinSounds', false);
+  assert.match(await slash('slash-off', 'join', { name: 'horn' }), /turned off in this server/);
+});
+
+test('/sound volume sets one sound’s volume', async () => {
+  await saveUpload('slash-volume', 'horn', '.wav', wav());
+  assert.match(await slash('slash-volume', 'volume', { name: 'horn', percent: 40 }), /40%/);
+  assert.equal(soundGain('slash-volume', 'horn'), 0.4);
+  assert.match(await slash('slash-volume', 'volume', { name: 'nope', percent: 40 }), /No sound by that name/);
 });

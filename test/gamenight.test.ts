@@ -1,6 +1,7 @@
 import { fakeClient } from './helpers.ts';
 import assert from 'node:assert/strict';
 import { mock, test } from 'node:test';
+import { recentActivity } from '../src/activity.ts';
 import { db } from '../src/db.ts';
 import { gameNights, nextOccurrence, parseWhen, tick } from '../src/features/gamenight.ts';
 
@@ -231,6 +232,18 @@ test('an RSVP button left on a cancelled night does nothing', async () => {
   const { update } = await press(`gn:in:${id}`, 'latecomer');
   assert.deepEqual(update, { components: [] });
   assert.equal(db.prepare(`SELECT 1 FROM game_night_rsvps WHERE night_id = ? AND user_id = 'latecomer'`).get(id), undefined);
+});
+
+test('buttons record who cancelled and who stopped repeating', async () => {
+  await plan('activity-log', 7);
+  const { id } = db.prepare("SELECT id FROM game_nights WHERE guild_id = 'activity-log'").get() as { id: number };
+  await press(`gn:stop:${id}`, 'host');
+  await press(`gn:cancel:${id}`, 'mod', true);
+  assert.deepEqual(recentActivity('activity-log', 10).map((r) => [r.actor, r.action.replace(/ for .*/, '')]), [
+    ['mod', 'Cancelled **Valheim** night'],
+    ['host', 'Stopped **Valheim** night repeating'],
+    ['host', 'Planned **Valheim** night'],
+  ]);
 });
 
 test('only the host or Manage Events can stop a series', async () => {

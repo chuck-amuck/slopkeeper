@@ -9,9 +9,11 @@ import {
   type GuildBasedChannel,
   type Role,
 } from 'discord.js';
+import { logActivity } from '../activity.ts';
 import { DEFAULT_ENV, DEFAULTS, setSetting, setting, storedSetting, type SettingKey } from '../settings.ts';
 import type { Feature } from '../types.ts';
 import { isTimeZone, pingWarning } from '../util.ts';
+import { applyLevels } from './soundboard.ts';
 
 const ANNOUNCE_PERMISSIONS = [
   [PermissionFlagsBits.ViewChannel, 'View Channel'],
@@ -28,6 +30,7 @@ export const LIMITS = {
   recapMinMinutes: [1, 600],
   sessionGraceMin: [1, 60],
   gameNightReminderMin: [0, 1440],
+  joinSoundCooldownMin: [0, 1440],
 } as const;
 
 const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -48,9 +51,12 @@ export const LABELS: Record<SettingKey, string> = {
   freeGamesChannel: 'Free games channel',
   gameNightReminderMin: 'Game night reminder',
   monthlyRecap: 'Monthly recap',
+  evenVolume: 'Even volume',
+  joinSounds: 'Join sounds',
+  joinSoundCooldownMin: 'Join sound cooldown',
 };
 
-function show(key: SettingKey, value: unknown): string {
+export function show(key: SettingKey, value: unknown): string {
   switch (key) {
     case 'announceChannel':
       return value ? `<#${value}>` : 'not set, so nothing gets posted';
@@ -65,11 +71,14 @@ function show(key: SettingKey, value: unknown): string {
     case 'hopOnCooldownMin':
     case 'recapMinMinutes':
     case 'sessionGraceMin':
+    case 'joinSoundCooldownMin':
       return `${value} min`;
     case 'steamCountry':
       return String(value).toUpperCase();
     case 'freeGames':
     case 'monthlyRecap':
+    case 'evenVolume':
+    case 'joinSounds':
       return value ? 'on' : 'off';
     case 'freeGamesChannel':
       return value ? `<#${value}>` : 'the announce channel';
@@ -150,7 +159,10 @@ export function source(guildId: string, key: SettingKey): string {
 function apply(i: ChatInputCommandInteraction<'cached'>, changes: [SettingKey, string | number | boolean | null][]) {
   const given = changes.filter(([, value]) => value !== null);
   if (!given.length) return i.reply({ content: 'Nothing to change. Pick at least one option.', flags: MessageFlags.Ephemeral });
-  for (const [key, value] of given) setSetting(i.guildId, key, value);
+  for (const [key, value] of given) {
+    setSetting(i.guildId, key, value);
+    logActivity(i.guildId, i.user.id, `Set ${LABELS[key]} to ${show(key, value === '' ? null : setting(i.guildId, key))}`);
+  }
   return i.reply({
     content: given.map(([key]) => `✅ ${LABELS[key]}: ${show(key, setting(i.guildId, key))}`).join('\n'),
     flags: MessageFlags.Ephemeral,
@@ -248,6 +260,16 @@ export const setup: Feature = {
         )
         .addSubcommand((s) =>
           s
+            .setName('sounds')
+            .setDescription('How the soundboard behaves')
+            .addBooleanOption((o) => o.setName('even_volume').setDescription('Level sounds so they play about as loud as each other (on by default)'))
+            .addBooleanOption((o) => o.setName('join_sounds').setDescription('Let people pick a sound for joining voice with /sound join (on by default)'))
+            .addIntegerOption((o) =>
+              o.setName('join_cooldown_minutes').setDescription('Shortest time between one person’s join sounds').setMinValue(LIMITS.joinSoundCooldownMin[0]).setMaxValue(LIMITS.joinSoundCooldownMin[1]),
+            ),
+        )
+        .addSubcommand((s) =>
+          s
             .setName('reset')
             .setDescription('Put a setting back to its default')
             .addStringOption((o) =>
@@ -283,6 +305,7 @@ export const setup: Feature = {
           const problem = cantHandOut(i.guild, role as Role);
           if (problem) return i.reply({ content: problem, flags: MessageFlags.Ephemeral });
           setSetting(i.guildId, 'hopOnRole', role.id);
+          logActivity(i.guildId, i.user.id, `Set ${LABELS.hopOnRole} to ${role}`);
           return i.reply({
             content: `✅ Hop-on pings now ping ${role}; people opt in with \`/notify\`.${roleWarning(i.guild, role as Role)}`,
             flags: MessageFlags.Ephemeral,
@@ -327,10 +350,22 @@ export const setup: Feature = {
         }
         if (sub === 'gamenight-reminder') return apply(i, [['gameNightReminderMin', i.options.getInteger('minutes', true)]]);
         if (sub === 'monthly-recap') return apply(i, [['monthlyRecap', i.options.getBoolean('enabled', true)]]);
+        if (sub === 'sounds') {
+          const evenVolume = i.options.getBoolean('even_volume');
+          await apply(i, [
+            ['evenVolume', evenVolume],
+            ['joinSounds', i.options.getBoolean('join_sounds')],
+            ['joinSoundCooldownMin', i.options.getInteger('join_cooldown_minutes')],
+          ]);
+          if (evenVolume !== null) await applyLevels(i.guild);
+          return;
+        }
 
         if (sub === 'reset') {
           const key = i.options.getString('setting', true) as SettingKey;
           setSetting(i.guildId, key, undefined);
+          logActivity(i.guildId, i.user.id, `Put ${LABELS[key]} back to the default`);
+          if (key === 'evenVolume') await applyLevels(i.guild);
           return i.reply({
             content: `↩️ ${LABELS[key]} is back to the default: ${show(key, setting(i.guildId, key))}.`,
             flags: MessageFlags.Ephemeral,

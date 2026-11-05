@@ -3,18 +3,22 @@ import { createHash, timingSafeEqual } from 'node:crypto';
 import { createReadStream, statSync } from 'node:fs';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import path from 'node:path';
+import { FROM_WEB, logActivity, recentActivity } from './activity.ts';
 import { config } from './config.ts';
 import * as discordBoard from './discordSounds.ts';
-import { cancelNight, stopSeries, upcomingNights } from './features/gamenight.ts';
+import { cancelNight, gameNames, planNight, readWhen, stopSeries, upcomingNights } from './features/gamenight.ts';
 import { activity, checkpoint, PERIODS, stats } from './features/gamestats.ts';
 import { voiceTotals } from './features/sessions.ts';
-import { checkSetting, LABELS, LIMITS, source } from './features/setup.ts';
+import { checkSetting, LABELS, LIMITS, show, source } from './features/setup.ts';
 import {
   addSound,
   addToDiscord,
+  applyLevels,
   changeEmoji,
+  discordVolume,
   favourites,
   findSound,
+  joinSounds,
   listSounds,
   parseEmoji,
   playCounts,
@@ -23,12 +27,16 @@ import {
   removeSound,
   renameSound,
   setFavourite,
+  setJoinSound,
+  setSoundVolume,
+  soundLevels,
   stopPlayback,
   syncToDiscord,
   uploadProblem,
+  volumeProblem,
   type Sound,
 } from './features/soundboard.ts';
-import { DEFAULTS, isAllowed, setSetting, setting, type SettingKey } from './settings.ts';
+import { DEFAULTS, idSetting, isAllowed, setSetting, setting, type SettingKey } from './settings.ts';
 import type { Feature } from './types.ts';
 import { humansIn, servedGuilds } from './util.ts';
 
@@ -45,6 +53,8 @@ const AUDIO_TYPES: Record<string, string> = {
 };
 const TIME_ZONES = Intl.supportedValuesOf('timeZone');
 const MAX_RANKED = 15;
+const ACTIVITY_PAGE = 50;
+const REPEATS = [7, 14];
 
 class Refused extends Error {
   status: number;
@@ -107,6 +117,7 @@ async function soundList(guild: Guild) {
   const sounds = [];
   const starred = favourites(guild.id);
   const plays = playCounts(guild.id);
+  const levels = soundLevels(guild.id);
   for (const sound of listSounds(guild.id)) {
     const { size, mtimeMs } = statSync(sound.file);
     const seconds = await durationOf(sound.file, mtimeMs);
@@ -119,15 +130,25 @@ async function soundList(guild: Guild) {
       fitsDiscord: seconds !== null && discordBoard.fits(seconds),
       favourite: starred.has(sound.name),
       plays: plays.get(sound.name) ?? 0,
+      gainDb: levels.get(sound.name)?.gainDb ?? null,
+      percent: levels.get(sound.name)?.percent ?? 100,
+      volume: discordVolume(guild.id, sound.name),
     });
   }
   return {
     sounds,
+    evenVolume: setting(guild.id, 'evenVolume'),
     slots: await discordBoard.slots(guild).catch(() => null),
     emojis: guild.emojis.cache.map((e) => ({ id: e.id, name: e.name, animated: e.animated, code: e.toString() })),
     clipSeconds: discordBoard.CLIP_SECONDS,
   };
 }
+
+const textChannels = (guild: Guild) =>
+  [...guild.channels.cache.values()]
+    .filter((c) => c.type === ChannelType.GuildText || c.type === ChannelType.GuildAnnouncement)
+    .sort((a, b) => a.rawPosition - b.rawPosition)
+    .map((c) => ({ id: c.id, name: c.name, category: c.parent?.name ?? null }));
 
 function settingList(guild: Guild) {
   const keys = Object.keys(DEFAULTS) as SettingKey[];
@@ -140,10 +161,7 @@ function settingList(guild: Guild) {
       source: source(guild.id, key),
       limits: LIMITS[key as keyof typeof LIMITS] ?? null,
     })),
-    channels: [...guild.channels.cache.values()]
-      .filter((c) => c.type === ChannelType.GuildText || c.type === ChannelType.GuildAnnouncement)
-      .sort((a, b) => a.rawPosition - b.rawPosition)
-      .map((c) => ({ id: c.id, name: c.name, category: c.parent?.name ?? null })),
+    channels: textChannels(guild),
     roles: [...guild.roles.cache.values()]
       .filter((r) => r.id !== guild.id && !r.managed)
       .sort((a, b) => b.position - a.position)
@@ -182,7 +200,62 @@ function nightList(guild: Guild) {
       repeats: n.repeats,
     })),
     series: series.map((s) => ({ id: s.id, game: s.game, repeats: s.repeats, nextAt: s.next_at, host: nameOf(guild, s.created_by) })),
+    // What the form for planning one chooses from
+    games: gameNames(guild.id),
+    channels: textChannels(guild),
+    defaultChannel: idSetting(guild.id, 'announceChannel'),
+    voiceChannels: [...guild.channels.cache.values()]
+      .filter((c) => c.type === ChannelType.GuildVoice)
+      .sort((a, b) => a.rawPosition - b.rawPosition)
+      .map((c) => ({ id: c.id, name: c.name })),
+    members: [...guild.members.cache.values()]
+      .filter((m) => !m.user.bot)
+      .map((m) => ({ id: m.id, name: m.displayName }))
+      .sort((a, b) => a.name.localeCompare(b.name)),
   };
+}
+
+/** Plans a night by the same rules as /gamenight plan, except a host has to be picked: the web UI doesn't know who's using it */
+async function planFromWeb(client: Client<true>, guild: Guild, req: IncomingMessage) {
+  const { game, when, channelId, voiceChannelId, details, hostId, repeat } = await readJson(req);
+  const name = typeof game === 'string' ? game.trim() : '';
+  if (!name || name.length > 90) throw new Refused(400, 'Say what you’re playing, in 90 characters or fewer.');
+  const text = typeof when === 'string' ? when.trim().slice(0, 100) : '';
+  const time = readWhen(guild.id, text);
+  if (!time) throw new Refused(400, `I couldn’t tell when ${text || 'that'} is. Try something like fri 8pm, tomorrow 20:30 or nov 3 7pm.`);
+  if (time.passed) throw new Refused(400, `${time.label} has already passed.`);
+  const about = typeof details === 'string' ? details.trim() : '';
+  if (about.length > 1000) throw new Refused(400, 'Details have to fit in 1000 characters.');
+  const host = guild.members.cache.get(String(hostId));
+  if (!host || host.user.bot) throw new Refused(400, 'Pick a host.');
+  const channel = checkSetting(guild, 'announceChannel', channelId);
+  if ('error' in channel) throw new Refused(400, plain(guild, channel.error));
+  const voice = voiceChannelId ? guild.channels.cache.get(String(voiceChannelId)) : null;
+  if (voice && voice.type !== ChannelType.GuildVoice) throw new Refused(400, 'Pick a voice channel.');
+  if (repeat !== null && repeat !== undefined && !REPEATS.includes(repeat as number)) throw new Refused(400, 'Nights repeat every 1 or 2 weeks.');
+
+  const note = await planNight(
+    client,
+    guild,
+    { channel_id: String(channel.value), game: name, details: about || null, voice_channel_id: voice?.id ?? null, starts_at: time.at, created_by: host.id },
+    (repeat as number | null | undefined) ?? null,
+  );
+  logActivity(guild.id, FROM_WEB, `Planned **${name}** night for ${time.label}`);
+  return { eventNote: note && plain(guild, note) };
+}
+
+function activityList(guild: Guild, url: URL) {
+  const before = Number(url.searchParams.get('before')) || undefined;
+  const rows = recentActivity(guild.id, ACTIVITY_PAGE + 1, before);
+  return {
+    timeZone: setting(guild.id, 'timezone'),
+    entries: rows.slice(0, ACTIVITY_PAGE).map((r) => ({ id: r.id, at: r.at, who: r.actor === FROM_WEB ? 'Web UI' : nameOf(guild, r.actor), action: plain(guild, r.action) })),
+    more: rows.length > ACTIVITY_PAGE,
+  };
+}
+
+function joinSoundList(guild: Guild) {
+  return { joinSounds: joinSounds(guild.id).map((r) => ({ id: r.user_id, who: nameOf(guild, r.user_id), name: r.name })) };
 }
 
 /** The same numbers as /gamestats and /stats, for the web UI's charts */
@@ -233,6 +306,7 @@ async function handleSounds(client: Client<true>, guild: Guild, req: IncomingMes
   const method = req.method!;
   // Everything but reading changes what the posted panels show
   const refresh = () => refreshPanels(client, guild.id);
+  const note = (action: string) => logActivity(guild.id, FROM_WEB, action);
 
   if (name === undefined) {
     if (method === 'GET') return soundList(guild);
@@ -266,8 +340,11 @@ async function handleSounds(client: Client<true>, guild: Guild, req: IncomingMes
       const { start } = await readJson(req);
       if (start !== undefined && (typeof start !== 'number' || !(start >= 0))) throw new Refused(400, 'Start has to be a number of seconds.');
       refuse(guild, await addToDiscord(guild, sound, start));
-    } else if (method === 'DELETE') await discordBoard.remove(guild, sound.name);
-    else throw new Refused(405, 'Not here.');
+      note(`Added **${sound.name}** to Discord’s soundboard`);
+    } else if (method === 'DELETE') {
+      await discordBoard.remove(guild, sound.name);
+      note(`Took **${sound.name}** off Discord’s soundboard`);
+    } else throw new Refused(405, 'Not here.');
     await refresh();
     return {};
   }
@@ -277,8 +354,9 @@ async function handleSounds(client: Client<true>, guild: Guild, req: IncomingMes
     const ext = path.extname(url.searchParams.get('file') ?? '').toLowerCase();
     refuse(guild, uploadProblem(name, ext, Number(req.headers['content-length'] ?? 0)));
     const data = await readBody(req);
-    const added = await addSound(guild, name, ext, data);
+    const added = await addSound(guild, name, ext, data, undefined, url.searchParams.get('discord') !== '0');
     if (!added) throw new Refused(400, 'That file doesn’t have any audio the bot can read, so it wasn’t saved.');
+    note(`${added.replaced ? 'Replaced' : 'Added'} sound **${name}**`);
     await refresh();
     return { replaced: added.replaced, discordProblem: added.problem && plain(guild, added.problem) };
   }
@@ -291,15 +369,25 @@ async function handleSounds(client: Client<true>, guild: Guild, req: IncomingMes
       const emoji = body.emoji ? await parseEmoji(guild, body.emoji) : null;
       if (emoji && 'error' in emoji) throw new Refused(400, emoji.error);
       await changeEmoji(guild, sound.name, emoji?.emoji ?? null);
+      note(emoji ? `Set the emoji on **${sound.name}**` : `Cleared the emoji on **${sound.name}**`);
     }
     if ('favourite' in body) setFavourite(guild.id, sound.name, body.favourite === true);
-    if ('name' in body) refuse(guild, await renameSound(guild, sound, String(body.name)));
+    if ('volume' in body) {
+      refuse(guild, volumeProblem(body.volume));
+      await setSoundVolume(guild, sound.name, body.volume as number);
+      note(`Set the volume of **${sound.name}** to ${body.volume as number}%`);
+    }
+    if ('name' in body) {
+      refuse(guild, await renameSound(guild, sound, String(body.name)));
+      note(`Renamed **${sound.name}** to **${String(body.name)}**`);
+    }
     await refresh();
     return {};
   }
 
   if (method === 'DELETE') {
     const problem = await removeSound(guild, soundOf(guild, name));
+    note(`Removed sound **${name}**`);
     await refresh();
     return { discordProblem: problem };
   }
@@ -313,14 +401,20 @@ async function handleSettings(guild: Guild, req: IncomingMessage, key?: string) 
   }
   if (!Object.hasOwn(DEFAULTS, key)) throw new Refused(404, 'No such setting.');
   const settingKey = key as SettingKey;
+  // Discord's copies have their own volume, so they don't follow this by themselves
+  const settled = () => (settingKey === 'evenVolume' ? applyLevels(guild) : undefined);
   if (req.method === 'DELETE') {
     setSetting(guild.id, settingKey, undefined);
+    logActivity(guild.id, FROM_WEB, `Put ${LABELS[settingKey]} back to the default`);
+    await settled();
     return {};
   }
   if (req.method !== 'PUT') throw new Refused(405, 'Not here.');
   const checked = checkSetting(guild, settingKey, (await readJson(req)).value);
   if ('error' in checked) throw new Refused(400, plain(guild, checked.error));
   setSetting(guild.id, settingKey, checked.value);
+  logActivity(guild.id, FROM_WEB, `Set ${LABELS[settingKey]} to ${show(settingKey, setting(guild.id, settingKey))}`);
+  await settled();
   return { warning: checked.warning && plain(guild, checked.warning) };
 }
 
@@ -346,13 +440,30 @@ async function handle(client: Client<true>, req: IncomingMessage, res: ServerRes
   if (section === 'settings' && rest.length <= 1) return handleSettings(guild, req, rest[0]);
   if (section === 'voice' && !rest.length && req.method === 'GET') return voiceList(guild);
   if (section === 'stats' && !rest.length && req.method === 'GET') return statsFor(guild, url);
+  if (section === 'activity' && !rest.length && req.method === 'GET') return activityList(guild, url);
+  if (section === 'join-sounds' && !rest.length && req.method === 'GET') return joinSoundList(guild);
+  if (section === 'join-sounds' && rest.length === 1 && req.method === 'DELETE') {
+    const who = joinSounds(guild.id).find((r) => r.user_id === rest[0]);
+    if (!who) throw new Refused(404, 'They don’t have a join sound.');
+    setJoinSound(guild.id, who.user_id, null);
+    logActivity(guild.id, FROM_WEB, `Removed ${nameOf(guild, who.user_id)}’s join sound`);
+    return {};
+  }
   if (section === 'game-nights' && !rest.length && req.method === 'GET') return nightList(guild);
+  if (section === 'game-nights' && !rest.length && req.method === 'POST') return planFromWeb(client, guild, req);
+  if (section === 'game-nights' && rest.length === 1 && rest[0] === 'when' && req.method === 'GET') {
+    return { time: readWhen(guild.id, (url.searchParams.get('text') ?? '').slice(0, 100)) };
+  }
   if (section === 'game-nights' && rest.length === 2 && rest[1] === 'cancel' && req.method === 'POST') {
-    if (!(await cancelNight(client, guild, Number(rest[0])))) throw new Refused(404, 'No such game night.');
+    const game = await cancelNight(client, guild, Number(rest[0]));
+    if (!game) throw new Refused(404, 'No such game night.');
+    logActivity(guild.id, FROM_WEB, `Cancelled **${game}** night`);
     return {};
   }
   if (section === 'game-night-series' && rest.length === 1 && req.method === 'DELETE') {
-    if (!(await stopSeries(client, guild, Number(rest[0])))) throw new Refused(404, 'No such repeating night.');
+    const game = await stopSeries(client, guild, Number(rest[0]));
+    if (!game) throw new Refused(404, 'No such repeating night.');
+    logActivity(guild.id, FROM_WEB, `Stopped **${game}** night repeating`);
     return {};
   }
   if (section === 'stop' && !rest.length && req.method === 'POST') {
@@ -362,6 +473,7 @@ async function handle(client: Client<true>, req: IncomingMessage, res: ServerRes
   if (section === 'discord-sync' && !rest.length && req.method === 'POST') {
     const result = await syncToDiscord(guild);
     await refreshPanels(client, guild.id);
+    if (result.added.length) logActivity(guild.id, FROM_WEB, `Copied ${result.added.length} sound${result.added.length === 1 ? '' : 's'} to Discord’s soundboard`);
     return { ...result, failed: result.failed.map((f) => plain(guild, f)), blocker: result.blocker && plain(guild, result.blocker) };
   }
   throw new Refused(404, 'Not found.');

@@ -146,6 +146,12 @@ export async function setEmoji(guild: Guild, name: string, emoji: string | null)
   if (id) await guild.soundboardSounds.edit(id, emojiFields(emoji)).catch((err) => console.error(`Soundboard emoji sync for ${name} failed:`, explain(err)));
 }
 
+/** Sets the volume of a sound's copy on Discord's soundboard, if it has one, leaving the clip as it is */
+export async function setVolume(guild: Guild, name: string, volume: number) {
+  const id = synced(guild.id).get(name);
+  if (id) await guild.soundboardSounds.edit(id, { volume }).catch((err) => console.error(`Soundboard volume sync for ${name} failed:`, explain(err)));
+}
+
 /** Drops the mapping for a Discord sound that no longer exists. Returns whether one was dropped */
 export function forget(soundId: string): boolean {
   return db.prepare('DELETE FROM discord_sounds WHERE sound_id = ?').run(soundId).changes > 0;
