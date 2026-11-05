@@ -1,18 +1,16 @@
 import { EmbedBuilder, Events, MessageFlags, SlashCommandBuilder, type Client, type GuildMember } from 'discord.js';
-import { db } from '../db.ts';
+import { db, MIN_PLAY } from '../db.ts';
 import { isAllowed } from '../settings.ts';
 import type { Feature } from '../types.ts';
 import { eachGuild, formatDuration, playingGames, servedGuilds, zonedParts, zonedTimeToUtc } from '../util.ts';
 import { sharedGames } from './games.ts';
 
 const DAY = 86_400_000;
-/** Plays shorter than this (launchers, crashes) aren't kept */
-const MIN_PLAY = 60_000;
 
-/** `${guildId}:${userId}` → game → its game_plays row, for games being played right now */
-const open = new Map<string, Map<string, number>>();
+/** `${guildId}:${userId}` → game → its game_plays row and voice channel, for games being played in voice right now */
+const open = new Map<string, Map<string, { id: number; channelId: string }>>();
 
-const insertPlay = db.prepare('INSERT INTO game_plays (guild_id, user_id, game, started_at, ended_at) VALUES (?, ?, ?, ?, ?)');
+const insertPlay = db.prepare('INSERT INTO game_plays (guild_id, user_id, game, channel_id, started_at, ended_at) VALUES (?, ?, ?, ?, ?, ?)');
 const extendPlay = db.prepare('UPDATE game_plays SET ended_at = ? WHERE id = ?');
 const dropShortPlay = db.prepare('DELETE FROM game_plays WHERE id = ? AND ended_at - started_at < ?');
 
@@ -21,19 +19,26 @@ function close(id: number, now: number) {
   dropShortPlay.run(id, MIN_PLAY);
 }
 
-/** Opens and closes plays so they match what the member is playing now */
+/** The voice channel a member's game time counts in, if any */
+function countedChannel(member: GuildMember): string | null {
+  const { channelId } = member.voice;
+  return channelId === member.guild.afkChannelId ? null : channelId;
+}
+
+/** Opens and closes plays so they match what the member is playing in voice now */
 function sync(member: GuildMember, now: number) {
   if (member.user.bot) return;
   const key = `${member.guild.id}:${member.id}`;
-  const playing = new Set(playingGames(member));
-  const mine = open.get(key) ?? new Map<string, number>();
-  for (const [game, id] of mine) {
-    if (playing.has(game)) continue;
-    close(id, now);
+  const channelId = countedChannel(member);
+  const playing = new Set(channelId ? playingGames(member) : []);
+  const mine = open.get(key) ?? new Map<string, { id: number; channelId: string }>();
+  for (const [game, play] of mine) {
+    if (playing.has(game) && play.channelId === channelId) continue;
+    close(play.id, now);
     mine.delete(game);
   }
   for (const game of playing) {
-    if (!mine.has(game)) mine.set(game, Number(insertPlay.run(member.guild.id, member.id, game, now, now).lastInsertRowid));
+    if (!mine.has(game)) mine.set(game, { id: Number(insertPlay.run(member.guild.id, member.id, game, channelId, now, now).lastInsertRowid), channelId: channelId! });
   }
   if (mine.size) open.set(key, mine);
   else open.delete(key);
@@ -60,7 +65,7 @@ export async function resync(client: Client<true>) {
 /** Brings open plays up to now, so stats include games in progress and a crash loses at most a few minutes */
 export function checkpoint() {
   const now = Date.now();
-  for (const mine of open.values()) for (const id of mine.values()) extendPlay.run(now, id);
+  for (const mine of open.values()) for (const { id } of mine.values()) extendPlay.run(now, id);
 }
 
 /** Time in each play that falls inside the period */
@@ -72,7 +77,7 @@ interface Totals {
 }
 
 function playsWhere(user?: string, game?: string): string {
-  const where = ['guild_id = :guild', 'ended_at > :since', 'started_at < :until'];
+  const where = ['guild_id = :guild', 'channel_id IS NOT NULL', 'ended_at > :since', 'started_at < :until'];
   if (user) where.push('user_id = :user');
   if (game) where.push('game = :game COLLATE NOCASE');
   return where.join(' AND ');
@@ -133,13 +138,13 @@ export function activity(guildId: string, since: number, until: number, timeZone
   return { step, buckets };
 }
 
-/** Time two people spent in the same game at the same moment, most first */
+/** Time two people spent in the same game in the same voice channel, most first */
 export function playedTogether(guildId: string, a: string, b: string) {
   return db
     .prepare(
       `SELECT x.game AS game, SUM(MIN(x.ended_at, y.ended_at) - MAX(x.started_at, y.started_at)) AS ms
        FROM game_plays x JOIN game_plays y
-         ON y.guild_id = x.guild_id AND y.game = x.game AND y.user_id = ? AND y.started_at < x.ended_at AND y.ended_at > x.started_at
+         ON y.guild_id = x.guild_id AND y.game = x.game AND y.channel_id = x.channel_id AND y.user_id = ? AND y.started_at < x.ended_at AND y.ended_at > x.started_at
        WHERE x.guild_id = ? AND x.user_id = ?
        GROUP BY x.game ORDER BY ms DESC`,
     )
@@ -179,7 +184,7 @@ export const gameStats: Feature = {
     {
       data: new SlashCommandBuilder()
         .setName('gamestats')
-        .setDescription('What this server plays, from Discord’s “Playing” status: overall, per person or per game')
+        .setDescription('What this server plays in voice: overall, per person or per game')
         .addUserOption((o) => o.setName('user').setDescription('Just this person'))
         .addStringOption((o) => o.setName('game').setDescription('Just this game').setMaxLength(100).setAutocomplete(true))
         .addStringOption((o) =>
@@ -192,7 +197,7 @@ export const gameStats: Feature = {
         if (!i.inGuild()) return i.respond([]);
         const query = `%${i.options.getFocused().replace(/[%_]/g, '')}%`;
         const rows = db
-          .prepare('SELECT game, SUM(ended_at - started_at) AS ms FROM game_plays WHERE guild_id = ? AND game LIKE ? GROUP BY game ORDER BY ms DESC LIMIT 25')
+          .prepare('SELECT game, SUM(ended_at - started_at) AS ms FROM game_plays WHERE guild_id = ? AND channel_id IS NOT NULL AND game LIKE ? GROUP BY game ORDER BY ms DESC LIMIT 25')
           .all(i.guildId, query) as { game: string }[];
         return i.respond(rows.map((r) => ({ name: r.game.slice(0, 100), value: r.game.slice(0, 100) })));
       },
@@ -205,7 +210,7 @@ export const gameStats: Feature = {
         const name = i.options.getMember('user')?.displayName ?? user?.displayName;
         const game = i.options.getString('game')?.trim();
         const isMember = (id: string) => i.guild.members.cache.has(id);
-        const embed = new EmbedBuilder().setColor(0x57f287).setFooter({ text: `${period.label} · from Discord activity status` });
+        const embed = new EmbedBuilder().setColor(0x57f287).setFooter({ text: `${period.label} · games played in voice` });
         const nothing = (what: string) => i.reply({ content: `No ${what} in the ${period.label}.`, flags: MessageFlags.Ephemeral });
 
         if (user && game) {
@@ -213,7 +218,7 @@ export const gameStats: Feature = {
           const idx = players.findIndex((r) => r.key === user.id);
           if (idx < 0) return nothing(`${game} for ${name}`);
           const sessions = (
-            db.prepare('SELECT COUNT(*) AS n FROM game_plays WHERE guild_id = ? AND user_id = ? AND game = ? COLLATE NOCASE AND ended_at > ?').get(i.guildId, user.id, game, since) as {
+            db.prepare('SELECT COUNT(*) AS n FROM game_plays WHERE guild_id = ? AND channel_id IS NOT NULL AND user_id = ? AND game = ? COLLATE NOCASE AND ended_at > ?').get(i.guildId, user.id, game, since) as {
               n: number;
             }
           ).n;
@@ -308,7 +313,7 @@ export const gameStats: Feature = {
         const shared = sharedGames(i.guildId, first.id, second.id);
 
         const summary: string[] = [];
-        if (games.length) summary.push(`**${formatDuration(games.reduce((sum, g) => sum + g.ms, 0))}** in the same game at the same time`);
+        if (games.length) summary.push(`**${formatDuration(games.reduce((sum, g) => sum + g.ms, 0))}** in the same game and voice channel`);
         if (voice.n) summary.push(`**${plural(voice.n, 'voice session')}** together, up to ${formatDuration(voice.seconds * 1000)}`);
         if (!summary.length) summary.push('No time together on record yet.');
         summary.push(`All-time game time: ${nameOf(first)} ${formatDuration(total(first.id))}, ${nameOf(second)} ${formatDuration(total(second.id))}`);
@@ -338,17 +343,21 @@ export const gameStats: Feature = {
     client.on(Events.PresenceUpdate, (_old, presence) => {
       if (presence.member && presence.guild && isAllowed(presence.guild.id)) sync(presence.member, Date.now());
     });
+    client.on(Events.VoiceStateUpdate, (oldState, newState) => {
+      if (oldState.channelId === newState.channelId) return; // mute/deafen/stream toggles
+      if (newState.member && isAllowed(newState.guild.id)) sync(newState.member, Date.now());
+    });
     client.on(Events.GuildMemberRemove, (member) => {
       const mine = open.get(`${member.guild.id}:${member.id}`);
       if (!mine) return;
-      for (const id of mine.values()) close(id, Date.now());
+      for (const { id } of mine.values()) close(id, Date.now());
       open.delete(`${member.guild.id}:${member.id}`);
     });
     setInterval(checkpoint, 5 * 60_000);
   },
   shutdown() {
     const now = Date.now();
-    for (const mine of open.values()) for (const id of mine.values()) close(id, now);
+    for (const mine of open.values()) for (const { id } of mine.values()) close(id, now);
     open.clear();
   },
 };

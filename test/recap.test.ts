@@ -17,7 +17,7 @@ function session(guildId: string, startedAt: number, hours: number, people: Reco
   const { lastInsertRowid } = db.prepare(`INSERT INTO sessions (guild_id, channel_id, started_at, ended_at) VALUES (?, 'v', ?, ?)`).run(guildId, startedAt, startedAt + hours * HOUR);
   for (const [id, h] of Object.entries(people)) db.prepare('INSERT INTO session_members (session_id, user_id, seconds) VALUES (?, ?, ?)').run(lastInsertRowid, id, h * 3600);
 }
-const play = db.prepare('INSERT INTO game_plays (guild_id, user_id, game, started_at, ended_at) VALUES (?, ?, ?, ?, ?)');
+const play = db.prepare(`INSERT INTO game_plays (guild_id, user_id, game, channel_id, started_at, ended_at) VALUES (?, ?, ?, 'voice', ?, ?)`);
 const sound = db.prepare('INSERT INTO sound_plays (guild_id, user_id, name, played_at) VALUES (?, ?, ?, ?)');
 const field = (embed: { fields?: { name: string; value: string }[] }, name: string) => embed.fields?.find((f) => f.name === name)?.value;
 

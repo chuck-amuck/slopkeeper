@@ -217,7 +217,9 @@ Every Sunday at 8 PM, in the server's time zone, the bot posts the past week's l
 
 ### Game stats
 
-The bot records how long each person plays each game, from the "Playing" status Discord shows on their profile. It counts every game Discord sees, in voice or not, and keeps the record per server. Anyone who doesn't want this can turn off **Settings → Activity Privacy → Share my activity** in Discord. Plays under a minute (launchers, crashes) aren't kept.
+The bot records how long each person plays each game while they're in a voice channel, from the "Playing" status Discord shows on their profile. They don't need anyone else there, but games played outside voice, or in the AFK channel, aren't recorded at all. It keeps the record per server. Anyone who doesn't want this can turn off **Settings → Activity Privacy → Share my activity** in Discord. Plays under a minute (launchers, crashes) aren't kept.
+
+Game time from before this rule is an estimate: the bot kept what fell inside saved voice sessions, up to each person's time in that session.
 
 | Command | What it does |
 | --- | --- |
@@ -243,7 +245,7 @@ Examples:
 | `/compare user [with]` | Compares someone with you, or with whoever you pick in `with`. |
 
 It shows, over all time:
-- how long the two played the same game at the same moment, and which games most;
+- how long the two played the same game in the same voice channel, and which games most;
 - how many voice sessions they shared. The time shown is a maximum, because the bot keeps each person's total for a session, not when each of them was there;
 - each person's total game time;
 - games they both own: anything in the library, plus Steam games tagged multiplayer.

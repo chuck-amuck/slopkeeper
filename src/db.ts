@@ -185,14 +185,16 @@ db.exec(`
     PRIMARY KEY (vote_id, user_id)
   );
 
-  -- Time spent playing each game, from Discord activity status
+  -- Time spent playing each game in a voice channel, from Discord activity status.
+  -- No channel_id: from before game time was limited to voice, so it isn't counted
   CREATE TABLE IF NOT EXISTS game_plays (
     id INTEGER PRIMARY KEY,
     guild_id TEXT NOT NULL,
     user_id TEXT NOT NULL,
     game TEXT NOT NULL,
     started_at INTEGER NOT NULL,
-    ended_at INTEGER NOT NULL
+    ended_at INTEGER NOT NULL,
+    channel_id TEXT
   );
   CREATE INDEX IF NOT EXISTS game_plays_by_guild ON game_plays (guild_id, started_at);
 
@@ -246,6 +248,61 @@ db.exec(`
 // Added after schema 3 came out, so a database from then won't have it yet
 if (!db.prepare("SELECT 1 FROM pragma_table_info('game_nights') WHERE name = 'series_id'").get()) {
   db.exec('ALTER TABLE game_nights ADD COLUMN series_id INTEGER');
+}
+
+/** Plays shorter than this (launchers, crashes) aren't kept */
+export const MIN_PLAY = 60_000;
+
+/**
+ * Game time used to count everywhere. This keeps the part of each old play that fell inside a voice session the
+ * person was in, as new rows, and leaves the originals uncounted. Sessions only saved each person's total, not when
+ * they were there, so that total caps each game and the result is an estimate.
+ */
+function keepVoicePlays() {
+  const people = db
+    .prepare(
+      `SELECT s.guild_id AS guildId, m.user_id AS userId, s.channel_id AS channelId, s.started_at AS start, s.ended_at AS end, m.seconds AS seconds
+       FROM session_members m JOIN sessions s ON s.id = m.session_id
+       ORDER BY s.started_at`,
+    )
+    .all() as { guildId: string; userId: string; channelId: string; start: number; end: number; seconds: number }[];
+  const plays = db.prepare(
+    `SELECT game, started_at AS start, ended_at AS end FROM game_plays
+     WHERE guild_id = ? AND user_id = ? AND channel_id IS NULL AND ended_at > ? AND started_at < ?
+     ORDER BY started_at`,
+  );
+  const keep = db.prepare('INSERT INTO game_plays (guild_id, user_id, game, channel_id, started_at, ended_at) VALUES (?, ?, ?, ?, ?, ?)');
+  // How far each person's time in each game has got, so being in two sessions at once only counts once
+  const reached = new Map<string, number>();
+  let kept = 0;
+  for (const p of people) {
+    const left = new Map<string, number>();
+    for (const play of plays.all(p.guildId, p.userId, p.start, p.end) as { game: string; start: number; end: number }[]) {
+      const key = `${p.guildId}:${p.userId}:${play.game}`;
+      const budget = left.get(play.game) ?? p.seconds * 1000;
+      const start = Math.max(play.start, p.start, reached.get(key) ?? 0);
+      const end = Math.min(play.end, p.end, start + budget);
+      if (end - start < MIN_PLAY) continue;
+      keep.run(p.guildId, p.userId, play.game, p.channelId, start, end);
+      left.set(play.game, budget - (end - start));
+      reached.set(key, end);
+      kept++;
+    }
+  }
+  console.log(`Kept ${kept} game plays from inside voice sessions`);
+}
+
+// Added after schema 3 came out too. In one transaction, so a failed start can run it again from the top
+if (!db.prepare("SELECT 1 FROM pragma_table_info('game_plays') WHERE name = 'channel_id'").get()) {
+  db.exec('BEGIN');
+  try {
+    db.exec('ALTER TABLE game_plays ADD COLUMN channel_id TEXT');
+    keepVoicePlays();
+    db.exec('COMMIT');
+  } catch (err) {
+    db.exec('ROLLBACK');
+    throw err;
+  }
 }
 
 export function getKv(key: string): string | undefined {
