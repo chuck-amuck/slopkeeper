@@ -409,8 +409,31 @@ Set in `.env` (see `.env.example`).
 | `ALLOWED_GUILD_IDS` | any server | Comma-separated server IDs allowed to use the bot; it leaves any other server |
 | `SALE_CHECK_HOURS` | 6 | How often Steam prices are checked, for every server at once |
 | `TZ` | UTC | The container's time zone, and every server's default time zone |
+| `API_TOKEN` | off | Turns on the [management API](#management-api) and is the token that unlocks it |
+| `API_PORT` | 8787 | Port for the management API |
 
 Everything else is a per-server setting. Servers set their own with `/setup`; the variables in [Settings and defaults](#settings-and-defaults) change the default for servers that haven't. For example, `HOPON_MIN_PEOPLE=3` makes every server wait for 3 people unless it ran `/setup hopon`.
+
+### Management API
+
+With `API_TOKEN` set, the bot serves an HTTP API for managing sounds and settings, for a separate admin page to use. It's off by default, and the bot works the same without it.
+
+It applies the same rules as `/sound` and `/setup`, and every request needs an `Authorization: Bearer <token>` header. It has no other login, so keep it on the container network: don't publish the port or put it behind a proxy.
+
+| Request | What it does |
+| --- | --- |
+| `GET /guilds` | Lists servers |
+| `GET /guilds/:id/sounds` | Lists sounds, Discord slots and the server's emoji |
+| `PUT /guilds/:id/sounds/:name?file=<filename>` | Adds or replaces a sound; the body is the file |
+| `PATCH /guilds/:id/sounds/:name` | Renames it or sets its emoji: `{ "name": "..." }`, `{ "emoji": "..." }` |
+| `DELETE /guilds/:id/sounds/:name` | Deletes it |
+| `GET /guilds/:id/sounds/:name/audio` | Downloads its audio |
+| `PUT /guilds/:id/sounds/:name/discord` | Copies it to Discord's soundboard: `{ "start": 12.5 }` picks a part of a long sound |
+| `DELETE /guilds/:id/sounds/:name/discord` | Takes it off Discord's soundboard |
+| `POST /guilds/:id/discord-sync` | Copies every sound that fits to Discord's soundboard |
+| `GET /guilds/:id/settings` | Lists settings, channels, roles and time zones |
+| `PUT /guilds/:id/settings/:key` | Changes a setting: `{ "value": ... }` |
+| `DELETE /guilds/:id/settings/:key` | Puts a setting back to its default |
 
 ## Setup
 
