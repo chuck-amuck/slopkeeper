@@ -209,6 +209,32 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS sound_plays_by_guild ON sound_plays (guild_id, played_at);
 
+  CREATE TABLE IF NOT EXISTS sound_levels (
+    guild_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    -- From measuring the file. NULL until it's been measured
+    gain_db REAL,
+    -- The volume someone picked on top of that
+    percent INTEGER NOT NULL DEFAULT 100,
+    PRIMARY KEY (guild_id, name)
+  );
+  CREATE TABLE IF NOT EXISTS join_sounds (
+    guild_id TEXT NOT NULL,
+    user_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    PRIMARY KEY (guild_id, user_id)
+  );
+
+  CREATE TABLE IF NOT EXISTS activity (
+    id INTEGER PRIMARY KEY,
+    guild_id TEXT NOT NULL,
+    at INTEGER NOT NULL,
+    -- A user id, or 'web' for the web UI, which has one shared login
+    actor TEXT NOT NULL,
+    action TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS activity_by_guild ON activity (guild_id, id);
+
   CREATE TABLE IF NOT EXISTS kv (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL

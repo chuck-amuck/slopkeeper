@@ -19,7 +19,7 @@ Everything happens through slash commands (type `/` in any channel, or run `/hel
 - [Getting together](#getting-together): [hop-on pings](#hop-on-pings) · [game pings](#game-pings) · [game nights](#game-nights)
 - [Playing games](#playing-games): [Steam accounts](#steam-accounts) · [What do we play?](#what-do-we-play) · [Game library](#game-library) · [Sale alerts](#sale-alerts) · [Free games](#free-games)
 - [Stats](#stats): [session recaps](#session-recaps) · [voice leaderboards](#voice-leaderboards) · [game stats](#game-stats) · [comparing two people](#comparing-two-people) · [monthly recap](#monthly-recap)
-- [Soundboard](#soundboard): [playing sounds](#playing-sounds) · [managing sounds](#managing-sounds) · [Discord's soundboard](#discords-soundboard)
+- [Soundboard](#soundboard): [playing sounds](#playing-sounds) · [managing sounds](#managing-sounds) · [even volume](#even-volume) · [Discord's soundboard](#discords-soundboard)
 - [Server settings](#server-settings): [settings and defaults](#settings-and-defaults)
 - [Multiple servers](#multiple-servers)
 - [Configuration](#configuration)
@@ -275,8 +275,11 @@ The bot holds a library of uploaded sounds and plays them in your voice channel.
 | `/sound panel` | Posts a button grid in the current channel: 20 sounds per page, ◀ ▶ to flip pages, ⏹ **Stop** to silence everything. The bot keeps every panel it posts up to date as sounds change, so post one in a handy channel and pin it. |
 | `/sound play name` | Plays one sound in your voice channel. The name autocompletes. |
 | `/sound stop` | Stops everything and makes the bot leave voice. |
+| `/sound join [name]` | Picks a sound that plays when you join voice. Leave `name` empty to stop having one. |
 
 You have to be in a voice channel to play a sound. The bot joins whichever channel you're in.
+
+**Join sounds** are opt-in: nothing plays until someone picks one with `/sound join`. A sound plays when you connect to voice, not when you switch channels, and not again until the cooldown is up (10 minutes unless `/setup sounds` says otherwise). If the bot is already in a different channel, it stays there rather than leaving the people using it. They don't count towards the monthly recap's top sounds.
 
 ### Managing sounds
 
@@ -285,6 +288,7 @@ You have to be in a voice channel to play a sound. The bot joins whichever chann
 | `/sound add name file [emoji]` | Uploads a sound. Names use lowercase letters, numbers, `-` and `_` (up to 32 characters). The file can be mp3, ogg, wav, m4a, opus, webm or flac, up to 5 MB, and the bot turns it down if it can't find audio in it. Using an existing name replaces that sound and keeps its emoji unless you give a new one. |
 | `/sound emoji name [emoji]` | Sets the emoji on a sound's button. Leave `emoji` empty to clear it. Custom emoji have to be from this server. |
 | `/sound remove name` | Deletes a sound from the bot, and from Discord's soundboard if it's there. |
+| `/sound volume name percent` | Sets how loud one sound plays, from 25 to 200, where 100 is normal. |
 
 Examples:
 ```
@@ -292,6 +296,12 @@ Examples:
 /sound emoji name:bruh emoji:💀
 /sound remove name:old-meme
 ```
+
+### Even volume
+
+Every sound is measured when it's added, so a whisper and an air horn play about as loud as each other. Your file isn't changed: the bot stores how much to turn each sound up or down and applies that as it plays, so turning it off with `/setup sounds` puts everything back. A quiet sound with one loud spike only comes up until the spike would clip, and no sound is boosted by more than 12 dB, so very quiet sounds can still need `/sound volume`.
+
+Sounds from before this existed are measured when the bot starts. Copies on Discord's soundboard are levelled using Discord's own volume for each sound, which can only go up to 1, so a sound that needs a big boost stays quieter there than on the bot.
 
 ### Discord's soundboard
 
@@ -343,6 +353,7 @@ Every setting has a sensible default, so only the announce channel needs setting
 | `/setup free-games enabled [channel]` | Turns free game posts on or off. `channel` gives them their own channel; without it they go to the announce channel. To move them back to the announce channel, use `/setup reset setting:Free games channel`. |
 | `/setup gamenight-reminder minutes` | How long before a game night to remind the people who are in. `0` turns reminders off. |
 | `/setup monthly-recap enabled` | Turns the post on the 1st of each month on or off. |
+| `/setup sounds [even_volume] [join_sounds] [join_cooldown_minutes]` | Turns [even volume](#even-volume) and join sounds on or off, and sets how often one person's join sound can play. |
 | `/setup reset setting` | Puts one setting back to its default. |
 
 For the commands with several options, only the options you fill in change.
@@ -383,6 +394,9 @@ So the host can change a default for every server at once, and each server can s
 | Free games channel | `free-games` | | the announce channel |
 | Game night reminder (minutes before) | `gamenight-reminder` | `GAMENIGHT_REMINDER_MIN` | 15 |
 | Monthly recap | `monthly-recap` | `MONTHLY_RECAP` (`false` to turn off) | on |
+| Even volume | `sounds` | `EVEN_VOLUME` (`false` to turn off) | on |
+| Join sounds | `sounds` | `JOIN_SOUNDS` (`false` to turn off) | on |
+| Minutes between one person's join sounds | `sounds` | `JOIN_SOUND_COOLDOWN_MIN` | 10 |
 
 ## Multiple servers
 
@@ -424,8 +438,8 @@ It applies the same rules as `/sound` and `/setup`, and every request needs an `
 | --- | --- |
 | `GET /guilds` | Lists servers |
 | `GET /guilds/:id/sounds` | Lists sounds, Discord slots and the server's emoji |
-| `PUT /guilds/:id/sounds/:name?file=<filename>` | Adds or replaces a sound; the body is the file |
-| `PATCH /guilds/:id/sounds/:name` | Renames it, sets its emoji or stars it: `{ "name": "..." }`, `{ "emoji": "..." }`, `{ "favourite": true }` |
+| `PUT /guilds/:id/sounds/:name?file=<filename>` | Adds or replaces a sound; the body is the file. `&discord=0` keeps a new sound off Discord's soundboard |
+| `PATCH /guilds/:id/sounds/:name` | Renames it, sets its emoji, volume or star: `{ "name": "..." }`, `{ "emoji": "..." }`, `{ "volume": 50 }`, `{ "favourite": true }` |
 | `DELETE /guilds/:id/sounds/:name` | Deletes it |
 | `GET /guilds/:id/sounds/:name/audio` | Downloads its audio |
 | `POST /guilds/:id/sounds/:name/play` | Plays it in a voice channel with people in it: `{ "channelId": "..." }` |
@@ -434,9 +448,14 @@ It applies the same rules as `/sound` and `/setup`, and every request needs an `
 | `POST /guilds/:id/discord-sync` | Copies every sound that fits to Discord's soundboard |
 | `GET /guilds/:id/voice` | Lists voice channels with people in them, busiest first |
 | `POST /guilds/:id/stop` | Stops whatever is playing |
-| `GET /guilds/:id/game-nights` | Lists upcoming game nights and repeating series |
+| `GET /guilds/:id/game-nights` | Lists upcoming game nights and repeating series, and what a new night can be set to |
+| `POST /guilds/:id/game-nights` | Plans a night as `/gamenight plan` does: `{ "game", "when", "channelId", "hostId", "voiceChannelId", "details", "repeat" }`, where `repeat` is 7, 14 or null |
+| `GET /guilds/:id/game-nights/when?text=<time>` | Says how a typed time reads, without planning anything |
 | `POST /guilds/:id/game-nights/:night/cancel` | Cancels a night, as its Cancel button does |
 | `DELETE /guilds/:id/game-night-series/:series` | Stops a series; nights already posted stay on |
+| `GET /guilds/:id/join-sounds` | Lists who has a join sound |
+| `DELETE /guilds/:id/join-sounds/:user` | Removes someone's join sound |
+| `GET /guilds/:id/activity?before=<id>` | The last year of changes to sounds, settings and game nights, 50 at a time, newest first |
 | `GET /guilds/:id/stats?period=<week\|month\|year\|all>&user=<id>&game=<name>` | Game and voice totals, with game time over the period |
 | `GET /guilds/:id/settings` | Lists settings, channels, roles and time zones |
 | `PUT /guilds/:id/settings/:key` | Changes a setting: `{ "value": ... }` |

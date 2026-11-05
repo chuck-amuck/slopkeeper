@@ -25,6 +25,10 @@ export const DEFAULTS = {
   freeGamesChannel: null as string | null,
   gameNightReminderMin: num('GAMENIGHT_REMINDER_MIN', 15),
   monthlyRecap: process.env.MONTHLY_RECAP !== 'false',
+  evenVolume: process.env.EVEN_VOLUME !== 'false',
+  // Nothing plays until someone picks a sound for themselves, so this can default to on
+  joinSounds: process.env.JOIN_SOUNDS !== 'false',
+  joinSoundCooldownMin: num('JOIN_SOUND_COOLDOWN_MIN', 10),
 };
 
 /** Env var that sets each setting's default, for /setup show */
@@ -40,6 +44,9 @@ export const DEFAULT_ENV: Partial<Record<SettingKey, string>> = {
   freeGames: 'FREE_GAMES',
   gameNightReminderMin: 'GAMENIGHT_REMINDER_MIN',
   monthlyRecap: 'MONTHLY_RECAP',
+  evenVolume: 'EVEN_VOLUME',
+  joinSounds: 'JOIN_SOUNDS',
+  joinSoundCooldownMin: 'JOIN_SOUND_COOLDOWN_MIN',
 };
 
 export type SettingKey = keyof typeof DEFAULTS;

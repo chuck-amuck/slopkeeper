@@ -74,6 +74,19 @@ test('a clip shorter than the start buffer plays in full', { skip: !hasFfmpeg },
   assert.equal(peaks.filter((p) => p > 0).length, 2);
 });
 
+test('a sound’s gain scales only that sound', { skip: !hasFfmpeg }, async () => {
+  const level = async (gain: number) => {
+    const mixer = new Mixer(0.5, 12);
+    const { peaks, done } = record(mixer);
+    mixer.add(tone('gain.wav', 440, 0.3), gain);
+    await done;
+    return Math.max(...peaks);
+  };
+  const normal = await level(1);
+  assert.ok(Math.abs((await level(0.5)) / normal - 0.5) < 0.02);
+  assert.ok(Math.abs((await level(1.5)) / normal - 1.5) < 0.02);
+});
+
 test('stopping ends playback', { skip: !hasFfmpeg }, async () => {
   const mixer = new Mixer(0.5, 12);
   const { peaks, done } = record(mixer);
