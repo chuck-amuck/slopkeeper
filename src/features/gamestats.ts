@@ -2,7 +2,7 @@ import { EmbedBuilder, Events, MessageFlags, SlashCommandBuilder, type Client, t
 import { db } from '../db.ts';
 import { isAllowed } from '../settings.ts';
 import type { Feature } from '../types.ts';
-import { eachGuild, formatDuration, playingGames, servedGuilds } from '../util.ts';
+import { eachGuild, formatDuration, playingGames, servedGuilds, zonedParts, zonedTimeToUtc } from '../util.ts';
 import { sharedGames } from './games.ts';
 
 const DAY = 86_400_000;
@@ -71,6 +71,13 @@ interface Totals {
   n: number;
 }
 
+function playsWhere(user?: string, game?: string): string {
+  const where = ['guild_id = :guild', 'ended_at > :since', 'started_at < :until'];
+  if (user) where.push('user_id = :user');
+  if (game) where.push('game = :game COLLATE NOCASE');
+  return where.join(' AND ');
+}
+
 export function stats(
   guildId: string,
   since: number,
@@ -80,20 +87,50 @@ export function stats(
   game?: string,
   until = Date.now(),
 ) {
-  const where = ['guild_id = :guild', 'ended_at > :since', 'started_at < :until'];
-  if (filter === 'user' || filter === 'both') where.push('user_id = :user');
-  if (filter === 'game' || filter === 'both') where.push('game = :game COLLATE NOCASE');
+  const where = playsWhere(filter === 'user' || filter === 'both' ? 'user' : undefined, filter === 'game' || filter === 'both' ? 'game' : undefined);
   const other = groupBy === 'game' ? 'user_id' : 'game';
   return db
     .prepare(
       `SELECT ${groupBy} AS key, SUM(${CLIPPED}) AS ms, COUNT(DISTINCT ${other}) AS n, MAX(ended_at) AS last
-       FROM game_plays WHERE ${where.join(' AND ')}
+       FROM game_plays WHERE ${where}
        GROUP BY ${groupBy} ORDER BY ms DESC`,
     )
     .all({ guild: guildId, since, until, ...(user ? { user } : {}), ...(game ? { game } : {}) }) as unknown as (Totals & {
     key: string;
     last: number;
   })[];
+}
+
+/**
+ * Game time per day, week or month in the server's time zone, whichever suits the length of the period.
+ * `keep` picks whose time counts. Every step is listed, so a quiet one shows up as a gap.
+ */
+export function activity(guildId: string, since: number, until: number, timeZone: string, keep: (userId: string) => boolean, user?: string, game?: string) {
+  const plays = (
+    db
+      .prepare(`SELECT user_id AS userId, MAX(started_at, :since) AS start, MIN(ended_at, :until) AS end FROM game_plays WHERE ${playsWhere(user, game)}`)
+      .all({ guild: guildId, since, until, ...(user ? { user } : {}), ...(game ? { game } : {}) }) as { userId: string; start: number; end: number }[]
+  ).filter((p) => keep(p.userId));
+  if (!plays.length) return { step: 'day', buckets: [] };
+
+  const first = since || plays.reduce((earliest, p) => Math.min(earliest, p.start), Infinity);
+  const days = (until - first) / DAY;
+  const step = days <= 45 ? 'day' : days <= 400 ? 'week' : 'month';
+  const { year, month, day } = zonedParts(first, timeZone);
+  const boundary = (i: number) => {
+    if (step === 'month') return zonedTimeToUtc(year, month + i, 1, 0, 0, timeZone);
+    return zonedTimeToUtc(year, month, day + i * (step === 'week' ? 7 : 1), 0, 0, timeZone);
+  };
+
+  const buckets: { start: number; ms: number }[] = [];
+  for (let i = 0; boundary(i) < until; i++) {
+    const start = boundary(i);
+    const end = boundary(i + 1);
+    let ms = 0;
+    for (const p of plays) ms += Math.max(0, Math.min(p.end, end) - Math.max(p.start, start));
+    buckets.push({ start, ms });
+  }
+  return { step, buckets };
 }
 
 /** Time two people spent in the same game at the same moment, most first */
@@ -122,7 +159,7 @@ export function voiceTogether(guildId: string, a: string, b: string) {
     .get(b, guildId, a) as { n: number; seconds: number };
 }
 
-const PERIODS = {
+export const PERIODS = {
   week: { label: 'past week', ms: 7 * DAY },
   month: { label: 'past month', ms: 30 * DAY },
   year: { label: 'past year', ms: 365 * DAY },

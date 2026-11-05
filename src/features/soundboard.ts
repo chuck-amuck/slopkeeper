@@ -162,7 +162,24 @@ export async function removeSound(guild: Guild, sound: Sound): Promise<string | 
   );
   rmSync(sound.file);
   setEmoji(guild.id, sound.name, null);
+  setFavourite(guild.id, sound.name, false);
   return problem;
+}
+
+/** Favourites sit at the top of the web UI's soundboard */
+export function favourites(guildId: string): Set<string> {
+  return new Set((db.prepare('SELECT name FROM sound_favourites WHERE guild_id = ?').all(guildId) as { name: string }[]).map((r) => r.name));
+}
+
+export function setFavourite(guildId: string, name: string, on: boolean) {
+  if (on) db.prepare('INSERT INTO sound_favourites (guild_id, name) VALUES (?, ?) ON CONFLICT DO NOTHING').run(guildId, name);
+  else db.prepare('DELETE FROM sound_favourites WHERE guild_id = ? AND name = ?').run(guildId, name);
+}
+
+/** Sound name → how often it's been played */
+export function playCounts(guildId: string): Map<string, number> {
+  const rows = db.prepare('SELECT name, COUNT(*) AS n FROM sound_plays WHERE guild_id = ? GROUP BY name').all(guildId) as { name: string; n: number }[];
+  return new Map(rows.map((r) => [r.name, r.n]));
 }
 
 export async function changeEmoji(guild: Guild, name: string, emoji: string | null) {
@@ -180,6 +197,7 @@ export async function renameSound(guild: Guild, sound: Sound, name: string): Pro
   renameSync(sound.file, path.join(path.dirname(sound.file), name + path.extname(sound.file)));
   db.prepare('UPDATE OR REPLACE sound_emoji SET name = ? WHERE guild_id = ? AND name = ?').run(name, guild.id, sound.name);
   db.prepare('UPDATE sound_plays SET name = ? WHERE guild_id = ? AND name = ?').run(name, guild.id, sound.name);
+  db.prepare('UPDATE OR REPLACE sound_favourites SET name = ? WHERE guild_id = ? AND name = ?').run(name, guild.id, sound.name);
   return null;
 }
 

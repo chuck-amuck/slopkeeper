@@ -109,7 +109,8 @@ export function resync(client: Client<true>) {
   pickUp(client, now);
 }
 
-function leaderboard(guildId: string, sinceMs: number, title: string): EmbedBuilder | null {
+/** Everyone's voice time since a moment, most first */
+export function voiceTotals(guildId: string, sinceMs: number) {
   const rows = db
     .prepare(
       `SELECT sm.user_id AS userId, sm.seconds AS secs, s.started_at AS startedAt
@@ -126,10 +127,11 @@ function leaderboard(guildId: string, sinceMs: number, title: string): EmbedBuil
     entry.dates.add(zonedDate(r.startedAt, timeZone));
     byUser.set(r.userId, entry);
   }
-  const people = [...byUser.values()]
-    .sort((a, b) => b.secs - a.secs)
-    .slice(0, 10)
-    .map((p) => ({ userId: p.userId, secs: p.secs, nights: p.dates.size }));
+  return [...byUser.values()].sort((a, b) => b.secs - a.secs).map((p) => ({ userId: p.userId, secs: p.secs, nights: p.dates.size }));
+}
+
+function leaderboard(guildId: string, sinceMs: number, title: string): EmbedBuilder | null {
+  const people = voiceTotals(guildId, sinceMs).slice(0, 10);
   if (!people.length) return null;
 
   const games = db

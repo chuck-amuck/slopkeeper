@@ -333,6 +333,59 @@ async function advance(client: Client<true>, guild: Guild, night: Night, now: nu
   }
 }
 
+/** The message that tells people a night is off */
+function offNotice(night: Night, going: string[]) {
+  return { content: `**${night.game} night** is off. ${going.map((id) => `<@${id}>`).join(' ')}`, allowedMentions: { users: going } };
+}
+
+async function markCancelled(guild: Guild, night: Night) {
+  db.prepare('UPDATE game_nights SET cancelled = 1 WHERE id = ?').run(night.id);
+  if (night.event_id) await guild.scheduledEvents.delete(night.event_id).catch(() => {});
+}
+
+/** Redraws a night's card, from outside a button press on it */
+async function refreshCard(client: Client<true>, night: Night) {
+  if (!night.message_id) return;
+  const channel = await client.channels.fetch(night.channel_id).catch(() => null);
+  if (!channel?.isTextBased()) return;
+  await channel.messages.edit(night.message_id, view(night)).catch((err) => console.error(`Game night ${night.id} card:`, err.message));
+}
+
+/** What the web UI shows: nights still to come, and the series that will post more */
+export function upcomingNights(guildId: string, now: number) {
+  const nights = db
+    .prepare('SELECT * FROM game_nights WHERE guild_id = ? AND cancelled = 0 AND starts_at > ? ORDER BY starts_at LIMIT 50')
+    .all(guildId, now - 3 * HOUR) as unknown as Night[];
+  const series = db.prepare('SELECT * FROM game_night_series WHERE guild_id = ? ORDER BY next_at').all(guildId) as unknown as Series[];
+  return {
+    nights: nights.map((n) => ({ ...n, people: rsvps(n.id), repeats: getSeries(n.series_id) ? repeatLabel(getSeries(n.series_id)!.every_days) : null })),
+    series: series.map((s) => ({ ...s, repeats: repeatLabel(s.every_days) })),
+  };
+}
+
+/** Cancels a night from the web UI, the way its Cancel button does. Returns whether this server has that night */
+export async function cancelNight(client: Client<true>, guild: Guild, id: number): Promise<boolean> {
+  const night = getNight(id);
+  if (night?.guild_id !== guild.id) return false;
+  if (night.cancelled) return true;
+  await markCancelled(guild, night);
+  await refreshCard(client, getNight(id)!);
+  const going = rsvps(id).in;
+  const channel = await client.channels.fetch(night.channel_id).catch(() => null);
+  if (night.starts_at > Date.now() && going.length && channel?.isSendable()) await channel.send(offNotice(night, going));
+  return true;
+}
+
+/** Ends a series from the web UI. Nights it already posted stay on. Returns whether this server has that series */
+export async function stopSeries(client: Client<true>, guild: Guild, id: number): Promise<boolean> {
+  if (getSeries(id)?.guild_id !== guild.id) return false;
+  db.prepare('DELETE FROM game_night_series WHERE id = ?').run(id);
+  // Their cards still have the Repeats line and the Stop repeating button
+  const nights = db.prepare('SELECT * FROM game_nights WHERE series_id = ? AND starts_at > ?').all(id, Date.now() - 12 * HOUR) as unknown as Night[];
+  for (const night of nights) await refreshCard(client, night);
+  return true;
+}
+
 function gameNames(guildId: string): string[] {
   const played = db.prepare('SELECT DISTINCT game FROM game_plays WHERE guild_id = ?').all(guildId) as { game: string }[];
   return [...new Set([...allGames(guildId).map((g) => g.name), ...played.map((r) => r.game)])].sort();
@@ -455,13 +508,10 @@ export const gameNights: Feature = {
 
     if (action === 'cancel') {
       if (!canManage) return i.reply({ content: 'Only the host or someone with Manage Events can cancel this.', flags: MessageFlags.Ephemeral });
-      db.prepare('UPDATE game_nights SET cancelled = 1 WHERE id = ?').run(night.id);
-      if (night.event_id) await i.guild.scheduledEvents.delete(night.event_id).catch(() => {});
+      await markCancelled(i.guild, night);
       await i.update(view(getNight(night.id)!));
       const going = rsvps(night.id).in.filter((id) => id !== i.user.id);
-      if (night.starts_at > Date.now() && going.length) {
-        await i.followUp({ content: `**${night.game} night** is off. ${going.map((id) => `<@${id}>`).join(' ')}`, allowedMentions: { users: going } });
-      }
+      if (night.starts_at > Date.now() && going.length) await i.followUp(offNotice(night, going));
       return;
     }
 

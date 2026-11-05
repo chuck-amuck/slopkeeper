@@ -5,18 +5,24 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import path from 'node:path';
 import { config } from './config.ts';
 import * as discordBoard from './discordSounds.ts';
+import { cancelNight, stopSeries, upcomingNights } from './features/gamenight.ts';
+import { activity, checkpoint, PERIODS, stats } from './features/gamestats.ts';
+import { voiceTotals } from './features/sessions.ts';
 import { checkSetting, LABELS, LIMITS, source } from './features/setup.ts';
 import {
   addSound,
   addToDiscord,
   changeEmoji,
+  favourites,
   findSound,
   listSounds,
   parseEmoji,
+  playCounts,
   playFromWeb,
   refreshPanels,
   removeSound,
   renameSound,
+  setFavourite,
   stopPlayback,
   syncToDiscord,
   uploadProblem,
@@ -38,6 +44,7 @@ const AUDIO_TYPES: Record<string, string> = {
   '.flac': 'audio/flac',
 };
 const TIME_ZONES = Intl.supportedValuesOf('timeZone');
+const MAX_RANKED = 15;
 
 class Refused extends Error {
   status: number;
@@ -98,10 +105,21 @@ async function durationOf(file: string, mtimeMs: number): Promise<number | null>
 
 async function soundList(guild: Guild) {
   const sounds = [];
+  const starred = favourites(guild.id);
+  const plays = playCounts(guild.id);
   for (const sound of listSounds(guild.id)) {
     const { size, mtimeMs } = statSync(sound.file);
     const seconds = await durationOf(sound.file, mtimeMs);
-    sounds.push({ name: sound.name, emoji: sound.emoji ?? null, onDiscord: sound.onDiscord, bytes: size, seconds, fitsDiscord: seconds !== null && discordBoard.fits(seconds) });
+    sounds.push({
+      name: sound.name,
+      emoji: sound.emoji ?? null,
+      onDiscord: sound.onDiscord,
+      bytes: size,
+      seconds,
+      fitsDiscord: seconds !== null && discordBoard.fits(seconds),
+      favourite: starred.has(sound.name),
+      plays: plays.get(sound.name) ?? 0,
+    });
   }
   return {
     sounds,
@@ -141,6 +159,63 @@ function voiceList(guild: Guild) {
     channels: channels
       .map((c) => ({ id: c.id, name: c.name, people: humansIn(c).map((m) => m.displayName) }))
       .sort((a, b) => b.people.length - a.people.length),
+  };
+}
+
+const nameOf = (guild: Guild, id: string) => guild.members.cache.get(id)?.displayName ?? 'Someone who left';
+
+function nightList(guild: Guild) {
+  const channelName = (id: string | null) => (id ? (guild.channels.cache.get(id)?.name ?? null) : null);
+  const { nights, series } = upcomingNights(guild.id, Date.now());
+  return {
+    timeZone: setting(guild.id, 'timezone'),
+    nights: nights.map((n) => ({
+      id: n.id,
+      game: n.game,
+      details: n.details,
+      startsAt: n.starts_at,
+      voiceChannel: channelName(n.voice_channel_id),
+      host: nameOf(guild, n.created_by),
+      in: n.people.in.map((id) => nameOf(guild, id)),
+      maybe: n.people.maybe.map((id) => nameOf(guild, id)),
+      out: n.people.out.map((id) => nameOf(guild, id)),
+      repeats: n.repeats,
+    })),
+    series: series.map((s) => ({ id: s.id, game: s.game, repeats: s.repeats, nextAt: s.next_at, host: nameOf(guild, s.created_by) })),
+  };
+}
+
+/** The same numbers as /gamestats and /stats, for the web UI's charts */
+function statsFor(guild: Guild, url: URL) {
+  const period = url.searchParams.get('period') ?? 'month';
+  if (!Object.hasOwn(PERIODS, period)) throw new Refused(400, 'No such period.');
+  const user = url.searchParams.get('user') || undefined;
+  const game = url.searchParams.get('game') || undefined;
+  const now = Date.now();
+  const { ms } = PERIODS[period as keyof typeof PERIODS];
+  const since = Number.isFinite(ms) ? now - ms : 0;
+  const isMember = (id: string) => guild.members.cache.has(id);
+  const filter = user && game ? 'both' : user ? 'user' : game ? 'game' : 'none';
+
+  checkpoint();
+  const games = stats(guild.id, since, filter, 'game', user, game);
+  const players = stats(guild.id, since, filter, 'user_id', user, game).filter((r) => isMember(r.key));
+  // Voice time isn't per game, so it only applies when no game is picked
+  const voice = game ? [] : voiceTotals(guild.id, since).filter((p) => isMember(p.userId) && (!user || p.userId === user));
+  return {
+    timeZone: setting(guild.id, 'timezone'),
+    user: user ? { id: user, name: nameOf(guild, user) } : null,
+    game: game ?? null,
+    totals: {
+      gameMs: players.reduce((sum, p) => sum + p.ms, 0),
+      games: games.length,
+      people: players.length,
+      voiceMs: voice.reduce((sum, p) => sum + p.secs * 1000, 0),
+    },
+    games: games.slice(0, MAX_RANKED).map((g) => ({ name: g.key, ms: g.ms, people: g.n })),
+    players: players.slice(0, MAX_RANKED).map((p) => ({ id: p.key, name: nameOf(guild, p.key), ms: p.ms, games: p.n })),
+    voice: voice.slice(0, MAX_RANKED).map((p) => ({ id: p.userId, name: nameOf(guild, p.userId), ms: p.secs * 1000, nights: p.nights })),
+    activity: activity(guild.id, since, now, setting(guild.id, 'timezone'), isMember, user, game),
   };
 }
 
@@ -217,6 +292,7 @@ async function handleSounds(client: Client<true>, guild: Guild, req: IncomingMes
       if (emoji && 'error' in emoji) throw new Refused(400, emoji.error);
       await changeEmoji(guild, sound.name, emoji?.emoji ?? null);
     }
+    if ('favourite' in body) setFavourite(guild.id, sound.name, body.favourite === true);
     if ('name' in body) refuse(guild, await renameSound(guild, sound, String(body.name)));
     await refresh();
     return {};
@@ -269,6 +345,16 @@ async function handle(client: Client<true>, req: IncomingMessage, res: ServerRes
   if (section === 'sounds' && rest.length <= 2) return handleSounds(client, guild, req, res, url, rest[0], rest[1]);
   if (section === 'settings' && rest.length <= 1) return handleSettings(guild, req, rest[0]);
   if (section === 'voice' && !rest.length && req.method === 'GET') return voiceList(guild);
+  if (section === 'stats' && !rest.length && req.method === 'GET') return statsFor(guild, url);
+  if (section === 'game-nights' && !rest.length && req.method === 'GET') return nightList(guild);
+  if (section === 'game-nights' && rest.length === 2 && rest[1] === 'cancel' && req.method === 'POST') {
+    if (!(await cancelNight(client, guild, Number(rest[0])))) throw new Refused(404, 'No such game night.');
+    return {};
+  }
+  if (section === 'game-night-series' && rest.length === 1 && req.method === 'DELETE') {
+    if (!(await stopSeries(client, guild, Number(rest[0])))) throw new Refused(404, 'No such repeating night.');
+    return {};
+  }
   if (section === 'stop' && !rest.length && req.method === 'POST') {
     stopPlayback(guild.id);
     return {};

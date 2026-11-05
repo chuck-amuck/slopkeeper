@@ -425,7 +425,7 @@ It applies the same rules as `/sound` and `/setup`, and every request needs an `
 | `GET /guilds` | Lists servers |
 | `GET /guilds/:id/sounds` | Lists sounds, Discord slots and the server's emoji |
 | `PUT /guilds/:id/sounds/:name?file=<filename>` | Adds or replaces a sound; the body is the file |
-| `PATCH /guilds/:id/sounds/:name` | Renames it or sets its emoji: `{ "name": "..." }`, `{ "emoji": "..." }` |
+| `PATCH /guilds/:id/sounds/:name` | Renames it, sets its emoji or stars it: `{ "name": "..." }`, `{ "emoji": "..." }`, `{ "favourite": true }` |
 | `DELETE /guilds/:id/sounds/:name` | Deletes it |
 | `GET /guilds/:id/sounds/:name/audio` | Downloads its audio |
 | `POST /guilds/:id/sounds/:name/play` | Plays it in a voice channel with people in it: `{ "channelId": "..." }` |
@@ -434,6 +434,10 @@ It applies the same rules as `/sound` and `/setup`, and every request needs an `
 | `POST /guilds/:id/discord-sync` | Copies every sound that fits to Discord's soundboard |
 | `GET /guilds/:id/voice` | Lists voice channels with people in them, busiest first |
 | `POST /guilds/:id/stop` | Stops whatever is playing |
+| `GET /guilds/:id/game-nights` | Lists upcoming game nights and repeating series |
+| `POST /guilds/:id/game-nights/:night/cancel` | Cancels a night, as its Cancel button does |
+| `DELETE /guilds/:id/game-night-series/:series` | Stops a series; nights already posted stay on |
+| `GET /guilds/:id/stats?period=<week\|month\|year\|all>&user=<id>&game=<name>` | Game and voice totals, with game time over the period |
 | `GET /guilds/:id/settings` | Lists settings, channels, roles and time zones |
 | `PUT /guilds/:id/settings/:key` | Changes a setting: `{ "value": ... }` |
 | `DELETE /guilds/:id/settings/:key` | Puts a setting back to its default |
