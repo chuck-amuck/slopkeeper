@@ -58,6 +58,27 @@ function findGame(guildId: string, name: string): GameRow | undefined {
     | undefined;
 }
 
+/** Games two people both own and could play together, most played first */
+export function sharedGames(guildId: string, a: string, b: string) {
+  const library = allGames(guildId);
+  const marks = [manualGameIds(a, guildId), manualGameIds(b, guildId)];
+  const steam = [ownedSteamGames(a), ownedSteamGames(b)];
+  const info = appInfo();
+  const minutes = (appid: number | null) => (appid === null ? 0 : (steam[0].get(appid)?.playtime ?? 0) + (steam[1].get(appid)?.playtime ?? 0));
+
+  const shared: { name: string; minutes: number }[] = [];
+  for (const g of library) {
+    const owns = (who: number) => marks[who].has(g.id) || (g.steam_appid !== null && steam[who].has(g.steam_appid));
+    if (owns(0) && owns(1)) shared.push({ name: g.name, minutes: minutes(g.steam_appid) });
+  }
+  const inLibrary = new Set(library.map((g) => g.steam_appid));
+  for (const [appid, game] of steam[0]) {
+    if (!steam[1].has(appid) || inLibrary.has(appid) || !info.get(appid)?.multiplayer) continue;
+    shared.push({ name: game.name ?? info.get(appid)?.name ?? `App ${appid}`, minutes: minutes(appid) });
+  }
+  return shared.sort((x, y) => y.minutes - x.minutes);
+}
+
 function parseSteamAppId(input: string): number | null {
   const match = input.match(/\/app\/(\d+)/) ?? input.trim().match(/^(\d+)$/);
   return match ? Number(match[1]) : null;
@@ -80,7 +101,9 @@ export function choose<T extends { name: string }>(ready: T[], avoid?: string): 
 
 const mentions = (ids: Iterable<string>) => [...ids].map((id) => `<@${id}>`).join(' ');
 
-interface Candidate {
+export const NOBODY_COUNTED = 'Nobody here has linked Steam (`/steam link`) or marked games (`/game own`) yet.';
+
+export interface Candidate {
   name: string;
   appid: number | null;
   missing: string[];
@@ -88,7 +111,8 @@ interface Candidate {
   playtime: number;
 }
 
-async function buildPick(guild: Guild, here: string[], avoid?: string) {
+/** What the people in voice could play, or null if nobody there has linked Steam or marked any games */
+export async function candidatesFor(guild: Guild, here: string[]) {
   await refreshStale(here, 3_600_000);
 
   const library = allGames(guild.id);
@@ -100,9 +124,7 @@ async function buildPick(guild: Guild, here: string[], avoid?: string) {
   const counted = here.filter((id) => linkFor(id) || manual.get(id)!.size > 0);
   const unknown = here.filter((id) => !counted.includes(id));
   const privateIds = counted.filter((id) => linkFor(id)?.private);
-  if (!counted.length) {
-    return { content: 'Nobody here has linked Steam (`/steam link`) or marked games (`/game own`) yet.', embeds: [], components: [] };
-  }
+  if (!counted.length) return null;
 
   const ownsApp = (id: string, appid: number) => {
     const lib = libByApp.get(appid);
@@ -144,14 +166,22 @@ async function buildPick(guild: Guild, here: string[], avoid?: string) {
     if (missing.length <= maxMissing) candidates.push({ name: g.name, appid: null, missing, playtime: 0 });
   }
 
+  const notes: string[] = [];
+  if (unknown.length) notes.push(`Not counted (no Steam linked): ${mentions(unknown)}`);
+  if (privateIds.length) notes.push(`🔒 Steam game details private: ${mentions(privateIds)}`);
+  return { counted, candidates, notes };
+}
+
+async function buildPick(guild: Guild, here: string[], avoid?: string) {
+  const found = await candidatesFor(guild, here);
+  if (!found) return { content: NOBODY_COUNTED, embeds: [], components: [] };
+  const { counted, candidates, notes } = found;
+
   const byPlaytime = (a: Candidate, b: Candidate) => b.playtime - a.playtime;
   const ready = candidates.filter((c) => c.missing.length === 0);
   const almost = candidates.filter((c) => c.missing.length === 1).sort(byPlaytime).slice(0, 8);
 
   const embed = new EmbedBuilder().setColor(0xeb459e);
-  const notes: string[] = [];
-  if (unknown.length) notes.push(`Not counted (no Steam linked): ${mentions(unknown)}`);
-  if (privateIds.length) notes.push(`🔒 Steam game details private: ${mentions(privateIds)}`);
 
   let pick: Candidate | undefined;
   if (ready.length) {
@@ -173,6 +203,7 @@ async function buildPick(guild: Guild, here: string[], avoid?: string) {
 
   const buttons = new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder().setCustomId('wdp:reroll').setLabel('Reroll').setEmoji('🎲').setStyle(ButtonStyle.Primary).setDisabled(ready.length < 2),
+    new ButtonBuilder().setCustomId('vote:start').setLabel('Vote').setEmoji('🗳️').setStyle(ButtonStyle.Secondary).setDisabled(ready.length < 2),
   );
   if (pick?.appid) {
     buttons.addComponents(new ButtonBuilder().setCustomId(`wdp:hide:${pick.appid}`).setLabel('Never suggest this').setStyle(ButtonStyle.Secondary));

@@ -2,7 +2,7 @@ import { fakeClient } from './helpers.ts';
 import assert from 'node:assert/strict';
 import { mock, test } from 'node:test';
 import { db } from '../src/db.ts';
-import { parseWhen, tick } from '../src/features/gamenight.ts';
+import { gameNights, nextOccurrence, parseWhen, tick } from '../src/features/gamenight.ts';
 
 const zone = 'America/Chicago';
 const thursday3pm = Date.UTC(2026, 9, 29, 20, 0);
@@ -85,4 +85,163 @@ test('a reminder that fails doesn’t hold up other servers, and is tried again'
   await tick(client);
   assert.deepEqual(sent, ['b', 'a'], 'b isn’t reminded twice');
   assert.equal(reminded(broken), 1);
+});
+
+test('repeats at the same local time across a daylight saving change', () => {
+  const fri = parseWhen('fri 8pm', thursday3pm, zone)!;
+  assert.equal(local(nextOccurrence(fri, 7, fri, zone)), '2026-11-06 20:00');
+  assert.equal(local(nextOccurrence(fri, 14, fri, zone)), '2026-11-13 20:00');
+  assert.equal(new Date(fri).getUTCHours() + 1, new Date(nextOccurrence(fri, 7, fri, zone)).getUTCHours(), 'an hour later in UTC');
+  assert.equal(local(nextOccurrence(fri, 7, fri + 15 * 86_400_000, zone)), '2026-11-20 20:00', 'skips what has already gone by');
+});
+
+const DAY = 86_400_000;
+const allNights = (guildId: string) => db.prepare('SELECT * FROM game_nights WHERE guild_id = ? ORDER BY starts_at').all(guildId) as unknown as (Record<string, number | string | null> & { id: number; starts_at: number; series_id: number | null })[];
+const seriesIn = (guildId: string) => db.prepare('SELECT * FROM game_night_series WHERE guild_id = ?').get(guildId) as { id: number; next_at: number; post_at: number } | undefined;
+const buttonIds = (reply: { components: { toJSON(): { components: { custom_id: string }[] } }[] }) => reply.components.flatMap((r) => r.toJSON().components.map((c) => c.custom_id));
+
+/** Runs /gamenight plan and returns its card */
+async function plan(guildId: string, repeat: number | null) {
+  let card: Parameters<typeof buttonIds>[0] & { id: string };
+  const interaction = {
+    inCachedGuild: () => true,
+    guildId,
+    channelId: `channel-${guildId}`,
+    guild: { id: guildId, members: {} },
+    user: { id: 'host' },
+    options: {
+      getSubcommand: () => 'plan',
+      getString: (name: string) => ({ game: 'Valheim', when: 'tomorrow 8pm' })[name] ?? null,
+      getChannel: () => null,
+      getInteger: () => repeat,
+    },
+    deferReply: async () => {},
+    editReply: async (r: typeof card) => (card = { ...r, id: 'card' }),
+    followUp: async () => {},
+  };
+  await gameNights.commands![0].run(interaction as never);
+  return card!;
+}
+
+/** Presses a card's button */
+async function press(customId: string, user: string, manageEvents = false) {
+  let update: Parameters<typeof buttonIds>[0] | undefined;
+  let reply: { content: string } | undefined;
+  await gameNights.onButton!({
+    customId,
+    inCachedGuild: () => true,
+    user: { id: user },
+    guild: { scheduledEvents: { delete: async () => {} } },
+    memberPermissions: { has: () => manageEvents },
+    update: async (r: typeof update) => (update = r),
+    reply: async (r: typeof reply) => (reply = r),
+    followUp: async () => {},
+  } as never);
+  return { update, reply };
+}
+
+const makeDue = (guildId: string) => db.prepare('UPDATE game_night_series SET post_at = ? WHERE guild_id = ?').run(Date.now() - 1, guildId);
+
+test('a one-off night has no series and no stop button', async () => {
+  const card = await plan('once', null);
+  assert.equal(seriesIn('once'), undefined);
+  assert.ok(!buttonIds(card).some((id) => id.startsWith('gn:stop')));
+});
+
+test('a repeating night posts its next card, once, with the host in', async () => {
+  const card = await plan('weekly', 7);
+  assert.ok(buttonIds(card).some((id) => id.startsWith('gn:stop')));
+  const first = allNights('weekly')[0];
+  const series = seriesIn('weekly')!;
+  assert.equal(first.series_id, series.id);
+  assert.equal(local(series.next_at), local(nextOccurrence(first.starts_at, 7, first.starts_at, zone)));
+  assert.equal(series.post_at, series.next_at - 6 * DAY);
+
+  const sent: { id?: string; embeds: unknown[] }[] = [];
+  const client = fakeClient([{ id: 'weekly', name: 'Weekly' }], async (_guild, message) => {
+    sent.push(message as never);
+    return { id: `posted-${sent.length}` };
+  });
+  await tick(client);
+  assert.equal(sent.length, 0, 'not due yet');
+
+  makeDue('weekly');
+  await tick(client);
+  await tick(client);
+  assert.equal(sent.length, 1);
+  const nights = allNights('weekly');
+  assert.equal(nights.length, 2);
+  assert.equal(nights[1].starts_at, series.next_at);
+  assert.equal(nights[1].message_id, 'posted-1');
+  assert.equal(nights[1].series_id, series.id);
+  assert.deepEqual({ ...(db.prepare('SELECT user_id, status FROM game_night_rsvps WHERE night_id = ?').get(nights[1].id) as object) }, { user_id: 'host', status: 'in' });
+  const moved = seriesIn('weekly')!;
+  assert.equal(moved.next_at, nextOccurrence(series.next_at, 7, series.next_at, zone));
+  assert.ok(moved.post_at > Date.now());
+});
+
+test('a card missed while the bot was down goes on to the next night ahead', async () => {
+  await plan('missed', 7);
+  const series = seriesIn('missed')!;
+  const longAgo = Date.now() - 20 * DAY;
+  db.prepare('UPDATE game_night_series SET next_at = ?, post_at = ? WHERE id = ?').run(longAgo, longAgo - 6 * DAY, series.id);
+  await tick(fakeClient([{ id: 'missed', name: 'Missed' }], async () => ({ id: 'x' })));
+  const nights = allNights('missed');
+  assert.equal(nights.length, 2);
+  assert.ok(nights.every((n) => n.starts_at > Date.now()), 'nothing posted in the past');
+  assert.ok(nights[1].starts_at < Date.now() + 8 * DAY, 'the very next one, not one further on');
+});
+
+test('a card that can’t be posted leaves nothing behind and is tried again in an hour', async () => {
+  mock.method(console, 'error', () => {});
+  await plan('blocked', 7);
+  makeDue('blocked');
+  const before = allNights('blocked').length;
+  let works = false;
+  const client = fakeClient([{ id: 'blocked', name: 'Blocked' }], async () => {
+    if (!works) throw new Error('Missing Permissions');
+    return { id: 'ok' };
+  });
+  await tick(client);
+  assert.equal(allNights('blocked').length, before);
+  assert.ok(seriesIn('blocked')!.post_at > Date.now() + 3_500_000, 'not retried every minute');
+
+  works = true;
+  makeDue('blocked');
+  await tick(client);
+  assert.equal(allNights('blocked').length, before + 1);
+});
+
+test('cancelling one night keeps the series, and the card can still stop it', async () => {
+  await plan('skip', 7);
+  const { id } = allNights('skip')[0];
+  const { update } = await press(`gn:cancel:${id}`, 'host');
+  assert.ok(seriesIn('skip'));
+  assert.deepEqual(buttonIds(update!), [`gn:stop:${id}`]);
+
+  const stopped = await press(`gn:stop:${id}`, 'host');
+  assert.equal(seriesIn('skip'), undefined);
+  assert.deepEqual(buttonIds(stopped.update!), []);
+});
+
+test('an RSVP button left on a cancelled night does nothing', async () => {
+  await plan('late', null);
+  const { id } = allNights('late')[0];
+  await press(`gn:cancel:${id}`, 'host');
+  const { update } = await press(`gn:in:${id}`, 'latecomer');
+  assert.deepEqual(update, { components: [] });
+  assert.equal(db.prepare(`SELECT 1 FROM game_night_rsvps WHERE night_id = ? AND user_id = 'latecomer'`).get(id), undefined);
+});
+
+test('only the host or Manage Events can stop a series', async () => {
+  await plan('perms', 14);
+  const { id } = allNights('perms')[0];
+  assert.match((await press(`gn:stop:${id}`, 'stranger')).reply!.content, /host/);
+  assert.ok(seriesIn('perms'));
+  await press(`gn:stop:${id}`, 'admin', true);
+  assert.equal(seriesIn('perms'), undefined);
+  makeDue('perms');
+  const sent: unknown[] = [];
+  await tick(fakeClient([{ id: 'perms', name: 'Perms' }], async (_g, m) => sent.push(m)));
+  assert.equal(sent.length, 0);
 });

@@ -34,6 +34,7 @@ const LABELS: Record<SettingKey, string> = {
   freeGames: 'Free game alerts',
   freeGamesChannel: 'Free games channel',
   gameNightReminderMin: 'Game night reminder',
+  monthlyRecap: 'Monthly recap',
 };
 
 function show(key: SettingKey, value: unknown): string {
@@ -55,6 +56,7 @@ function show(key: SettingKey, value: unknown): string {
     case 'steamCountry':
       return String(value).toUpperCase();
     case 'freeGames':
+    case 'monthlyRecap':
       return value ? 'on' : 'off';
     case 'freeGamesChannel':
       return value ? `<#${value}>` : 'the announce channel';
@@ -174,6 +176,12 @@ export const setup: Feature = {
         )
         .addSubcommand((s) =>
           s
+            .setName('monthly-recap')
+            .setDescription('Post a recap of the month on the 1st (on by default)')
+            .addBooleanOption((o) => o.setName('enabled').setDescription('On or off').setRequired(true)),
+        )
+        .addSubcommand((s) =>
+          s
             .setName('reset')
             .setDescription('Put a setting back to its default')
             .addStringOption((o) =>
@@ -264,6 +272,7 @@ export const setup: Feature = {
           ]);
         }
         if (sub === 'gamenight-reminder') return apply(i, [['gameNightReminderMin', i.options.getInteger('minutes', true)]]);
+        if (sub === 'monthly-recap') return apply(i, [['monthlyRecap', i.options.getBoolean('enabled', true)]]);
 
         if (sub === 'reset') {
           const key = i.options.getString('setting', true) as SettingKey;

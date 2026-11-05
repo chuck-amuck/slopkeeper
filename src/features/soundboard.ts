@@ -234,6 +234,11 @@ export async function play(channel: VoiceBasedChannel, file: string): Promise<st
   return null;
 }
 
+/** For the monthly recap */
+function recordPlay(guildId: string, userId: string, name: string) {
+  db.prepare('INSERT INTO sound_plays (guild_id, user_id, name, played_at) VALUES (?, ?, ?, ?)').run(guildId, userId, name, Date.now());
+}
+
 function stopPlayback(guildId: string) {
   const a = audio.get(guildId);
   a?.mixer?.stopAll();
@@ -396,6 +401,7 @@ export const soundboard: Feature = {
           if (!i.member.voice.channel) return i.reply({ content: 'Join a voice channel first.', ...ephemeral });
           await i.deferReply(ephemeral);
           const problem = await play(i.member.voice.channel, sound.file);
+          if (!problem) recordPlay(i.guildId, i.user.id, sound.name);
           return i.editReply(problem ?? `🔊 ${sound.name}`);
         }
 
@@ -573,5 +579,6 @@ export const soundboard: Feature = {
     }
     const problem = await play(i.member.voice.channel, sound.file);
     if (problem) return i.followUp({ content: problem, flags: MessageFlags.Ephemeral });
+    recordPlay(i.guildId, i.user.id, sound.name);
   },
 };
