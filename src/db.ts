@@ -196,6 +196,11 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS game_plays_by_guild ON game_plays (guild_id, started_at);
 
+  CREATE TABLE IF NOT EXISTS sound_favourites (
+    guild_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    PRIMARY KEY (guild_id, name)
+  );
   CREATE TABLE IF NOT EXISTS sound_plays (
     guild_id TEXT NOT NULL,
     user_id TEXT NOT NULL,
