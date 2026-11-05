@@ -428,9 +428,12 @@ It applies the same rules as `/sound` and `/setup`, and every request needs an `
 | `PATCH /guilds/:id/sounds/:name` | Renames it or sets its emoji: `{ "name": "..." }`, `{ "emoji": "..." }` |
 | `DELETE /guilds/:id/sounds/:name` | Deletes it |
 | `GET /guilds/:id/sounds/:name/audio` | Downloads its audio |
+| `POST /guilds/:id/sounds/:name/play` | Plays it in a voice channel with people in it: `{ "channelId": "..." }` |
 | `PUT /guilds/:id/sounds/:name/discord` | Copies it to Discord's soundboard: `{ "start": 12.5 }` picks a part of a long sound |
 | `DELETE /guilds/:id/sounds/:name/discord` | Takes it off Discord's soundboard |
 | `POST /guilds/:id/discord-sync` | Copies every sound that fits to Discord's soundboard |
+| `GET /guilds/:id/voice` | Lists voice channels with people in them, busiest first |
+| `POST /guilds/:id/stop` | Stops whatever is playing |
 | `GET /guilds/:id/settings` | Lists settings, channels, roles and time zones |
 | `PUT /guilds/:id/settings/:key` | Changes a setting: `{ "value": ... }` |
 | `DELETE /guilds/:id/settings/:key` | Puts a setting back to its default |

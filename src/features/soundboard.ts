@@ -319,7 +319,14 @@ function recordPlay(guildId: string, userId: string, name: string) {
   db.prepare('INSERT INTO sound_plays (guild_id, user_id, name, played_at) VALUES (?, ?, ?, ?)').run(guildId, userId, name, Date.now());
 }
 
-function stopPlayback(guildId: string) {
+/** Plays a sound for the web UI, which has nobody to credit. It still counts towards the recap's top sounds */
+export async function playFromWeb(channel: VoiceBasedChannel, sound: Sound): Promise<string | null> {
+  const problem = await play(channel, sound.file);
+  if (!problem) recordPlay(channel.guild.id, 'web', sound.name);
+  return problem;
+}
+
+export function stopPlayback(guildId: string) {
   const a = audio.get(guildId);
   a?.mixer?.stopAll();
   a?.player.stop(true);

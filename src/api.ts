@@ -1,4 +1,4 @@
-import { ChannelType, type Client, type Guild } from 'discord.js';
+import { ChannelType, type Client, type Guild, type VoiceBasedChannel } from 'discord.js';
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { createReadStream, statSync } from 'node:fs';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
@@ -13,16 +13,18 @@ import {
   findSound,
   listSounds,
   parseEmoji,
+  playFromWeb,
   refreshPanels,
   removeSound,
   renameSound,
+  stopPlayback,
   syncToDiscord,
   uploadProblem,
   type Sound,
 } from './features/soundboard.ts';
 import { DEFAULTS, isAllowed, setSetting, setting, type SettingKey } from './settings.ts';
 import type { Feature } from './types.ts';
-import { servedGuilds } from './util.ts';
+import { humansIn, servedGuilds } from './util.ts';
 
 // A little over the largest sound, which is the largest thing anything sends
 const MAX_BODY = 5 * 1024 * 1024 + 1024;
@@ -132,6 +134,16 @@ function settingList(guild: Guild) {
   };
 }
 
+/** Channels with people in them, busiest first */
+function voiceList(guild: Guild) {
+  const channels = [...guild.channels.cache.values()].filter((c): c is VoiceBasedChannel => c.isVoiceBased() && c.id !== guild.afkChannelId && humansIn(c).length > 0);
+  return {
+    channels: channels
+      .map((c) => ({ id: c.id, name: c.name, people: humansIn(c).map((m) => m.displayName) }))
+      .sort((a, b) => b.people.length - a.people.length),
+  };
+}
+
 const soundOf = (guild: Guild, name: string): Sound => {
   const sound = findSound(guild.id, name);
   if (!sound) throw new Refused(404, 'No sound by that name.');
@@ -161,6 +173,16 @@ async function handleSounds(client: Client<true>, guild: Guild, req: IncomingMes
     });
     createReadStream(file).pipe(res);
     return null;
+  }
+
+  if (part === 'play' && method === 'POST') {
+    const sound = soundOf(guild, name);
+    const channel = guild.channels.cache.get(String((await readJson(req)).channelId));
+    if (!channel?.isVoiceBased()) throw new Refused(400, 'Pick a voice channel.');
+    // With nobody there, the bot would leave as soon as it joined
+    if (!humansIn(channel).length) throw new Refused(400, `Nobody’s in ${channel.name} any more.`);
+    refuse(guild, await playFromWeb(channel, sound));
+    return {};
   }
 
   if (part === 'discord') {
@@ -246,6 +268,11 @@ async function handle(client: Client<true>, req: IncomingMessage, res: ServerRes
 
   if (section === 'sounds' && rest.length <= 2) return handleSounds(client, guild, req, res, url, rest[0], rest[1]);
   if (section === 'settings' && rest.length <= 1) return handleSettings(guild, req, rest[0]);
+  if (section === 'voice' && !rest.length && req.method === 'GET') return voiceList(guild);
+  if (section === 'stop' && !rest.length && req.method === 'POST') {
+    stopPlayback(guild.id);
+    return {};
+  }
   if (section === 'discord-sync' && !rest.length && req.method === 'POST') {
     const result = await syncToDiscord(guild);
     await refreshPanels(client, guild.id);
