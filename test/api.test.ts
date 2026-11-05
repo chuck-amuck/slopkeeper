@@ -616,7 +616,7 @@ const HOUR = 3_600_000;
 
 function addPlay(user: string, game: string, hoursAgo: number, hours: number, guildId = GUILD) {
   const start = Date.now() - hoursAgo * HOUR;
-  db.prepare('INSERT INTO game_plays (guild_id, user_id, game, started_at, ended_at) VALUES (?, ?, ?, ?, ?)').run(guildId, user, game, start, start + hours * HOUR);
+  db.prepare(`INSERT INTO game_plays (guild_id, user_id, game, channel_id, started_at, ended_at) VALUES (?, ?, ?, 'voice', ?, ?)`).run(guildId, user, game, start, start + hours * HOUR);
 }
 
 function addSession(members: [string, number][], hoursAgo: number) {
@@ -689,7 +689,7 @@ test('stats are empty for a quiet server', async () => {
 
 test('a play across midnight is split between the days', () => {
   const midnight = Date.parse('2026-03-10T05:00:00Z'); // In Chicago, on CDT
-  db.prepare('INSERT INTO game_plays (guild_id, user_id, game, started_at, ended_at) VALUES (?, ?, ?, ?, ?)').run(GUILD, 'u1', 'Halo', midnight - HOUR / 2, midnight + HOUR);
+  db.prepare(`INSERT INTO game_plays (guild_id, user_id, game, channel_id, started_at, ended_at) VALUES (?, ?, ?, 'voice', ?, ?)`).run(GUILD, 'u1', 'Halo', midnight - HOUR / 2, midnight + HOUR);
   const { step, buckets } = activity(GUILD, midnight - 2 * 24 * HOUR, midnight + 24 * HOUR, 'America/Chicago', () => true);
   assert.equal(step, 'day');
   assert.deepEqual(buckets.filter((b) => b.ms).map((b) => b.ms), [HOUR / 2, HOUR]);
@@ -698,8 +698,8 @@ test('a play across midnight is split between the days', () => {
 
 test('longer periods are grouped by week, then by month from the 1st', () => {
   const now = Date.parse('2026-06-15T17:00:00Z');
-  db.prepare('INSERT INTO game_plays (guild_id, user_id, game, started_at, ended_at) VALUES (?, ?, ?, ?, ?)').run(GUILD, 'u1', 'Halo', now - 500 * 24 * HOUR, now - 500 * 24 * HOUR + HOUR);
-  db.prepare('INSERT INTO game_plays (guild_id, user_id, game, started_at, ended_at) VALUES (?, ?, ?, ?, ?)').run(GUILD, 'u1', 'Halo', now - 50 * 24 * HOUR, now - 50 * 24 * HOUR + HOUR);
+  db.prepare(`INSERT INTO game_plays (guild_id, user_id, game, channel_id, started_at, ended_at) VALUES (?, ?, ?, 'voice', ?, ?)`).run(GUILD, 'u1', 'Halo', now - 500 * 24 * HOUR, now - 500 * 24 * HOUR + HOUR);
+  db.prepare(`INSERT INTO game_plays (guild_id, user_id, game, channel_id, started_at, ended_at) VALUES (?, ?, ?, 'voice', ?, ?)`).run(GUILD, 'u1', 'Halo', now - 50 * 24 * HOUR, now - 50 * 24 * HOUR + HOUR);
   assert.equal(activity(GUILD, now - 100 * 24 * HOUR, now, 'UTC', () => true).step, 'week');
   const months = activity(GUILD, 0, now, 'UTC', () => true);
   assert.equal(months.step, 'month');
@@ -865,7 +865,7 @@ const nightRows = () => db.prepare('SELECT * FROM game_nights WHERE guild_id = ?
 
 test('offers what the planning form needs', async () => {
   setSetting(GUILD, 'announceChannel', '111');
-  db.prepare("INSERT INTO game_plays (guild_id, user_id, game, started_at, ended_at) VALUES (?, 'u1', 'Halo', 0, 1)").run(GUILD);
+  db.prepare("INSERT INTO game_plays (guild_id, user_id, game, channel_id, started_at, ended_at) VALUES (?, 'u1', 'Halo', 'voice', 0, 1)").run(GUILD);
   const data = await ok(`/guilds/${GUILD}/game-nights`);
   assert.deepEqual(data.games, ['Halo']);
   assert.equal(data.defaultChannel, '111');

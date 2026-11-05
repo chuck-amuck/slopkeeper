@@ -1,14 +1,17 @@
 import './helpers.ts';
 import assert from 'node:assert/strict';
-import { mock, test } from 'node:test';
+import { EventEmitter } from 'node:events';
+import { mock, test, type TestContext } from 'node:test';
+import { Events } from 'discord.js';
+import { config } from '../src/config.ts';
 import { db } from '../src/db.ts';
 import { sharedGames } from '../src/features/games.ts';
-import { gameStats, playedTogether, resync, stats, voiceTogether } from '../src/features/gamestats.ts';
+import { activity, checkpoint, gameStats, playedTogether, resync, stats, voiceTogether } from '../src/features/gamestats.ts';
 
 const HOUR = 3_600_000;
 const DAY = 24 * HOUR;
 const t = Date.now();
-const play = db.prepare('INSERT INTO game_plays (guild_id, user_id, game, started_at, ended_at) VALUES (?, ?, ?, ?, ?)');
+const play = db.prepare(`INSERT INTO game_plays (guild_id, user_id, game, channel_id, started_at, ended_at) VALUES (?, ?, ?, 'voice', ?, ?)`);
 play.run('g', 'a', 'Valheim', t - 3 * HOUR, t - HOUR);
 play.run('g', 'b', 'Valheim', t - 2 * HOUR, t - HOUR);
 play.run('g', 'a', 'Valheim', t - 8 * DAY - HOUR, t - 8 * DAY + HOUR);
@@ -88,7 +91,7 @@ test('after a long disconnect, someone who went offline stops counting as playin
   const activity = { type: 0, name: 'Stale Game' };
   const presences = { cache: new Map<string, unknown>([['p', { activities: [activity] }]]) };
   const guild = { id: 'gap', name: 'Gap', presences, members: { cache: new Map(), fetch: async (): Promise<unknown> => undefined } };
-  const member = { id: 'p', user: { bot: false }, guild, get presence() { return presences.cache.get('p') ?? null; } };
+  const member = { id: 'p', user: { bot: false }, guild, voice: { channelId: 'v' }, get presence() { return presences.cache.get('p') ?? null; } };
   guild.members.cache.set('p', member);
   const client = { guilds: { cache: new Map([['gap', guild]]) } } as never;
 
@@ -115,6 +118,15 @@ test('time together is the overlap in the same game, not just both playing it', 
   assert.deepEqual(playedTogether('c', 'a', 'b').map((r) => [r.game, r.ms / HOUR]), [['Valheim', 2]]);
   assert.deepEqual(playedTogether('c', 'b', 'a').map((r) => [r.game, r.ms / HOUR]), [['Valheim', 2]]);
   assert.deepEqual(playedTogether('c', 'a', 'nobody'), []);
+});
+
+test('the same game in different voice channels isn’t time together', () => {
+  const inChannel = db.prepare(`INSERT INTO game_plays (guild_id, user_id, game, channel_id, started_at, ended_at) VALUES ('split', ?, 'Valheim', ?, ?, ?)`);
+  inChannel.run('a', 'v1', t - 3 * HOUR, t);
+  inChannel.run('b', 'v2', t - 3 * HOUR, t);
+  inChannel.run('c', 'v1', t - HOUR, t);
+  assert.deepEqual(playedTogether('split', 'a', 'b'), []);
+  assert.deepEqual(playedTogether('split', 'a', 'c').map((r) => [r.game, r.ms / HOUR]), [['Valheim', 1]]);
 });
 
 test('voice time together counts shared sessions, at the shorter person’s time', () => {
@@ -189,3 +201,190 @@ test('/compare refuses one person or a bot', async () => {
   assert.match((await compare({ id: 'b' }, { id: 'b' })).content!, /two different/);
   assert.match((await compare({ id: 'robot', bot: true })).content!, /Bots/);
 });
+
+const MINUTE = 60_000;
+
+/** A server the feature is watching, with its members in and out of voice */
+function voiceServer(t: TestContext, id: string, afkChannelId: string | null = null) {
+  t.mock.timers.enable({ apis: ['Date', 'setInterval'], now: Date.now() });
+  const guild = {
+    id,
+    name: id,
+    afkChannelId,
+    presences: { cache: new Map() },
+    members: { cache: new Map<string, unknown>(), fetch: async (): Promise<unknown> => undefined },
+  };
+  const client = Object.assign(new EventEmitter(), { guilds: { cache: new Map([[id, guild]]) } });
+  gameStats.setup!(client as never);
+
+  const member = (userId: string, bot = false) => {
+    const person = { id: userId, user: { bot }, guild, voice: { channelId: null as string | null }, presence: { activities: [] as { type: number; name: string }[] } };
+    guild.members.cache.set(userId, person);
+    return person;
+  };
+  type Member = ReturnType<typeof member>;
+  return {
+    client,
+    member,
+    moveTo(person: Member, channelId: string | null) {
+      const oldState = { channelId: person.voice.channelId };
+      person.voice = { channelId };
+      client.emit(Events.VoiceStateUpdate, oldState, { channelId, member: person, guild });
+    },
+    /** A mute or deafen: Discord sends a voice update, but the channel stays the same */
+    mute(person: Member) {
+      const { channelId } = person.voice;
+      client.emit(Events.VoiceStateUpdate, { channelId }, { channelId, member: person, guild });
+    },
+    play(person: Member, ...games: string[]) {
+      person.presence = { activities: games.map((name) => ({ type: 0, name })) };
+      client.emit(Events.PresenceUpdate, null, { member: person, guild });
+    },
+    /** Everything recorded so far, as [person, game, channel, minutes] */
+    plays() {
+      checkpoint();
+      const rows = db
+        .prepare('SELECT user_id AS userId, game, channel_id AS channelId, ended_at - started_at AS ms FROM game_plays WHERE guild_id = ? ORDER BY id')
+        .all(id) as { userId: string; game: string; channelId: string; ms: number }[];
+      return rows.map((r) => [r.userId, r.game, r.channelId, r.ms / MINUTE]);
+    },
+  };
+}
+
+test('a game counts in voice, even alone', (t) => {
+  const { member, moveTo, play, plays } = voiceServer(t, 'alone');
+  const sam = member('sam');
+  moveTo(sam, 'v1');
+  play(sam, 'Valheim');
+  t.mock.timers.tick(5 * MINUTE);
+  assert.deepEqual(plays(), [['sam', 'Valheim', 'v1', 5]]);
+});
+
+test('a game out of voice isn’t recorded at all', (t) => {
+  const { member, play, plays } = voiceServer(t, 'solo');
+  play(member('sam'), 'Valheim');
+  t.mock.timers.tick(30 * MINUTE);
+  assert.deepEqual(plays(), []);
+});
+
+test('the AFK channel doesn’t count, and going there stops the clock', (t) => {
+  const { member, moveTo, play, plays } = voiceServer(t, 'afk', 'away');
+  const sam = member('sam');
+  moveTo(sam, 'away');
+  play(sam, 'Valheim');
+  t.mock.timers.tick(30 * MINUTE);
+  assert.deepEqual(plays(), []);
+  moveTo(sam, 'v1');
+  t.mock.timers.tick(5 * MINUTE);
+  moveTo(sam, 'away');
+  t.mock.timers.tick(30 * MINUTE);
+  assert.deepEqual(plays(), [['sam', 'Valheim', 'v1', 5]]);
+});
+
+test('a game started before joining counts from the join, and leaving stops it', (t) => {
+  const { member, moveTo, play, plays } = voiceServer(t, 'joining');
+  const sam = member('sam');
+  play(sam, 'Valheim');
+  t.mock.timers.tick(20 * MINUTE);
+  moveTo(sam, 'v1');
+  t.mock.timers.tick(10 * MINUTE);
+  moveTo(sam, null);
+  t.mock.timers.tick(20 * MINUTE);
+  assert.deepEqual(plays(), [['sam', 'Valheim', 'v1', 10]]);
+});
+
+test('closing the game in voice stops it, and others in the channel carry on', (t) => {
+  const { member, moveTo, play, plays } = voiceServer(t, 'closing');
+  const [sam, alex] = [member('sam'), member('alex')];
+  for (const person of [sam, alex]) {
+    moveTo(person, 'v1');
+    play(person, 'Valheim');
+  }
+  t.mock.timers.tick(5 * MINUTE);
+  play(sam);
+  t.mock.timers.tick(5 * MINUTE);
+  assert.deepEqual(plays(), [['sam', 'Valheim', 'v1', 5], ['alex', 'Valheim', 'v1', 10]]);
+});
+
+test('moving channel starts a new play in the new channel', (t) => {
+  const { member, moveTo, play, plays } = voiceServer(t, 'moving');
+  const sam = member('sam');
+  moveTo(sam, 'v1');
+  play(sam, 'Valheim');
+  t.mock.timers.tick(5 * MINUTE);
+  moveTo(sam, 'v2');
+  t.mock.timers.tick(3 * MINUTE);
+  assert.deepEqual(plays(), [['sam', 'Valheim', 'v1', 5], ['sam', 'Valheim', 'v2', 3]]);
+});
+
+test('muting doesn’t split a play', (t) => {
+  const { member, moveTo, mute, play, plays } = voiceServer(t, 'muting');
+  const sam = member('sam');
+  moveTo(sam, 'v1');
+  play(sam, 'Valheim');
+  t.mock.timers.tick(5 * MINUTE);
+  mute(sam);
+  t.mock.timers.tick(5 * MINUTE);
+  assert.deepEqual(plays(), [['sam', 'Valheim', 'v1', 10]]);
+});
+
+test('bots aren’t recorded', (t) => {
+  const { member, moveTo, play, plays } = voiceServer(t, 'bots');
+  const robot = member('robot', true);
+  moveTo(robot, 'v1');
+  play(robot, 'Valheim');
+  t.mock.timers.tick(5 * MINUTE);
+  assert.deepEqual(plays(), []);
+});
+
+test('a server that isn’t allowed isn’t recorded', (t) => {
+  Object.assign(config, { allowedGuildIds: ['somewhere-else'] });
+  t.after(() => Object.assign(config, { allowedGuildIds: undefined }));
+  const { member, moveTo, plays } = voiceServer(t, 'barred');
+  const sam = member('sam');
+  sam.presence = { activities: [{ type: 0, name: 'Valheim' }] };
+  moveTo(sam, 'v1');
+  t.mock.timers.tick(5 * MINUTE);
+  assert.deepEqual(plays(), []);
+});
+
+test('a resync closes the play of someone who left voice during the gap', async (t) => {
+  const { client, member, moveTo, play, plays } = voiceServer(t, 'dropped');
+  const sam = member('sam');
+  moveTo(sam, 'v1');
+  play(sam, 'Valheim');
+  t.mock.timers.tick(5 * MINUTE);
+  sam.voice = { channelId: null }; // no event: it happened while the bot was disconnected
+  await resync(client as never);
+  t.mock.timers.tick(5 * MINUTE);
+  assert.deepEqual(plays(), [['sam', 'Valheim', 'v1', 5]]);
+});
+
+test('plays from before voice tracking aren’t counted anywhere', async (t) => {
+  const old = db.prepare(`INSERT INTO game_plays (guild_id, user_id, game, started_at, ended_at) VALUES ('old', ?, 'Old Game', ?, ?)`);
+  old.run('a', t2(4), t2(1));
+  old.run('b', t2(4), t2(1));
+  assert.deepEqual(stats('old', 0, 'none', 'game'), []);
+  assert.deepEqual(activity('old', 0, Date.now(), 'UTC', () => true).buckets, []);
+  assert.deepEqual(playedTogether('old', 'a', 'b'), []);
+
+  let names: { name: string }[] = [];
+  await gameStats.commands![0].autocomplete!({ inGuild: () => true, guildId: 'old', options: { getFocused: () => '' }, respond: async (r: typeof names) => (names = r) } as never);
+  assert.deepEqual(names, []);
+
+  // A counted play of the same game, so only the session count can tell old rows apart
+  db.prepare(`INSERT INTO game_plays (guild_id, user_id, game, channel_id, started_at, ended_at) VALUES ('old', 'a', 'Old Game', 'v', ?, ?)`).run(t2(1), t2(0));
+  let reply: { embeds: { toJSON(): { description: string } }[] };
+  await gameStats.commands![0].run({
+    inCachedGuild: () => true,
+    guildId: 'old',
+    guild: { members: { cache: new Map([['a', {}]]) } },
+    options: { getString: (name: string) => (name === 'game' ? 'Old Game' : 'all'), getUser: () => ({ id: 'a', displayName: 'A' }), getMember: () => null },
+    reply: async (r: typeof reply) => (reply = r),
+  } as never);
+  assert.match(reply!.embeds[0].toJSON().description, /over 1 session,/);
+});
+
+function t2(hoursAgo: number) {
+  return t - hoursAgo * HOUR;
+}
