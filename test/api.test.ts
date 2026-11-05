@@ -1,4 +1,5 @@
 import './helpers.ts';
+import { joinVoiceChannel, VoiceConnectionStatus } from '@discordjs/voice';
 import { ChannelType, Collection, PermissionFlagsBits } from 'discord.js';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
@@ -10,6 +11,7 @@ import type { AddressInfo } from 'node:net';
 import { createApi, webApi } from '../src/api.ts';
 import { config } from '../src/config.ts';
 import { db } from '../src/db.ts';
+import { soundboard } from '../src/features/soundboard.ts';
 import { setting, setSetting } from '../src/settings.ts';
 
 const TOKEN = 'secret';
@@ -26,11 +28,19 @@ let nextSoundId = 0;
 let panelEdits: unknown[][];
 let permitted: bigint[];
 
-const channel = (id: string, name: string, type: ChannelType, rawPosition: number) => ({
+const member = (id: string, displayName: string, bot = false) => [id, { id, displayName, user: { bot } }] as const;
+
+const channel = (id: string, name: string, type: ChannelType, rawPosition: number, people: ReturnType<typeof member>[] = []) => ({
   id,
   name,
   type,
   rawPosition,
+  joinable: true,
+  isVoiceBased: () => type === ChannelType.GuildVoice,
+  members: new Map(people),
+  get guild() {
+    return guild;
+  },
   parent: { name: 'Chat' },
   permissionsFor: () => ({ has: (flag: bigint) => permitted.includes(flag) }),
   toString: () => `<#${id}>`,
@@ -49,6 +59,8 @@ for (const r of roles.values()) r.guild = { members: { me } };
 const guild = {
   id: GUILD,
   name: 'Test server',
+  afkChannelId: '704',
+  voiceAdapterCreator: () => ({ sendPayload: () => true, destroy() {} }),
   iconURL: () => null,
   premiumTier: 0,
   members: { me },
@@ -57,6 +69,10 @@ const guild = {
       ['c2', channel('c2', 'second', ChannelType.GuildText, 2)],
       ['111', channel('111', 'first', ChannelType.GuildAnnouncement, 1)],
       ['v1', channel('v1', 'voice', ChannelType.GuildVoice, 3)],
+      ['701', channel('701', 'General', ChannelType.GuildVoice, 4, [member('u1', 'Ana')])],
+      ['702', channel('702', 'Gaming', ChannelType.GuildVoice, 5, [member('u1', 'Ana'), member('u2', 'Ben'), member('b1', 'Some Bot', true)])],
+      ['703', channel('703', 'Bots', ChannelType.GuildVoice, 6, [member('b1', 'Some Bot', true)])],
+      ['704', channel('704', 'AFK', ChannelType.GuildVoice, 7, [member('u3', 'Cy')])],
     ]),
   },
   roles: { cache: roles },
@@ -384,6 +400,61 @@ test('stores values in the form /setup does', async () => {
   assert.equal(setting(GUILD, 'monthlyRecap'), false);
   await ok(`/guilds/${GUILD}/settings/timezone`, { method: 'PUT', json: { value: ' Europe/London ' } });
   assert.equal(setting(GUILD, 'timezone'), 'Europe/London');
+});
+
+test('lists voice channels with people in them, busiest first, without bots or the AFK channel', async () => {
+  assert.deepEqual((await ok(`/guilds/${GUILD}/voice`)).channels, [
+    { id: '702', name: 'Gaming', people: ['Ana', 'Ben'] },
+    { id: '701', name: 'General', people: ['Ana'] },
+  ]);
+});
+
+const plays = () => (db.prepare('SELECT user_id, name FROM sound_plays').all() as { user_id: string; name: string }[]).map((r) => `${r.user_id}:${r.name}`);
+const play = (name: string, channelId: unknown) => ({ url: `/guilds/${GUILD}/sounds/${name}/play`, init: { method: 'POST', json: { channelId } } });
+
+test('plays a sound in a voice channel and counts it, with nobody credited', async (t) => {
+  // The audio loop and the leave-when-idle timer would otherwise keep the test process going
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  await upload('horn');
+  permitted.push(PermissionFlagsBits.Connect, PermissionFlagsBits.Speak);
+  const connection = joinVoiceChannel({ channelId: '702', guildId: GUILD, adapterCreator: guild.voiceAdapterCreator as never });
+  Object.assign(connection, { state: { ...connection.state, status: VoiceConnectionStatus.Ready } });
+  // After the test, pass or fail, so a failure doesn't leave audio running and hang the run
+  t.after(async () => {
+    await ok(`/guilds/${GUILD}/stop`, { method: 'POST' });
+    soundboard.shutdown!();
+  });
+
+  const { url, init } = play('horn', '702');
+  await ok(url, init);
+  assert.deepEqual(plays(), ['web:horn']);
+});
+
+test('won’t play somewhere it can’t', async () => {
+  await upload('horn');
+  const attempts = [
+    [400, 'Pick a voice channel', play('horn', '111')],
+    [400, 'Pick a voice channel', play('horn', 'nope')],
+    [400, 'Pick a voice channel', play('horn', undefined)],
+    [400, 'Nobody’s in voice', play('horn', 'v1')],
+    [400, 'Nobody’s in Bots', play('horn', '703')],
+    [404, 'No sound', play('missing', '702')],
+  ] as const;
+  for (const [status, message, { url, init }] of attempts) assert.ok((await refused(status, url, init)).includes(message), message);
+  assert.deepEqual(plays(), []);
+});
+
+test('says why it can’t join, in plain text, without counting the play', async () => {
+  await upload('horn');
+  const { url, init } = play('horn', '701');
+  const error = await refused(400, url, init);
+  assert.match(error, /Connect/);
+  assert.doesNotMatch(error, /\*\*/);
+  assert.deepEqual(plays(), []);
+});
+
+test('stop works with nothing playing', async () => {
+  assert.deepEqual(await ok(`/guilds/${GUILD}/stop`, { method: 'POST' }), {});
 });
 
 test('stays off without a token', async () => {
