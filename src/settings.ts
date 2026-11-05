@@ -24,6 +24,7 @@ export const DEFAULTS = {
   // Unset posts free games in the announce channel
   freeGamesChannel: null as string | null,
   gameNightReminderMin: num('GAMENIGHT_REMINDER_MIN', 15),
+  monthlyRecap: process.env.MONTHLY_RECAP !== 'false',
 };
 
 /** Env var that sets each setting's default, for /setup show */
@@ -38,6 +39,7 @@ export const DEFAULT_ENV: Partial<Record<SettingKey, string>> = {
   steamCountry: 'STEAM_CC',
   freeGames: 'FREE_GAMES',
   gameNightReminderMin: 'GAMENIGHT_REMINDER_MIN',
+  monthlyRecap: 'MONTHLY_RECAP',
 };
 
 export type SettingKey = keyof typeof DEFAULTS;

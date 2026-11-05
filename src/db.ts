@@ -143,13 +143,46 @@ db.exec(`
     reminded INTEGER NOT NULL DEFAULT 0,
     -- Discord event: 0 scheduled, 1 started, 2 ended
     event_stage INTEGER NOT NULL DEFAULT 0,
-    cancelled INTEGER NOT NULL DEFAULT 0
+    cancelled INTEGER NOT NULL DEFAULT 0,
+    series_id INTEGER
   );
   CREATE TABLE IF NOT EXISTS game_night_rsvps (
     night_id INTEGER NOT NULL REFERENCES game_nights(id) ON DELETE CASCADE,
     user_id TEXT NOT NULL,
     status TEXT NOT NULL,
     PRIMARY KEY (night_id, user_id)
+  );
+
+  -- A repeating game night: when its next card is due, and what goes on it
+  CREATE TABLE IF NOT EXISTS game_night_series (
+    id INTEGER PRIMARY KEY,
+    guild_id TEXT NOT NULL,
+    channel_id TEXT NOT NULL,
+    game TEXT NOT NULL,
+    details TEXT,
+    voice_channel_id TEXT,
+    created_by TEXT NOT NULL,
+    every_days INTEGER NOT NULL,
+    next_at INTEGER NOT NULL,
+    post_at INTEGER NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS game_votes (
+    id INTEGER PRIMARY KEY,
+    guild_id TEXT NOT NULL,
+    channel_id TEXT NOT NULL,
+    message_id TEXT,
+    voice_channel_id TEXT NOT NULL,
+    -- JSON list of { name, appid }; a ballot's choice is an index into it
+    options TEXT NOT NULL,
+    note TEXT,
+    closes_at INTEGER NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS game_vote_ballots (
+    vote_id INTEGER NOT NULL REFERENCES game_votes(id) ON DELETE CASCADE,
+    user_id TEXT NOT NULL,
+    choice INTEGER NOT NULL,
+    PRIMARY KEY (vote_id, user_id)
   );
 
   -- Time spent playing each game, from Discord activity status
@@ -163,6 +196,14 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS game_plays_by_guild ON game_plays (guild_id, started_at);
 
+  CREATE TABLE IF NOT EXISTS sound_plays (
+    guild_id TEXT NOT NULL,
+    user_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    played_at INTEGER NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS sound_plays_by_guild ON sound_plays (guild_id, played_at);
+
   CREATE TABLE IF NOT EXISTS kv (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
@@ -170,6 +211,11 @@ db.exec(`
 
   PRAGMA user_version = ${SCHEMA_VERSION};
 `);
+
+// Added after schema 3 came out, so a database from then won't have it yet
+if (!db.prepare("SELECT 1 FROM pragma_table_info('game_nights') WHERE name = 'series_id'").get()) {
+  db.exec('ALTER TABLE game_nights ADD COLUMN series_id INTEGER');
+}
 
 export function getKv(key: string): string | undefined {
   const row = db.prepare('SELECT value FROM kv WHERE key = ?').get(key) as { value: string } | undefined;

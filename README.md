@@ -7,7 +7,7 @@ Keeper of the slop. A Discord bot for friends servers that helps people get toge
 - **Getting together:** pings people who opted in when a voice channel fills up, with per-game pings for the games being played, and plans game nights people can RSVP to.
 - **Picking a game:** knows everyone's Steam library and picks a multiplayer game that the people in voice all own.
 - **Getting games:** posts when a game the group wants goes on sale, pinging whoever still needs it, and when a game is free to keep on Steam, Epic or GOG.
-- **Remembering the night:** recaps each voice session, keeps a weekly leaderboard, and tracks what everyone plays, per person and for the whole server.
+- **Remembering the night:** recaps each voice session, keeps a weekly leaderboard, tracks what everyone plays, per person and for the whole server, and posts a recap of each month.
 - **Messing around:** a soundboard that layers different sounds like Discord's own and restarts a spammed one without a gap, with short clips mirrored into Discord's soundboard.
 
 Everything happens through slash commands (type `/` in any channel, or run `/help`) and through automatic posts in each server's announce channel.
@@ -18,7 +18,7 @@ Everything happens through slash commands (type `/` in any channel, or run `/hel
 - [Getting started](#getting-started-for-everyone-in-the-server)
 - [Getting together](#getting-together): [hop-on pings](#hop-on-pings) · [game pings](#game-pings) · [game nights](#game-nights)
 - [Playing games](#playing-games): [Steam accounts](#steam-accounts) · [What do we play?](#what-do-we-play) · [Game library](#game-library) · [Sale alerts](#sale-alerts) · [Free games](#free-games)
-- [Stats](#stats): [session recaps](#session-recaps) · [voice leaderboards](#voice-leaderboards) · [game stats](#game-stats)
+- [Stats](#stats): [session recaps](#session-recaps) · [voice leaderboards](#voice-leaderboards) · [game stats](#game-stats) · [comparing two people](#comparing-two-people) · [monthly recap](#monthly-recap)
 - [Soundboard](#soundboard): [playing sounds](#playing-sounds) · [managing sounds](#managing-sounds) · [Discord's soundboard](#discords-soundboard)
 - [Server settings](#server-settings): [settings and defaults](#settings-and-defaults)
 - [Multiple servers](#multiple-servers)
@@ -96,15 +96,20 @@ What happens after that:
 - At the start time, the Discord event goes live. It ends 3 hours later, or once its voice channel empties, whichever is later.
 - **Cancel night** (host, or anyone with Manage Events) greys out the card, deletes the event and lets the people who were in know.
 
+**Repeating nights:** add `repeat` to plan a night every week or every 2 weeks. The bot posts each new card, with its own Discord event and game role ping, 6 days before that night, so a weekly night's next card goes up the day after the last one. It stays at the same local time when the clocks change.
+
+**Cancel night** only skips that night. To end the whole series, press **Stop repeating** on any of its cards (host, or anyone with Manage Events).
+
 | Command | What it does |
 | --- | --- |
-| `/gamenight plan game when [voice] [details]` | Plans a game night. `when` takes things like `fri 8pm`, `tomorrow 20:30`, `next sat 9`, `nov 3 7:30pm` or `2026-11-03 19:00`, in the server's time zone (`/setup timezone`). A bare hour like `fri 9` means 9 PM. While you type, the suggestion shows exactly when it'll be, so you can check before sending. |
-| `/gamenight list` | Upcoming game nights, with how many are in and a link to each card. |
+| `/gamenight plan game when [voice] [details] [repeat]` | Plans a game night. `when` takes things like `fri 8pm`, `tomorrow 20:30`, `next sat 9`, `nov 3 7:30pm` or `2026-11-03 19:00`, in the server's time zone (`/setup timezone`). A bare hour like `fri 9` means 9 PM. While you type, the suggestion shows exactly when it'll be, so you can check before sending. |
+| `/gamenight list` | Upcoming game nights, with how many are in and a link to each card. Repeating ones show 🔁. |
 
 Examples:
 ```
 /gamenight plan game:Valheim when:fri 9pm voice:#gaming
 /gamenight plan game:Jackbox when:sat 8 details:Bring snacks. Phones out.
+/gamenight plan game:Deep Rock Galactic when:thu 9pm repeat:Every week
 ```
 
 ---
@@ -129,6 +134,7 @@ The bot builds a picture of who owns what from two sources:
 | Command | What it does |
 | --- | --- |
 | `/whatdoweplay` | Run it while you're in voice. It picks a random game that everyone in your channel owns. |
+| `/gamevote [minutes]` | Run it while you're in voice. Everyone in your channel votes on the games they all own. It stays open for 1 minute by default, up to 10. |
 
 Which games qualify:
 - Steam games tagged **Multi-player**, **Online Co-op** or **Online PvP**, plus any game in the library, even one Steam doesn't tag as multiplayer.
@@ -142,7 +148,14 @@ The reply also shows:
 
 Buttons:
 - **🎲 Reroll** picks again from the games that qualify. It's greyed out when only one game qualifies.
+- **🗳️ Vote** starts a 1-minute `/gamevote`. It's greyed out when only one game qualifies.
 - **Never suggest this** hides a game from future picks. Undo it with `/game unhide`.
+
+How a vote works:
+- The ballot has up to 10 games from the same list: the 5 you've played most, then a random mix of the rest.
+- Everyone in the voice channel gets one vote and can change it until the vote closes. People outside the channel can't vote.
+- It closes as soon as everyone in the channel has voted, or when time runs out. A tie is settled at random, and the result says so.
+- Each voice channel can only have one vote open at a time.
 
 ### Game library
 
@@ -223,6 +236,32 @@ Examples:
 /gamestats user:@Alex game:Lethal Company
 ```
 
+### Comparing two people
+
+| Command | What it does |
+| --- | --- |
+| `/compare user [with]` | Compares someone with you, or with whoever you pick in `with`. |
+
+It shows, over all time:
+- how long the two played the same game at the same moment, and which games most;
+- how many voice sessions they shared. The time shown is a maximum, because the bot keeps each person's total for a session, not when each of them was there;
+- each person's total game time;
+- games they both own: anything in the library, plus Steam games tagged multiplayer.
+
+### Monthly recap
+
+On the 1st of each month, the bot posts last month's highlights to the announce channel, at the same hour as the weekly leaderboard. If it was down then, it posts when it's back. Months with nothing to report are skipped, and a server's first recap comes after its first full month.
+
+The recap covers total game and voice time, the top games, biggest gamers, most time in voice, the longest session, top sounds and who played the most of them, and game nights held. Months follow the server's time zone.
+
+Top sounds only counts sounds played through the bot, with its panels or `/sound play`. Discord doesn't tell bots about sounds played from its own soundboard.
+
+| Command | What it does |
+| --- | --- |
+| `/recap [month]` | Shows last month's recap, or this month's so far. |
+
+Turn the monthly post off with `/setup monthly-recap`. `/recap` keeps working.
+
 ---
 
 ## Soundboard
@@ -294,7 +333,7 @@ Every setting has a sensible default, so only the announce channel needs setting
 | Command | What it does |
 | --- | --- |
 | `/setup show` | Lists every setting, its current value and where it comes from: **set here** (with `/setup`), **host default** (the host's `.env`) or **default**. |
-| `/setup announce-channel channel` | Sets where hop-on pings, session recaps, the weekly leaderboard and sale alerts are posted, and free games unless they have their own channel. Until it's set, the bot works but posts nothing. It checks that it can post in the channel and tells you which permission is missing if not. |
+| `/setup announce-channel channel` | Sets where hop-on pings, session recaps, the weekly leaderboard, the monthly recap and sale alerts are posted, and free games unless they have their own channel. Until it's set, the bot works but posts nothing. It checks that it can post in the channel and tells you which permission is missing if not. |
 | `/setup hopon-role [role]` | Sets the role that hop-on pings ping, which `/notify` hands out. Leave `role` empty to post hop-on pings without pinging that role. It warns you if its own role is below this one, since Discord then won't let it hand the role out. |
 | `/setup hopon [min_people] [cooldown_minutes]` | How many people a voice channel needs before a hop-on ping, and how long to wait before the next one. |
 | `/setup sessions [recap_min_minutes] [grace_minutes]` | The shortest session that gets a recap, and how long a channel stays empty before its session ends. |
@@ -303,6 +342,7 @@ Every setting has a sensible default, so only the announce channel needs setting
 | `/setup steam-region country` | Steam store region for sale prices, as a two-letter country code. |
 | `/setup free-games enabled [channel]` | Turns free game posts on or off. `channel` gives them their own channel; without it they go to the announce channel. To move them back to the announce channel, use `/setup reset setting:Free games channel`. |
 | `/setup gamenight-reminder minutes` | How long before a game night to remind the people who are in. `0` turns reminders off. |
+| `/setup monthly-recap enabled` | Turns the post on the 1st of each month on or off. |
 | `/setup reset setting` | Puts one setting back to its default. |
 
 For the commands with several options, only the options you fill in change.
@@ -342,6 +382,7 @@ So the host can change a default for every server at once, and each server can s
 | Free game posts | `free-games` | `FREE_GAMES` (`true` to turn on) | off |
 | Free games channel | `free-games` | | the announce channel |
 | Game night reminder (minutes before) | `gamenight-reminder` | `GAMENIGHT_REMINDER_MIN` | 15 |
+| Monthly recap | `monthly-recap` | `MONTHLY_RECAP` (`false` to turn off) | on |
 
 ## Multiple servers
 

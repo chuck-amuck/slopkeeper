@@ -3,6 +3,7 @@ import { db } from '../db.ts';
 import { isAllowed } from '../settings.ts';
 import type { Feature } from '../types.ts';
 import { eachGuild, formatDuration, playingGames, servedGuilds } from '../util.ts';
+import { sharedGames } from './games.ts';
 
 const DAY = 86_400_000;
 /** Plays shorter than this (launchers, crashes) aren't kept */
@@ -57,21 +58,29 @@ export async function resync(client: Client<true>) {
 }
 
 /** Brings open plays up to now, so stats include games in progress and a crash loses at most a few minutes */
-function checkpoint() {
+export function checkpoint() {
   const now = Date.now();
   for (const mine of open.values()) for (const id of mine.values()) extendPlay.run(now, id);
 }
 
 /** Time in each play that falls inside the period */
-const CLIPPED = 'MIN(ended_at, :now) - MAX(started_at, :since)';
+const CLIPPED = 'MIN(ended_at, :until) - MAX(started_at, :since)';
 
 interface Totals {
   ms: number;
   n: number;
 }
 
-export function stats(guildId: string, since: number, filter: 'user' | 'game' | 'both' | 'none', groupBy: 'game' | 'user_id', user?: string, game?: string) {
-  const where = ['guild_id = :guild', 'ended_at > :since'];
+export function stats(
+  guildId: string,
+  since: number,
+  filter: 'user' | 'game' | 'both' | 'none',
+  groupBy: 'game' | 'user_id',
+  user?: string,
+  game?: string,
+  until = Date.now(),
+) {
+  const where = ['guild_id = :guild', 'ended_at > :since', 'started_at < :until'];
   if (filter === 'user' || filter === 'both') where.push('user_id = :user');
   if (filter === 'game' || filter === 'both') where.push('game = :game COLLATE NOCASE');
   const other = groupBy === 'game' ? 'user_id' : 'game';
@@ -81,10 +90,36 @@ export function stats(guildId: string, since: number, filter: 'user' | 'game' | 
        FROM game_plays WHERE ${where.join(' AND ')}
        GROUP BY ${groupBy} ORDER BY ms DESC`,
     )
-    .all({ guild: guildId, since, now: Date.now(), ...(user ? { user } : {}), ...(game ? { game } : {}) }) as unknown as (Totals & {
+    .all({ guild: guildId, since, until, ...(user ? { user } : {}), ...(game ? { game } : {}) }) as unknown as (Totals & {
     key: string;
     last: number;
   })[];
+}
+
+/** Time two people spent in the same game at the same moment, most first */
+export function playedTogether(guildId: string, a: string, b: string) {
+  return db
+    .prepare(
+      `SELECT x.game AS game, SUM(MIN(x.ended_at, y.ended_at) - MAX(x.started_at, y.started_at)) AS ms
+       FROM game_plays x JOIN game_plays y
+         ON y.guild_id = x.guild_id AND y.game = x.game AND y.user_id = ? AND y.started_at < x.ended_at AND y.ended_at > x.started_at
+       WHERE x.guild_id = ? AND x.user_id = ?
+       GROUP BY x.game ORDER BY ms DESC`,
+    )
+    .all(b, guildId, a) as { game: string; ms: number }[];
+}
+
+/** Voice sessions two people were both part of. Only each person's total is kept, so the shorter one is the most they can have overlapped */
+export function voiceTogether(guildId: string, a: string, b: string) {
+  return db
+    .prepare(
+      `SELECT COUNT(*) AS n, COALESCE(SUM(MIN(x.seconds, y.seconds)), 0) AS seconds
+       FROM session_members x
+       JOIN session_members y ON y.session_id = x.session_id AND y.user_id = ?
+       JOIN sessions s ON s.id = x.session_id
+       WHERE s.guild_id = ? AND x.user_id = ?`,
+    )
+    .get(b, guildId, a) as { n: number; seconds: number };
 }
 
 const PERIODS = {
@@ -94,11 +129,11 @@ const PERIODS = {
   all: { label: 'all time', ms: Infinity },
 };
 
-const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
+export const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 const countPeople = (n: number) => `${n} ${n === 1 ? 'person' : 'people'}`;
 /** Keeps the top-10 lists inside Discord's limit on embed fields, whatever a game calls itself */
-const short = (name: string) => (name.length > 60 ? `${name.slice(0, 59)}…` : name);
-const rank = (idx: number) => ['🥇', '🥈', '🥉'][idx] ?? `${idx + 1}.`;
+export const short = (name: string) => (name.length > 60 ? `${name.slice(0, 59)}…` : name);
+export const rank = (idx: number) => ['🥇', '🥈', '🥉'][idx] ?? `${idx + 1}.`;
 const ago = (ms: number) => `<t:${Math.floor(ms / 1000)}:R>`;
 
 export const gameStats: Feature = {
@@ -212,6 +247,49 @@ export const gameStats: Feature = {
                   .join('\n') || '—',
             },
           );
+        return i.reply({ embeds: [embed], allowedMentions: { parse: [] } });
+      },
+    },
+    {
+      data: new SlashCommandBuilder()
+        .setName('compare')
+        .setDescription('What two people have in common: games they both own and time played together')
+        .addUserOption((o) => o.setName('user').setDescription('Who to compare').setRequired(true))
+        .addUserOption((o) => o.setName('with').setDescription('Who to compare them with (default: you)')),
+      async run(i) {
+        if (!i.inCachedGuild()) return i.reply({ content: 'Use this in a server.', flags: MessageFlags.Ephemeral });
+        const first = i.options.getUser('with') ?? i.user;
+        const second = i.options.getUser('user', true);
+        if (first.id === second.id) return i.reply({ content: 'Pick two different people.', flags: MessageFlags.Ephemeral });
+        if (first.bot || second.bot) return i.reply({ content: 'Bots don’t play games. Pick two people.', flags: MessageFlags.Ephemeral });
+
+        checkpoint();
+        const nameOf = (u: typeof first) => i.guild.members.cache.get(u.id)?.displayName ?? u.displayName;
+        const total = (id: string) => stats(i.guildId, 0, 'user', 'game', id).reduce((sum, g) => sum + g.ms, 0);
+        const games = playedTogether(i.guildId, first.id, second.id);
+        const voice = voiceTogether(i.guildId, first.id, second.id);
+        const shared = sharedGames(i.guildId, first.id, second.id);
+
+        const summary: string[] = [];
+        if (games.length) summary.push(`**${formatDuration(games.reduce((sum, g) => sum + g.ms, 0))}** in the same game at the same time`);
+        if (voice.n) summary.push(`**${plural(voice.n, 'voice session')}** together, up to ${formatDuration(voice.seconds * 1000)}`);
+        if (!summary.length) summary.push('No time together on record yet.');
+        summary.push(`All-time game time: ${nameOf(first)} ${formatDuration(total(first.id))}, ${nameOf(second)} ${formatDuration(total(second.id))}`);
+
+        const embed = new EmbedBuilder().setColor(0x57f287).setTitle(`🤝 ${nameOf(first)} and ${nameOf(second)}`).setDescription(summary.join('\n'));
+        if (games.length) {
+          embed.addFields({
+            name: 'Played together most',
+            value: games
+              .slice(0, 5)
+              .map((g, idx) => `${rank(idx)} **${short(g.game)}** · ${formatDuration(g.ms)}`)
+              .join('\n'),
+          });
+        }
+        embed.addFields({
+          name: `Both own (${shared.length})`,
+          value: shared.map((g) => short(g.name)).slice(0, 15).join(', ') || 'Nothing yet. Link Steam with `/steam link` or mark games with `/game own`.',
+        });
         return i.reply({ embeds: [embed], allowedMentions: { parse: [] } });
       },
     },

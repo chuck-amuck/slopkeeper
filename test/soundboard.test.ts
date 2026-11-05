@@ -1,5 +1,5 @@
 import './helpers.ts';
-import { getVoiceConnection, VoiceConnectionStatus } from '@discordjs/voice';
+import { getVoiceConnection, joinVoiceChannel, VoiceConnectionStatus } from '@discordjs/voice';
 import { PermissionFlagsBits } from 'discord.js';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
@@ -148,4 +148,44 @@ test('replacing a sound with another format leaves only the new file', { skip: !
   assert.equal(await saveUpload('uploads', 'bell', '.ogg', audio()), true);
   assert.equal(existsSync(path.join(dir(), 'bell.wav')), false);
   assert.equal(existsSync(path.join(dir(), 'bell.ogg')), true);
+});
+
+test('plays are counted for the recap, whether from a panel or /sound play, and failures aren’t', { skip: !hasFfmpeg }, async (t) => {
+  // The audio loop and the leave-when-idle timer would otherwise keep the test process going
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const errors = mock.method(console, 'error', () => {});
+  assert.equal(await saveUpload('counted', 'horn', '.wav', audio()), true);
+  const voice = channel('counted');
+  const connection = joinVoiceChannel({ channelId: 'voice', guildId: 'counted', adapterCreator: (voice as { guild: { voiceAdapterCreator: never } }).guild.voiceAdapterCreator });
+  Object.assign(connection, { state: { ...connection.state, status: VoiceConnectionStatus.Ready } });
+
+  const plays = () => (db.prepare(`SELECT user_id, name FROM sound_plays WHERE guild_id = 'counted'`).all() as { user_id: string; name: string }[]).map((r) => `${r.user_id}:${r.name}`);
+  const shared = { inCachedGuild: () => true, guildId: 'counted', channelId: 'text', message: { id: 'panel' }, member: { voice: { channel: voice } } };
+  const click = (user: string, member = shared.member) =>
+    soundboard.onButton!({ ...shared, member, customId: 'sb:horn', user: { id: user }, deferUpdate: async () => {}, followUp: async () => {} } as never);
+
+  const type = (user: string, member = shared.member) =>
+    soundboard.commands![0].run({
+      ...shared,
+      member,
+      user: { id: user },
+      options: { getSubcommand: () => 'play', getString: () => 'horn' },
+      deferReply: async () => {},
+      editReply: async () => {},
+    } as never);
+  // After the test, pass or fail, so a failure doesn't leave audio running and hang the run
+  t.after(async () => {
+    await soundboard.onButton!({ ...shared, customId: 'sb:#stop', user: { id: 'clicker' }, deferUpdate: async () => {} } as never);
+    soundboard.shutdown!();
+    errors.mock.restore();
+  });
+
+  await click('clicker');
+  await type('typer');
+  assert.deepEqual(plays(), ['clicker:horn', 'typer:horn']);
+
+  const blocked = { voice: { channel: channel('counted', { missing: [PermissionFlagsBits.Connect] }) } };
+  await click('blocked', blocked);
+  await type('blocked', blocked);
+  assert.deepEqual(plays(), ['clicker:horn', 'typer:horn']);
 });

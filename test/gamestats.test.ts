@@ -2,7 +2,8 @@ import './helpers.ts';
 import assert from 'node:assert/strict';
 import { mock, test } from 'node:test';
 import { db } from '../src/db.ts';
-import { gameStats, resync, stats } from '../src/features/gamestats.ts';
+import { sharedGames } from '../src/features/games.ts';
+import { gameStats, playedTogether, resync, stats, voiceTogether } from '../src/features/gamestats.ts';
 
 const HOUR = 3_600_000;
 const DAY = 24 * HOUR;
@@ -102,4 +103,89 @@ test('after a long disconnect, someone who went offline stops counting as playin
   await resync(client);
   assert.equal(open(), 0);
   assert.equal(presences.cache.size, 0);
+});
+
+test('time together is the overlap in the same game, not just both playing it', () => {
+  play.run('c', 'a', 'Valheim', t - 10 * HOUR, t - 6 * HOUR);
+  play.run('c', 'b', 'Valheim', t - 8 * HOUR, t - 4 * HOUR);
+  play.run('c', 'b', 'Valheim', t - 100 * HOUR, t - 90 * HOUR);
+  play.run('c', 'a', 'Deep Rock', t - 3 * HOUR, t - 2 * HOUR);
+  play.run('c', 'b', 'Lethal Company', t - 3 * HOUR, t - 2 * HOUR);
+  play.run('elsewhere', 'b', 'Deep Rock', t - 3 * HOUR, t - 2 * HOUR);
+  assert.deepEqual(playedTogether('c', 'a', 'b').map((r) => [r.game, r.ms / HOUR]), [['Valheim', 2]]);
+  assert.deepEqual(playedTogether('c', 'b', 'a').map((r) => [r.game, r.ms / HOUR]), [['Valheim', 2]]);
+  assert.deepEqual(playedTogether('c', 'a', 'nobody'), []);
+});
+
+test('voice time together counts shared sessions, at the shorter person’s time', () => {
+  const session = (guildId: string, people: [string, number][]) => {
+    const { lastInsertRowid } = db.prepare(`INSERT INTO sessions (guild_id, channel_id, started_at, ended_at) VALUES (?, 'v', 0, 1)`).run(guildId);
+    for (const [id, seconds] of people) db.prepare('INSERT INTO session_members (session_id, user_id, seconds) VALUES (?, ?, ?)').run(lastInsertRowid, id, seconds);
+  };
+  session('c', [['a', 3600], ['b', 1800]]);
+  session('c', [['a', 600], ['b', 1200]]);
+  session('c', [['a', 9999]]);
+  session('elsewhere', [['a', 9999], ['b', 9999]]);
+  assert.deepEqual({ ...voiceTogether('c', 'a', 'b') }, { n: 2, seconds: 2400 });
+  assert.deepEqual({ ...voiceTogether('c', 'a', 'nobody') }, { n: 0, seconds: 0 });
+});
+
+test('shared games are library games plus multiplayer Steam games both own', () => {
+  const add = db.prepare(`INSERT INTO games (guild_id, name, steam_appid, added_by) VALUES ('c', ?, ?, 'x')`);
+  const manual = Number(add.run('Jackbox', null).lastInsertRowid);
+  const steamOne = Number(add.run('Deep Rock', 10).lastInsertRowid);
+  const half = Number(add.run('Half', null).lastInsertRowid);
+  for (const [game, user] of [[manual, 'a'], [manual, 'b'], [steamOne, 'b'], [half, 'a']] as [number, string][]) {
+    db.prepare('INSERT INTO game_owners (game_id, user_id) VALUES (?, ?)').run(game, user);
+  }
+  db.prepare(`INSERT INTO steam_links (user_id, steam_id) VALUES ('a', 'sa'), ('b', 'sb')`).run();
+  const own = db.prepare('INSERT INTO steam_owned (steam_id, appid, name, playtime) VALUES (?, ?, ?, ?)');
+  own.run('sa', 10, 'Deep Rock Galactic', 60);
+  for (const [steam, minutes] of [['sa', 300], ['sb', 100]] as [string, number][]) {
+    own.run(steam, 20, 'Helldivers', minutes);
+    own.run(steam, 30, 'Solo Game', 9000);
+  }
+  own.run('sa', 40, 'Only Mine', 5);
+  db.prepare('INSERT INTO app_info (appid, name, multiplayer) VALUES (20, ?, 1), (30, ?, 0), (40, ?, 1)').run('Helldivers', 'Solo Game', 'Only Mine');
+  assert.deepEqual(sharedGames('c', 'a', 'b'), [
+    { name: 'Helldivers', minutes: 400 },
+    { name: 'Deep Rock', minutes: 60 },
+    { name: 'Jackbox', minutes: 0 },
+  ]);
+});
+
+async function compare(user: { id: string; bot?: boolean; displayName?: string }, other?: { id: string; bot?: boolean; displayName?: string }) {
+  let reply: { content?: string; embeds?: { toJSON(): { title: string; description: string; fields: { name: string; value: string }[] } }[] } = {};
+  await gameStats.commands![1].run({
+    inCachedGuild: () => true,
+    guildId: 'c',
+    user: { id: 'a', displayName: 'Alex' },
+    guild: { members: { cache: new Map([['a', { displayName: 'Alex' }], ['b', { displayName: 'Sam' }]]) } },
+    options: { getUser: (name: string) => (name === 'user' ? user : (other ?? null)) },
+    reply: async (r: typeof reply) => (reply = r),
+  } as never);
+  return reply;
+}
+
+test('/compare sums it all up, against you by default', async () => {
+  const embed = (await compare({ id: 'b', displayName: 'Sam' })).embeds![0].toJSON();
+  assert.equal(embed.title, '🤝 Alex and Sam');
+  assert.match(embed.description, /\*\*2h\*\* in the same game/);
+  assert.match(embed.description, /\*\*2 voice sessions\*\* together, up to 40m/);
+  assert.match(embed.fields[0].value, /Valheim/);
+  assert.equal(embed.fields[1].name, 'Both own (3)');
+  assert.match(embed.fields[1].value, /^Helldivers, Deep Rock, Jackbox$/);
+});
+
+test('/compare takes two other people, and says when there’s nothing yet', async () => {
+  const embed = (await compare({ id: 'b', displayName: 'Sam' }, { id: 'nobody', displayName: 'Pat' })).embeds![0].toJSON();
+  assert.equal(embed.title, '🤝 Pat and Sam');
+  assert.match(embed.description, /No time together/);
+  assert.match(embed.fields[0].value, /\/steam link/);
+});
+
+test('/compare refuses one person or a bot', async () => {
+  assert.match((await compare({ id: 'a' })).content!, /two different/);
+  assert.match((await compare({ id: 'b' }, { id: 'b' })).content!, /two different/);
+  assert.match((await compare({ id: 'robot', bot: true })).content!, /Bots/);
 });
