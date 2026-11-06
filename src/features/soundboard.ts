@@ -58,6 +58,8 @@ const CONNECT_TIMEOUT_MS = 15_000;
 const RECONNECT_TIMEOUT_MS = 5_000;
 const NAME_PATTERN = /^[a-z0-9_-]{1,32}$/;
 export const VOLUME_PERCENT = [25, 200] as const;
+export const BIN_DAYS = 30;
+const DAY = 86_400_000;
 const SHORTEST_TRIM = 0.1;
 /** How far apart two times can be and still be the same moment, since the page rounds what it sends */
 const TRIM_TOLERANCE = 0.05;
@@ -99,6 +101,11 @@ function dropOriginal(guildId: string, name: string) {
   const original = originalOf(guildId, name);
   if (original) rmSync(original);
 }
+
+/** A deleted sound's folder, inside the server's so its files can be moved rather than copied */
+const binDir = (guildId: string, id: number) => path.join(soundDir(guildId), 'bin', String(id));
+
+const audioIn = (dir: string) => (existsSync(dir) ? readdirSync(dir).find((f) => EXTENSIONS.includes(path.extname(f).toLowerCase())) : undefined);
 
 export interface Sound {
   name: string;
@@ -254,7 +261,84 @@ export async function addSound(guild: Guild, name: string, ext: string, data: Bu
   return { replaced, problem };
 }
 
-/** Deletes a sound. Returns why it couldn't come off Discord's soundboard, if it couldn't */
+function moveToBin(guildId: string, sound: Sound) {
+  const level = soundLevels(guildId).get(sound.name);
+  const { lastInsertRowid } = db
+    .prepare('INSERT INTO deleted_sounds (guild_id, name, emoji, favourite, gain_db, percent, deleted_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
+    .run(guildId, sound.name, sound.emoji ?? null, favourites(guildId).has(sound.name) ? 1 : 0, level?.gainDb ?? null, level?.percent ?? 100, Date.now());
+  const dir = binDir(guildId, Number(lastInsertRowid));
+  mkdirSync(path.join(dir, 'originals'), { recursive: true });
+  const original = originalOf(guildId, sound.name);
+  if (original) renameSync(original, path.join(dir, 'originals', path.basename(original)));
+  renameSync(sound.file, path.join(dir, path.basename(sound.file)));
+}
+
+export interface DeletedSound {
+  id: number;
+  name: string;
+  emoji: string | null;
+  favourite: number;
+  gain_db: number | null;
+  percent: number;
+  deleted_at: number;
+}
+
+/** What's in the bin, newest first */
+export function deletedSounds(guildId: string): DeletedSound[] {
+  return db.prepare('SELECT id, name, emoji, favourite, gain_db, percent, deleted_at FROM deleted_sounds WHERE guild_id = ? ORDER BY deleted_at DESC, id DESC').all(guildId) as unknown as DeletedSound[];
+}
+
+export const expiresAt = (sound: DeletedSound) => sound.deleted_at + BIN_DAYS * DAY;
+
+/** Empties one place in the bin for good. Returns whether there was anything there */
+export function eraseDeleted(guildId: string, id: number): boolean {
+  const { changes } = db.prepare('DELETE FROM deleted_sounds WHERE guild_id = ? AND id = ?').run(guildId, id);
+  if (changes) rmSync(binDir(guildId, id), { recursive: true, force: true });
+  return changes > 0;
+}
+
+/** Erases whatever has been in the bin too long */
+export function clearBin(now = Date.now()) {
+  const old = db.prepare('SELECT guild_id, id FROM deleted_sounds WHERE deleted_at <= ?').all(now - BIN_DAYS * DAY) as { guild_id: string; id: number }[];
+  for (const { guild_id, id } of old) eraseDeleted(guild_id, id);
+}
+
+/** A name no sound is using: this one, or this one numbered */
+function untaken(guildId: string, base: string) {
+  const taken = new Set(listSounds(guildId).map((s) => s.name));
+  let name = base;
+  for (let n = 2; taken.has(name); n++) name = `${base.slice(0, 32 - String(n).length - 1)}-${n}`;
+  return name;
+}
+
+/**
+ * Puts a deleted sound back in the library and returns the name it came back with, or null if it's gone. It
+ * stays off Discord's soundboard, as its slot may be in use by now.
+ */
+export function restoreDeleted(guildId: string, id: number): string | null {
+  const sound = deletedSounds(guildId).find((s) => s.id === id);
+  if (!sound) return null;
+  const dir = binDir(guildId, id);
+  const file = audioIn(dir);
+  if (!file) {
+    eraseDeleted(guildId, id);
+    return null;
+  }
+  const name = untaken(guildId, sound.name);
+  const original = audioIn(path.join(dir, 'originals'));
+  if (original) {
+    mkdirSync(originalsDir(guildId), { recursive: true });
+    renameSync(path.join(dir, 'originals', original), path.join(originalsDir(guildId), `${name}${path.extname(original)}`));
+  }
+  renameSync(path.join(dir, file), path.join(soundDir(guildId), `${name}${path.extname(file)}`));
+  setEmoji(guildId, name, sound.emoji);
+  setFavourite(guildId, name, sound.favourite === 1);
+  db.prepare('INSERT OR REPLACE INTO sound_levels (guild_id, name, gain_db, percent) VALUES (?, ?, ?, ?)').run(guildId, name, sound.gain_db, sound.percent);
+  eraseDeleted(guildId, id);
+  return name;
+}
+
+/** Moves a sound to the bin. Returns why it couldn't come off Discord's soundboard, if it couldn't */
 export async function removeSound(guild: Guild, sound: Sound): Promise<string | null> {
   const problem = await discordBoard.remove(guild, sound.name).then(
     () => null,
@@ -262,8 +346,7 @@ export async function removeSound(guild: Guild, sound: Sound): Promise<string | 
   );
   // Whatever's still on Discord is no longer this sound
   if (problem) discordBoard.forget(discordBoard.synced(guild.id).get(sound.name)!);
-  rmSync(sound.file);
-  dropOriginal(guild.id, sound.name);
+  moveToBin(guild.id, sound);
   setEmoji(guild.id, sound.name, null);
   setFavourite(guild.id, sound.name, false);
   db.prepare('DELETE FROM sound_levels WHERE guild_id = ? AND name = ?').run(guild.id, sound.name);
@@ -362,10 +445,7 @@ export const addToDiscord = (guild: Guild, sound: Sound, start?: number) => disc
 function freeName(guildId: string, sound: DiscordSound) {
   const cleaned = sound.name.normalize('NFKD').replace(/\p{M}/gu, '').toLowerCase().replace(/[^a-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 32);
   const base = cleaned.length >= 2 ? cleaned : `sound-${sound.id.slice(-6)}`;
-  const taken = new Set(listSounds(guildId).map((s) => s.name));
-  let name = base;
-  for (let n = 2; taken.has(name); n++) name = `${base.slice(0, 32 - String(n).length - 1)}-${n}`;
-  return name;
+  return untaken(guildId, base);
 }
 
 /** Copies a Discord sound into the library and links the two. Returns the name it's under. Throws if it couldn't, changing nothing */
@@ -746,7 +826,7 @@ async function onSetting(i: ButtonInteraction<'cached'>) {
   if (action === 'rename') return i.showModal(askFor(settingId('rename', page, sound.name), `Rename ${sound.name}`, 'New name', sound.name, true));
   if (action === 'delete') {
     return i.update({
-      content: `Delete **${sound.name}**? This can’t be undone.`,
+      content: `Delete **${sound.name}**? You can get it back for ${BIN_DAYS} days with \`/sound restore\`.`,
       components: [
         new ActionRowBuilder<ButtonBuilder>().addComponents(
           actionButton('confirm', page, sound.name, 'Yes, delete it', '🗑️', ButtonStyle.Danger),
@@ -761,7 +841,7 @@ async function onSetting(i: ButtonInteraction<'cached'>) {
     const problem = await removeSound(i.guild, sound);
     logActivity(i.guildId, i.user.id, `Removed sound **${sound.name}**`);
     await notify();
-    const removed = `🗑️ Removed **${sound.name}**.${problem ? ` Couldn’t remove it from Discord’s soundboard: ${problem}.` : ''}`;
+    const removed = `🗑️ Removed **${sound.name}**. Bring it back within ${BIN_DAYS} days with \`/sound restore\`.${problem ? ` Couldn’t remove it from Discord’s soundboard: ${problem}.` : ''}`;
     return i.editReply(settingsMenu(i.guildId, page, canManage, removed));
   }
   if (action === 'test') {
@@ -864,6 +944,12 @@ export const soundboard: Feature = {
         )
         .addSubcommand((s) =>
           s
+            .setName('restore')
+            .setDescription(`Bring back a sound deleted in the last ${BIN_DAYS} days`)
+            .addStringOption((o) => o.setName('name').setDescription('Deleted sound').setRequired(true).setAutocomplete(true)),
+        )
+        .addSubcommand((s) =>
+          s
             .setName('volume')
             .setDescription('Set how loud one sound plays, for any that even volume doesn’t get right')
             .addStringOption((o) => o.setName('name').setDescription('Sound').setRequired(true).setAutocomplete(true))
@@ -896,6 +982,14 @@ export const soundboard: Feature = {
       async autocomplete(i) {
         if (!i.guildId) return i.respond([]);
         const query = i.options.getFocused().toLowerCase();
+        if (i.options.getSubcommand() === 'restore') {
+          return i.respond(
+            deletedSounds(i.guildId)
+              .filter((s) => s.name.includes(query))
+              .slice(0, 25)
+              .map((s) => ({ name: s.name, value: String(s.id) })),
+          );
+        }
         return i.respond(
           listSounds(i.guildId)
             .filter((s) => s.name.includes(query))
@@ -959,7 +1053,17 @@ export const soundboard: Feature = {
           if (!sound) return i.reply({ content: 'No sound by that name.', ...ephemeral });
           const problem = await removeSound(i.guild, sound);
           logActivity(i.guildId, i.user.id, `Removed sound **${sound.name}**`);
-          await i.reply(`🗑️ Removed sound **${sound.name}**.${problem ? `\nCouldn’t remove it from Discord’s soundboard: ${problem}.` : ''}`);
+          await i.reply(`🗑️ Removed sound **${sound.name}**. Bring it back within ${BIN_DAYS} days with \`/sound restore\`.${problem ? `\nCouldn’t remove it from Discord’s soundboard: ${problem}.` : ''}`);
+          return refreshPanels(i.client, i.guildId);
+        }
+
+        if (sub === 'restore') {
+          const input = i.options.getString('name', true);
+          const deleted = deletedSounds(i.guildId).find((s) => String(s.id) === input || s.name === input);
+          const name = deleted && restoreDeleted(i.guildId, deleted.id);
+          if (!name) return i.reply({ content: `No deleted sound by that name. They’re kept for ${BIN_DAYS} days.`, ...ephemeral });
+          logActivity(i.guildId, i.user.id, `Restored sound **${name}**`);
+          await i.reply(`♻️ Restored **${name}**${name === deleted.name ? '' : `, as **${deleted.name}** is taken`}. It’s not on Discord’s soundboard until it’s added again.`);
           return refreshPanels(i.client, i.guildId);
         }
 
@@ -1045,6 +1149,15 @@ export const soundboard: Feature = {
     },
   ],
   async setup(client) {
+    const sweep = () => {
+      try {
+        clearBin();
+      } catch (err) {
+        console.error('Clearing the sound bin failed:', err);
+      }
+    };
+    sweep();
+    setInterval(sweep, DAY);
     for (const guild of servedGuilds(client)) {
       await discordBoard.reconcile(guild).catch((err) => console.error(`Soundboard reconcile failed in ${guild.name}:`, err.message));
       dropMissingEmoji(guild);

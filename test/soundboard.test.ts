@@ -324,3 +324,39 @@ test('/sound volume sets one sound’s volume', async () => {
   assert.equal(soundGain('slash-volume', 'horn'), 0.4);
   assert.match(await slash('slash-volume', 'volume', { name: 'nope', percent: 40 }), /No sound by that name/);
 });
+
+test('/sound remove can be undone with /sound restore', async () => {
+  await saveUpload('slash-bin', 'horn', '.wav', wav());
+  const guild = 'slash-bin';
+  await soundboard.commands![0].run({
+    inCachedGuild: () => true,
+    guildId: guild,
+    guild: { id: guild },
+    client: { channels: { cache: new Map() } },
+    user: { id: 'person' },
+    options: { getSubcommand: () => 'remove', getString: () => 'horn' },
+    reply: async (r: string) => assert.match(r, /within 30 days with `\/sound restore`/),
+  } as never);
+  let offered: { name: string; value: string }[] = [];
+  await soundboard.commands![0].autocomplete!({ guildId: guild, options: { getFocused: () => 'ho', getSubcommand: () => 'restore' }, respond: async (r: typeof offered) => (offered = r) } as never);
+  assert.equal(offered[0].name, 'horn');
+
+  const restored = async (value: string) => {
+    let reply = '';
+    await soundboard.commands![0].run({
+      inCachedGuild: () => true,
+      guildId: guild,
+      guild: { id: guild },
+      client: { channels: { cache: new Map() } },
+      user: { id: 'person' },
+      options: { getSubcommand: () => 'restore', getString: () => value },
+      reply: async (r: string | { content: string }) => void (reply = typeof r === 'string' ? r : r.content),
+    } as never);
+    return reply;
+  };
+  assert.match(await restored('nope'), /No deleted sound/);
+  assert.match(await restored(offered[0].value), /Restored \*\*horn\*\*\./);
+  assert.match(await restored(offered[0].value), /No deleted sound/);
+  assert.ok(existsSync(path.join(process.env.DATA_DIR!, 'sounds', guild, 'horn.wav')));
+  assert.equal(recentActivity(guild, 1)[0].action, 'Restored sound **horn**');
+});

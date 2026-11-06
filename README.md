@@ -246,13 +246,13 @@ The web UI's Settings page lists what's free right now, with the reason each gam
 
 The bot tracks each voice channel as a session. It records who was there, for how long, and which games Discord showed them playing. A session ends once the channel has been empty for 5 minutes, so a quick disconnect doesn't split the night in two.
 
-If a session lasted at least 15 minutes and had 2 or more people, the bot posts a recap with each person's time and the games played. Shorter or solo sessions aren't recorded. Both times can be changed with `/setup sessions`.
+A session of at least 15 minutes is recorded, even with one person in it, so time alone counts towards voice stats. With 2 or more people, the bot also posts a recap with each person's time and the games played. Shorter sessions aren't recorded. Both times can be changed with `/setup sessions`.
 
 ### Voice leaderboards
 
 | Command | What it does |
 | --- | --- |
-| `/stats [period]` | Voice leaderboard for the past week (default), past month or all time. Shows the top 10 by time in voice, how many nights each person showed up, and the most-played games. |
+| `/stats [period]` | Voice leaderboard for the past week (default), past month or all time. Shows the top 10 by time in voice, how many nights each person showed up, and the most-played games by game time, as `/gamestats` does. |
 
 Every Sunday at 8 PM, in the server's time zone, the bot posts the past week's leaderboard to the announce channel. Change the day and hour with `/setup leaderboard`.
 
@@ -336,10 +336,11 @@ You have to be in a voice channel to play a sound. The bot joins whichever chann
 | --- | --- |
 | `/sound add name file [emoji]` | Uploads a sound. Names use lowercase letters, numbers, `-` and `_` (up to 32 characters). The file can be mp3, ogg, wav, m4a, opus, webm or flac, up to 5 MB, and the bot turns it down if it can't find audio in it. Using an existing name replaces that sound and keeps its emoji unless you give a new one. |
 | `/sound emoji name [emoji]` | Sets the emoji on a sound's button. Leave `emoji` empty to clear it. Custom emoji have to be from this server. |
-| `/sound remove name` | Deletes a sound from the bot, and from Discord's soundboard if it's there. |
+| `/sound remove name` | Deletes a sound from the bot, and from Discord's soundboard if it's there. It stays in a bin for 30 days. |
+| `/sound restore name` | Brings back a sound from the bin with its emoji, volume, star and untrimmed original. If the name's been taken, it comes back numbered, like `horn-2`. It isn't put back on Discord's soundboard, and anyone who had it as a join sound has to pick it again. |
 | `/sound volume name percent` | Sets how loud one sound plays, from 25 to 200, where 100 is normal. |
 
-The [management API](#management-api) can also trim a sound. The bot keeps the first version, so it can be restored until the sound is replaced or deleted. A copy on Discord's soundboard stays as it is until it's added again.
+The [management API](#management-api) can also trim a sound. The bot keeps the first version, so it can be restored until the sound is replaced. A copy on Discord's soundboard stays as it is until it's added again.
 
 Examples:
 ```
@@ -479,12 +480,13 @@ One running bot can serve several servers. Each server gets its own:
 A page for your home network, in [`web/`](web), that runs as a second container next to the bot:
 
 - **Soundboard:** big buttons that play in voice, with favourites first and then whatever gets played most.
-- **Library:** upload files or whole folders, preview, rename and delete sounds, set a sound's volume, trim it with a way back to the original, and choose what's on Discord's soundboard, with a waveform for picking part of a long sound.
+- **Library:** upload files or whole folders, preview, rename and delete sounds, set a sound's volume, trim it with a way back to the original, and choose what's on Discord's soundboard, with a waveform for picking part of a long sound. **Recently deleted** restores a sound or erases it for good.
 - **Game nights:** plan a night, see what's coming up, cancel one or stop a repeating one.
+- **Games:** the game library, with who has each game, who needs it, who wants it and any sale. Add and remove games, set player limits and Steam links, and tick who owns or wants what. Ownership from a Steam library is locked.
 - **Stats:** game and voice time, overall or for one person or game.
 - **Discord's soundboard:** on Library, see what fills the slots, play or save any sound, and swap sounds between Discord and the library.
 - **Merging games:** on Stats, Merge games puts different spellings of a game together, and Separate on a clicked game takes one back out.
-- **Activity:** a history of changes to sounds, settings and game nights.
+- **Activity:** a history of changes to sounds, games, settings and game nights.
 - **Settings:** everything in `/setup`, for each server, which free games are being posted or hidden and why, and what's on sale now.
 
 It holds no data of its own. The bot does everything through its [management API](#management-api), so the rules are the same as for the slash commands, and a change here updates the bot's posted soundboard panels too.
@@ -535,9 +537,12 @@ It applies the same rules as `/sound` and `/setup`, and every request needs an `
 | `GET /guilds/:id/sounds` | Lists sounds, Discord slots and the server's emoji |
 | `PUT /guilds/:id/sounds/:name?file=<filename>` | Adds or replaces a sound; the body is the file. `&discord=0` keeps a new sound off Discord's soundboard |
 | `PATCH /guilds/:id/sounds/:name` | Renames it, sets its emoji, volume or star: `{ "name": "..." }`, `{ "emoji": "..." }`, `{ "volume": 50 }`, `{ "favourite": true }` |
-| `DELETE /guilds/:id/sounds/:name` | Deletes it |
+| `DELETE /guilds/:id/sounds/:name` | Moves it to the bin for 30 days |
 | `GET /guilds/:id/sounds/:name/audio` | Downloads its audio |
 | `POST /guilds/:id/sounds/:name/play` | Plays it in a voice channel with people in it: `{ "channelId": "..." }` |
+| `GET /guilds/:id/deleted-sounds` | Lists what's in the bin, newest first |
+| `POST /guilds/:id/deleted-sounds/:deleted/restore` | Brings it back, and says what it's called now |
+| `DELETE /guilds/:id/deleted-sounds/:deleted` | Erases it for good |
 | `GET /guilds/:id/game-names` | Every game with what else it's been called |
 | `POST /guilds/:id/game-names/merge` | Merges games: `{ "names": ["A", "B"], "into": "A" }` |
 | `POST /guilds/:id/game-names/separate` | Puts a spelling back as its own game: `{ "name": "B" }` |
@@ -551,6 +556,11 @@ It applies the same rules as `/sound` and `/setup`, and every request needs an `
 | `POST /guilds/:id/discord-sounds/:soundId/save` | Saves it to the library and links the two |
 | `DELETE /guilds/:id/discord-sounds/:soundId` | Takes it off Discord's soundboard, saving it to the library first |
 | `GET /guilds/:id/sales` | Lists what's watched and on sale, from the last check, with why |
+| `GET /guilds/:id/games` | Lists the game library with owners, who needs each game, who wants it and any sale, plus the server's members |
+| `POST /guilds/:id/games` | Adds a game: `{ "name": "..." }` takes a name or Steam store link |
+| `PATCH /guilds/:id/games/:game` | Sets its details: `{ "maxPlayers": 4 }`, `{ "steam": "<link or app ID>" }`, with null or an empty link to clear |
+| `DELETE /guilds/:id/games/:game` | Removes it and its marks |
+| `PATCH /guilds/:id/games/:game/members/:user` | Marks someone: `{ "owns": true }`, `{ "wants": true }`. Owning clears wanting, and Steam ownership can't be changed |
 | `GET /guilds/:id/free-games` | Lists what's free right now, with whether each game is posted and why |
 | `GET /guilds/:id/voice` | Lists voice channels with people in them, busiest first |
 | `POST /guilds/:id/stop` | Stops whatever is playing |

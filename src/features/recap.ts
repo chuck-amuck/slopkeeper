@@ -17,7 +17,9 @@ export function buildRecap(guild: Guild, start: number, end: number): EmbedBuild
   const players = stats(guild.id, start, 'none', 'user_id', undefined, undefined, end).filter((r) => isMember(r.key));
 
   const period = [guild.id, start, end] as const;
-  const sessions = db.prepare('SELECT COUNT(*) AS n, COALESCE(SUM(ended_at - started_at), 0) AS ms FROM sessions WHERE guild_id = ? AND started_at >= ? AND started_at < ?').get(...period) as {
+  // Time alone counts as voice time, but a highlight needs company
+  const group = '(SELECT COUNT(*) FROM session_members WHERE session_id = sessions.id) >= 2';
+  const sessions = db.prepare(`SELECT COUNT(*) AS n, COALESCE(SUM(ended_at - started_at), 0) AS ms FROM sessions WHERE guild_id = ? AND started_at >= ? AND started_at < ? AND ${group}`).get(...period) as {
     n: number;
     ms: number;
   };
@@ -32,7 +34,7 @@ export function buildRecap(guild: Guild, start: number, end: number): EmbedBuild
       .all(...period) as { userId: string; seconds: number }[]
   ).filter((r) => isMember(r.userId));
   const longest = db
-    .prepare('SELECT id, started_at, ended_at FROM sessions WHERE guild_id = ? AND started_at >= ? AND started_at < ? ORDER BY ended_at - started_at DESC LIMIT 1')
+    .prepare(`SELECT id, started_at, ended_at FROM sessions WHERE guild_id = ? AND started_at >= ? AND started_at < ? AND ${group} ORDER BY ended_at - started_at DESC LIMIT 1`)
     .get(...period) as { id: number; started_at: number; ended_at: number } | undefined;
 
   const sounds = db
@@ -52,7 +54,7 @@ export function buildRecap(guild: Guild, start: number, end: number): EmbedBuild
     )
     .all(...period) as { game: string; people: number }[];
 
-  if (!games.length && !sessions.n && !sounds.length && !nights.length) return null;
+  if (!games.length && !sessions.n && !voice.length && !sounds.length && !nights.length) return null;
 
   const timeZone = setting(guild.id, 'timezone');
   const label = new Date(start).toLocaleString('en-US', { timeZone, month: 'long', year: 'numeric' });

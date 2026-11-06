@@ -210,16 +210,21 @@ function saleLine(g: Sale, name: string, history: string | null = null) {
   return `[**${title}**](${storeUrl(g.appid)}): ${facts.filter(Boolean).join(' ')}`;
 }
 
-/** Watched games on sale at the last check, most wanted first */
-export async function onSale(guild: Guild): Promise<Sale[]> {
-  const rows = db.prepare('SELECT appid, discount, was, price, final FROM sale_prices WHERE country = ?').all(setting(guild.id, 'steamCountry')) as {
+/** Everything on sale at the last check, in this server's store region */
+export function salePrices(guildId: string) {
+  const rows = db.prepare('SELECT appid, discount, was, price, final FROM sale_prices WHERE country = ?').all(setting(guildId, 'steamCountry')) as {
     appid: number;
     discount: number;
     was: string;
     price: string;
     final: number;
   }[];
-  const prices = new Map(rows.map((r) => [r.appid, r]));
+  return new Map(rows.map((r) => [r.appid, r]));
+}
+
+/** Watched games on sale at the last check, most wanted first */
+export async function onSale(guild: Guild): Promise<Sale[]> {
+  const prices = salePrices(guild.id);
   const games = await watched(guild);
   return games.flatMap((g) => (prices.has(g.appid) ? [{ ...g, ...prices.get(g.appid)! }] : [])).sort(byInterest);
 }

@@ -4,6 +4,7 @@ import { gameName } from '../gameNames.ts';
 import { isAllowed, setting } from '../settings.ts';
 import type { Feature } from '../types.ts';
 import { announceChannel, eachGuild, formatDuration, humansIn, playingGames, servedGuilds, zonedDate, zonedParts } from '../util.ts';
+import { checkpoint, short, stats } from './gamestats.ts';
 
 interface LiveSession {
   guildId: string;
@@ -55,7 +56,8 @@ async function finish(client: Client<true>, channelId: string) {
   live.delete(channelId);
 
   const endedAt = s.emptySince ?? Date.now();
-  if (!save(s, channelId, endedAt)) return;
+  // Time alone counts towards the stats, but it's nothing to announce
+  if (!save(s, channelId, endedAt) || s.totals.size < 2) return;
   const duration = endedAt - s.startedAt;
 
   const ranked = [...s.totals].sort((a, b) => b[1] - a[1]);
@@ -69,9 +71,9 @@ async function finish(client: Client<true>, channelId: string) {
   await (await announceChannel(client, s.guildId))?.send({ embeds: [embed] });
 }
 
-/** Records a session if it was long and busy enough to count. Returns whether it was */
+/** Records a session if it was long enough to count. Returns whether it was */
 function save(s: LiveSession, channelId: string, endedAt: number): boolean {
-  if (endedAt - s.startedAt < setting(s.guildId, 'recapMinMinutes') * 60_000 || s.totals.size < 2) return false;
+  if (endedAt - s.startedAt < setting(s.guildId, 'recapMinMinutes') * 60_000) return false;
 
   db.exec('BEGIN');
   try {
@@ -135,15 +137,8 @@ function leaderboard(guildId: string, sinceMs: number, title: string): EmbedBuil
   const people = voiceTotals(guildId, sinceMs).slice(0, 10);
   if (!people.length) return null;
 
-  const games = db
-    .prepare(
-      `SELECT COALESCE(a.name, sg.game) AS game, COUNT(DISTINCT s.id) AS n
-       FROM session_games sg JOIN sessions s ON s.id = sg.session_id
-       LEFT JOIN game_aliases a ON a.guild_id = s.guild_id AND a.raw = sg.game
-       WHERE s.guild_id = ? AND s.started_at >= ?
-       GROUP BY 1 ORDER BY n DESC LIMIT 5`,
-    )
-    .all(guildId, sinceMs) as { game: string; n: number }[];
+  checkpoint();
+  const games = stats(guildId, sinceMs, 'none', 'game').slice(0, 5);
 
   const medals = ['🥇', '🥈', '🥉'];
   const embed = new EmbedBuilder()
@@ -155,7 +150,7 @@ function leaderboard(guildId: string, sinceMs: number, title: string): EmbedBuil
     )
     .setColor(0xfee75c);
   if (games.length) {
-    embed.addFields({ name: 'Most played', value: games.map((g) => `${g.game} (${g.n} session${g.n === 1 ? '' : 's'})`).join('\n') });
+    embed.addFields({ name: 'Most played', value: games.map((g) => `${short(g.key)} · ${formatDuration(g.ms)}`).join('\n') });
   }
   return embed;
 }
