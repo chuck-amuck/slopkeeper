@@ -23,6 +23,11 @@ export const DEFAULTS = {
   freeGames: process.env.FREE_GAMES === 'true',
   // Unset posts free games in the announce channel
   freeGamesChannel: null as string | null,
+  // Most giveaways are filler, so an alert only goes out for one that looks worth having
+  freeGamesMinRating: num('FREE_GAMES_MIN_RATING', 70),
+  freeGamesTaste: process.env.FREE_GAMES_TASTE !== 'false',
+  freeGamesMultiplayer: process.env.FREE_GAMES_MULTIPLAYER === 'true',
+  freeGamesUnlisted: process.env.FREE_GAMES_UNLISTED === 'true',
   gameNightReminderMin: num('GAMENIGHT_REMINDER_MIN', 15),
   monthlyRecap: process.env.MONTHLY_RECAP !== 'false',
   evenVolume: process.env.EVEN_VOLUME !== 'false',
@@ -42,6 +47,10 @@ export const DEFAULT_ENV: Partial<Record<SettingKey, string>> = {
   sessionGraceMin: 'SESSION_GRACE_MIN',
   steamCountry: 'STEAM_CC',
   freeGames: 'FREE_GAMES',
+  freeGamesMinRating: 'FREE_GAMES_MIN_RATING',
+  freeGamesTaste: 'FREE_GAMES_TASTE',
+  freeGamesMultiplayer: 'FREE_GAMES_MULTIPLAYER',
+  freeGamesUnlisted: 'FREE_GAMES_UNLISTED',
   gameNightReminderMin: 'GAMENIGHT_REMINDER_MIN',
   monthlyRecap: 'MONTHLY_RECAP',
   evenVolume: 'EVEN_VOLUME',

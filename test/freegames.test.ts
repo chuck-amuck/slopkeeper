@@ -25,6 +25,18 @@ test('cleans up what the feed sends', () => {
   assert.equal(game.endDate, '2026-10-31 23:59:00');
 });
 
+test('titles lose everything the feed adds to them', () => {
+  const titles = [
+    ['GMH - Good Morning Human (Epic Games) Giveaways', 'GMH - Good Morning Human'],
+    ['Flotsam (Epic Games) Giveaway', 'Flotsam'],
+    ['Letter Quest: Grimm’s Journey Remastered Steam Key Giveaway', 'Letter Quest: Grimm’s Journey Remastered'],
+    ['Dwarven Realms (Steam) Key Giveaway', 'Dwarven Realms'],
+    ['The Key Giveaway', 'The Key'],
+    ['Plain Name', 'Plain Name'],
+  ];
+  for (const [title, clean] of titles) assert.equal(parseFeed([{ ...entry, title }])[0].title, clean);
+});
+
 test('handles missing values, ended offers and an empty feed', () => {
   const [game] = parseFeed([{ ...entry, worth: 'N/A', end_date: 'N/A' }]);
   assert.equal(game.worth, '');
@@ -39,6 +51,7 @@ test('posts only to servers that turned it on, and a failed post is tried again'
   for (const id of ['a', 'b']) {
     setSetting(id, 'announceChannel', `channel-${id}`);
     setSetting(id, 'freeGames', true);
+    setSetting(id, 'freeGamesUnlisted', true);
   }
   setSetting('off', 'announceChannel', 'channel-off');
 
