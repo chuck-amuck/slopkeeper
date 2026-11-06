@@ -69,7 +69,7 @@ function describe(i: Interaction): string {
   if (i.isChatInputCommand() || i.isAutocomplete()) {
     what = [`/${i.commandName}`, i.options.getSubcommand(false)].filter(Boolean).join(' ');
     if (i.isAutocomplete()) what += ' autocomplete';
-  } else if (i.isButton() || i.isStringSelectMenu()) what = `Component ${i.customId}`;
+  } else if (i.isButton() || i.isStringSelectMenu() || i.isModalSubmit()) what = `Component ${i.customId}`;
   return `${what} by ${i.user.tag} in ${where}`;
 }
 
@@ -80,7 +80,7 @@ client.on(Events.InteractionCreate, async (i) => {
     else if (i.isButton() || i.isStringSelectMenu()) {
       const feature = features.find((f) => f.componentPrefix === i.customId.split(':')[0]);
       await (i.isButton() ? feature?.onButton?.(i) : feature?.onSelect?.(i));
-    }
+    } else if (i.isModalSubmit()) await features.find((f) => f.componentPrefix === i.customId.split(':')[0])?.onModal?.(i);
   } catch (err) {
     console.error(`${describe(i)} failed:`, err);
     if (!i.isRepliable()) return;
