@@ -31,9 +31,14 @@ async function getJson(url: string) {
   return (await res.json()) as Record<string, any>;
 }
 
-async function lookUp(title: string): Promise<GameFacts> {
+/** The Steam game with this exact name, ignoring case and punctuation */
+export async function findOnSteam(title: string) {
   const { items = [] } = await getJson(`https://store.steampowered.com/api/storesearch/?term=${encodeURIComponent(title)}&l=english&cc=US`);
-  const match = (items as { id: number; name: string }[]).find((item) => gameKey(item.name) === gameKey(title));
+  return (items as { id: number; name: string }[]).find((item) => gameKey(item.name) === gameKey(title)) ?? null;
+}
+
+async function lookUp(title: string): Promise<GameFacts> {
+  const match = await findOnSteam(title);
   if (!match) return { appid: null, positive: 0, negative: 0, tags: [] };
   const spy = await getJson(`https://steamspy.com/api.php?request=appdetails&appid=${match.id}`);
   // It sends an empty array rather than an object when a game has no tags

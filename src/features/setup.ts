@@ -32,6 +32,7 @@ export const LIMITS = {
   gameNightReminderMin: [0, 1440],
   joinSoundCooldownMin: [0, 1440],
   freeGamesMinRating: [0, 100],
+  saleMinDiscount: [1, 100],
 } as const;
 
 const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -54,6 +55,9 @@ export const LABELS: Record<SettingKey, string> = {
   freeGamesTaste: 'Only games like what you play',
   freeGamesMultiplayer: 'Only multiplayer games',
   freeGamesUnlisted: 'Games not on Steam',
+  saleMinDiscount: 'Smallest sale worth posting',
+  saleSteamWishlists: 'Steam wishlists in sale alerts',
+  saleChannel: 'Sale alerts channel',
   gameNightReminderMin: 'Game night reminder',
   monthlyRecap: 'Monthly recap',
   evenVolume: 'Even volume',
@@ -83,6 +87,7 @@ export function show(key: SettingKey, value: unknown): string {
     case 'freeGames':
     case 'freeGamesTaste':
     case 'freeGamesMultiplayer':
+    case 'saleSteamWishlists':
     case 'monthlyRecap':
     case 'evenVolume':
     case 'joinSounds':
@@ -91,7 +96,10 @@ export function show(key: SettingKey, value: unknown): string {
       return value ? 'shown' : 'hidden';
     case 'freeGamesMinRating':
       return value ? `${value}% positive` : 'off';
+    case 'saleMinDiscount':
+      return `${value}% off`;
     case 'freeGamesChannel':
+    case 'saleChannel':
       return value ? `<#${value}>` : 'the announce channel';
     case 'gameNightReminderMin':
       return value ? `${value} min before` : 'off';
@@ -135,7 +143,8 @@ export function checkSetting(guild: Guild, key: SettingKey, value: unknown): Che
   }
   switch (key) {
     case 'announceChannel':
-    case 'freeGamesChannel': {
+    case 'freeGamesChannel':
+    case 'saleChannel': {
       const channel = guild.channels.cache.get(String(value));
       if (channel?.type !== ChannelType.GuildText && channel?.type !== ChannelType.GuildAnnouncement) return { error: 'Pick a text channel.' };
       const problem = cantPost(guild, channel);
@@ -270,6 +279,21 @@ export const setup: Feature = {
         )
         .addSubcommand((s) =>
           s
+            .setName('sale-alerts')
+            .setDescription('Choose which Steam sales are worth posting, and where')
+            .addIntegerOption((o) =>
+              o.setName('min_discount').setDescription('Smallest discount to post, in percent').setMinValue(LIMITS.saleMinDiscount[0]).setMaxValue(LIMITS.saleMinDiscount[1]),
+            )
+            .addBooleanOption((o) => o.setName('steam_wishlists').setDescription('Include games on members’ public Steam wishlists'))
+            .addChannelOption((o) =>
+              o
+                .setName('channel')
+                .setDescription('Post them here instead of the announce channel')
+                .addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement),
+            ),
+        )
+        .addSubcommand((s) =>
+          s
             .setName('gamenight-reminder')
             .setDescription('How long before a game night to ping the people who are in')
             .addIntegerOption((o) => o.setName('minutes').setDescription('0 turns reminders off').setRequired(true).setMinValue(LIMITS.gameNightReminderMin[0]).setMaxValue(LIMITS.gameNightReminderMin[1])),
@@ -378,6 +402,16 @@ export const setup: Feature = {
             ['freeGamesUnlisted', i.options.getBoolean('not_on_steam')],
           ]);
         }
+        if (sub === 'sale-alerts') {
+          const channel = i.options.getChannel('channel', false, [ChannelType.GuildText, ChannelType.GuildAnnouncement]);
+          const problem = channel && cantPost(i.guild, channel);
+          if (problem) return i.reply({ content: problem, flags: MessageFlags.Ephemeral });
+          return apply(i, [
+            ['saleMinDiscount', i.options.getInteger('min_discount')],
+            ['saleSteamWishlists', i.options.getBoolean('steam_wishlists')],
+            ['saleChannel', channel?.id ?? null],
+          ]);
+        }
         if (sub === 'gamenight-reminder') return apply(i, [['gameNightReminderMin', i.options.getInteger('minutes', true)]]);
         if (sub === 'monthly-recap') return apply(i, [['monthlyRecap', i.options.getBoolean('enabled', true)]]);
         if (sub === 'sounds') {
@@ -409,7 +443,7 @@ export const setup: Feature = {
           .setDescription(
             (Object.keys(DEFAULTS) as SettingKey[])
               .map((key) => {
-                const value = key === 'announceChannel' || key === 'hopOnRole' || key === 'freeGamesChannel' ? setting(i.guildId, key) || null : setting(i.guildId, key);
+                const value = key === 'announceChannel' || key === 'hopOnRole' || key === 'freeGamesChannel' || key === 'saleChannel' ? setting(i.guildId, key) || null : setting(i.guildId, key);
                 return `**${LABELS[key]}:** ${show(key, value)} · *${source(i.guildId, key)}*`;
               })
               .join('\n'),

@@ -10,12 +10,13 @@ import { gameVotes } from '../src/features/gamevote.ts';
 import { help } from '../src/features/help.ts';
 import { hopOn } from '../src/features/hopon.ts';
 import { recap } from '../src/features/recap.ts';
+import { sales } from '../src/features/sales.ts';
 import { sessions } from '../src/features/sessions.ts';
 import { setup } from '../src/features/setup.ts';
 import { soundboard } from '../src/features/soundboard.ts';
 import { steam } from '../src/features/steam.ts';
 
-const features = [hopOn, gamePings, gameNights, sessions, gameStats, recap, games, gameVotes, steam, freeGames, soundboard, setup];
+const features = [hopOn, gamePings, gameNights, sessions, gameStats, recap, games, gameVotes, steam, sales, freeGames, soundboard, setup];
 const commands = [...features, help(features)].flatMap((f) => f.commands ?? []).map((c) => c.data.toJSON());
 
 interface Option {

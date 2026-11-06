@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { recentActivity } from '../src/activity.ts';
 import { setup } from '../src/features/setup.ts';
+import { setting } from '../src/settings.ts';
 
 /** Runs a /setup subcommand */
 function run(guildId: string, sub: string, values: Record<string, unknown>) {
@@ -30,4 +31,15 @@ test('records settings changed in Discord, including ones set to nothing or zero
 test('records putting a setting back', async () => {
   await run('setup-reset', 'reset', { setting: 'hopOnMinPeople' });
   assert.deepEqual(log('setup-reset'), ['Put Hop-on ping at back to the default']);
+});
+
+test('sale alerts set their discount, wishlists and channel, one at a time if wanted', async () => {
+  const guildId = 'setup-sales';
+  await run(guildId, 'sale-alerts', { min_discount: 40 });
+  assert.equal(setting(guildId, 'saleMinDiscount'), 40);
+  assert.equal(setting(guildId, 'saleSteamWishlists'), true);
+  await run(guildId, 'sale-alerts', { steam_wishlists: false });
+  assert.equal(setting(guildId, 'saleSteamWishlists'), false);
+  assert.equal(setting(guildId, 'saleMinDiscount'), 40);
+  assert.deepEqual(log(guildId), ['Set Steam wishlists in sale alerts to off', 'Set Smallest sale worth posting to 40% off']);
 });

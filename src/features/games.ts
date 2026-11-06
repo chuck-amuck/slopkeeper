@@ -11,6 +11,7 @@ import {
 import { db } from '../db.ts';
 import type { Feature } from '../types.ts';
 import { humansIn, paginate } from '../util.ts';
+import { findOnSteam } from './gamefacts.ts';
 import { appInfo, ensureAppInfo, linkFor, ownedSteamGames, refreshStale, type OwnedGame } from './steam.ts';
 
 export interface GameRow {
@@ -22,6 +23,18 @@ export interface GameRow {
 
 export function allGames(guildId: string): GameRow[] {
   return db.prepare('SELECT id, name, steam_appid, max_players FROM games WHERE guild_id = ? ORDER BY name').all(guildId) as unknown as GameRow[];
+}
+
+/** The same for a Steam app that may not be in the library */
+export function ownersOfApp(guild: Guild, appid: number): Set<string> {
+  const rows = db
+    .prepare(
+      `SELECT o.user_id FROM game_owners o JOIN games g ON g.id = o.game_id WHERE g.guild_id = ? AND g.steam_appid = ?
+       UNION
+       SELECT l.user_id FROM steam_links l JOIN steam_owned o ON o.steam_id = l.steam_id WHERE o.appid = ?`,
+    )
+    .all(guild.id, appid, appid) as { user_id: string }[];
+  return new Set(rows.map((r) => r.user_id).filter((id) => guild.members.cache.has(id)));
 }
 
 /** Owners from manual /game own marks plus linked Steam libraries, among the server's members */
@@ -77,6 +90,29 @@ export function sharedGames(guildId: string, a: string, b: string) {
     shared.push({ name: game.name ?? info.get(appid)?.name ?? `App ${appid}`, minutes: minutes(appid) });
   }
   return shared.sort((x, y) => y.minutes - x.minutes);
+}
+
+/** The game someone asked for, added to the library if it's new. Null if Steam doesn't know it */
+async function wantedGame(guildId: string, input: string, userId: string): Promise<GameRow | null> {
+  const listed = findGame(guildId, input);
+  if (listed?.steam_appid) return listed;
+
+  let app: { id: number; name: string } | null;
+  const linked = input.includes('/') ? parseSteamAppId(input) : null;
+  if (linked) {
+    await ensureAppInfo([linked]);
+    const name = appInfo().get(linked)?.name;
+    app = name ? { id: linked, name } : null;
+  } else app = await findOnSteam(input);
+  if (!app) return null;
+
+  const already = allGames(guildId).find((g) => g.steam_appid === app.id) ?? listed ?? findGame(guildId, app.name);
+  if (already) {
+    db.prepare('UPDATE games SET steam_appid = ? WHERE id = ?').run(app.id, already.id);
+    return { ...already, steam_appid: app.id };
+  }
+  db.prepare('INSERT INTO games (guild_id, name, steam_appid, added_by) VALUES (?, ?, ?, ?)').run(guildId, app.name, app.id, userId);
+  return findGame(guildId, app.name)!;
 }
 
 function parseSteamAppId(input: string): number | null {
@@ -213,6 +249,11 @@ async function buildPick(guild: Guild, here: string[], avoid?: string) {
 
 const LIST_PAGE_CHARS = 4000; // embed descriptions stop at 4096
 
+function wantedBy(game: GameRow, guild: Guild) {
+  const rows = db.prepare('SELECT user_id FROM game_wants WHERE game_id = ?').all(game.id) as { user_id: string }[];
+  return rows.map((r) => r.user_id).filter((id) => guild.members.cache.has(id));
+}
+
 function libraryPage(guild: Guild, wanted: number) {
   const rows = allGames(guild.id);
   if (!rows.length) return { content: 'Library is empty. Add something with `/game add`.', embeds: [], components: [] };
@@ -223,6 +264,8 @@ function libraryPage(guild: Guild, wanted: number) {
     let line = `**${g.name}**${g.max_players ? ` · up to ${g.max_players}` : ''}`;
     if (owners.size) line += `\n  owned: ${mentions(owners)}`;
     if (missing.length) line += `\n  needs it: ${mentions(missing)}`;
+    const wanted = wantedBy(g, guild);
+    if (wanted.length) line += `\n  wanted: ${mentions(wanted)}`;
     return line;
   });
   const pages = paginate(lines, LIST_PAGE_CHARS);
@@ -260,6 +303,12 @@ export const games: Feature = {
             .setDescription('Toggle ownership by hand (non-Steam games, Family Sharing)')
             .addStringOption((o) => o.setName('name').setDescription('Game').setRequired(true).setAutocomplete(true))
             .addUserOption((o) => o.setName('user').setDescription('Who owns it (default: you)')),
+        )
+        .addSubcommand((s) =>
+          s
+            .setName('want')
+            .setDescription('Get pinged when a game goes on sale, or stop. Run it again to take it back')
+            .addStringOption((o) => o.setName('name').setDescription('Game, or its Steam store link').setRequired(true).setAutocomplete(true).setMaxLength(200)),
         )
         .addSubcommand((s) => s.setName('list').setDescription('Show the library and who owns what'))
         .addSubcommand((s) =>
@@ -301,6 +350,19 @@ export const games: Feature = {
           const name = i.options.getString('name', true);
           const { changes } = db.prepare('DELETE FROM hidden_apps WHERE guild_id = ? AND name = ?').run(i.guildId, name);
           return i.reply(changes ? `👀 **${name}** can be suggested again.` : { content: 'That game is not hidden.', flags: MessageFlags.Ephemeral });
+        }
+
+        if (sub === 'want') {
+          await i.deferReply();
+          const input = i.options.getString('name', true).trim();
+          const wanted = await wantedGame(i.guildId, input, i.user.id).catch((err) => (console.error(err), undefined));
+          if (wanted === undefined) return i.editReply('Steam couldn’t be reached just now. Try again in a bit.');
+          if (!wanted) return i.editReply({ content: `Couldn’t find **${input}** on Steam. Paste its store link instead.`, allowedMentions: { parse: [] } });
+          if (ownersOf(wanted, i.guild).has(i.user.id)) return i.editReply(`You already own **${wanted.name}**.`);
+          const { changes } = db.prepare('DELETE FROM game_wants WHERE game_id = ? AND user_id = ?').run(wanted.id, i.user.id);
+          if (changes) return i.editReply(`➖ You’ll no longer hear about **${wanted.name}**.`);
+          db.prepare('INSERT INTO game_wants (game_id, user_id) VALUES (?, ?)').run(wanted.id, i.user.id);
+          return i.editReply(`🛒 You’ll be pinged when **${wanted.name}** goes on sale.`);
         }
 
         const game = sub === 'list' ? undefined : findGame(i.guildId, i.options.getString('name', true));

@@ -209,6 +209,17 @@ test('lists the current free games with why each is or isn’t posted', async (t
   assert.deepEqual(games, [{ title: 'Great Game', url: 'https://example.com/g', worth: '$9.99', platforms: 'Steam', show: false, reason: 'Not on Steam, so it can’t be rated' }]);
 });
 
+test('lists what’s on sale with the reasons in plain names', async (t) => {
+  db.prepare(`INSERT INTO games (id, guild_id, name, steam_appid, added_by) VALUES (9001, ?, 'Discounted', 9001, 'x')`).run(GUILD);
+  db.prepare(`INSERT INTO game_wants (game_id, user_id) VALUES (9001, 'u1')`).run();
+  db.prepare(`INSERT INTO sale_prices (country, appid, discount, was, price, final) VALUES ('us', 9001, 50, '$20.00', '$10.00', 1000)`).run();
+  t.after(() => db.exec('DELETE FROM games WHERE id = 9001; DELETE FROM sale_prices'));
+  const { games } = await ok(`/guilds/${GUILD}/sales`);
+  assert.deepEqual(games, [
+    { name: 'Discounted', url: 'https://store.steampowered.com/app/9001', discount: 50, was: '$20.00', price: '$10.00', why: 'Wanted by Ana' },
+  ]);
+});
+
 test('every route needs the token', async () => {
   for (const authorization of [undefined, 'Bearer wrong', TOKEN]) {
     const res = await fetch(`${base}/guilds`, { headers: authorization ? { authorization } : {} });

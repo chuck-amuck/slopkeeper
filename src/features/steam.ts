@@ -103,6 +103,34 @@ export async function refreshStale(userIds: string[], maxAgeMs: number) {
   for (const r of results) if (r.status === 'rejected') console.error(r.reason);
 }
 
+/** Steam gives the same empty answer for a private wishlist and an empty one */
+async function fetchWishlist(steamId: string) {
+  const body = await steamGet<{ response: { items?: { appid: number }[] } }>('/IWishlistService/GetWishlist/v1/', { steamid: steamId });
+  return (body.response.items ?? []).map((item) => item.appid);
+}
+
+export async function refreshWishlists() {
+  const links = db.prepare('SELECT DISTINCT steam_id FROM steam_links').all() as { steam_id: string }[];
+  let visible = 0;
+  for (const { steam_id } of links) {
+    const appids = await fetchWishlist(steam_id).catch((err) => (console.error(err), null));
+    // One that couldn't be read keeps the games it had
+    if (!appids) continue;
+    if (appids.length) visible++;
+    db.exec('BEGIN');
+    try {
+      db.prepare('DELETE FROM steam_wishlist WHERE steam_id = ?').run(steam_id);
+      const insert = db.prepare('INSERT OR IGNORE INTO steam_wishlist (steam_id, appid) VALUES (?, ?)');
+      for (const appid of appids) insert.run(steam_id, appid);
+      db.exec('COMMIT');
+    } catch (err) {
+      db.exec('ROLLBACK');
+      throw err;
+    }
+  }
+  if (links.length) console.log(`Steam wishlists: games on ${visible} of ${links.length}`);
+}
+
 async function refreshAll() {
   const links = db.prepare('SELECT user_id FROM steam_links').all() as { user_id: string }[];
   for (const { user_id } of links) await refreshUser(user_id).catch(console.error);
@@ -193,6 +221,7 @@ export const steam: Feature = {
         if (sub === 'unlink') {
           db.prepare('DELETE FROM steam_links WHERE user_id = ?').run(user.id);
           db.prepare('DELETE FROM steam_owned WHERE steam_id NOT IN (SELECT steam_id FROM steam_links)').run();
+          db.prepare('DELETE FROM steam_wishlist WHERE steam_id NOT IN (SELECT steam_id FROM steam_links)').run();
           return i.reply({ content: `Unlinked ${user}.`, allowedMentions: { parse: [] } });
         }
 

@@ -41,7 +41,7 @@ Everything happens through slash commands (type `/` in any channel, or run `/hel
 4. Throughout the night, people spam the soundboard panel.
 5. Everyone leaves at 1 AM. Five minutes after the channel empties, the bot posts a recap: the session lasted 4h, Sam was there for 4h, Alex for 3h 40m, and so on, plus the games people were playing.
 6. On Sunday evening, the bot posts the week's voice leaderboard. `/gamestats` shows the server put 31 hours into Lethal Company this month, and `/gamestats user:@Alex` shows where Alex's evenings went.
-7. Days later, Helldivers 2 goes 40% off. The bot posts the sale and pings Jordan, the only one who doesn't own it. The same week, it posts in #free-games that a game is free to keep on Epic.
+7. Days later, Helldivers 2 goes 40% off. They've been playing it, so the bot posts the sale and pings Jordan, the only one who doesn't have it. The same week, it posts in #free-games that a game is free to keep on Epic.
 
 ## Getting started (for everyone in the server)
 
@@ -168,6 +168,7 @@ The library is the group's shared list of games it cares about. Add a game to th
 | Command | What it does |
 | --- | --- |
 | `/game add name [steam] [max_players]` | Adds a game. `steam` takes the store URL or app ID and turns on sale alerts and automatic Steam ownership. `max_players` is the most people one lobby holds. |
+| `/game want name` | Pings you when a game goes on sale. Takes a library game, a name or a Steam store link, and adds a new game to the library. Run it again to take it back. |
 | `/game own name [user]` | Marks a game as owned by you, or by `user`, for non-Steam games and Family Sharing. Run it again to unmark it. It's not needed if Steam already shows the person owning the game. |
 | `/game list` | Shows every library game, its player cap, who owns it and who still needs it, with ◀ ▶ buttons once it's too long for one page. |
 | `/game remove name` | Removes a game from the library, along with its manual ownership marks. |
@@ -183,9 +184,35 @@ Examples:
 
 ### Sale alerts
 
-Every `SALE_CHECK_HOURS` (default 6), the bot checks the Steam price of every library game that has a Steam ID. It posts in the announce channel when a game goes on sale, or when an ongoing sale gets a deeper discount. The post shows the discount, the old and new price, and the store link, and pings the people who don't own the game yet. Games everyone already owns are skipped.
+Every `SALE_CHECK_HOURS` (default 6), the bot checks Steam prices for what this server cares about:
+
+- **Played:** games played in voice here in the past 180 days, found by matching the name to a Steam title. Games not on Steam are skipped, and `/game add` with a Steam ID covers a game whose name doesn't match.
+- **Wanted:** games someone asked for with `/game want`.
+- **Steam wishlists:** games on a linked member's Steam wishlist, if their profile lets the bot see it. A server can turn these off.
+- **Library:** games added with a Steam ID.
+
+It posts once per check in the announce channel, or the channel from `/setup sale-alerts`, however many games are on sale. Up to 10 games are listed, most wanted first, and the rest are in `/sales`:
+
+> 💸 **2 games on sale**
+> **Deep Rock Galactic**: 60% off, $11.99, was $29.99. Lowest price yet. Played 14h · Needs it: @Sam, @Alex
+> **Hades**: 50% off, $12.49, was $24.99. Lowest ever $6.24. Wanted by @Jo
+
+A game is posted at 25% off or more by default, then again only if the same sale gets at least 10 points deeper. The lowest price comes from [CheapShark](https://www.cheapshark.com), covers all stores, is in US dollars, and so only appears for servers using the `us` region.
+
+Only the people a sale matters to are pinged:
+
+- Whoever wanted it, or has it on their wishlist, until they own it.
+- For played and library games, everyone in the group who doesn't have it. A library game that was added by `/game want` only pings the people who wanted it.
+- Not anyone who has played it in voice here, as they must have it somehow.
+- Not anyone whose Steam library is private, unless they asked for the game, as nobody can tell what they own.
+
+Games hidden with **Never suggest this** aren't watched for being played or wishlisted, only if someone asked for them. A game nobody needs isn't posted.
 
 The "group" here is the server's members who have linked Steam or marked at least one game as owned. Prices use the server's Steam store region (`/setup steam-region`, default `us`).
+
+| Command | What it does |
+| --- | --- |
+| `/sales` | Shows everything this server plays or wants that was on sale at the last check, including sales too small to post. |
 
 ### Free games
 
@@ -234,7 +261,7 @@ The bot records how long each person plays each game while they're in a voice ch
 
 A game's time is how long anyone was playing it, so two people playing for the same hour add one hour to the game and one hour each to themselves. That's why the players of a game can add up to more than the game itself. If the same game is running in two voice channels at once, it still only counts once.
 
-Different spellings of a game count as one. Discord can report a game several ways, so spellings that only differ by case, spaces or punctuation match by themselves: `slaythespire2` joins "Slay the Spire 2". For anything else, like "Slay the Spire II", use **Merge games** on the web UI's Stats page. Merges apply to past stats, ping roles and new plays. Nothing stored is changed, so **Separate** puts a spelling back at any time.
+Different spellings of a game count as one. Discord can report a game several ways, so spellings that only differ by case, spaces or punctuation match by themselves: `slaythespire2` joins "Slay the Spire 2". So does a Roman numeral from II to IX in capitals at the end of a name: "Slay the Spire II" joins too. For anything else, like "StS 2", use **Merge games** on the web UI's Stats page. Merges apply to past stats, ping roles and new plays. Nothing stored is changed, so **Separate** puts a spelling back at any time.
 
 Game time from before this rule is an estimate: the bot kept what fell inside saved voice sessions, up to each person's time in that session.
 
@@ -374,6 +401,7 @@ Every setting has a sensible default, so only the announce channel needs setting
 | `/setup timezone zone` | The server's time zone, used for the weekly post, counting "nights" on leaderboards, and reading game night times. Autocompletes, e.g. `America/Chicago`, `Europe/London`. |
 | `/setup steam-region country` | Steam store region for sale prices, as a two-letter country code. |
 | `/setup free-game-filters [min_rating] [like_what_we_play] [multiplayer_only] [not_on_steam]` | Chooses which free games are worth posting. See [Free games](#free-games). |
+| `/setup sale-alerts [min_discount] [steam_wishlists] [channel]` | Sets the smallest sale worth posting, whether Steam wishlists count, and a channel of their own. See [Sale alerts](#sale-alerts). |
 | `/setup free-games enabled [channel]` | Turns free game posts on or off. `channel` gives them their own channel; without it they go to the announce channel. To move them back to the announce channel, use `/setup reset setting:Free games channel`. |
 | `/setup gamenight-reminder minutes` | How long before a game night to remind the people who are in. `0` turns reminders off. |
 | `/setup monthly-recap enabled` | Turns the post on the 1st of each month on or off. |
@@ -420,6 +448,9 @@ So the host can change a default for every server at once, and each server can s
 | Only games like what you play | `free-game-filters` | `FREE_GAMES_TASTE` (`false` to turn off) | on |
 | Only multiplayer games | `free-game-filters` | `FREE_GAMES_MULTIPLAYER` (`true` to turn on) | off |
 | Games not on Steam | `free-game-filters` | `FREE_GAMES_UNLISTED` (`true` to show them) | hidden |
+| Smallest sale worth posting | `sale-alerts` | `SALE_MIN_DISCOUNT` | 25 |
+| Steam wishlists in sale alerts | `sale-alerts` | `SALE_STEAM_WISHLISTS` (`false` to turn off) | on |
+| Sale alerts channel | `sale-alerts` | | announce channel |
 | Game night reminder (minutes before) | `gamenight-reminder` | `GAMENIGHT_REMINDER_MIN` | 15 |
 | Monthly recap | `monthly-recap` | `MONTHLY_RECAP` (`false` to turn off) | on |
 | Even volume | `sounds` | `EVEN_VOLUME` (`false` to turn off) | on |
@@ -483,6 +514,7 @@ It applies the same rules as `/sound` and `/setup`, and every request needs an `
 | `POST /guilds/:id/discord-sounds/:soundId/play` | Plays it in a voice channel: `{ "channelId": "..." }` |
 | `POST /guilds/:id/discord-sounds/:soundId/save` | Saves it to the library and links the two |
 | `DELETE /guilds/:id/discord-sounds/:soundId` | Takes it off Discord's soundboard, saving it to the library first |
+| `GET /guilds/:id/sales` | Lists what's watched and on sale, from the last check, with why |
 | `GET /guilds/:id/free-games` | Lists what's free right now, with whether each game is posted and why |
 | `GET /guilds/:id/voice` | Lists voice channels with people in them, busiest first |
 | `POST /guilds/:id/stop` | Stops whatever is playing |
