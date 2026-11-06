@@ -30,7 +30,7 @@ export function noteGame(guildId: string, raw: string): boolean {
   const key = gameKey(raw);
   const matches = inGroup(guildId, key);
   const match = matches.find((m) => !m.manual) ?? matches[0];
-  const takesOver = match && !match.manual && titleScore(raw) > titleScore(match.name);
+  const takesOver = match && titleScore(raw) > titleScore(match.name);
   db.prepare('INSERT INTO game_aliases (guild_id, raw, key, name, manual) VALUES (?, ?, ?, ?, ?)').run(guildId, raw, key, match?.name ?? raw, match?.manual ?? 0);
   if (takesOver) db.prepare('UPDATE game_aliases SET name = ? WHERE guild_id = ? AND key = ? AND manual = 0').run(raw, guildId, key);
   return !!match;
