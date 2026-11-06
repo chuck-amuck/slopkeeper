@@ -8,7 +8,8 @@ import { config } from './config.ts';
 import * as discordBoard from './discordSounds.ts';
 import { cancelNight, gameNames, planNight, readWhen, stopSeries, upcomingNights } from './features/gamenight.ts';
 import { reviewGiveaways } from './features/freegames.ts';
-import { onSale, saleName, saleReasons, storeUrl } from './features/sales.ts';
+import { addGame, allGames, gameById, groupMembers, ownersOf, parseSteamAppId, removeGame, setGameDetails, setOwned, setWanted, steamOwnersOf, wantedBy, type GameRow } from './features/games.ts';
+import { onSale, saleName, salePrices, saleReasons, storeUrl } from './features/sales.ts';
 import { activity, checkpoint, PERIODS, stats } from './features/gamestats.ts';
 import { gameName, gameSpellings, mergeGames, separateGame } from './gameNames.ts';
 import { voiceTotals } from './features/sessions.ts';
@@ -17,8 +18,12 @@ import {
   addSound,
   addToDiscord,
   applyLevels,
+  BIN_DAYS,
   changeEmoji,
+  deletedSounds,
   discordVolume,
+  eraseDeleted,
+  expiresAt,
   favourites,
   findSound,
   isTrimmed,
@@ -30,6 +35,7 @@ import {
   refreshPanels,
   removeSound,
   renameSound,
+  restoreDeleted,
   restoreSound,
   setFavourite,
   setJoinSound,
@@ -198,6 +204,12 @@ function voiceList(guild: Guild) {
 
 const nameOf = (guild: Guild, id: string) => guild.members.cache.get(id)?.displayName ?? 'Someone who left';
 
+const memberList = (guild: Guild) =>
+  [...guild.members.cache.values()]
+    .filter((m) => !m.user.bot)
+    .map((m) => ({ id: m.id, name: m.displayName }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+
 function nightList(guild: Guild) {
   const channelName = (id: string | null) => (id ? (guild.channels.cache.get(id)?.name ?? null) : null);
   const { nights, series } = upcomingNights(guild.id, Date.now());
@@ -224,10 +236,7 @@ function nightList(guild: Guild) {
       .filter((c) => c.type === ChannelType.GuildVoice)
       .sort((a, b) => a.rawPosition - b.rawPosition)
       .map((c) => ({ id: c.id, name: c.name })),
-    members: [...guild.members.cache.values()]
-      .filter((m) => !m.user.bot)
-      .map((m) => ({ id: m.id, name: m.displayName }))
-      .sort((a, b) => a.name.localeCompare(b.name)),
+    members: memberList(guild),
   };
 }
 
@@ -514,6 +523,116 @@ async function handleSounds(client: Client<true>, guild: Guild, req: IncomingMes
   throw new Refused(405, 'Not here.');
 }
 
+function deletedList(guild: Guild) {
+  return { days: BIN_DAYS, sounds: deletedSounds(guild.id).map((s) => ({ id: s.id, name: s.name, emoji: s.emoji, deletedAt: s.deleted_at, expiresAt: expiresAt(s) })) };
+}
+
+async function handleDeleted(client: Client<true>, guild: Guild, req: IncomingMessage, id: string, action?: string) {
+  const sound = deletedSounds(guild.id).find((s) => String(s.id) === id);
+  if (!sound) throw new Refused(404, 'That sound isn’t in the bin any more.');
+  if (action === 'restore' && req.method === 'POST') {
+    const name = restoreDeleted(guild.id, sound.id);
+    if (!name) throw new Refused(404, 'That sound isn’t in the bin any more.');
+    logActivity(guild.id, FROM_WEB, `Restored sound **${name}**`);
+    await refreshPanels(client, guild.id);
+    return { name };
+  }
+  if (action === undefined && req.method === 'DELETE') {
+    eraseDeleted(guild.id, sound.id);
+    logActivity(guild.id, FROM_WEB, `Erased deleted sound **${sound.name}**`);
+    return {};
+  }
+  throw new Refused(405, 'Not here.');
+}
+
+function gameList(guild: Guild) {
+  const group = groupMembers(guild);
+  const prices = salePrices(guild.id);
+  const person = (id: string) => ({ id, name: nameOf(guild, id) });
+  const byName = (a: { name: string }, b: { name: string }) => a.name.localeCompare(b.name);
+  return {
+    games: allGames(guild.id).map((g) => {
+      const owners = ownersOf(g, guild);
+      const onSteam = steamOwnersOf(g);
+      const sale = g.steam_appid === null ? undefined : prices.get(g.steam_appid);
+      return {
+        id: g.id,
+        name: g.name,
+        appid: g.steam_appid,
+        url: g.steam_appid === null ? null : storeUrl(g.steam_appid),
+        maxPlayers: g.max_players,
+        owners: [...owners].map((id) => ({ ...person(id), steam: onSteam.has(id) })).sort(byName),
+        needs: group.filter((id) => !owners.has(id)).map(person).sort(byName),
+        wanted: wantedBy(g, guild).map(person).sort(byName),
+        sale: sale ? { discount: sale.discount, price: sale.price, was: sale.was } : null,
+      };
+    }),
+    members: memberList(guild),
+  };
+}
+
+async function addGameFromWeb(guild: Guild, req: IncomingMessage) {
+  const { name } = await readJson(req);
+  const input = typeof name === 'string' ? name.trim() : '';
+  if (!input || input.length > (input.includes('/') ? 200 : 100)) throw new Refused(400, 'Give a game’s name in 100 characters or fewer, or its Steam store link.');
+  const result = await addGame(guild.id, input, FROM_WEB).catch((err: unknown) => {
+    console.error(err);
+    throw new Refused(502, 'Steam couldn’t be reached just now. Try again in a bit.');
+  });
+  if (!result) throw new Refused(404, 'Steam doesn’t know that link.');
+  if (result.added) logActivity(guild.id, FROM_WEB, `Added **${result.game.name}** to the game library`);
+  return { name: result.game.name, added: result.added };
+}
+
+async function changeGame(guild: Guild, game: GameRow, req: IncomingMessage) {
+  const body = await readJson(req);
+  const limit = 'maxPlayers' in body ? body.maxPlayers : game.max_players;
+  if (limit !== null && !(Number.isInteger(limit) && (limit as number) >= 1 && (limit as number) <= 100)) throw new Refused(400, 'The player limit has to be from 1 to 100.');
+  let appid = game.steam_appid;
+  if ('steam' in body) {
+    const link = typeof body.steam === 'string' ? body.steam.trim() : '';
+    appid = link ? parseSteamAppId(link) : null;
+    if (link && appid === null) throw new Refused(400, 'Couldn’t find a Steam app ID in that. Paste the store link or the number.');
+    const other = appid !== null && allGames(guild.id).find((g) => g.steam_appid === appid && g.id !== game.id);
+    if (other) throw new Refused(409, `${other.name} already has that Steam link.`);
+  }
+  setGameDetails(game, limit as number | null, appid);
+  logActivity(guild.id, FROM_WEB, `Changed the details of **${game.name}**`);
+  return {};
+}
+
+async function markGame(guild: Guild, game: GameRow, userId: string, req: IncomingMessage) {
+  if (!guild.members.cache.has(userId)) throw new Refused(404, 'They aren’t in this server.');
+  const { owns, wants } = await readJson(req);
+  if (typeof owns !== 'boolean' && typeof wants !== 'boolean') throw new Refused(400, 'Say whether they own it or want it.');
+  const who = nameOf(guild, userId);
+  if (typeof owns === 'boolean') {
+    if (steamOwnersOf(game).has(userId)) throw new Refused(409, `${who} owns it on Steam, so it can’t be changed here.`);
+    setOwned(game, userId, owns);
+    logActivity(guild.id, FROM_WEB, `Marked ${who} as ${owns ? 'owning' : 'not owning'} **${game.name}**`);
+  }
+  if (typeof wants === 'boolean') {
+    if (wants && game.steam_appid === null) throw new Refused(409, `${game.name} needs a Steam link first, as sale alerts come from Steam.`);
+    if (wants && ownersOf(game, guild).has(userId)) throw new Refused(409, `${who} already owns ${game.name}.`);
+    setWanted(game, userId, wants);
+    logActivity(guild.id, FROM_WEB, `Marked ${who} as ${wants ? 'wanting' : 'not wanting'} **${game.name}**`);
+  }
+  return {};
+}
+
+async function handleGame(guild: Guild, req: IncomingMessage, id: string, member?: string, userId?: string) {
+  const game = gameById(guild.id, Number(id));
+  if (!game) throw new Refused(404, 'No such game.');
+  if (member === 'members' && userId !== undefined && req.method === 'PATCH') return markGame(guild, game, userId, req);
+  if (member === undefined && req.method === 'PATCH') return changeGame(guild, game, req);
+  if (member === undefined && req.method === 'DELETE') {
+    removeGame(game);
+    logActivity(guild.id, FROM_WEB, `Removed **${game.name}** from the game library`);
+    return {};
+  }
+  throw new Refused(405, 'Not here.');
+}
+
 async function handleSettings(guild: Guild, req: IncomingMessage, key?: string) {
   if (key === undefined) {
     if (req.method === 'GET') return settingList(guild);
@@ -557,6 +676,11 @@ async function handle(client: Client<true>, req: IncomingMessage, res: ServerRes
   if (!guild || !isAllowed(guild.id)) throw new Refused(404, 'The bot isn’t in that server.');
 
   if (section === 'sounds' && rest.length <= 2) return handleSounds(client, guild, req, res, url, rest[0], rest[1]);
+  if (section === 'deleted-sounds' && !rest.length && req.method === 'GET') return deletedList(guild);
+  if (section === 'deleted-sounds' && (rest.length === 1 || rest.length === 2)) return handleDeleted(client, guild, req, rest[0], rest[1]);
+  if (section === 'games' && !rest.length && req.method === 'GET') return gameList(guild);
+  if (section === 'games' && !rest.length && req.method === 'POST') return addGameFromWeb(guild, req);
+  if (section === 'games' && rest.length >= 1 && rest.length <= 3) return handleGame(guild, req, rest[0], rest[1], rest[2]);
   if (section === 'discord-sounds' && (rest.length === 1 || rest.length === 2)) return handleDiscordSound(client, guild, req, res, rest[0], rest[1]);
   if (section === 'settings' && rest.length <= 1) return handleSettings(guild, req, rest[0]);
   if (section === 'voice' && !rest.length && req.method === 'GET') return voiceList(guild);

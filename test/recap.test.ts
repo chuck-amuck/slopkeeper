@@ -170,3 +170,20 @@ test('/recap can show this month so far', async () => {
   await run(null);
   assert.match(reply!.content!, /Nothing to recap for last month/);
 });
+
+test('time alone counts as voice time, but not as a session or a highlight', () => {
+  session('alone', start + DAY, 9, { a: 9 });
+  session('alone', start + 2 * DAY, 2, { a: 2, b: 2 });
+  const embed = buildRecap(guild('alone', 'a', 'b'), start, end)!.toJSON();
+  assert.match(embed.description!, /1 voice session\*\*, 2h/);
+  assert.match(field(embed, 'Longest session')!, /\*\*2h\*\*/);
+  assert.match(field(embed, 'Most time in voice')!, /<@a> · 11h/);
+});
+
+test('a month of nothing but time alone still has a recap', () => {
+  session('only-alone', start + DAY, 3, { a: 3 });
+  const embed = buildRecap(guild('only-alone', 'a'), start, end)!.toJSON();
+  assert.equal(embed.description, undefined);
+  assert.equal(field(embed, 'Longest session'), undefined);
+  assert.match(field(embed, 'Most time in voice')!, /<@a> · 3h/);
+});

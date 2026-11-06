@@ -244,6 +244,14 @@ main {
   gap: 16px;
 }
 
+/* Keeps Log out on the top row on a small window */
+@media (max-width: 1060px) {
+  nav button {
+    padding-left: 8px;
+    padding-right: 8px;
+  }
+}
+
 /* Sounds */
 
 .toolbar {
@@ -1430,4 +1438,94 @@ textarea {
 
 .free-reason.hidden-game {
   color: var(--muted);
+}
+
+/* The Recently deleted card on the Library page */
+
+.bin:empty {
+  display: none;
+}
+
+.bin .field .control {
+  justify-content: flex-end;
+}
+
+.bin .field .control button {
+  margin-left: 0;
+}
+
+/* Games */
+
+.game {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 16px;
+  border-top: 1px solid var(--line);
+}
+
+.game:first-child {
+  border-top: 0;
+}
+
+.game-body {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.game-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 10px;
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+
+.game-title .hint {
+  font-weight: 400;
+}
+
+.game-sale {
+  color: var(--good);
+  font-size: 13px;
+}
+
+.game-sale s {
+  margin-left: 6px;
+  color: var(--muted);
+}
+
+.game-member {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 12px;
+  padding: 8px 4px;
+  border-radius: 6px;
+}
+
+.game-member:hover {
+  background: var(--raised);
+}
+
+.game-member .rank-name {
+  flex: 1 1 120px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.game-mark {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+}
+
+.game-mark input {
+  width: auto;
+  min-height: 0;
+  accent-color: var(--accent);
 }

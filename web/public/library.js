@@ -8,6 +8,7 @@ const MAX_BYTES = 5 * 1024 * 1024;
 const NAME_PATTERN = /^[a-z0-9_-]{1,32}$/;
 const AUDIO_FILE = /\.(mp3|ogg|wav|m4a|opus|webm|flac)$/i;
 const MAX_NOTES = 4;
+const DAY = 86_400_000;
 
 const formatSeconds = (s) => (s === null ? 'unreadable' : s < 10 ? `${s.toFixed(1)} s` : `${Math.round(s)} s`);
 
@@ -127,6 +128,7 @@ export function renderLibrary(main) {
   );
   const queueBox = el('div', { className: 'queue', hidden: true });
   const list = el('div', { className: 'list' });
+  const bin = el('div', { className: 'stack bin' });
 
   main.append(
     voice.node,
@@ -136,6 +138,7 @@ export function renderLibrary(main) {
     picker,
     queueBox,
     list,
+    bin,
   );
   list.append(el('div', { className: 'empty' }, 'Loading sounds…'));
 
@@ -148,7 +151,7 @@ export function renderLibrary(main) {
   }
 
   async function load() {
-    const fresh = await request(api('/sounds'));
+    const [fresh, deleted] = await Promise.all([request(api('/sounds')), request(api('/deleted-sounds'))]);
     // Still on this server, if the request took a while
     if (guildId !== state.guildId || !main.isConnected) return;
     data = fresh;
@@ -156,6 +159,51 @@ export function renderLibrary(main) {
     renderBoard();
     renderList();
     renderQueue();
+    renderBin(deleted);
+  }
+
+  function renderBin({ days, sounds }) {
+    bin.replaceChildren(
+      ...(sounds.length
+        ? [el('section', { className: 'card' }, el('h2', {}, 'Recently deleted'), el('p', { className: 'card-note' }, `Kept for ${days} days. A restored sound isn’t on Discord’s soundboard until it’s added again.`), sounds.map(deletedRow))]
+        : []),
+    );
+  }
+
+  function deletedRow(sound) {
+    const left = Math.ceil((sound.expiresAt - Date.now()) / DAY);
+    return el(
+      'div',
+      { className: 'field' },
+      el(
+        'div',
+        {},
+        el('div', { className: 'series-name' }, sound.emoji && emojiNode(sound.emoji, 'emoji'), sound.emoji && ' ', sound.name),
+        el('p', { className: 'hint' }, left > 1 ? `Erased in ${left} days` : 'Erased within a day'),
+      ),
+      el(
+        'div',
+        { className: 'control' },
+        el(
+          'button',
+          {
+            ariaLabel: `Restore ${sound.name}`,
+            onclick: () =>
+              attempt(async () => {
+                const { name } = await request(api(`/deleted-sounds/${sound.id}/restore`), { method: 'POST' });
+                toast(name === sound.name ? `${name} is back.` : `${sound.name} is back, as ${name}.`);
+                await load();
+              }),
+          },
+          'Restore',
+        ),
+        confirmButton({ ariaLabel: `Delete ${sound.name} forever` }, 'Delete forever', 'Sure?', async () => {
+          await request(api(`/deleted-sounds/${sound.id}`), { method: 'DELETE' });
+          toast(`${sound.name} is gone for good.`);
+          await load();
+        }),
+      ),
+    );
   }
 
   function renderSlots() {

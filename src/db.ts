@@ -273,6 +273,17 @@ db.exec(`
     name TEXT NOT NULL,
     PRIMARY KEY (guild_id, user_id)
   );
+  -- What a deleted sound needs to come back. Its files wait in sounds/<server>/bin/<id>/
+  CREATE TABLE IF NOT EXISTS deleted_sounds (
+    id INTEGER PRIMARY KEY,
+    guild_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    emoji TEXT,
+    favourite INTEGER NOT NULL,
+    gain_db REAL,
+    percent INTEGER NOT NULL,
+    deleted_at INTEGER NOT NULL
+  );
 
   CREATE TABLE IF NOT EXISTS activity (
     id INTEGER PRIMARY KEY,

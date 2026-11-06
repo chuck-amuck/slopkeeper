@@ -54,6 +54,12 @@ test('a session still going when the bot stops is saved', () => {
   assert.ok(Math.abs(saved[1].secs - 1800) < 5);
 });
 
+test('someone alone in voice when the bot stops is saved', () => {
+  join(voice('solo', 'v9'), person('a'), Date.now() - 3_600_000);
+  sessions.shutdown!();
+  assert.deepEqual(seconds('solo').map((r) => r.user), ['a']);
+});
+
 test('a short session isn’t saved when the bot stops', () => {
   join(voice('brief', 'v2'), person('a'), Date.now() - 60_000);
   join(voice('brief', 'v2'), person('b'), Date.now() - 60_000);

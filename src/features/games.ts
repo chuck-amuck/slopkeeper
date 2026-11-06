@@ -58,6 +58,13 @@ export function groupMembers(guild: Guild): string[] {
   return rows.map((r) => r.user_id).filter((id) => guild.members.cache.has(id));
 }
 
+/** Those who own a game through a linked Steam library, so it can't be taken back by hand */
+export function steamOwnersOf(game: GameRow): Set<string> {
+  if (game.steam_appid === null) return new Set();
+  const rows = db.prepare('SELECT l.user_id FROM steam_links l JOIN steam_owned o ON o.steam_id = l.steam_id WHERE o.appid = ?').all(game.steam_appid) as { user_id: string }[];
+  return new Set(rows.map((r) => r.user_id));
+}
+
 function manualGameIds(userId: string, guildId: string): Set<number> {
   const rows = db
     .prepare('SELECT o.game_id FROM game_owners o JOIN games g ON g.id = o.game_id WHERE o.user_id = ? AND g.guild_id = ?')
@@ -70,6 +77,8 @@ function findGame(guildId: string, name: string): GameRow | undefined {
     | GameRow
     | undefined;
 }
+
+export const gameById = (guildId: string, id: number) => allGames(guildId).find((g) => g.id === id);
 
 /** Games two people both own and could play together, most played first */
 export function sharedGames(guildId: string, a: string, b: string) {
@@ -93,7 +102,7 @@ export function sharedGames(guildId: string, a: string, b: string) {
 }
 
 /** The game someone asked for, added to the library if it's new. Null if Steam doesn't know it */
-async function wantedGame(guildId: string, input: string, userId: string): Promise<GameRow | null> {
+async function gameFromSteam(guildId: string, input: string, userId: string): Promise<GameRow | null> {
   const listed = findGame(guildId, input);
   if (listed?.steam_appid) return listed;
 
@@ -115,9 +124,42 @@ async function wantedGame(guildId: string, input: string, userId: string): Promi
   return findGame(guildId, app.name)!;
 }
 
-function parseSteamAppId(input: string): number | null {
+export function parseSteamAppId(input: string): number | null {
   const match = input.match(/\/app\/(\d+)/) ?? input.trim().match(/^(\d+)$/);
   return match ? Number(match[1]) : null;
+}
+
+/**
+ * Adds a game from a name or Steam link, by Steam's name for it if Steam knows it. A name it doesn't know is
+ * added as typed, for non-Steam games, but a link has to lead somewhere, so that's null. Throws if Steam can't be asked.
+ */
+export async function addGame(guildId: string, input: string, userId: string) {
+  const had = new Set(allGames(guildId).map((g) => g.id));
+  const game = await gameFromSteam(guildId, input, userId);
+  if (game) return { game, added: !had.has(game.id) };
+  if (input.includes('/')) return null;
+  const listed = findGame(guildId, input);
+  if (listed) return { game: listed, added: false };
+  db.prepare('INSERT INTO games (guild_id, name, added_by) VALUES (?, ?, ?)').run(guildId, input, userId);
+  return { game: findGame(guildId, input)!, added: true };
+}
+
+export function setGameDetails(game: GameRow, maxPlayers: number | null, appid: number | null) {
+  db.prepare('UPDATE games SET max_players = ?, steam_appid = ? WHERE id = ?').run(maxPlayers, appid, game.id);
+}
+
+export const removeGame = (game: GameRow) => db.prepare('DELETE FROM games WHERE id = ?').run(game.id);
+
+/** Owning a game is the end of wanting it */
+export function setOwned(game: GameRow, userId: string, on: boolean) {
+  if (!on) return db.prepare('DELETE FROM game_owners WHERE game_id = ? AND user_id = ?').run(game.id, userId);
+  db.prepare('INSERT OR IGNORE INTO game_owners (game_id, user_id) VALUES (?, ?)').run(game.id, userId);
+  setWanted(game, userId, false);
+}
+
+export function setWanted(game: GameRow, userId: string, on: boolean) {
+  if (on) db.prepare('INSERT OR IGNORE INTO game_wants (game_id, user_id) VALUES (?, ?)').run(game.id, userId);
+  else db.prepare('DELETE FROM game_wants WHERE game_id = ? AND user_id = ?').run(game.id, userId);
 }
 
 async function autocomplete(i: AutocompleteInteraction) {
@@ -249,7 +291,7 @@ async function buildPick(guild: Guild, here: string[], avoid?: string) {
 
 const LIST_PAGE_CHARS = 4000; // embed descriptions stop at 4096
 
-function wantedBy(game: GameRow, guild: Guild) {
+export function wantedBy(game: GameRow, guild: Guild) {
   const rows = db.prepare('SELECT user_id FROM game_wants WHERE game_id = ?').all(game.id) as { user_id: string }[];
   return rows.map((r) => r.user_id).filter((id) => guild.members.cache.has(id));
 }
@@ -355,7 +397,7 @@ export const games: Feature = {
         if (sub === 'want') {
           await i.deferReply();
           const input = i.options.getString('name', true).trim();
-          const wanted = await wantedGame(i.guildId, input, i.user.id).catch((err) => (console.error(err), undefined));
+          const wanted = await gameFromSteam(i.guildId, input, i.user.id).catch((err) => (console.error(err), undefined));
           if (wanted === undefined) return i.editReply('Steam couldn’t be reached just now. Try again in a bit.');
           if (!wanted) return i.editReply({ content: `Couldn’t find **${input}** on Steam. Paste its store link instead.`, allowedMentions: { parse: [] } });
           if (ownersOf(wanted, i.guild).has(i.user.id)) return i.editReply(`You already own **${wanted.name}**.`);
@@ -374,8 +416,7 @@ export const games: Feature = {
             return i.reply({ content: `${user} already owns **${game.name}** on Steam.`, allowedMentions: { parse: [] } });
           }
           const owned = manualGameIds(user.id, i.guildId).has(game.id);
-          if (owned) db.prepare('DELETE FROM game_owners WHERE game_id = ? AND user_id = ?').run(game.id, user.id);
-          else db.prepare('INSERT INTO game_owners (game_id, user_id) VALUES (?, ?)').run(game.id, user.id);
+          setOwned(game, user.id, !owned);
           return i.reply({
             content: `${owned ? '➖' : '✅'} ${user} ${owned ? 'no longer owns' : 'owns'} **${game.name}**.`,
             allowedMentions: { parse: [] },
@@ -383,7 +424,7 @@ export const games: Feature = {
         }
 
         if (sub === 'remove' && game) {
-          db.prepare('DELETE FROM games WHERE id = ?').run(game.id);
+          removeGame(game);
           return i.reply(`🗑️ Removed **${game.name}**.`);
         }
 

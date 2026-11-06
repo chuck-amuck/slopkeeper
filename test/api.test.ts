@@ -16,7 +16,7 @@ import { logActivity } from '../src/activity.ts';
 import { Mixer } from '../src/mixer.ts';
 import { noteGame } from '../src/gameNames.ts';
 import { activity, stats } from '../src/features/gamestats.ts';
-import { levelLibrary, setJoinSound, soundboard, soundGain } from '../src/features/soundboard.ts';
+import { BIN_DAYS, clearBin, levelLibrary, setJoinSound, soundboard, soundGain } from '../src/features/soundboard.ts';
 import { setting, setSetting } from '../src/settings.ts';
 
 const TOKEN = 'secret';
@@ -163,7 +163,8 @@ beforeEach(() => {
   permitted = [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.EmbedLinks];
   db.exec(`DELETE FROM sound_emoji; DELETE FROM discord_sounds; DELETE FROM sound_plays; DELETE FROM guild_settings; DELETE FROM sound_panels;
     DELETE FROM sound_favourites; DELETE FROM game_nights; DELETE FROM game_night_series; DELETE FROM game_plays; DELETE FROM session_members; DELETE FROM sessions;
-    DELETE FROM sound_levels; DELETE FROM join_sounds; DELETE FROM activity; DELETE FROM game_aliases`);
+    DELETE FROM sound_levels; DELETE FROM join_sounds; DELETE FROM activity; DELETE FROM game_aliases; DELETE FROM deleted_sounds; DELETE FROM games;
+    DELETE FROM steam_links; DELETE FROM steam_owned; DELETE FROM sale_prices`);
   db.prepare("INSERT INTO sound_panels (message_id, guild_id, channel_id, page) VALUES ('m', ?, '111', 0)").run(GUILD);
   if (existsSync(soundFolder)) for (const f of readdirSync(soundFolder)) execFileSync('rm', ['-r', path.join(soundFolder, f)]);
 });
@@ -1592,4 +1593,267 @@ test('plays a Discord sound in voice as loud as it is there, or as the library h
   assert.equal(added.mock.calls[2].arguments[0], path.join(soundFolder, 'theirs.mp3'));
   assert.deepEqual(plays(), ['web:theirs']);
   assert.match(await refused(400, url, { method: 'POST', json: { channelId: 'v1' } }), /Nobody’s in voice/);
+});
+
+const DAY = 86_400_000;
+const bin = async () => (await ok(`/guilds/${GUILD}/deleted-sounds`)).sounds as any[];
+const remove = (name: string) => ok(`/guilds/${GUILD}/sounds/${name}`, { method: 'DELETE' });
+const restore = (id: number) => ok(`/guilds/${GUILD}/deleted-sounds/${id}/restore`, { method: 'POST' });
+const activityText = () => (db.prepare('SELECT action FROM activity ORDER BY id').all() as { action: string }[]).map((r) => r.action);
+
+test('a deleted sound comes back with everything it had, but not on Discord', async () => {
+  await upload('horn');
+  await ok(`/guilds/${GUILD}/sounds/horn`, { method: 'PATCH', json: { emoji: '📯', volume: 150, favourite: true } });
+  await ok(`/guilds/${GUILD}/sounds/horn/trim`, { method: 'POST', json: { start: 0, end: 0.1 } });
+  const before = (await sounds())[0];
+  const trimmed = readFileSync(path.join(soundFolder, 'horn.wav'));
+  setJoinSound(GUILD, 'u1', 'horn');
+
+  await remove('horn');
+  assert.deepEqual(await sounds(), []);
+  assert.equal(existsSync(path.join(soundFolder, 'horn.wav')), false);
+  assert.equal(discordSounds.size, 0);
+  const [deleted] = await bin();
+  assert.equal(deleted.name, 'horn');
+  assert.equal(deleted.emoji, '📯');
+  assert.equal(deleted.expiresAt - deleted.deletedAt, BIN_DAYS * DAY);
+
+  assert.deepEqual(await restore(deleted.id), { name: 'horn' });
+  const after = (await sounds())[0];
+  for (const key of ['name', 'emoji', 'favourite', 'volume', 'trimmed', 'loudness']) assert.deepEqual(after[key], before[key], key);
+  assert.equal(after.trimmed, true);
+  assert.equal(after.onDiscord, false);
+  assert.deepEqual(readFileSync(path.join(soundFolder, 'horn.wav')), trimmed);
+  assert.deepEqual(await bin(), []);
+  assert.deepEqual(readdirSync(path.join(soundFolder, 'bin')), []);
+  assert.equal((await ok(`/guilds/${GUILD}/join-sounds`)).joinSounds.length, 0);
+  assert.equal(activityText().at(-1), 'Restored sound **horn**');
+  await ok(`/guilds/${GUILD}/sounds/horn/restore`, { method: 'POST' });
+  assert.notDeepEqual(readFileSync(path.join(soundFolder, 'horn.wav')), trimmed, 'its untrimmed version came back too');
+});
+
+test('a sound comes back under a new name if its own has been taken, original and all', async () => {
+  await upload('horn');
+  await ok(`/guilds/${GUILD}/sounds/horn/trim`, { method: 'POST', json: { start: 0, end: 0.1 } });
+  await remove('horn');
+  await upload('horn');
+  const [deleted] = await bin();
+  assert.deepEqual(await restore(deleted.id), { name: 'horn-2' });
+  assert.deepEqual((await sounds()).map((s) => [s.name, s.trimmed]), [['horn', false], ['horn-2', true]]);
+
+  await remove('horn-2');
+  await upload('horn-2');
+  assert.deepEqual(await restore((await bin())[0].id), { name: 'horn-2-2' });
+});
+
+test('a long name stays within the limit when it has to change', async () => {
+  const name = 'x'.repeat(32);
+  await upload(name);
+  await remove(name);
+  await upload(name);
+  const { name: back } = await restore((await bin())[0].id);
+  assert.equal(back, `${'x'.repeat(30)}-2`);
+});
+
+test('two deleted sounds of one name are kept apart, newest first', async () => {
+  await upload('horn', 'a.wav', wav(0.2) as BodyInit);
+  await remove('horn');
+  await upload('horn', 'a.wav', wav(0.4) as BodyInit);
+  await remove('horn');
+  const [newest, oldest] = await bin();
+  assert.ok(newest.id > oldest.id);
+  await restore(oldest.id);
+  assert.ok(readFileSync(path.join(soundFolder, 'horn.wav')).length < wav(0.3).length);
+});
+
+test('sounds in the bin aren’t listed, and go after 30 days', async () => {
+  await upload('old');
+  await upload('recent');
+  await remove('old');
+  await remove('recent');
+  const [recent, old] = await bin();
+  db.prepare('UPDATE deleted_sounds SET deleted_at = ? WHERE id = ?').run(Date.now() - (BIN_DAYS + 1) * DAY, old.id);
+  db.prepare('UPDATE deleted_sounds SET deleted_at = ? WHERE id = ?').run(Date.now() - (BIN_DAYS - 1) * DAY, recent.id);
+  clearBin();
+  assert.deepEqual((await bin()).map((s) => s.name), ['recent']);
+  assert.deepEqual(readdirSync(path.join(soundFolder, 'bin')), [String(recent.id)]);
+  assert.deepEqual(await sounds(), []);
+});
+
+test('delete forever erases a sound, for this server only', async () => {
+  await upload('horn');
+  await remove('horn');
+  const [deleted] = await bin();
+  await refused(404, `/guilds/${GUILD}/deleted-sounds/${deleted.id + 1}`, { method: 'DELETE' });
+  await refused(404, `/guilds/${GUILD}/deleted-sounds/nope/restore`, { method: 'POST' });
+  await refused(405, `/guilds/${GUILD}/deleted-sounds/${deleted.id}`, { method: 'POST' });
+  await refused(405, `/guilds/${GUILD}/deleted-sounds/${deleted.id}/restore`, { method: 'DELETE' });
+  const { lastInsertRowid } = db.prepare(`INSERT INTO deleted_sounds (guild_id, name, favourite, percent, deleted_at) VALUES ('elsewhere', 'theirs', 0, 100, 0)`).run();
+  await refused(404, `/guilds/${GUILD}/deleted-sounds/${lastInsertRowid}/restore`, { method: 'POST' });
+  await refused(404, `/guilds/${GUILD}/deleted-sounds/${lastInsertRowid}`, { method: 'DELETE' });
+
+  await ok(`/guilds/${GUILD}/deleted-sounds/${deleted.id}`, { method: 'DELETE' });
+  assert.deepEqual(await bin(), []);
+  assert.equal(existsSync(path.join(soundFolder, 'bin', String(deleted.id))), false);
+  await refused(404, `/guilds/${GUILD}/deleted-sounds/${deleted.id}/restore`, { method: 'POST' });
+  assert.equal(activityText().at(-1), 'Erased deleted sound **horn**');
+});
+
+test('a sound whose files have gone says so instead of breaking', async () => {
+  await upload('horn');
+  await remove('horn');
+  const [deleted] = await bin();
+  rmSync(path.join(soundFolder, 'bin', String(deleted.id)), { recursive: true });
+  await refused(404, `/guilds/${GUILD}/deleted-sounds/${deleted.id}/restore`, { method: 'POST' });
+  assert.deepEqual(await bin(), []);
+});
+
+const library = () => ok(`/guilds/${GUILD}/games`);
+const addGame = (name: string) => ok(`/guilds/${GUILD}/games`, { method: 'POST', json: { name } });
+const gameCalled = async (name: string) => ((await library()).games as any[]).find((g) => g.name === name);
+const insertGame = (name: string, appid: number | null = null) => Number(db.prepare(`INSERT INTO games (guild_id, name, steam_appid, added_by) VALUES (?, ?, ?, 'u1')`).run(GUILD, name, appid).lastInsertRowid);
+const mark = (id: number, user: string, json: unknown) => ok(`/guilds/${GUILD}/games/${id}/members/${user}`, { method: 'PATCH', json });
+
+function fakeSteam(t: TestContext, found: Record<string, number> = {}, down = false) {
+  const real = fetch;
+  t.mock.method(globalThis, 'fetch', async (url: string, init?: RequestInit) => {
+    if (String(url).startsWith(base)) return real(url, init);
+    if (down) return new Response('', { status: 503 });
+    if (String(url).includes('GetItems')) return new Response(JSON.stringify({ response: {} }));
+    const term = new URL(url).searchParams.get('term')!;
+    const match = Object.keys(found).find((name) => name.toLowerCase() === term.toLowerCase());
+    return new Response(JSON.stringify({ items: match ? [{ id: found[match], name: match }] : [] }));
+  });
+}
+
+test('adds a game by name, using Steam’s name and app ID when it has one', async (t) => {
+  fakeSteam(t, { 'Deep Rock Galactic': 548430 });
+  assert.deepEqual(await addGame('  deep rock galactic '), { name: 'Deep Rock Galactic', added: true });
+  const game = await gameCalled('Deep Rock Galactic');
+  assert.equal(game.appid, 548430);
+  assert.equal(game.url, 'https://store.steampowered.com/app/548430');
+  assert.deepEqual(activityText(), ['Added **Deep Rock Galactic** to the game library']);
+  assert.deepEqual(await addGame('Deep Rock Galactic'), { name: 'Deep Rock Galactic', added: false });
+  assert.equal((await library()).games.length, 1);
+  assert.equal(activityText().length, 1);
+});
+
+test('a game Steam doesn’t know is added as typed, once', async (t) => {
+  fakeSteam(t);
+  assert.deepEqual(await addGame('Tabletop Night'), { name: 'Tabletop Night', added: true });
+  assert.deepEqual(await addGame('tabletop night'), { name: 'Tabletop Night', added: false });
+  const game = await gameCalled('Tabletop Night');
+  assert.equal(game.appid, null);
+  assert.equal(game.url, null);
+});
+
+test('adds a game by its store link, and turns down a link that leads nowhere', async (t) => {
+  fakeSteam(t);
+  db.prepare(`INSERT OR REPLACE INTO app_info (appid, name, multiplayer) VALUES (620, 'Portal 2', 1)`).run();
+  assert.equal((await addGame('https://store.steampowered.com/app/620/Portal_2/')).name, 'Portal 2');
+  assert.equal((await gameCalled('Portal 2')).appid, 620);
+  assert.match(await refused(404, `/guilds/${GUILD}/games`, { method: 'POST', json: { name: 'https://store.steampowered.com/app/99999999/' } }), /doesn’t know/);
+  assert.match(await refused(404, `/guilds/${GUILD}/games`, { method: 'POST', json: { name: 'https://example.com/nope' } }), /doesn’t know/);
+  assert.equal((await library()).games.length, 1);
+});
+
+test('turns down a bad name, and says when Steam can’t be asked rather than adding it wrongly', async (t) => {
+  for (const name of ['', '   ', 5, 'x'.repeat(101), `https://store.steampowered.com/${'x'.repeat(200)}`]) await refused(400, `/guilds/${GUILD}/games`, { method: 'POST', json: { name } });
+  fakeSteam(t, {}, true);
+  mock.method(console, 'error', () => {});
+  assert.match(await refused(502, `/guilds/${GUILD}/games`, { method: 'POST', json: { name: 'Valheim' } }), /couldn’t be reached/);
+  assert.deepEqual((await library()).games, []);
+});
+
+test('lists who has a game, who needs it, who wants it and any sale', async () => {
+  const id = insertGame('Valheim', 892970);
+  insertGame('Other', 1);
+  db.prepare(`INSERT INTO game_owners (game_id, user_id) VALUES (?, 'u1')`).run(id);
+  db.prepare(`INSERT INTO game_owners (game_id, user_id) SELECT id, 'u2' FROM games WHERE name = 'Other'`).run();
+  db.prepare(`INSERT INTO game_owners (game_id, user_id) VALUES (?, 'gone')`).run(id);
+  db.prepare(`INSERT INTO steam_links (user_id, steam_id) VALUES ('u3', 's3')`).run();
+  db.prepare(`INSERT INTO steam_owned (steam_id, appid, playtime) VALUES ('s3', 892970, 5)`).run();
+  db.prepare(`INSERT INTO game_wants (game_id, user_id) VALUES (?, 'u2')`).run(id);
+  db.prepare(`INSERT INTO sale_prices (country, appid, discount, was, price, final) VALUES ('us', 892970, 40, '$20.00', '$12.00', 1200), ('de', 1, 90, '20€', '2€', 200)`).run();
+  const { games, members } = await library();
+  const [other, valheim] = games;
+  assert.deepEqual(valheim.owners, [{ id: 'u1', name: 'Ana', steam: false }, { id: 'u3', name: 'Cy', steam: true }]);
+  assert.deepEqual(valheim.needs, [{ id: 'u2', name: 'Ben' }]);
+  assert.deepEqual(valheim.wanted, [{ id: 'u2', name: 'Ben' }]);
+  assert.deepEqual(valheim.sale, { discount: 40, price: '$12.00', was: '$20.00' });
+  assert.equal(other.sale, null, 'another region’s sale');
+  assert.deepEqual(members.map((m: { name: string }) => m.name), ['Ana', 'Ben', 'Cy']);
+});
+
+test('sets a game’s player limit and Steam link, leaving the other as it was', async () => {
+  const id = insertGame('Valheim');
+  insertGame('Taken', 7);
+  const url = `/guilds/${GUILD}/games/${id}`;
+  await ok(url, { method: 'PATCH', json: { maxPlayers: 10 } });
+  assert.equal((await gameCalled('Valheim')).maxPlayers, 10);
+  await ok(url, { method: 'PATCH', json: { steam: 'https://store.steampowered.com/app/892970/Valheim/' } });
+  assert.equal((await gameCalled('Valheim')).appid, 892970);
+  assert.equal((await gameCalled('Valheim')).maxPlayers, 10);
+  await ok(url, { method: 'PATCH', json: { maxPlayers: null, steam: '' } });
+  assert.equal((await gameCalled('Valheim')).maxPlayers, null);
+  assert.equal((await gameCalled('Valheim')).appid, null);
+
+  for (const maxPlayers of [0, 101, 2.5, '4']) await refused(400, url, { method: 'PATCH', json: { maxPlayers } });
+  await ok(url, { method: 'PATCH', json: { maxPlayers: 1 } });
+  await ok(url, { method: 'PATCH', json: { maxPlayers: 100 } });
+  assert.match(await refused(400, url, { method: 'PATCH', json: { steam: 'not a link' } }), /Steam app ID/);
+  assert.match(await refused(409, url, { method: 'PATCH', json: { steam: '7' } }), /Taken already has/);
+  await refused(404, `/guilds/${GUILD}/games/9999`, { method: 'PATCH', json: {} });
+  await refused(405, `/guilds/${GUILD}/games/${id}`, { method: 'PUT', json: {} });
+  await refused(405, `/guilds/${GUILD}/games/${id}/members/u1`, { method: 'DELETE' });
+});
+
+test('marks who owns and wants a game, and owning ends wanting', async () => {
+  const id = insertGame('Valheim', 892970);
+  await mark(id, 'u1', { wants: true });
+  assert.deepEqual((await gameCalled('Valheim')).wanted.map((w: { id: string }) => w.id), ['u1']);
+  await mark(id, 'u1', { wants: false });
+  assert.deepEqual((await gameCalled('Valheim')).wanted, []);
+  await mark(id, 'u1', { wants: true });
+  await mark(id, 'u1', { owns: true });
+  await mark(id, 'u1', { owns: true });
+  const owned = await gameCalled('Valheim');
+  assert.deepEqual(owned.owners, [{ id: 'u1', name: 'Ana', steam: false }]);
+  assert.deepEqual(owned.wanted, []);
+  assert.match(await refused(409, `/guilds/${GUILD}/games/${id}/members/u1`, { method: 'PATCH', json: { wants: true } }), /Ana already owns Valheim/);
+  await mark(id, 'u1', { owns: false });
+  assert.deepEqual((await gameCalled('Valheim')).owners, []);
+  assert.equal(activityText().at(-1), 'Marked Ana as not owning **Valheim**');
+});
+
+test('Steam ownership can’t be changed by hand, and only Steam games can be wanted', async () => {
+  const id = insertGame('Valheim', 892970);
+  const noSteam = insertGame('Tabletop');
+  db.prepare(`INSERT INTO steam_links (user_id, steam_id) VALUES ('u3', 's3')`).run();
+  db.prepare(`INSERT INTO steam_owned (steam_id, appid, playtime) VALUES ('s3', 892970, 5)`).run();
+  const url = `/guilds/${GUILD}/games/${id}/members`;
+  assert.match(await refused(409, `${url}/u3`, { method: 'PATCH', json: { owns: false } }), /owns it on Steam/);
+  assert.match(await refused(409, `${url}/u3`, { method: 'PATCH', json: { owns: true } }), /owns it on Steam/);
+  assert.equal((await gameCalled('Valheim')).owners[0].steam, true);
+  assert.match(await refused(409, `/guilds/${GUILD}/games/${noSteam}/members/u1`, { method: 'PATCH', json: { wants: true } }), /needs a Steam link/);
+  await refused(404, `${url}/nobody`, { method: 'PATCH', json: { owns: true } });
+  await refused(400, `${url}/u1`, { method: 'PATCH', json: {} });
+  await refused(400, `${url}/u1`, { method: 'PATCH', json: { owns: 'yes' } });
+});
+
+test('removing a game clears its marks, and a game in another server can’t be touched', async () => {
+  const id = insertGame('Valheim', 892970);
+  await mark(id, 'u1', { owns: true });
+  await mark(id, 'u2', { wants: true });
+  const { lastInsertRowid } = db.prepare(`INSERT INTO games (guild_id, name, added_by) VALUES ('elsewhere', 'Theirs', 'x')`).run();
+  await refused(404, `/guilds/${GUILD}/games/${lastInsertRowid}`, { method: 'DELETE' });
+  await refused(404, `/guilds/${GUILD}/games/${lastInsertRowid}`, { method: 'PATCH', json: { maxPlayers: 2 } });
+  await refused(404, `/guilds/${GUILD}/games/${lastInsertRowid}/members/u1`, { method: 'PATCH', json: { owns: true } });
+
+  await ok(`/guilds/${GUILD}/games/${id}`, { method: 'DELETE' });
+  assert.deepEqual((await library()).games, []);
+  assert.equal((db.prepare('SELECT COUNT(*) AS n FROM game_owners WHERE game_id = ?').get(id) as { n: number }).n, 0);
+  assert.equal((db.prepare('SELECT COUNT(*) AS n FROM game_wants WHERE game_id = ?').get(id) as { n: number }).n, 0);
+  assert.equal(activityText().at(-1), 'Removed **Valheim** from the game library');
+  db.prepare(`DELETE FROM games WHERE guild_id = 'elsewhere'`).run();
 });

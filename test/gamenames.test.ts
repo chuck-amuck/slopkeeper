@@ -296,17 +296,37 @@ test('a session recap lists a game once, under the name it goes by', async (t) =
   assert.equal(sent[0].embeds![0].toJSON().fields!.find((f) => f.name === 'Played')!.value, 'Lethal Company');
 });
 
-test('the leaderboard’s Most played counts a session once per game', async () => {
+test('time alone in voice is saved without a recap, and a moment alone isn’t saved at all', async (t) => {
+  const { client, sent, join, leave } = server(t, 'alone');
+  sessions.setup!(client as never);
+  const saved = () => db.prepare(`SELECT m.user_id AS user FROM session_members m JOIN sessions s ON s.id = m.session_id WHERE s.guild_id = 'alone'`).all() as { user: string }[];
+  join('sam', 'Lethal Company');
+  t.mock.timers.tick(14 * 60_000);
+  leave('sam');
+  t.mock.timers.tick(HOUR);
+  for (let n = 0; n < 5; n++) await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(saved(), []);
+
+  join('sam', 'Lethal Company');
+  t.mock.timers.tick(2 * HOUR);
+  leave('sam');
+  t.mock.timers.tick(HOUR);
+  for (let n = 0; n < 5; n++) await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(saved().map((r) => r.user), ['sam']);
+  assert.deepEqual(sent, []);
+});
+
+test('the leaderboard’s Most played goes by game time, and counts a merged game as one', async () => {
   for (const raw of ['Halo', 'halo!']) noteGame('board', raw);
-  const row = db.prepare(`INSERT INTO sessions (guild_id, channel_id, started_at, ended_at) VALUES ('board', 'v', ?, ?)`);
-  const first = row.run(t - HOUR, t).lastInsertRowid;
-  const second = row.run(t - 3 * HOUR, t - 2 * HOUR).lastInsertRowid;
-  db.prepare(`INSERT INTO session_members (session_id, user_id, seconds) VALUES (?, 'a', 3600)`).run(first);
+  const { lastInsertRowid } = db.prepare(`INSERT INTO sessions (guild_id, channel_id, started_at, ended_at) VALUES ('board', 'v', ?, ?)`).run(t - HOUR, t);
+  db.prepare(`INSERT INTO session_members (session_id, user_id, seconds) VALUES (?, 'a', 3600)`).run(lastInsertRowid);
   const game = db.prepare('INSERT INTO session_games (session_id, game) VALUES (?, ?)');
-  game.run(first, 'Halo');
-  game.run(first, 'halo!');
-  game.run(second, 'halo!');
-  game.run(first, 'Unknown Elsewhere');
+  // More sessions, but less time
+  for (const name of ['Halo', 'Unknown Elsewhere', 'Busy']) game.run(lastInsertRowid, name);
+  const play = db.prepare(`INSERT INTO game_plays (guild_id, user_id, game, channel_id, started_at, ended_at) VALUES ('board', 'a', ?, 'v', ?, ?)`);
+  play.run('Halo', t - 3 * HOUR, t - 2 * HOUR);
+  play.run('halo!', t - 2 * HOUR, t - HOUR);
+  play.run('Unknown Elsewhere', t - 3 * HOUR, t);
   let reply: { embeds: { toJSON(): { fields: { value: string }[] } }[] };
   await sessions.commands![0].run({
     inGuild: () => true,
@@ -314,7 +334,7 @@ test('the leaderboard’s Most played counts a session once per game', async () 
     options: { getString: () => 'all' },
     reply: async (r: typeof reply) => (reply = r),
   } as never);
-  assert.match(reply!.embeds[0].toJSON().fields[0].value, /^Halo \(2 sessions\)\nUnknown Elsewhere \(1 session\)$/);
+  assert.equal(reply!.embeds[0].toJSON().fields[0].value, 'Unknown Elsewhere · 3h\nHalo · 2h');
 });
 
 test('/gamestats finds a merged game by any name it’s picked with', async () => {
