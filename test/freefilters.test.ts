@@ -18,6 +18,7 @@ interface Listed {
 const catalog = new Map<string, Listed>();
 const asked: string[] = [];
 let down = false;
+let errorJson = false;
 let nextId = 1;
 
 const feedEntry = (title: string, id: number) => ({ id, title: `${title} (Steam) Giveaway`, worth: '$9.99', image: 'https://example.com/i.jpg', description: 'Free', open_giveaway_url: 'https://example.com/open', platforms: 'PC, Steam', end_date: 'N/A', status: 'Active' });
@@ -32,6 +33,7 @@ mock.method(globalThis, 'fetch', async (url: string) => {
   asked.push(link.hostname);
   if (link.hostname === 'www.gamerpower.com') return new Response(JSON.stringify(feed));
   if (down) return new Response('nope', { status: 503 });
+  if (errorJson) return new Response('{"items":[]}', { status: 500 });
   if (link.hostname === 'store.steampowered.com') {
     const term = link.searchParams.get('term')!;
     const found = catalog.get(term);
@@ -53,6 +55,27 @@ const judge = (id: string, title: string, theirs: Awaited<ReturnType<typeof tast
 
 let plays = 0;
 const played = (guildId: string, game: string, hours: number) => db.prepare(`INSERT INTO game_plays (guild_id, user_id, game, channel_id, started_at, ended_at) VALUES (?, 'u1', ?, 'voice', ?, ?)`).run(guildId, game, Date.now() - (hours + 1) * HOUR - ++plays, Date.now() - HOUR - plays);
+
+test('a server that hasn’t turned free games on gets none', async () => {
+  const sent: unknown[] = [];
+  await check(fakeClient([{ id: 'never-on', name: 'never-on' }], async (_, message) => void sent.push(message)));
+  assert.deepEqual(sent, []);
+});
+
+test('a Steam error isn’t remembered as a game that isn’t on Steam', async () => {
+  errorJson = true;
+  await assert.rejects(factsFor('Error Page'));
+  errorJson = false;
+  list('Error Page', 80, 20);
+  assert.notEqual((await factsFor('Error Page')).appid, null);
+});
+
+test('a game SteamSpy has no numbers for counts as no reviews', async () => {
+  const game = list('No Numbers', 0, 0);
+  Object.assign(game, { positive: undefined, negative: undefined });
+  const facts = await factsFor('No Numbers');
+  assert.deepEqual([facts.positive, facts.negative], [0, 0]);
+});
 
 test('a game needs enough reviews, and enough of them positive', async () => {
   setSetting('rating', 'freeGamesTaste', false);

@@ -194,6 +194,14 @@ async function refused(status: number, url: string, init?: RequestInit & { json?
 const upload = (name: string, file = 'clip.wav', body: BodyInit = wav() as BodyInit) => call(`/guilds/${GUILD}/sounds/${name}?file=${file}`, { method: 'PUT', body });
 const sounds = async () => (await ok(`/guilds/${GUILD}/sounds`)).sounds as any[];
 
+test('says when the free game list can’t be read', async (t) => {
+  const real = fetch;
+  t.mock.method(globalThis, 'fetch', async (url: string, init?: RequestInit) => (String(url).startsWith(base) ? real(url, init) : new Response('', { status: 500 })));
+  const res = await call(`/guilds/${GUILD}/free-games`);
+  assert.equal(res.status, 502);
+  assert.equal((await res.json()).error, 'The free game list couldn’t be read just now.');
+});
+
 test('lists the current free games with why each is or isn’t posted', async (t) => {
   const real = fetch;
   const asked: string[] = [];
