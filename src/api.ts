@@ -10,6 +10,7 @@ import { cancelNight, gameNames, planNight, readWhen, stopSeries, upcomingNights
 import { reviewGiveaways } from './features/freegames.ts';
 import { addGame, addMemberGame, allGames, gameById, groupMembers, memberGames, ownersOf, parseSteamAppId, removeGame, setGameDetails, setOwned, setWanted, steamOwnersOf, wantedBy, type GameRow } from './features/games.ts';
 import { onSale, saleName, salePrices, saleReasons, storeUrl } from './features/sales.ts';
+import { linkSteam, profileUrl, refreshAll, steamLinks, unlinkSteam } from './features/steam.ts';
 import { activity, checkpoint, PERIODS, stats } from './features/gamestats.ts';
 import { gameName, gameSpellings, mergeGames, separateGame } from './gameNames.ts';
 import { voiceTotals } from './features/sessions.ts';
@@ -639,6 +640,50 @@ async function handleGame(guild: Guild, req: IncomingMessage, id: string, member
   throw new Refused(405, 'Not here.');
 }
 
+function steamAccountList(guild: Guild) {
+  const links = new Map(steamLinks().map((l) => [l.user_id, l]));
+  const account = (id: string) => {
+    const link = links.get(id);
+    return link ? { url: profileUrl(link.steam_id), private: link.private === 1, games: link.games } : null;
+  };
+  return {
+    configured: !!config.steamApiKey,
+    members: memberList(guild)
+      .map((m) => ({ ...m, steam: account(m.id) }))
+      .sort((a, b) => Number(!a.steam) - Number(!b.steam)),
+  };
+}
+
+function needSteam() {
+  if (!config.steamApiKey) throw new Refused(409, 'Steam isn’t set up on the bot: it needs a STEAM_API_KEY.');
+}
+
+const steamDown = (err: unknown) => {
+  console.error(err);
+  throw new Refused(502, 'Steam couldn’t be reached just now. Try again in a bit.');
+};
+
+async function handleSteamAccount(guild: Guild, req: IncomingMessage, userId: string) {
+  if (!guild.members.cache.has(userId)) throw new Refused(404, 'They aren’t in this server.');
+  needSteam();
+  const who = nameOf(guild, userId);
+  if (req.method === 'PUT') {
+    const { profile } = await readJson(req);
+    const text = typeof profile === 'string' ? profile.trim() : '';
+    if (!text || text.length > 200) throw new Refused(400, 'Paste their Steam profile link.');
+    const linked = await linkSteam(userId, text).catch(steamDown);
+    if (!linked) throw new Refused(400, 'Couldn’t find that Steam profile. Paste the full profile link.');
+    logActivity(guild.id, FROM_WEB, `Linked ${who}’s Steam account`);
+    return { games: linked.games };
+  }
+  if (req.method === 'DELETE') {
+    if (!unlinkSteam(userId)) throw new Refused(404, 'They don’t have a linked Steam account.');
+    logActivity(guild.id, FROM_WEB, `Unlinked ${who}’s Steam account`);
+    return {};
+  }
+  throw new Refused(405, 'Not here.');
+}
+
 async function handleSettings(guild: Guild, req: IncomingMessage, key?: string) {
   if (key === undefined) {
     if (req.method === 'GET') return settingList(guild);
@@ -690,6 +735,14 @@ async function handle(client: Client<true>, req: IncomingMessage, res: ServerRes
     return { games: memberGames(guild).map((g) => ({ appid: g.appid, name: g.name, owners: g.owners.map((id) => nameOf(guild, id)).sort((a, b) => a.localeCompare(b)) })) };
   }
   if (section === 'games' && rest.length >= 1 && rest.length <= 3) return handleGame(guild, req, rest[0], rest[1], rest[2]);
+  if (section === 'steam-links' && !rest.length && req.method === 'GET') return steamAccountList(guild);
+  if (section === 'steam-links' && rest.length === 1) return handleSteamAccount(guild, req, rest[0]);
+  if (section === 'steam-refresh' && !rest.length && req.method === 'POST') {
+    needSteam();
+    await refreshAll().catch(steamDown);
+    logActivity(guild.id, FROM_WEB, 'Refreshed Steam libraries');
+    return {};
+  }
   if (section === 'discord-sounds' && (rest.length === 1 || rest.length === 2)) return handleDiscordSound(client, guild, req, res, rest[0], rest[1]);
   if (section === 'settings' && rest.length <= 1) return handleSettings(guild, req, rest[0]);
   if (section === 'voice' && !rest.length && req.method === 'GET') return voiceList(guild);

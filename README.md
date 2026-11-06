@@ -130,6 +130,8 @@ The bot builds a picture of who owns what from two sources:
 | `/steam list` | Shows everyone who's linked, with a profile link and game count. 🔒 means their game details are private. |
 | `/steam refresh` | Re-reads every linked library now. Useful right after someone buys a game, or after fixing their privacy setting. |
 
+All of this can also be done for anyone from **Steam accounts** on the web UI's Games page.
+
 ### What do we play?
 
 | Command | What it does |
@@ -489,7 +491,7 @@ A page for your home network, in [`web/`](web), that runs as a second container 
 - **Soundboard:** big buttons that play in voice, with favourites first and then whatever gets played most.
 - **Library:** upload files or whole folders, preview, rename and delete sounds, set a sound's volume, trim it with a way back to the original, and choose what's on Discord's soundboard, with a waveform for picking part of a long sound. **Recently deleted** restores a sound or erases it for good.
 - **Game nights:** plan a night, see what's coming up, cancel one or stop a repeating one.
-- **Games:** the game library, with who has each game, who needs it, who wants it and any sale. Add games from a searchable list of what members own on Steam, or by name or store link. Remove games, set player limits and Steam links, and tick who owns or wants what. Ownership from a Steam library is locked.
+- **Games:** the game library, with who has each game, who needs it, who wants it and any sale. Add games from a searchable list of what members own on Steam, or by name or store link. **Steam accounts** links, changes and unlinks anyone's Steam account and refreshes libraries. Remove games, set player limits and Steam links, and tick who owns or wants what. Ownership from a Steam library is locked.
 - **Stats:** game and voice time, overall or for one person or game.
 - **Discord's soundboard:** on Library, see what fills the slots, play or save any sound, and swap sounds between Discord and the library.
 - **Merging games:** on Stats, Merge games puts different spellings of a game together, and Separate on a clicked game takes one back out.
@@ -564,6 +566,10 @@ It applies the same rules as `/sound` and `/setup`, and every request needs an `
 | `DELETE /guilds/:id/discord-sounds/:soundId` | Takes it off Discord's soundboard, saving it to the library first |
 | `GET /guilds/:id/sales` | Lists what's watched and on sale, from the last check, with why |
 | `GET /guilds/:id/games` | Lists the game library with owners, who needs each game, who wants it and any sale, plus the server's members |
+| `GET /guilds/:id/steam-links` | Lists the server's members with their linked Steam account, if any, and whether Steam is set up |
+| `PUT /guilds/:id/steam-links/:user` | Links or changes someone's account: `{ "profile": "<link, custom URL name or SteamID64>" }` |
+| `DELETE /guilds/:id/steam-links/:user` | Unlinks them and forgets their library |
+| `POST /guilds/:id/steam-refresh` | Re-reads every linked library |
 | `GET /guilds/:id/games/owned` | Lists Steam games members own that aren't in the library, those the most people have first |
 | `POST /guilds/:id/games` | Adds a game: `{ "name": "..." }` takes a name or Steam store link, `{ "appid": 620 }` takes one from the owned list |
 | `PATCH /guilds/:id/games/:game` | Sets its details: `{ "maxPlayers": 4 }`, `{ "steam": "<link or app ID>" }`, with null or an empty link to clear |
