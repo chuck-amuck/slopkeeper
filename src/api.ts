@@ -9,9 +9,9 @@ import * as discordBoard from './discordSounds.ts';
 import { cancelNight, gameNames, planNight, readWhen, stopSeries, upcomingNights } from './features/gamenight.ts';
 import { reviewGiveaways } from './features/freegames.ts';
 import { addGameRole, canHandOut, gameRoles, pingableGames, pingChoices, pingMenu, removeGameRole } from './features/gameroles.ts';
-import { addGame, addMemberGame, allGames, gameById, groupMembers, hiddenGames, hideGame, memberGames, NOBODY_COUNTED, ownersOf, parseSteamAppId, removeGame, setGameDetails, setOwned, setWanted, steamOwnersOf, unhideGame, wantedBy, type GameRow } from './features/games.ts';
+import { addGame, addMemberGame, allGames, familyPlayersOf, gameById, groupMembers, hiddenGames, hideGame, memberGames, NOBODY_COUNTED, ownersOf, parseSteamAppId, removeGame, setGameDetails, setOwned, setWanted, steamOwnersOf, unhideGame, wantedBy, type GameRow } from './features/games.ts';
 import { onSale, saleName, salePrices, saleReasons, storeUrl } from './features/sales.ts';
-import { linkSteam, profileUrl, refreshAll, steamLinks, unlinkSteam } from './features/steam.ts';
+import { currentPlayers, familyOf, joinFamily, leaveFamily, linkSteam, profileUrl, refreshAll, steamLinks, unlinkSteam } from './features/steam.ts';
 import { activity, checkpoint, comparison, PERIODS, pickFor, sessionCount, stats } from './features/gamestats.ts';
 import { postVote } from './features/gamevote.ts';
 import { recapFor } from './features/recap.ts';
@@ -646,6 +646,7 @@ function gameList(guild: Guild) {
   return {
     games: allGames(guild.id).map((g) => {
       const owners = ownersOf(g, guild);
+      const family = familyPlayersOf(g, guild, owners);
       const onSteam = steamOwnersOf(g);
       const sale = g.steam_appid === null ? undefined : prices.get(g.steam_appid);
       return {
@@ -655,7 +656,8 @@ function gameList(guild: Guild) {
         url: g.steam_appid === null ? null : storeUrl(g.steam_appid),
         maxPlayers: g.max_players,
         owners: [...owners].map((id) => ({ ...person(id), steam: onSteam.has(id) })).sort(byName),
-        needs: group.filter((id) => !owners.has(id)).map(person).sort(byName),
+        family: [...family].map(person).sort(byName),
+        needs: group.filter((id) => !owners.has(id) && !family.has(id)).map(person).sort(byName),
         wanted: wantedBy(g, guild).map(person).sort(byName),
         sale: sale ? { discount: sale.discount, price: sale.price, was: sale.was } : null,
       };
@@ -741,7 +743,7 @@ function steamAccountList(guild: Guild) {
   return {
     configured: !!config.steamApiKey,
     members: memberList(guild)
-      .map((m) => ({ ...m, steam: account(m.id) }))
+      .map((m) => ({ ...m, steam: account(m.id), family: familyOf(m.id).filter((id) => id !== m.id).map((id) => nameOf(guild, id)) }))
       .sort((a, b) => Number(!a.steam) - Number(!b.steam)),
   };
 }
@@ -785,10 +787,11 @@ async function pickFromWeb(guild: Guild, url: URL) {
   if (!users.length) throw new Refused(400, 'Pick at least one person.');
   for (const id of users) memberIn(guild, id);
   const picked = await pickFor(guild, users).catch(steamDown);
-  const person = <T extends { missing: string[]; players: { id: string }[]; appid: number | null }>(row: T) => ({
+  const person = <T extends { missing: string[]; borrowed: string[]; players: { id: string }[]; appid: number | null }>(row: T) => ({
     ...row,
     url: row.appid === null ? null : storeUrl(row.appid),
     missing: row.missing.map((id) => nameOf(guild, id)),
+    borrowed: row.borrowed.map((id) => nameOf(guild, id)),
     players: row.players.map((p) => ({ ...p, name: nameOf(guild, p.id) })),
   });
   if (!picked) return { people: users.length, counted: 0, notes: [plain(guild, NOBODY_COUNTED)], ready: [], almost: [] };
@@ -860,6 +863,22 @@ async function handleSteamAccount(guild: Guild, req: IncomingMessage, userId: st
   if (req.method === 'DELETE') {
     if (!unlinkSteam(userId)) throw new Refused(404, 'They don’t have a linked Steam account.');
     logActivity(guild.id, FROM_WEB, `Unlinked ${who}’s Steam account`);
+    return {};
+  }
+  throw new Refused(405, 'Not here.');
+}
+
+async function handleFamily(guild: Guild, req: IncomingMessage, userId: string) {
+  const who = memberIn(guild, userId).displayName;
+  if (req.method === 'PUT') {
+    const other = memberIn(guild, String((await readJson(req)).with));
+    refuse(guild, joinFamily(userId, other.id));
+    logActivity(guild.id, FROM_WEB, `Put ${who} in a Steam family with ${other.displayName}`);
+    return {};
+  }
+  if (req.method === 'DELETE') {
+    if (!leaveFamily(userId)) throw new Refused(404, 'They aren’t in a Steam family.');
+    logActivity(guild.id, FROM_WEB, `Took ${who} out of their Steam family`);
     return {};
   }
   throw new Refused(405, 'Not here.');
@@ -941,6 +960,12 @@ async function handle(client: Client<true>, req: IncomingMessage, res: ServerRes
   if (section === 'game-pings' && rest.length === 1 && req.method === 'DELETE') return removeGamePing(guild, rest[0]);
   if (section === 'steam-links' && !rest.length && req.method === 'GET') return steamAccountList(guild);
   if (section === 'steam-links' && rest.length === 1) return handleSteamAccount(guild, req, rest[0]);
+  if (section === 'steam-links' && rest.length === 2 && rest[1] === 'family') return handleFamily(guild, req, rest[0]);
+  if (section === 'steam-apps' && rest.length === 1 && req.method === 'GET') {
+    const appid = /^\d+$/.test(rest[0]) ? Number(rest[0]) : undefined;
+    if (appid === undefined) throw new Refused(404, 'No such game.');
+    return { players: await currentPlayers(appid) };
+  }
   if (section === 'steam-refresh' && !rest.length && req.method === 'POST') {
     needSteam();
     await refreshAll().catch(steamDown);
