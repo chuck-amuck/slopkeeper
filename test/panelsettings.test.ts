@@ -322,3 +322,11 @@ test('a stuck panel is logged once, names its channel, and again if the reason c
   await refreshPanels(client, s.id);
   assert.equal(lines().length, 3, 'a panel that recovered counts as new if it sticks again');
 });
+
+test('the even volume switch updates the copies on Discord too', async (t) => {
+  const s = server();
+  db.prepare(`INSERT INTO discord_sounds (guild_id, name, sound_id) VALUES (?, 'horn', 'discord-horn')`).run(s.id);
+  const edited = t.mock.method(s.guild.soundboardSounds, 'edit', async () => {});
+  await clicker(s, { admin: true }).press('sb:#even:0:');
+  assert.equal(edited.mock.callCount(), 1);
+});
