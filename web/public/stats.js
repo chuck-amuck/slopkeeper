@@ -1,4 +1,4 @@
-import { api, attempt, el, openDialog, recall, remember, request, state, toast } from './lib.js';
+import { ago, api, attempt, el, openDialog, recall, remember, request, state, toast } from './lib.js';
 
 const PERIODS = [
   ['week', 'Past week'],
@@ -7,7 +7,7 @@ const PERIODS = [
   ['all', 'All time'],
 ];
 
-function duration(ms) {
+export function duration(ms) {
   const minutes = Math.round(ms / 60_000);
   if (minutes < 60) return `${minutes}m`;
   const hours = Math.floor(minutes / 60);
@@ -87,8 +87,108 @@ function ranked(rows, onPick) {
 const card = (title, ...children) => el('section', { className: 'card' }, el('h2', {}, title), el('div', { className: 'card-body' }, ...children));
 const titled = (title, action, ...children) => el('section', { className: 'card' }, el('div', { className: 'card-head' }, el('h2', {}, title), action), el('div', { className: 'card-body' }, ...children));
 const count = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+const lastPlayed = (ms) => `last played ${ago(ms)}`;
+
+const VIEWS = [
+  ['overview', 'Overview', overview],
+  ['compare', 'Compare', compare],
+  ['recap', 'Monthly recap', recap],
+];
 
 export function renderStats(main) {
+  const body = el('div', { className: 'stack' });
+  const tabs = el('div', { className: 'views' });
+  const open = (id) => {
+    remember('statsView', id);
+    const [, , render] = VIEWS.find(([view]) => view === id);
+    tabs.replaceChildren(...VIEWS.map(([view, label]) => el('button', { ...(view === id && { 'aria-current': 'page' }), onclick: () => open(view) }, label)));
+    const view = el('div', { className: 'stack' });
+    body.replaceChildren(view);
+    render(view);
+  };
+  main.append(tabs, body);
+  open(VIEWS.some(([view]) => view === recall('statsView')) ? recall('statsView') : 'overview');
+}
+
+function compare(main) {
+  const guildId = state.guildId;
+  const pick = (label) => el('select', { ariaLabel: label, onchange: () => show() });
+  const first = pick('First person');
+  const second = pick('Second person');
+  const content = el('div', { className: 'stack' });
+  main.append(el('div', { className: 'toolbar' }, first, el('span', {}, 'and'), second), content);
+
+  function render(data) {
+    const [a, b] = data.people;
+    content.replaceChildren(
+      el(
+        'div',
+        { className: 'stats' },
+        tile('Played together', duration(data.togetherMs)),
+        tile('Voice sessions together', String(data.voice.sessions)),
+        tile(`${a.name}’s game time`, duration(a.ms)),
+        tile(`${b.name}’s game time`, duration(b.ms)),
+      ),
+      ...(data.games.length ? [card('Played together most', ranked(data.games.map((g) => ({ label: g.name, ms: g.ms }))))] : []),
+      card(
+        `Both own (${data.shared.length})`,
+        data.shared.length ? el('p', { className: 'shared-games' }, data.shared.join(', ')) : el('p', { className: 'hint' }, 'Nothing yet. Link Steam or mark games on the Games page.'),
+      ),
+      el('p', { className: 'hint' }, `Played together means the same game in the same voice channel. They spent up to ${duration(data.voice.ms)} in voice together: only each person’s total is kept, so that’s the most it could be.`),
+    );
+  }
+
+  function show() {
+    if (first.value === second.value) return content.replaceChildren(el('div', { className: 'empty' }, 'Pick two different people.'));
+    const query = new URLSearchParams({ a: first.value, b: second.value });
+    return attempt(async () => {
+      const data = await request(api(`/compare?${query}`));
+      if (guildId === state.guildId && main.isConnected && query.get('a') === first.value && query.get('b') === second.value) render(data);
+    });
+  }
+
+  void attempt(async () => {
+    const { members } = await request(api('/pick/options'));
+    if (guildId !== state.guildId || !main.isConnected) return;
+    if (members.length < 2) return content.replaceChildren(el('div', { className: 'empty' }, 'It takes two people to compare.'));
+    for (const [idx, picker] of [first, second].entries()) picker.replaceChildren(...members.map((m, n) => el('option', { value: m.id, selected: n === idx }, m.name)));
+    await show();
+  });
+}
+
+function recap(main) {
+  const guildId = state.guildId;
+  const content = el('div', { className: 'stack' }, el('div', { className: 'empty' }, 'Loading the recap…'));
+  const month = el(
+    'select',
+    { ariaLabel: 'Month', onchange: () => show() },
+    el('option', { value: 'last' }, 'Last month'),
+    el('option', { value: 'this' }, 'This month so far'),
+  );
+  main.append(el('div', { className: 'toolbar' }, month), content);
+
+  function show() {
+    const asked = month.value;
+    return attempt(async () => {
+      const { recap: found } = await request(api(`/recap?month=${asked}`));
+      if (guildId !== state.guildId || !main.isConnected || asked !== month.value) return;
+      if (!found) return content.replaceChildren(el('div', { className: 'empty' }, 'Nothing to recap for that month yet.'));
+      content.replaceChildren(
+        el(
+          'section',
+          { className: 'card' },
+          el('h2', {}, found.title),
+          found.description && el('p', { className: 'card-note' }, found.description),
+          found.fields.map((f) => el('div', { className: 'recap-field' }, el('div', { className: 'series-name' }, f.name), el('div', { className: 'recap-value' }, f.value))),
+        ),
+      );
+    });
+  }
+
+  void show();
+}
+
+function overview(main) {
   const guildId = state.guildId;
   let period = recall('period') ?? 'month';
   let user = null;
@@ -243,6 +343,8 @@ export function renderStats(main) {
         !user && tile('People playing', String(totals.people)),
         !game && tile('Time in voice', duration(totals.voiceMs)),
         game && !user && tile('Player time', duration(totals.playerMs)),
+        data.place && tile('Sessions', String(data.place.sessions)),
+        data.place && tile('Rank', `${data.place.rank} of ${data.place.of}`),
       ),
       ...(activity.buckets.length ? [card('Game time over time', columnChart(activity, timeZone))] : []),
       ...(data.spellings.length
@@ -258,10 +360,10 @@ export function renderStats(main) {
           ]
         : []),
       ...(!game && data.games.length
-        ? [titled('Top games', el('button', { onclick: mergeGames }, 'Merge games'), ranked(data.games.map((g) => ({ label: g.name, ms: g.ms, note: user ? null : count(g.people, 'player') })), pickGame))]
+        ? [titled('Top games', el('button', { onclick: mergeGames }, 'Merge games'), ranked(data.games.map((g) => ({ label: g.name, ms: g.ms, note: user ? lastPlayed(g.last) : count(g.people, 'player') })), pickGame))]
         : []),
       ...(!user && data.players.length
-        ? [card(game ? 'Who played' : 'Most game time', ranked(data.players.map((p) => ({ id: p.id, label: p.name, ms: p.ms, note: game ? null : count(p.games, 'game') })), pickUser))]
+        ? [card(game ? 'Who played' : 'Most game time', ranked(data.players.map((p) => ({ id: p.id, label: p.name, ms: p.ms, note: game ? lastPlayed(p.last) : count(p.games, 'game') })), pickUser))]
         : []),
       ...(data.voice.length ? [card('Time in voice', ranked(data.voice.map((p) => ({ id: p.id, label: p.name, ms: p.ms, note: count(p.nights, 'night') })), user ? null : pickUser))] : []),
       el('p', { className: 'hint' }, 'Games played in a voice channel. A game’s time is how long anyone was playing it, so its players can add up to more. From Discord’s “Playing” status, so it only counts people who share it.'),

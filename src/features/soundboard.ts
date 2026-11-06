@@ -32,6 +32,7 @@ import {
   type ChatInputCommandInteraction,
   type Client,
   type Guild,
+  type GuildTextBasedChannel,
   type VoiceBasedChannel,
   type VoiceState,
 } from 'discord.js';
@@ -758,6 +759,12 @@ function trackPanel(messageId: string, guildId: string, channelId: string, page:
   db.prepare(
     'INSERT INTO sound_panels (message_id, guild_id, channel_id, page) VALUES (?, ?, ?, ?) ON CONFLICT(message_id) DO UPDATE SET page = excluded.page',
   ).run(messageId, guildId, channelId, page);
+}
+
+/** Posts a panel from outside Discord */
+export async function postPanel(channel: GuildTextBasedChannel) {
+  const message = await channel.send(panel(channel.guild.id, 0));
+  trackPanel(message.id, channel.guild.id, channel.id, 0);
 }
 
 /** Sound names can't contain ':', so these split cleanly into action, page and sound */

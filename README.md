@@ -495,11 +495,15 @@ A page for your home network, in [`web/`](web), that runs as a second container 
 - **Library:** upload files or whole folders, preview, rename and delete sounds, set a sound's volume, trim it with a way back to the original, and choose what's on Discord's soundboard, with a waveform for picking part of a long sound. **Recently deleted** restores a sound or erases it for good.
 - **Game nights:** plan a night, see what's coming up, cancel one or stop a repeating one.
 - **Games:** the game library, with who has each game, who needs it, who wants it and any sale. Add games from a searchable list of what members own on Steam, or by name or store link. **Steam accounts** links, changes and unlinks anyone's Steam account and refreshes libraries. Remove games, set player limits and Steam links, tick who owns or wants what, and hide a game from `/whatdoweplay` or let it back in. Ownership from a Steam library is locked.
-- **Stats:** game and voice time, overall or for one person or game.
+- **Pick a game:** choose a voice channel, or tick people to plan before anyone's in voice, and see the games everyone owns and those one purchase away, using the same rules as `/whatdoweplay`. Each game shows time played here, Steam hours and when it was last played, in total and per person. Sort or search them, **Pick for us** chooses one at random, and **Start a vote** posts the usual `/gamevote` card in a channel.
+- **Stats:** **Overview** has game and voice time, overall or for one person or game, with sessions, rank and when it was last played. **Compare** is `/compare` with every game two people both own, and **Monthly recap** is `/recap`.
 - **Discord's soundboard:** on Library, see what fills the slots, play or save any sound, and swap sounds between Discord and the library.
 - **Merging games:** on Stats, Merge games puts different spellings of a game together, and Separate on a clicked game takes one back out.
 - **Activity:** a history of changes to sounds, games, settings and game nights.
-- **Settings:** everything in `/setup`, for each server, game ping roles, everyone's join sounds, which free games are being posted or hidden and why, and what's on sale now.
+- **Settings:** everything in `/setup`, for each server, game ping roles, everyone's join sounds, which free games are being posted or hidden and why, and what's on sale now. **Who gets pinged** changes anyone's hop-on and game pings, as `/notify` and `/pings` do.
+- **Posting to Discord:** **Post panel** on Soundboard is `/sound panel`, and **Post Choose games button** on Settings is `/gamerole menu`.
+
+Anything that shows information stays on the page. Only a vote, a panel and the Choose games button post to Discord. The page doesn't know who you are, so anyone with the password can change anyone's pings, as with Steam accounts.
 
 It holds no data of its own. The bot does everything through its [management API](#management-api), so the rules are the same as for the slash commands, and a change here updates the bot's posted soundboard panels too.
 
@@ -593,10 +597,19 @@ It applies the same rules as `/sound` and `/setup`, and every request needs an `
 | `POST /guilds/:id/game-pings` | Adds pings for a game: `{ "game": "Valheim", "roleId": "..." }`. Leave out `roleId` to make a new role |
 | `DELETE /guilds/:id/game-pings/:role` | Stops pings for a game, and deletes the role if the bot made it |
 | `GET /guilds/:id/hidden-games` | Lists games hidden from `/whatdoweplay` |
-| `PUT /guilds/:id/hidden-games/:appid` | Hides a library game from `/whatdoweplay` |
+| `PUT /guilds/:id/hidden-games/:appid` | Hides a game from `/whatdoweplay`. `{ "name": "..." }` names a Steam game that isn't in the library |
 | `DELETE /guilds/:id/hidden-games/:appid` | Lets a hidden game be suggested again |
+| `GET /guilds/:id/pick?channel=<id>` or `?users=<id>,<id>` | Games those people could play, as `/whatdoweplay` works out, with time played and Steam hours for each person |
+| `GET /guilds/:id/pick/options` | Lists the members, voice channels and text channels to choose from |
+| `POST /guilds/:id/votes` | Starts a vote: `{ "voiceChannelId", "channelId", "minutes" }`, with 1 to 10 minutes |
+| `GET /guilds/:id/compare?a=<id>&b=<id>` | Compares two people, as `/compare` does |
+| `GET /guilds/:id/recap?month=<last\|this>` | A month's highlights, as `/recap` shows them |
+| `GET /guilds/:id/members/:user/pings` | Lists the hop-on and game ping roles, and which someone has |
+| `PUT /guilds/:id/members/:user/pings` | Turns one on or off: `{ "roleId": "...", "on": true }`. Other roles can't be changed |
+| `POST /guilds/:id/sound-panels` | Posts a soundboard panel: `{ "channelId": "..." }` |
+| `POST /guilds/:id/game-pings/menu` | Posts the Choose games button: `{ "channelId": "..." }` |
 | `GET /guilds/:id/activity?before=<id>` | The last year of changes to sounds, settings and game nights, 50 at a time, newest first |
-| `GET /guilds/:id/stats?period=<week\|month\|year\|all>&user=<id>&game=<name>` | Game and voice totals, with game time over the period |
+| `GET /guilds/:id/stats?period=<week\|month\|year\|all>&user=<id>&game=<name>` | Game and voice totals, with game time over the period, plus sessions, rank and when it was last played where a person or game is chosen |
 | `GET /guilds/:id/settings` | Lists settings, channels, roles and time zones |
 | `PUT /guilds/:id/settings/:key` | Changes a setting: `{ "value": ... }` |
 | `DELETE /guilds/:id/settings/:key` | Puts a setting back to its default |

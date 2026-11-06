@@ -1,10 +1,11 @@
-import { EmbedBuilder, Events, MessageFlags, SlashCommandBuilder, type Client, type GuildMember } from 'discord.js';
+import { EmbedBuilder, Events, MessageFlags, SlashCommandBuilder, type Client, type Guild, type GuildMember } from 'discord.js';
 import { db, MIN_PLAY } from '../db.ts';
-import { gameName, noteGame } from '../gameNames.ts';
+import { gameKey, gameName, noteGame } from '../gameNames.ts';
 import { isAllowed } from '../settings.ts';
 import type { Feature } from '../types.ts';
 import { eachGuild, formatDuration, playingGames, servedGuilds, zonedParts, zonedTimeToUtc } from '../util.ts';
-import { sharedGames } from './games.ts';
+import { candidatesFor, sharedGames } from './games.ts';
+import { ownedSteamGames } from './steam.ts';
 
 const DAY = 86_400_000;
 
@@ -190,6 +191,50 @@ export function voiceTogether(guildId: string, a: string, b: string) {
     .get(b, guildId, a) as { n: number; seconds: number };
 }
 
+/** Everything /compare shows about two people, over all time */
+export function comparison(guildId: string, a: string, b: string) {
+  checkpoint();
+  const total = (id: string) => stats(guildId, 0, 'user', 'game', id).reduce((sum, g) => sum + g.ms, 0);
+  return { games: playedTogether(guildId, a, b), voice: voiceTogether(guildId, a, b), shared: sharedGames(guildId, a, b), totals: [total(a), total(b)] };
+}
+
+/** How many times someone has played a game since a moment */
+export function sessionCount(guildId: string, user: string, game: string, since: number) {
+  return (
+    db.prepare('SELECT COUNT(*) AS n FROM named_plays WHERE guild_id = ? AND channel_id IS NOT NULL AND user_id = ? AND game = ? COLLATE NOCASE AND ended_at > ?').get(guildId, user, game, since) as {
+      n: number;
+    }
+  ).n;
+}
+
+/** What the people in a group could play, with what each of them has put into it, for comparing the options */
+export async function pickFor(guild: Guild, here: string[]) {
+  const found = await candidatesFor(guild, here);
+  if (!found) return null;
+  checkpoint();
+  const keyOf = (name: string) => gameKey(gameName(guild.id, name));
+  const played = new Map(here.map((id) => [id, new Map(stats(guild.id, 0, 'user', 'game', id).map((g) => [keyOf(g.key), g]))]));
+  const steam = new Map(here.map((id) => [id, ownedSteamGames(id)]));
+
+  const rows = found.candidates.map((c) => {
+    const players = found.counted.map((id) => {
+      const here = played.get(id)!.get(keyOf(c.name));
+      return { id, steamMinutes: c.appid === null ? null : (steam.get(id)!.get(c.appid)?.playtime ?? null), playedMs: here?.ms ?? 0, last: here?.last ?? null };
+    });
+    const lasts = players.flatMap((p) => p.last ?? []);
+    return {
+      name: c.name,
+      appid: c.appid,
+      missing: c.missing,
+      steamMinutes: players.reduce((sum, p) => sum + (p.steamMinutes ?? 0), 0),
+      playedMs: players.reduce((sum, p) => sum + p.playedMs, 0),
+      last: lasts.length ? Math.max(...lasts) : null,
+      players,
+    };
+  });
+  return { counted: found.counted, notes: found.notes, ready: rows.filter((r) => !r.missing.length), almost: rows.filter((r) => r.missing.length === 1) };
+}
+
 export const PERIODS = {
   week: { label: 'past week', ms: 7 * DAY },
   month: { label: 'past month', ms: 30 * DAY },
@@ -243,11 +288,7 @@ export const gameStats: Feature = {
           const players = stats(i.guildId, since, 'game', 'user_id', undefined, game).filter((r) => isMember(r.key));
           const idx = players.findIndex((r) => r.key === user.id);
           if (idx < 0) return nothing(`${game} for ${name}`);
-          const sessions = (
-            db.prepare('SELECT COUNT(*) AS n FROM named_plays WHERE guild_id = ? AND channel_id IS NOT NULL AND user_id = ? AND game = ? COLLATE NOCASE AND ended_at > ?').get(i.guildId, user.id, game, since) as {
-              n: number;
-            }
-          ).n;
+          const sessions = sessionCount(i.guildId, user.id, game, since);
           const me = players[idx];
           embed
             .setTitle(`🎮 ${name} · ${game}`)
@@ -331,18 +372,14 @@ export const gameStats: Feature = {
         if (first.id === second.id) return i.reply({ content: 'Pick two different people.', flags: MessageFlags.Ephemeral });
         if (first.bot || second.bot) return i.reply({ content: 'Bots don’t play games. Pick two people.', flags: MessageFlags.Ephemeral });
 
-        checkpoint();
         const nameOf = (u: typeof first) => i.guild.members.cache.get(u.id)?.displayName ?? u.displayName;
-        const total = (id: string) => stats(i.guildId, 0, 'user', 'game', id).reduce((sum, g) => sum + g.ms, 0);
-        const games = playedTogether(i.guildId, first.id, second.id);
-        const voice = voiceTogether(i.guildId, first.id, second.id);
-        const shared = sharedGames(i.guildId, first.id, second.id);
+        const { games, voice, shared, totals } = comparison(i.guildId, first.id, second.id);
 
         const summary: string[] = [];
         if (games.length) summary.push(`**${formatDuration(games.reduce((sum, g) => sum + g.ms, 0))}** in the same game and voice channel`);
         if (voice.n) summary.push(`**${plural(voice.n, 'voice session')}** together, up to ${formatDuration(voice.seconds * 1000)}`);
         if (!summary.length) summary.push('No time together on record yet.');
-        summary.push(`All-time game time: ${nameOf(first)} ${formatDuration(total(first.id))}, ${nameOf(second)} ${formatDuration(total(second.id))}`);
+        summary.push(`All-time game time: ${nameOf(first)} ${formatDuration(totals[0])}, ${nameOf(second)} ${formatDuration(totals[1])}`);
 
         const embed = new EmbedBuilder().setColor(0x57f287).setTitle(`🤝 ${nameOf(first)} and ${nameOf(second)}`).setDescription(summary.join('\n'));
         if (games.length) {

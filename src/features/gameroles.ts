@@ -13,7 +13,7 @@ import {
 } from 'discord.js';
 import { db } from '../db.ts';
 import { gameKey, gameName } from '../gameNames.ts';
-import { isAllowed } from '../settings.ts';
+import { idSetting, isAllowed } from '../settings.ts';
 import type { Feature } from '../types.ts';
 import { listNames, pingWarning } from '../util.ts';
 import { allGames } from './games.ts';
@@ -70,6 +70,19 @@ export function rolesForGames(guildId: string, games: string[]): string[] {
   return gameRoles(guildId)
     .filter((r) => wanted.has(keyOf(r.name)))
     .map((r) => r.role_id);
+}
+
+/** The message with the Choose games button, which anyone can use */
+export const pingMenu = () => ({
+  content: '🔔 **Game pings.** Pick the games you want to be pinged for when people play them or plan a game night.',
+  components: [new ActionRowBuilder<ButtonBuilder>().addComponents(new ButtonBuilder().setCustomId('gr:open').setLabel('Choose games').setEmoji('🎮').setStyle(ButtonStyle.Primary))],
+});
+
+/** The roles people can opt in to or out of: the hop-on role, and each game's */
+export function pingChoices(guild: Guild) {
+  const hopOn = idSetting(guild.id, 'hopOnRole');
+  const games = gameRoles(guild.id).filter((r) => r.role_id !== hopOn).map((r) => ({ id: r.role_id, label: r.name }));
+  return [...(hopOn ? [{ id: hopOn, label: 'Hop-on pings' }] : []), ...games].filter((r) => guild.roles.cache.has(r.id));
 }
 
 const heldBy = (member: GuildMember) => new Set(member.roles.cache.keys());
@@ -148,14 +161,7 @@ export const gamePings: Feature = {
         const sub = i.options.getSubcommand();
 
         if (sub === 'menu') {
-          await i.channel?.send({
-            content: '🔔 **Game pings.** Pick the games you want to be pinged for when people play them or plan a game night.',
-            components: [
-              new ActionRowBuilder<ButtonBuilder>().addComponents(
-                new ButtonBuilder().setCustomId('gr:open').setLabel('Choose games').setEmoji('🎮').setStyle(ButtonStyle.Primary),
-              ),
-            ],
-          });
+          await i.channel?.send(pingMenu());
           return i.reply({ content: 'Posted.', flags: MessageFlags.Ephemeral });
         }
 

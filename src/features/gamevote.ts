@@ -8,6 +8,9 @@ import {
   type ButtonInteraction,
   type ChatInputCommandInteraction,
   type Client,
+  type Guild,
+  type GuildTextBasedChannel,
+  type VoiceBasedChannel,
 } from 'discord.js';
 import { db } from '../db.ts';
 import type { Feature } from '../types.ts';
@@ -108,29 +111,52 @@ export async function tick(client: Client<true>) {
   }
 }
 
+const voteIn = (voice: VoiceBasedChannel) => db.prepare('SELECT * FROM game_votes WHERE voice_channel_id = ?').get(voice.id) as Vote | undefined;
+
+/** Opens a vote on what the people in a voice channel all own, or returns why there's nothing to vote on */
+async function open(guild: Guild, channelId: string, voice: VoiceBasedChannel, minutes: number) {
+  const found = await candidatesFor(guild, humansIn(voice).map((m) => m.id));
+  if (!found) return NOBODY_COUNTED;
+  const ready = found.candidates.filter((c) => c.missing.length === 0);
+  if (ready.length < 2) {
+    return ready.length ? `**${ready[0].name}** is the only game that fits, so there’s nothing to vote on.` : 'No game fits everyone here, so there’s nothing to vote on.';
+  }
+  const { lastInsertRowid } = db
+    .prepare('INSERT INTO game_votes (guild_id, channel_id, voice_channel_id, options, note, closes_at) VALUES (?, ?, ?, ?, ?, ?)')
+    .run(guild.id, channelId, voice.id, JSON.stringify(chooseOptions(ready)), found.notes.join('\n') || null, Date.now() + minutes * 60_000);
+  return getVote(Number(lastInsertRowid))!;
+}
+
+const attach = (vote: Vote, messageId: string) => db.prepare('UPDATE game_votes SET message_id = ? WHERE id = ?').run(messageId, vote.id);
+
+/** Posts a vote from outside Discord. Returns why it couldn't, or null */
+export async function postVote(channel: GuildTextBasedChannel, voice: VoiceBasedChannel, minutes: number): Promise<string | null> {
+  if (voteIn(voice)) return `There’s already a vote going in ${voice}.`;
+  const vote = await open(channel.guild, channel.id, voice, minutes);
+  if (typeof vote === 'string') return vote;
+  try {
+    attach(vote, (await channel.send(view(vote))).id);
+  } catch (err) {
+    // A vote with no card can't be voted on, and it would block the next one
+    db.prepare('DELETE FROM game_votes WHERE id = ?').run(vote.id);
+    throw err;
+  }
+  return null;
+}
+
 async function start(i: ChatInputCommandInteraction<'cached'> | ButtonInteraction<'cached'>, minutes: number) {
   const voice = i.member.voice.channel;
   if (!voice) return i.reply({ content: 'Join a voice channel first, then I can check what everyone owns.', flags: MessageFlags.Ephemeral });
-  const open = db.prepare('SELECT * FROM game_votes WHERE voice_channel_id = ?').get(voice.id) as Vote | undefined;
-  if (open) {
-    const link = open.message_id ? ` [Jump to it](https://discord.com/channels/${open.guild_id}/${open.channel_id}/${open.message_id}).` : '';
+  const running = voteIn(voice);
+  if (running) {
+    const link = running.message_id ? ` [Jump to it](https://discord.com/channels/${running.guild_id}/${running.channel_id}/${running.message_id}).` : '';
     return i.reply({ content: `There’s already a vote going in ${voice}.${link}`, flags: MessageFlags.Ephemeral });
   }
 
   await i.deferReply();
-  const found = await candidatesFor(i.guild, humansIn(voice).map((m) => m.id));
-  if (!found) return i.editReply(NOBODY_COUNTED);
-  const ready = found.candidates.filter((c) => c.missing.length === 0);
-  if (ready.length < 2) {
-    return i.editReply(ready.length ? `**${ready[0].name}** is the only game that fits, so there’s nothing to vote on.` : 'No game fits everyone here, so there’s nothing to vote on.');
-  }
-
-  const { lastInsertRowid } = db
-    .prepare('INSERT INTO game_votes (guild_id, channel_id, voice_channel_id, options, note, closes_at) VALUES (?, ?, ?, ?, ?, ?)')
-    .run(i.guildId, i.channelId, voice.id, JSON.stringify(chooseOptions(ready)), found.notes.join('\n') || null, Date.now() + minutes * 60_000);
-  const id = Number(lastInsertRowid);
-  const message = await i.editReply(view(getVote(id)!));
-  db.prepare('UPDATE game_votes SET message_id = ? WHERE id = ?').run(message.id, id);
+  const vote = await open(i.guild, i.channelId, voice, minutes);
+  if (typeof vote === 'string') return i.editReply(vote);
+  attach(vote, (await i.editReply(view(vote))).id);
 }
 
 export const gameVotes: Feature = {

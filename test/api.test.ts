@@ -55,6 +55,11 @@ const channel = (id: string, name: string, type: ChannelType, rawPosition: numbe
   },
   parent: { name: 'Chat' },
   permissionsFor: () => ({ has: (flag: bigint) => permitted.includes(flag) }),
+  send: async (message: unknown) => {
+    if (failSend) throw new Error('Missing Access');
+    sent.push({ channelId: id, message });
+    return { id: `posted-${sent.length}` };
+  },
   toString: () => `<#${id}>`,
 });
 const role = (id: string, name: string, position: number, extra = {}) => ({ id, name, position, managed: false, mentionable: true, members: new Map(), guild: null as unknown, toString: () => `<@&${id}>`, ...extra });
@@ -66,6 +71,8 @@ const roles = new Map([
   ['333', role('333', 'Mods', 5)],
 ]);
 let manageRoles = true;
+const heldRoles = new Set<string>();
+let failRoles = false;
 let mentionEveryone = true;
 const me = {
   permissions: { has: (flag: bigint) => (flag === PermissionFlagsBits.ManageRoles ? manageRoles : flag === PermissionFlagsBits.MentionEveryone ? mentionEveryone : true) },
@@ -81,7 +88,21 @@ const guild = {
   voiceAdapterCreator: () => ({ sendPayload: () => true, destroy() {} }),
   iconURL: () => null,
   premiumTier: 0,
-  members: { me, cache: new Map([member('u1', 'Ana'), member('u2', 'Ben'), member('u3', 'Cy')]) },
+  members: {
+    me,
+    cache: new Map([member('u1', 'Ana'), member('u2', 'Ben'), member('u3', 'Cy')]),
+    fetch: async ({ user }: { user: string }) => ({
+      ...guild.members.cache.get(user),
+      roles: {
+        cache: new Map([...heldRoles].filter((key) => key.startsWith(`${user}:`)).map((key) => [key.split(':')[1], {}])),
+        add: async (id: string) => {
+          if (failRoles) throw new Error('Missing Permissions');
+          heldRoles.add(`${user}:${id}`);
+        },
+        remove: async (id: string) => void heldRoles.delete(`${user}:${id}`),
+      },
+    }),
+  },
   scheduledEvents: {
     create: async (event: unknown) => {
       createdEvents.push(event);
@@ -175,6 +196,8 @@ beforeEach(() => {
   refuseDiscord = null;
   manageRoles = true;
   mentionEveryone = true;
+  heldRoles.clear();
+  failRoles = false;
   for (const id of roles.keys()) if (id.startsWith('made-')) roles.delete(id);
   panelEdits = [];
   sent = [];
@@ -185,7 +208,7 @@ beforeEach(() => {
   db.exec(`DELETE FROM sound_emoji; DELETE FROM discord_sounds; DELETE FROM sound_plays; DELETE FROM guild_settings; DELETE FROM sound_panels;
     DELETE FROM sound_favourites; DELETE FROM game_nights; DELETE FROM game_night_series; DELETE FROM game_plays; DELETE FROM session_members; DELETE FROM sessions;
     DELETE FROM sound_levels; DELETE FROM join_sounds; DELETE FROM activity; DELETE FROM game_aliases; DELETE FROM deleted_sounds; DELETE FROM games;
-    DELETE FROM steam_links; DELETE FROM steam_owned; DELETE FROM sale_prices; DELETE FROM game_roles; DELETE FROM hidden_apps`);
+    DELETE FROM steam_links; DELETE FROM steam_owned; DELETE FROM sale_prices; DELETE FROM game_roles; DELETE FROM hidden_apps; DELETE FROM game_votes`);
   db.prepare("INSERT INTO sound_panels (message_id, guild_id, channel_id, page) VALUES ('m', ?, '111', 0)").run(GUILD);
   if (existsSync(soundFolder)) for (const f of readdirSync(soundFolder)) execFileSync('rm', ['-r', path.join(soundFolder, f)]);
 });
@@ -2279,4 +2302,290 @@ test('still sets a join sound while they’re off, and says it won’t play', as
   await ok(`/guilds/${GUILD}/settings/joinSounds`, { method: 'PUT', json: { value: false } });
   assert.match((await setJoin('u1', { name: 'horn' })).warning, /turned off/);
   assert.equal((await ok(joinUrl)).joinSounds.length, 1);
+});
+
+const pick = (query: string) => ok(`/guilds/${GUILD}/pick?${query}`);
+const hours = (n: number) => n * 3_600_000;
+const playedIn = (user: string, game: string, start: number, end: number) =>
+  db.prepare(`INSERT INTO game_plays (guild_id, user_id, game, channel_id, started_at, ended_at) VALUES (?, ?, ?, '702', ?, ?)`).run(GUILD, user, game, start, end);
+/** Two library games that Ana and Ben own, and one only Ana does */
+async function ownedGames(t: TestContext) {
+  fakeSteam(t);
+  const [halo, valheim, hades] = [insertGame('Halo'), insertGame('Valheim', 892970), insertGame('Hades', 1145360)];
+  for (const id of [halo, valheim, hades]) await mark(id, 'u1', { owns: true });
+  for (const id of [halo, valheim]) await mark(id, 'u2', { owns: true });
+  return { halo, valheim, hades };
+}
+
+test('picks from a voice channel’s people, splitting what fits from what’s one purchase away', async (t) => {
+  await ownedGames(t);
+  const data = await pick('channel=702');
+  assert.equal(data.counted, 2);
+  assert.deepEqual(data.ready.map((g: any) => g.name).sort(), ['Halo', 'Valheim']);
+  assert.deepEqual(data.almost.map((g: any) => [g.name, g.missing]), [['Hades', ['Ben']]]);
+  assert.equal(data.ready.find((g: any) => g.name === 'Valheim').url, 'https://store.steampowered.com/app/892970');
+});
+
+test('picks from people chosen by hand, and matches what /whatdoweplay works from', async (t) => {
+  await ownedGames(t);
+  const data = await pick('users=u1,u2,u1');
+  const direct = await candidatesFor(guild as never, ['u1', 'u2']);
+  assert.deepEqual(data.ready.map((g: any) => g.name).sort(), direct!.candidates.filter((c) => !c.missing.length).map((c) => c.name).sort());
+  assert.equal(data.people, 2);
+});
+
+test('compares what each person has put into a game', async (t) => {
+  await ownedGames(t);
+  const now = Date.now();
+  playedIn('u1', 'Halo', now - hours(5), now - hours(3));
+  playedIn('u2', 'Halo', now - hours(4), now - hours(1));
+  const { ready } = await pick('users=u1,u2');
+  const halo = ready.find((g: any) => g.name === 'Halo');
+  assert.equal(halo.playedMs, hours(5));
+  assert.equal(halo.last, now - hours(1));
+  assert.deepEqual(halo.players.map((p: any) => [p.name, p.playedMs]), [['Ana', hours(2)], ['Ben', hours(3)]]);
+  assert.equal(ready.find((g: any) => g.name === 'Valheim').playedMs, 0);
+});
+
+test('adds Steam hours per person, and leaves out what’s hidden or too full', async (t) => {
+  const { halo } = await ownedGames(t);
+  await ok(`/guilds/${GUILD}/games/${halo}`, { method: 'PATCH', json: { maxPlayers: 1 } });
+  await ok(`/guilds/${GUILD}/hidden-games/892970`, { method: 'PUT' });
+  assert.deepEqual((await pick('users=u1,u2')).ready, []);
+  assert.deepEqual((await pick('users=u1')).ready.map((g: any) => g.name).sort(), ['Hades', 'Halo']);
+});
+
+test('says who isn’t counted, by name', async (t) => {
+  await ownedGames(t);
+  guild.members.cache.set('777', member('777', 'Numeric Ned')[1] as never);
+  const { notes, people, counted } = await pick('users=u1,777');
+  guild.members.cache.delete('777');
+  assert.deepEqual(notes, ['Not counted (no Steam linked): Numeric Ned']);
+  assert.deepEqual([people, counted], [2, 1]);
+});
+
+test('says so when nobody picked can be counted', async (t) => {
+  fakeSteam(t);
+  const data = await pick('users=u3');
+  assert.deepEqual([data.counted, data.ready], [0, []]);
+  assert.match(data.notes[0], /Nobody here has linked Steam/);
+  assert.doesNotMatch(data.notes[0], /`/);
+});
+
+test('refuses a pick with nobody to pick for', async () => {
+  await refused(400, `/guilds/${GUILD}/pick`);
+  await refused(400, `/guilds/${GUILD}/pick?users=`);
+  await refused(404, `/guilds/${GUILD}/pick?users=u1,nobody`);
+  await refused(400, `/guilds/${GUILD}/pick?channel=703`);
+  await refused(400, `/guilds/${GUILD}/pick?channel=c2`);
+});
+
+test('offers the people and channels to choose from', async () => {
+  setSetting(GUILD, 'announceChannel', '111');
+  const data = await ok(`/guilds/${GUILD}/pick/options`);
+  assert.deepEqual(data.members.map((m: any) => m.name), ['Ana', 'Ben', 'Cy']);
+  assert.deepEqual(data.voice.map((c: any) => c.name), ['Gaming', 'General']);
+  assert.deepEqual(data.channels.map((c: any) => c.id), ['111', 'c2']);
+  assert.equal(data.announceChannel, '111');
+});
+
+const startVote = (json: unknown) => ok(`/guilds/${GUILD}/votes`, { method: 'POST', json });
+const voteRows = () => db.prepare('SELECT * FROM game_votes').all() as any[];
+
+test('posts a vote in the channel picked, for the people in the voice channel', async (t) => {
+  await ownedGames(t);
+  await startVote({ voiceChannelId: '702', channelId: '111', minutes: 3 });
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].channelId, '111');
+  assert.match(sent[0].message.embeds[0].toJSON().description, /Everyone in <#702> gets one vote/);
+  const [vote] = voteRows();
+  assert.deepEqual([vote.channel_id, vote.voice_channel_id, vote.message_id], ['111', '702', 'posted-1']);
+  assert.ok(Math.abs(vote.closes_at - Date.now() - 180_000) < 5000);
+  assert.deepEqual(JSON.parse(vote.options).map((o: any) => o.name).sort(), ['Halo', 'Valheim']);
+  assert.equal(activityText().at(-1), 'Started a game vote for <#702> in <#111>');
+});
+
+test('a vote runs one at a time per voice channel', async (t) => {
+  await ownedGames(t);
+  await startVote({ voiceChannelId: '702', channelId: '111' });
+  assert.equal(await refused(400, `/guilds/${GUILD}/votes`, { method: 'POST', json: { voiceChannelId: '702', channelId: '111' } }), 'There’s already a vote going in #Gaming.');
+  assert.equal(voteRows().length, 1);
+});
+
+test('won’t start a vote with nothing to vote on', async (t) => {
+  fakeSteam(t);
+  await mark(insertGame('Halo'), 'u1', { owns: true });
+  const refusal = await refused(400, `/guilds/${GUILD}/votes`, { method: 'POST', json: { voiceChannelId: '701', channelId: '111' } });
+  assert.equal(refusal, 'Halo is the only game that fits, so there’s nothing to vote on.');
+  assert.deepEqual(voteRows(), []);
+  assert.equal(sent.length, 0);
+});
+
+test('refuses a bad vote', async () => {
+  const url = `/guilds/${GUILD}/votes`;
+  for (const minutes of [0, 11, 1.5, 'two']) await refused(400, url, { method: 'POST', json: { voiceChannelId: '702', channelId: '111', minutes } });
+  await refused(400, url, { method: 'POST', json: { voiceChannelId: 'c2', channelId: '111' } });
+  await refused(400, url, { method: 'POST', json: { voiceChannelId: '703', channelId: '111' } });
+  permitted = [];
+  assert.match(await refused(400, url, { method: 'POST', json: { voiceChannelId: '702', channelId: '111' } }), /^I can’t post in #first/);
+});
+
+test('a vote that can’t be posted doesn’t block the next one', async (t) => {
+  await ownedGames(t);
+  failSend = true;
+  await refused(502, `/guilds/${GUILD}/votes`, { method: 'POST', json: { voiceChannelId: '702', channelId: '111' } });
+  assert.deepEqual(voteRows(), []);
+  failSend = false;
+  await startVote({ voiceChannelId: '702', channelId: '111' });
+  assert.equal(voteRows().length, 1);
+});
+
+const compared = (a: string, b: string) => `/guilds/${GUILD}/compare?a=${a}&b=${b}`;
+
+test('compares two people', async (t) => {
+  await ownedGames(t);
+  const now = Date.now();
+  playedIn('u1', 'Halo', now - hours(5), now - hours(2));
+  playedIn('u2', 'Halo', now - hours(4), now - hours(1));
+  playedIn('u2', 'Solo Game', now - hours(9), now - hours(8));
+  const session = Number(db.prepare(`INSERT INTO sessions (guild_id, channel_id, started_at, ended_at) VALUES (?, '702', 0, 9000)`).run(GUILD).lastInsertRowid);
+  for (const [user, seconds] of [['u1', 3600], ['u2', 7200]] as const) db.prepare('INSERT INTO session_members (session_id, user_id, seconds) VALUES (?, ?, ?)').run(session, user, seconds);
+
+  const data = await ok(compared('u1', 'u2'));
+  assert.deepEqual(data.people.map((p: any) => [p.name, p.ms]), [['Ana', hours(3)], ['Ben', hours(4)]]);
+  assert.equal(data.togetherMs, hours(2));
+  assert.deepEqual(data.games, [{ name: 'Halo', ms: hours(2) }]);
+  assert.deepEqual(data.voice, { sessions: 1, ms: hours(1) });
+  assert.deepEqual([...data.shared].sort(), ['Halo', 'Valheim']);
+});
+
+test('lists everything two people both own, past what Discord can fit', async (t) => {
+  fakeSteam(t);
+  for (let n = 0; n < 20; n++) {
+    const id = insertGame(`Game ${n}`);
+    await mark(id, 'u1', { owns: true });
+    await mark(id, 'u2', { owns: true });
+  }
+  assert.equal((await ok(compared('u1', 'u2'))).shared.length, 20);
+});
+
+test('refuses to compare anyone but two people here', async () => {
+  await refused(400, compared('u1', 'u1'));
+  await refused(404, compared('u1', 'nobody'));
+  await refused(404, `/guilds/${GUILD}/compare?a=u1`);
+});
+
+test('shows a month’s recap as plain text', async () => {
+  guild.members.cache.set('777', member('777', 'Numeric Ned')[1] as never);
+  guild.members.cache.set('778', member('778', 'Numeric Nia')[1] as never);
+  const now = Date.now();
+  db.prepare(`INSERT INTO game_plays (guild_id, user_id, game, channel_id, started_at, ended_at) VALUES (?, '777', 'Halo', '702', ?, ?)`).run(GUILD, now - 60_000, now);
+  const session = Number(db.prepare(`INSERT INTO sessions (guild_id, channel_id, started_at, ended_at) VALUES (?, '702', ?, ?)`).run(GUILD, now - 60_000, now).lastInsertRowid);
+  for (const user of ['777', '778']) db.prepare('INSERT INTO session_members (session_id, user_id, seconds) VALUES (?, ?, 60)').run(session, user);
+
+  const { recap } = await ok(`/guilds/${GUILD}/recap?month=this`);
+  guild.members.cache.delete('777');
+  guild.members.cache.delete('778');
+  assert.match(recap.title, /recap$/);
+  const text = JSON.stringify(recap);
+  assert.match(text, /Numeric Ned/);
+  assert.match(recap.fields.find((f: any) => f.name === 'Longest session').value, /on \w+ \d+, \d{4} with Numeric/);
+  assert.doesNotMatch(text, /<@|<t:|\*\*/);
+});
+
+test('says when there’s no recap, and refuses a month it doesn’t know', async () => {
+  assert.deepEqual(await ok(`/guilds/${GUILD}/recap`), { recap: null });
+  await refused(400, `/guilds/${GUILD}/recap?month=march`);
+});
+
+test('adds sessions, rank and last played to the stats', async () => {
+  const now = Date.now();
+  playedIn('u1', 'Halo', now - hours(5), now - hours(4));
+  playedIn('u1', 'Halo', now - hours(3), now - hours(2));
+  playedIn('u2', 'Halo', now - hours(9), now - hours(1));
+  const both = await ok(`/guilds/${GUILD}/stats?period=all&user=u1&game=Halo`);
+  assert.deepEqual(both.place, { rank: 2, of: 2, sessions: 2 });
+  assert.equal(both.games[0].last, now - hours(2));
+  const one = await ok(`/guilds/${GUILD}/stats?period=all&game=Halo`);
+  assert.equal(one.place, null);
+  assert.equal(one.players[0].last, now - hours(1));
+  assert.equal((await ok(`/guilds/${GUILD}/stats?period=all&user=u3&game=Halo`)).place, null);
+});
+
+const pings = (user: string) => `/guilds/${GUILD}/members/${user}/pings`;
+const setPing = (user: string, json: unknown) => ok(pings(user), { method: 'PUT', json });
+
+test('shows and changes anyone’s pings', async () => {
+  setSetting(GUILD, 'hopOnRole', 'r1');
+  db.prepare(`INSERT INTO game_roles (role_id, guild_id, name) VALUES ('333', ?, 'Halo')`).run(GUILD);
+  heldRoles.add('u2:333');
+  assert.deepEqual((await ok(pings('u2'))).pings, [{ id: 'r1', label: 'Hop-on pings', on: false }, { id: '333', label: 'Halo', on: true }]);
+  await setPing('u2', { roleId: 'r1', on: true });
+  await setPing('u2', { roleId: '333', on: false });
+  assert.deepEqual((await ok(pings('u2'))).pings.map((p: any) => p.on), [true, false]);
+  assert.deepEqual([...heldRoles], ['u2:r1']);
+  assert.deepEqual(activityText().slice(-2), ['Turned Hop-on pings on for Ben', 'Turned Halo off for Ben']);
+});
+
+test('only hop-on and game roles can be changed', async () => {
+  setSetting(GUILD, 'hopOnRole', 'r1');
+  for (const roleId of ['333', 'r2', GUILD, undefined]) await refused(400, pings('u1'), { method: 'PUT', json: { roleId, on: true } });
+  await refused(400, pings('u1'), { method: 'PUT', json: { roleId: 'r1', on: 'yes' } });
+  assert.deepEqual([...heldRoles], []);
+});
+
+test('doesn’t offer a role from another server, or one that’s gone', async () => {
+  db.prepare(`INSERT INTO game_roles (role_id, guild_id, name) VALUES ('r1', 'other', 'Halo'), ('gone', ?, 'Valheim')`).run(GUILD);
+  assert.deepEqual((await ok(pings('u1'))).pings, []);
+});
+
+test('says so when the bot can’t change someone’s roles', async () => {
+  setSetting(GUILD, 'hopOnRole', 'r1');
+  failRoles = true;
+  assert.match(await refused(409, pings('u1'), { method: 'PUT', json: { roleId: 'r1', on: true } }), /Manage Roles and has to be above @Gamers/);
+  assert.deepEqual(activityText().filter((a) => a.startsWith('Turned')), []);
+});
+
+test('pings are only for people here', async () => {
+  await refused(404, pings('nobody'));
+  await refused(405, pings('u1'), { method: 'DELETE' });
+});
+
+test('posts a soundboard panel and keeps track of it', async () => {
+  await upload('horn');
+  db.exec('DELETE FROM sound_panels');
+  await ok(`/guilds/${GUILD}/sound-panels`, { method: 'POST', json: { channelId: '111' } });
+  assert.equal(sent[0].channelId, '111');
+  assert.ok(sent[0].message.components.length > 0);
+  assert.deepEqual(db.prepare('SELECT message_id, guild_id, channel_id FROM sound_panels').all().map((r) => ({ ...r })), [{ message_id: 'posted-1', guild_id: GUILD, channel_id: '111' }]);
+  assert.equal(activityText().at(-1), 'Posted a soundboard panel in <#111>');
+});
+
+test('posts the Choose games button', async () => {
+  await ok(`/guilds/${GUILD}/game-pings/menu`, { method: 'POST', json: { channelId: 'c2' } });
+  assert.equal(sent[0].channelId, 'c2');
+  assert.equal(sent[0].message.components[0].toJSON().components[0].custom_id, 'gr:open');
+  assert.equal(activityText().at(-1), 'Posted the game pings button in <#c2>');
+});
+
+test('won’t post in a channel it can’t, or say it did when Discord refused', async () => {
+  for (const url of [`/guilds/${GUILD}/sound-panels`, `/guilds/${GUILD}/game-pings/menu`]) {
+    await refused(400, url, { method: 'POST', json: { channelId: 'nope' } });
+    await refused(400, url, { method: 'POST', json: {} });
+    permitted = [];
+    assert.match(await refused(400, url, { method: 'POST', json: { channelId: '111' } }), /^I can’t post in #first/);
+    permitted = [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.EmbedLinks];
+    failSend = true;
+    await refused(502, url, { method: 'POST', json: { channelId: '111' } });
+    failSend = false;
+  }
+  assert.deepEqual(activityText(), []);
+});
+
+test('hides a Steam game outside the library, by the name it’s given', async () => {
+  await ok(`${hiddenUrl}/620`, { method: 'PUT', json: { name: 'Portal 2' } });
+  assert.deepEqual(await hiddenNames(), ['Portal 2']);
+  await refused(404, `${hiddenUrl}/730`, { method: 'PUT', json: { name: 'x'.repeat(101) } });
+  await refused(404, `${hiddenUrl}/730`, { method: 'PUT', json: { name: 5 } });
+  await refused(404, `${hiddenUrl}/abc`, { method: 'PUT', json: { name: 'Portal 2' } });
 });
