@@ -223,6 +223,180 @@ function manageDialog(main, gameId, data, reload) {
   paint();
 }
 
+const PRIVACY_HELP = 'To fix a private library, in Steam go to Profile → Edit Profile → Privacy Settings, set Game details to Public, then refresh here.';
+
+/** Who's who on Steam. Links apply in every server someone shares with the bot, as Steam accounts do */
+function accountsDialog(main, onChanged) {
+  let data = null;
+  let editing = null;
+  const problem = el('div', { className: 'bad-text plan-problem', hidden: true });
+  const done = el('div', { className: 'form-note', hidden: true });
+  const search = el('input', { type: 'search', placeholder: 'Search people', ariaLabel: 'Search people', oninput: () => paint() });
+  const list = el('div', { className: 'merge-list' }, el('p', {}, 'Loading members…'));
+  const help = el('p', { className: 'hint', hidden: true }, PRIVACY_HELP);
+
+  const say = (node, text) => {
+    node.textContent = text ?? '';
+    node.hidden = !text;
+  };
+
+  async function refresh() {
+    data = await request(api('/steam-links'));
+    paint();
+    await onChanged();
+  }
+
+  const guarded = (action, message) =>
+    attempt(async () => {
+      say(problem, null);
+      say(done, null);
+      try {
+        await action();
+        say(done, message());
+      } catch (err) {
+        if (!(err instanceof RequestError)) throw err;
+        say(problem, err.message);
+      }
+    });
+
+  function linkForm(member) {
+    const profile = el('input', { required: true, maxLength: 200, autocomplete: 'off', placeholder: 'Profile link, custom URL name or SteamID64', ariaLabel: `Steam profile for ${member.name}` });
+    const save = el('button', { className: 'primary', type: 'submit' }, 'Save');
+    const form = el(
+      'form',
+      {
+        className: 'steam-form',
+        onsubmit: (e) => {
+          e.preventDefault();
+          let games;
+          save.disabled = true;
+          void guarded(
+            async () => {
+              ({ games } = await request(api(`/steam-links/${member.id}`), { method: 'PUT', json: { profile: profile.value } }));
+              editing = null;
+              await refresh();
+            },
+            () => (games === null ? `Linked ${member.name}, but their game details are private.` : `Linked ${member.name}, with ${games} games.`),
+          ).finally(() => {
+            save.disabled = false;
+          });
+        },
+      },
+      profile,
+      save,
+      el(
+        'button',
+        {
+          type: 'button',
+          onclick: () => {
+            editing = null;
+            paint();
+          },
+        },
+        'Cancel',
+      ),
+    );
+    setTimeout(() => profile.focus());
+    return form;
+  }
+
+  function accountRow(member) {
+    const { steam } = member;
+    const edit = (label) =>
+      el(
+        'button',
+        {
+          ariaLabel: `${label} ${member.name}`,
+          disabled: !data.configured,
+          onclick: () => {
+            editing = member.id;
+            say(problem, null);
+            paint();
+          },
+        },
+        label,
+      );
+    return el(
+      'div',
+      { className: 'steam-account' },
+      el('span', { className: 'rank-name' }, member.name),
+      steam
+        ? el('a', { className: 'steam-status', href: steam.url, target: '_blank', rel: 'noreferrer' }, steam.private ? 'Game details private' : `${steam.games} game${steam.games === 1 ? '' : 's'}`)
+        : el('span', { className: 'steam-status' }, 'Not linked'),
+      el(
+        'span',
+        { className: 'steam-actions' },
+        edit(steam ? 'Change' : 'Link'),
+        steam &&
+          confirmButton({ ariaLabel: `Unlink ${member.name}`, disabled: !data.configured }, 'Unlink', 'Sure?', () =>
+            guarded(
+              async () => {
+                await request(api(`/steam-links/${member.id}`), { method: 'DELETE' });
+                await refresh();
+              },
+              () => `Unlinked ${member.name}.`,
+            ),
+          ),
+      ),
+      editing === member.id && linkForm(member),
+    );
+  }
+
+  function paint() {
+    if (!data) return;
+    const query = search.value.trim().toLowerCase();
+    const shown = data.members.filter((m) => m.name.toLowerCase().includes(query));
+    list.replaceChildren(...shown.map(accountRow));
+    if (!shown.length) list.append(el('p', {}, 'Nobody matches that.'));
+    help.hidden = !data.members.some((m) => m.steam?.private);
+    refreshAll.disabled = !data.configured;
+    if (!data.configured) say(problem, 'Steam isn’t set up on the bot: it needs a STEAM_API_KEY.');
+  }
+
+  const refreshAll = el(
+    'button',
+    {
+      type: 'button',
+      disabled: true,
+      onclick: () => {
+        refreshAll.disabled = true;
+        say(done, 'Refreshing libraries…');
+        void guarded(
+          async () => {
+            await request(api('/steam-refresh'), { method: 'POST' });
+            await refresh();
+          },
+          () => 'Libraries refreshed.',
+        ).finally(() => {
+          refreshAll.disabled = false;
+        });
+      },
+    },
+    'Refresh libraries',
+  );
+
+  const node = openDialog(
+    main,
+    el('h2', {}, 'Steam accounts'),
+    el('p', {}, 'Who’s who on Steam, for working out who owns what. A link applies in every server someone shares with the bot.'),
+    search,
+    list,
+    help,
+    done,
+    problem,
+    el('div', { className: 'actions' }, refreshAll, el('button', { type: 'button', onclick: () => node.close() }, 'Close')),
+  );
+  void attempt(async () => {
+    try {
+      data = await request(api('/steam-links'));
+      paint();
+    } catch (err) {
+      list.replaceChildren(el('p', {}, err.message));
+      throw err;
+    }
+  });
+}
+
 export function renderGames(main) {
   const guildId = state.guildId;
   let data = null;
@@ -251,7 +425,8 @@ export function renderGames(main) {
     FILTERS.map(([id, label]) => el('option', { value: id }, label)),
   );
   const add = el('button', { className: 'primary', onclick: () => addDialog(main, load) }, 'Add a game');
-  main.append(el('div', { className: 'toolbar' }, search, picker, add), box);
+  const accounts = el('button', { onclick: () => accountsDialog(main, load) }, 'Steam accounts');
+  main.append(el('div', { className: 'toolbar' }, search, picker, accounts, add), box);
 
   const gameRow = (g) =>
     el(

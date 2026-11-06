@@ -93,6 +93,54 @@ async function refreshUser(userId: string): Promise<number | null> {
   return games?.length ?? null;
 }
 
+const forgetUnlinked = () => {
+  db.prepare('DELETE FROM steam_owned WHERE steam_id NOT IN (SELECT steam_id FROM steam_links)').run();
+  db.prepare('DELETE FROM steam_wishlist WHERE steam_id NOT IN (SELECT steam_id FROM steam_links)').run();
+};
+
+const saveLink = db.prepare('INSERT INTO steam_links (user_id, steam_id) VALUES (?, ?) ON CONFLICT(user_id) DO UPDATE SET steam_id = excluded.steam_id, refreshed_at = 0');
+
+/**
+ * Links someone to a Steam profile and reads its library. Returns null if there's no such profile, or else how many
+ * games it has, which is null if they're private. Throws if Steam can't be asked, leaving any link they had.
+ */
+export async function linkSteam(userId: string, profile: string) {
+  const steamId = await resolveSteamId(profile);
+  if (!steamId) return null;
+  const before = linkFor(userId);
+  saveLink.run(userId, steamId);
+  try {
+    const games = await refreshUser(userId);
+    forgetUnlinked();
+    void ensureAppInfo([...ownedSteamGames(userId).keys()]).catch(console.error);
+    return { games };
+  } catch (err) {
+    if (before) db.prepare('UPDATE steam_links SET steam_id = ?, private = ?, refreshed_at = ? WHERE user_id = ?').run(before.steam_id, before.private, before.refreshed_at, userId);
+    else db.prepare('DELETE FROM steam_links WHERE user_id = ?').run(userId);
+    throw err;
+  }
+}
+
+/** Returns whether they were linked */
+export function unlinkSteam(userId: string) {
+  const { changes } = db.prepare('DELETE FROM steam_links WHERE user_id = ?').run(userId);
+  forgetUnlinked();
+  return changes > 0;
+}
+
+/** Everyone linked, in any server, since links are shared between them */
+export function steamLinks() {
+  return db
+    .prepare(
+      `SELECT l.user_id, l.steam_id, l.private, COUNT(o.appid) AS games
+       FROM steam_links l LEFT JOIN steam_owned o ON o.steam_id = l.steam_id
+       GROUP BY l.user_id`,
+    )
+    .all() as { user_id: string; steam_id: string; private: number; games: number }[];
+}
+
+export const profileUrl = (steamId: string) => `https://steamcommunity.com/profiles/${steamId}`;
+
 export async function refreshStale(userIds: string[], maxAgeMs: number) {
   if (!config.steamApiKey) return;
   const stale = userIds.filter((id) => {
@@ -131,7 +179,7 @@ export async function refreshWishlists() {
   if (links.length) console.log(`Steam wishlists: games on ${visible} of ${links.length}`);
 }
 
-async function refreshAll() {
+export async function refreshAll() {
   const links = db.prepare('SELECT user_id FROM steam_links').all() as { user_id: string }[];
   for (const { user_id } of links) await refreshUser(user_id).catch(console.error);
   // Warm the category cache so /whatdoweplay rarely has to wait on the store API
@@ -205,23 +253,16 @@ export const steam: Feature = {
 
         if (sub === 'link') {
           await i.deferReply();
-          const steamId = await resolveSteamId(i.options.getString('profile', true));
-          if (!steamId) return i.editReply("Couldn't find that Steam profile. Paste the full profile URL.");
-          db.prepare(
-            'INSERT INTO steam_links (user_id, steam_id) VALUES (?, ?) ON CONFLICT(user_id) DO UPDATE SET steam_id = excluded.steam_id, refreshed_at = 0',
-          ).run(user.id, steamId);
-          const count = await refreshUser(user.id);
-          void ensureAppInfo([...ownedSteamGames(user.id).keys()]).catch(console.error);
+          const linked = await linkSteam(user.id, i.options.getString('profile', true));
+          if (!linked) return i.editReply("Couldn't find that Steam profile. Paste the full profile URL.");
           return i.editReply({
-            content: count === null ? `🔗 Linked ${user}, but: ${PRIVACY_HELP}` : `🔗 Linked ${user} (${count} games).`,
+            content: linked.games === null ? `🔗 Linked ${user}, but: ${PRIVACY_HELP}` : `🔗 Linked ${user} (${linked.games} games).`,
             allowedMentions: { parse: [] },
           });
         }
 
         if (sub === 'unlink') {
-          db.prepare('DELETE FROM steam_links WHERE user_id = ?').run(user.id);
-          db.prepare('DELETE FROM steam_owned WHERE steam_id NOT IN (SELECT steam_id FROM steam_links)').run();
-          db.prepare('DELETE FROM steam_wishlist WHERE steam_id NOT IN (SELECT steam_id FROM steam_links)').run();
+          unlinkSteam(user.id);
           return i.reply({ content: `Unlinked ${user}.`, allowedMentions: { parse: [] } });
         }
 
@@ -231,19 +272,12 @@ export const steam: Feature = {
           return i.editReply('🔄 Steam libraries refreshed.');
         }
 
-        const allLinks = db
-          .prepare(
-            `SELECT l.user_id, l.steam_id, l.private, COUNT(o.appid) AS games
-             FROM steam_links l LEFT JOIN steam_owned o ON o.steam_id = l.steam_id
-             GROUP BY l.user_id`,
-          )
-          .all() as { user_id: string; steam_id: string; private: number; games: number }[];
         // Links are shared between servers; only list this server's members
-        const links = i.inCachedGuild() ? allLinks.filter((l) => i.guild.members.cache.has(l.user_id)) : [];
+        const links = i.inCachedGuild() ? steamLinks().filter((l) => i.guild.members.cache.has(l.user_id)) : [];
         if (!links.length) return i.reply('Nobody here has linked Steam yet. Use `/steam link`.');
         const lines = links.map(
           (l) =>
-            `<@${l.user_id}> · [profile](https://steamcommunity.com/profiles/${l.steam_id}) · ${l.private ? '🔒 game details private' : `${l.games} games`}`,
+            `<@${l.user_id}> · [profile](${profileUrl(l.steam_id)}) · ${l.private ? '🔒 game details private' : `${l.games} games`}`,
         );
         return i.reply({ embeds: [new EmbedBuilder().setTitle('🔗 Linked Steam accounts').setDescription(lines.join('\n')).setColor(0x1b2838)] });
       },

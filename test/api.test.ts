@@ -16,6 +16,7 @@ import { logActivity } from '../src/activity.ts';
 import { Mixer } from '../src/mixer.ts';
 import { noteGame } from '../src/gameNames.ts';
 import { activity, stats } from '../src/features/gamestats.ts';
+import { steam } from '../src/features/steam.ts';
 import { BIN_DAYS, clearBin, levelLibrary, setJoinSound, soundboard, soundGain } from '../src/features/soundboard.ts';
 import { setting, setSetting } from '../src/settings.ts';
 
@@ -1925,4 +1926,151 @@ test('only games on the list can be picked', async () => {
 
 test('the owned list only takes GET', async () => {
   await refused(404, `/guilds/${GUILD}/games/owned`, { method: 'DELETE' });
+});
+
+const VALVE = '76561197960287930';
+const OTHER_STEAM = '76561197960287931';
+const accounts = async () => (await ok(`/guilds/${GUILD}/steam-links`)) as { configured: boolean; members: { id: string; name: string; steam: { url: string; private: boolean; games: number } | null }[] };
+const account = async (id: string) => (await accounts()).members.find((m) => m.id === id)!.steam;
+const linkUrl = (user: string) => `/guilds/${GUILD}/steam-links/${user}`;
+const linkTo = (user: string, profile: unknown) => ok(linkUrl(user), { method: 'PUT', json: { profile } });
+
+/** Steam with a key set: `gaben` is a custom URL, one profile has two games, and any other is private */
+function steamApi(t: TestContext, state = { down: false, ownedDown: false }) {
+  const key = config.steamApiKey;
+  config.steamApiKey = 'key';
+  t.after(() => void (config.steamApiKey = key));
+  const real = fetch;
+  t.mock.method(globalThis, 'fetch', async (input: string, init?: RequestInit) => {
+    if (String(input).startsWith(base)) return real(input, init);
+    if (state.down) throw new Error('offline');
+    const url = new URL(input);
+    if (url.pathname.includes('ResolveVanityURL')) {
+      return new Response(JSON.stringify({ response: url.searchParams.get('vanityurl') === 'gaben' ? { success: 1, steamid: VALVE } : { success: 42 } }));
+    }
+    if (url.pathname.includes('GetOwnedGames')) {
+      if (state.ownedDown) return new Response('', { status: 503 });
+      const games = [{ appid: 10, name: 'Game One', playtime_forever: 1 }, { appid: 20, name: 'Game Two', playtime_forever: 2 }];
+      return new Response(JSON.stringify({ response: url.searchParams.get('steamid') === VALVE ? { game_count: 2, games } : {} }));
+    }
+    return new Response(JSON.stringify({ response: {} }));
+  });
+  mock.method(console, 'error', () => {});
+  return state;
+}
+
+test('lists this server’s members, linked first, without bots or other servers’ people', async (t) => {
+  steamApi(t);
+  linkSteam('u2', [[1, 'One'], [2, 'Two']]);
+  linkSteam('stranger', [[3, 'Three']]);
+  const { configured, members } = await accounts();
+  assert.equal(configured, true);
+  assert.deepEqual(members.map((m) => m.name), ['Ben', 'Ana', 'Cy']);
+  assert.deepEqual(members[0].steam, { url: 'https://steamcommunity.com/profiles/steam-u2', private: false, games: 2 });
+  assert.equal(members[1].steam, null);
+});
+
+test('links someone by profile link, custom URL name or ID, and reads their library', async (t) => {
+  steamApi(t);
+  assert.deepEqual(await linkTo('u1', `https://steamcommunity.com/profiles/${VALVE}/`), { games: 2 });
+  assert.deepEqual(await account('u1'), { url: `https://steamcommunity.com/profiles/${VALVE}`, private: false, games: 2 });
+  assert.deepEqual(await linkTo('u2', 'https://steamcommunity.com/id/gaben'), { games: 2 });
+  assert.deepEqual(await linkTo('u3', 'gaben'), { games: 2 });
+  assert.deepEqual(await linkTo('u3', VALVE), { games: 2 });
+  assert.equal(activityText().at(-1), 'Linked Cy’s Steam account');
+  for (const line of activityText()) assert.doesNotMatch(line, /7656/);
+});
+
+test('changing a link replaces the old library, and a private one says so', async (t) => {
+  steamApi(t);
+  await linkTo('u1', VALVE);
+  assert.deepEqual(await linkTo('u1', OTHER_STEAM), { games: null });
+  assert.deepEqual(await account('u1'), { url: `https://steamcommunity.com/profiles/${OTHER_STEAM}`, private: true, games: 0 });
+  assert.equal((db.prepare('SELECT COUNT(*) AS n FROM steam_owned').get() as { n: number }).n, 0);
+});
+
+test('unlinking forgets a library, unless someone else still has that account', async (t) => {
+  steamApi(t);
+  await linkTo('u1', VALVE);
+  await linkTo('u2', VALVE);
+  await ok(linkUrl('u1'), { method: 'DELETE' });
+  assert.equal(await account('u1'), null);
+  assert.equal((await account('u2'))!.games, 2);
+  await ok(linkUrl('u2'), { method: 'DELETE' });
+  assert.equal((db.prepare('SELECT COUNT(*) AS n FROM steam_owned').get() as { n: number }).n, 0);
+  assert.equal(activityText().at(-1), 'Unlinked Ben’s Steam account');
+  assert.match(await refused(404, linkUrl('u2'), { method: 'DELETE' }), /don’t have a linked/);
+});
+
+test('turns down a bad profile, someone not in the server and other methods', async (t) => {
+  steamApi(t);
+  for (const profile of ['', '   ', 5, null, 'x'.repeat(201)]) assert.match(await refused(400, linkUrl('u1'), { method: 'PUT', json: { profile } }), /Paste their/);
+  assert.match(await refused(400, linkUrl('u1'), { method: 'PUT', json: { profile: 'nobody-here' } }), /Couldn’t find/);
+  assert.match(await refused(400, linkUrl('u1'), { method: 'PUT', json: { profile: 'not a profile!' } }), /Couldn’t find/);
+  assert.match(await refused(404, linkUrl('stranger'), { method: 'PUT', json: { profile: VALVE } }), /aren’t in this server/);
+  await refused(404, linkUrl('stranger'), { method: 'DELETE' });
+  await refused(405, linkUrl('u1'), { method: 'POST' });
+  assert.equal(await account('u1'), null);
+  assert.deepEqual(activityText(), []);
+});
+
+test('with Steam down, nothing changes', async (t) => {
+  const state = steamApi(t);
+  await linkTo('u1', VALVE);
+  state.ownedDown = true;
+  assert.match(await refused(502, linkUrl('u1'), { method: 'PUT', json: { profile: OTHER_STEAM } }), /couldn’t be reached/);
+  assert.match(await refused(502, linkUrl('u2'), { method: 'PUT', json: { profile: VALVE } }), /couldn’t be reached/);
+  assert.equal(await account('u2'), null);
+  assert.deepEqual(await account('u1'), { url: `https://steamcommunity.com/profiles/${VALVE}`, private: false, games: 2 });
+  state.ownedDown = false;
+  state.down = true;
+  assert.match(await refused(502, linkUrl('u3'), { method: 'PUT', json: { profile: 'gaben' } }), /couldn’t be reached/);
+  assert.equal(await account('u3'), null);
+});
+
+test('without an API key, it says so instead of trying', async () => {
+  const key = config.steamApiKey;
+  config.steamApiKey = null;
+  linkSteam('u1', [[1, 'One']]);
+  assert.equal((await accounts()).configured, false);
+  assert.match(await refused(409, linkUrl('u2'), { method: 'PUT', json: { profile: VALVE } }), /STEAM_API_KEY/);
+  assert.match(await refused(409, linkUrl('u1'), { method: 'DELETE' }), /STEAM_API_KEY/);
+  assert.match(await refused(409, `/guilds/${GUILD}/steam-refresh`, { method: 'POST' }), /STEAM_API_KEY/);
+  config.steamApiKey = key;
+});
+
+test('refreshes libraries', async (t) => {
+  steamApi(t);
+  await linkTo('u1', VALVE);
+  db.prepare('DELETE FROM steam_owned').run();
+  await ok(`/guilds/${GUILD}/steam-refresh`, { method: 'POST' });
+  assert.equal((await account('u1'))!.games, 2);
+  assert.equal(activityText().at(-1), 'Refreshed Steam libraries');
+  await refused(404, `/guilds/${GUILD}/steam-refresh`);
+});
+
+test('/steam link, list and unlink work as they did', async (t) => {
+  steamApi(t);
+  const run = async (sub: string, values: Record<string, unknown>) => {
+    let reply: any;
+    const answer = async (r: unknown) => void (reply = r);
+    await steam.commands![0].run({
+      inCachedGuild: () => true,
+      guild,
+      guildId: GUILD,
+      user: { id: 'u1', toString: () => '<@u1>' },
+      options: { getSubcommand: () => sub, getUser: () => null, getString: (name: string) => values[name] },
+      deferReply: async () => {},
+      editReply: answer,
+      reply: answer,
+    } as never);
+    return reply;
+  };
+  assert.match((await run('link', { profile: 'nobody-here' })) as string, /Couldn't find/);
+  assert.equal((await run('link', { profile: VALVE })).content, '🔗 Linked <@u1> (2 games).');
+  assert.match((await run('link', { profile: OTHER_STEAM })).content, /Linked <@u1>, but: .*private/);
+  assert.match((await run('list', {})).embeds[0].toJSON().description, new RegExp(`<@u1> · \\[profile\\]\\(https://steamcommunity.com/profiles/${OTHER_STEAM}\\) · 🔒`));
+  assert.equal((await run('unlink', {})).content, 'Unlinked <@u1>.');
+  assert.equal(await account('u1'), null);
+  assert.match((await run('list', {})) as string, /Nobody here has linked/);
 });

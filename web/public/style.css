@@ -1560,3 +1560,44 @@ textarea {
 .game-member .rank-note {
   display: inline;
 }
+
+.steam-account {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  padding: 8px 4px;
+  border-radius: 6px;
+}
+
+.steam-account:hover {
+  background: var(--raised);
+}
+
+.steam-account .rank-name {
+  flex: 1 1 120px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.steam-status {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.steam-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.steam-form {
+  display: flex;
+  flex-wrap: wrap;
+  flex-basis: 100%;
+  gap: 8px;
+}
+
+.steam-form input {
+  flex: 1 1 200px;
+  min-width: 0;
+}
