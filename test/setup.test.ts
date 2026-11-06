@@ -43,3 +43,10 @@ test('sale alerts set their discount, wishlists and channel, one at a time if wa
   assert.equal(setting(guildId, 'saleMinDiscount'), 40);
   assert.deepEqual(log(guildId), ['Set Steam wishlists in sale alerts to off', 'Set Smallest sale worth posting to 40% off']);
 });
+
+test('free game filters set the lowest rating and whether unlisted games show', async () => {
+  const guildId = 'setup-free';
+  await run(guildId, 'free-game-filters', { min_rating: 85, not_on_steam: true });
+  assert.equal(setting(guildId, 'freeGamesMinRating'), 85);
+  assert.equal(setting(guildId, 'freeGamesUnlisted'), true);
+});

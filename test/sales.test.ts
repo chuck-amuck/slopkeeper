@@ -29,6 +29,10 @@ const world = {
   lowest: new Map<number, string>(),
   pricesDown: false,
   cheapSharkDown: false,
+  unlisted: new Set<number>(),
+  brokenBatchWith: 0,
+  storeTitles: new Map<string, string>(),
+  noPriceHistory: false,
   batches: [] as number[][],
   userAgents: [] as (string | null)[],
 };
@@ -41,6 +45,7 @@ mock.method(globalThis, 'fetch', async (input: string | URL, init?: RequestInit)
     if (world.pricesDown) return new Response('', { status: 503 });
     const appids = url.searchParams.get('appids')!.split(',').map(Number);
     world.batches.push(appids);
+    if (appids.includes(world.brokenBatchWith)) return new Response('', { status: 503 });
     return json(
       Object.fromEntries(
         appids.map((appid) => {
@@ -49,7 +54,7 @@ mock.method(globalThis, 'fetch', async (input: string | URL, init?: RequestInit)
           const data = price
             ? { price_overview: { discount_percent: price.discount, initial_formatted: price.discount ? '$20.00' : '', final_formatted: `$${(final / 100).toFixed(2)}`, final } }
             : [];
-          return [appid, { success: true, data }];
+          return [appid, { success: !world.unlisted.has(appid), data }];
         }),
       ),
     );
@@ -57,7 +62,7 @@ mock.method(globalThis, 'fetch', async (input: string | URL, init?: RequestInit)
   if (url.pathname === '/api/storesearch/') {
     const term = url.searchParams.get('term')!;
     const id = world.storeNames.get(term);
-    return json({ items: id ? [{ id, name: term }] : [] });
+    return json({ items: id ? [{ id, name: world.storeTitles.get(term) ?? term }] : [] });
   }
   if (url.hostname === 'steamspy.com') return json({ positive: 10, negative: 1, tags: [] });
   if (url.pathname.includes('GetWishlist')) {
@@ -74,6 +79,7 @@ mock.method(globalThis, 'fetch', async (input: string | URL, init?: RequestInit)
     if (world.cheapSharkDown) return new Response('', { status: 500 });
     const steam = url.searchParams.get('steamAppID');
     if (steam) return json(world.lowest.has(Number(steam)) ? [{ gameID: steam }] : []);
+    if (world.noPriceHistory) return json({});
     return json({ cheapestPriceEver: { price: world.lowest.get(Number(url.searchParams.get('id'))) } });
   }
   throw new Error(`Unexpected fetch: ${url}`);
@@ -87,6 +93,10 @@ function fresh() {
   world.lowest.clear();
   world.pricesDown = false;
   world.cheapSharkDown = false;
+  world.unlisted.clear();
+  world.brokenBatchWith = 0;
+  world.storeTitles.clear();
+  world.noPriceHistory = false;
   world.batches.length = 0;
   world.userAgents.length = 0;
   // Steam links belong to people, not servers, so one test's would leak into the next
@@ -225,6 +235,18 @@ test('several wishlists are listed together', async () => {
   await checkSales(s.client);
   assert.match(s.text(), /On Steam wishlists: <@a>, <@b>/);
   assert.deepEqual(s.pinged().sort(), ['a', 'b']);
+});
+
+test('someone with a game still on their wishlist isn’t told about it', async () => {
+  const s = server(['a', 'b']);
+  linkSteam('a');
+  linkSteam('b');
+  world.wishlists.set(STEAM_ID('a'), [65]);
+  world.wishlists.set(STEAM_ID('b'), [65]);
+  played(s.id, 'a', 'Family Shared', 65, 400);
+  world.prices.set(65, { discount: 50 });
+  await checkSales(s.client);
+  assert.deepEqual(s.pinged(), ['b']);
 });
 
 test('wishlists can be turned off for a server', async () => {
@@ -403,6 +425,26 @@ test('a game that stops being sold counts as not on sale', async () => {
   assert.deepEqual(await onSale(s.guild), []);
 });
 
+test('one game Steam won’t answer for doesn’t cost the rest of its batch', async () => {
+  const s = server(['a']);
+  addGame(s.id, 'Pulled', 62);
+  addGame(s.id, 'Fine', 63);
+  world.unlisted.add(62);
+  world.prices.set(63, { discount: 50 });
+  await checkSales(s.client);
+  assert.match(s.text(), /Fine/);
+  assert.doesNotMatch(s.text(), /Pulled/);
+});
+
+test('a batch that fails doesn’t stop the next', async () => {
+  const s = server(['a']);
+  for (let n = 0; n < 51; n++) addGame(s.id, `Part ${n}`, 6000 + n);
+  world.prices.set(6009, { discount: 50 }); // Part 9 sorts last, so it's alone in the second batch
+  world.brokenBatchWith = 6000;
+  await checkSales(s.client);
+  assert.match(s.text(), /Part 9/);
+});
+
 test('a failed price check changes nothing', async () => {
   const s = server(['a']);
   addGame(s.id, 'Steady', 37);
@@ -559,6 +601,16 @@ test('a post goes out without the lowest price if CheapShark fails or doesn’t 
   assert.doesNotMatch(t.text(), /Lowest/);
 });
 
+test('a game CheapShark has no history for gets no lowest price line', async () => {
+  const s = server(['a']);
+  addGame(s.id, 'No History', 64);
+  world.prices.set(64, { discount: 50 });
+  world.lowest.set(64, '1.00');
+  world.noPriceHistory = true;
+  await checkSales(s.client);
+  assert.doesNotMatch(s.text(), /Lowest|NaN/);
+});
+
 test('the lowest price only shows for the US region, where it’s in the same money', async () => {
   const s = server(['a']);
   setSetting(s.id, 'steamCountry', 'gb');
@@ -712,6 +764,15 @@ test('/game want gives a library game with no Steam ID its ID', async () => {
   world.storeNames.set('No Id Yet', 74);
   await runWant(s, 'want5', 'No Id Yet');
   assert.deepEqual(wantsOf('want5'), [{ name: 'No Id Yet', steam_appid: 74 }]);
+});
+
+test('/game want keeps a library name that Steam writes differently', async () => {
+  const s = server(['want10']);
+  addGame(s.id, 'Slay the Spire II', null);
+  world.storeNames.set('Slay the Spire II', 79);
+  world.storeTitles.set('Slay the Spire II', 'Slay the Spire 2');
+  await runWant(s, 'want10', 'Slay the Spire II');
+  assert.deepEqual(wantsOf('want10'), [{ name: 'Slay the Spire II', steam_appid: 79 }]);
 });
 
 test('/game want asks for a link when Steam can’t find a game', async () => {
