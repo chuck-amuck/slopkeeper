@@ -1,4 +1,4 @@
-import { api, attempt, confirmButton, el, request, state, toast } from './lib.js';
+import { api, attempt, confirmButton, el, request, RequestError, state, toast } from './lib.js';
 
 const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
@@ -46,6 +46,12 @@ export function renderSettings(main) {
   const loading = el('div', { className: 'empty' }, 'Loading settings…');
   main.append(loading);
   const fields = new Map();
+
+  async function refreshFields() {
+    const fresh = await request(api('/settings'));
+    if (guildId !== state.guildId || !main.isConnected) return;
+    for (const [key, update] of fields) update(fresh.settings.find((s) => s.key === key), fresh);
+  }
 
   function control(setting, spec, data, save) {
     const value = setting.value;
@@ -102,9 +108,7 @@ export function renderSettings(main) {
     };
 
     const refresh = async () => {
-      const fresh = await request(api('/settings'));
-      if (guildId !== state.guildId || !main.isConnected) return;
-      for (const [key, update] of fields) update(fresh.settings.find((s) => s.key === key), fresh);
+      await refreshFields();
       if (setting.key.startsWith('freeGames')) void paintFreeGames();
       if (setting.key.startsWith('sale')) void paintSales();
     };
@@ -211,9 +215,99 @@ export function renderSettings(main) {
     return el('section', { className: 'card' }, el('h2', {}, 'On sale now'), salesBody);
   }
 
-  function joinSoundCard(rows) {
+  /** A row of its own under a list: what it does on the left, the form on the right, and any message below */
+  function adder(title, hint, controls, submit) {
+    const message = el('div', { className: 'message', hidden: true });
+    const say = (text, bad) => {
+      message.hidden = !text;
+      message.textContent = text ?? '';
+      message.className = bad ? 'message bad' : 'message';
+    };
+    const form = el(
+      'form',
+      {
+        className: 'control stacked',
+        onsubmit: (e) => {
+          e.preventDefault();
+          const button = form.querySelector('button');
+          button.disabled = true;
+          void attempt(async () => {
+            say(null);
+            try {
+              say((await submit()).warning);
+            } catch (err) {
+              if (!(err instanceof RequestError)) throw err;
+              say(err.message, true);
+            }
+          }).finally(() => {
+            button.disabled = false;
+          });
+        },
+      },
+      controls,
+    );
+    return el('div', { className: 'field' }, el('div', {}, el('div', { className: 'series-name' }, title), el('p', { className: 'hint' }, hint)), form, message);
+  }
+
+  function gamePingCard(first) {
     const body = el('div');
-    const card = el('section', { className: 'card' }, el('h2', {}, 'Join sounds'), body);
+    const games = el('datalist', { id: 'ping-games' });
+    const game = el('input', { required: true, maxLength: 100, list: 'ping-games', autocomplete: 'off', placeholder: 'Game', ariaLabel: 'Game' });
+    const role = el('select', { ariaLabel: 'Role' });
+
+    const load = async () => paint(await request(api('/game-pings')));
+
+    function pingRow(ping) {
+      const who = `${ping.people} ${ping.people === 1 ? 'person' : 'people'}`;
+      const label = ping.role === null ? 'Its role was deleted' : `@${ping.role} · ${who}${ping.made ? ' · Made by the bot' : ''}`;
+      return el(
+        'div',
+        { className: 'field' },
+        el('div', {}, el('div', { className: 'series-name' }, ping.game), el('p', { className: 'hint' }, label)),
+        el(
+          'div',
+          { className: 'control' },
+          confirmButton({ ariaLabel: `Remove pings for ${ping.game}` }, 'Remove', ping.made && ping.role !== null ? 'Delete the role?' : 'Remove it?', async () => {
+            await request(api(`/game-pings/${ping.id}`), { method: 'DELETE' });
+            toast(`Removed pings for ${ping.game}.`);
+            await Promise.all([load(), refreshFields()]);
+          }),
+        ),
+      );
+    }
+
+    function paint(data) {
+      body.replaceChildren(...(data.pings.length ? data.pings.map(pingRow) : [el('p', { className: 'card-note empty-note' }, 'No games have pings yet.')]));
+      games.replaceChildren(...data.games.map((name) => el('option', { value: name })));
+      role.replaceChildren(el('option', { value: '' }, 'Make a new role'), ...data.roles.map((r) => el('option', { value: r.id }, `@${r.name}`)));
+    }
+
+    const add = adder('Add a game', 'Pick a game or type one, as Discord shows it when people play. Only roles the bot can hand out are listed.', [game, role, el('button', { type: 'submit' }, 'Add')], async () => {
+      const name = game.value.trim();
+      const result = await request(api('/game-pings'), { method: 'POST', json: { game: name, ...(role.value && { roleId: role.value }) } });
+      toast(`Added pings for ${name}.`);
+      game.value = '';
+      await Promise.all([load(), refreshFields()]);
+      return result;
+    });
+
+    paint(first);
+    return el(
+      'section',
+      { className: 'card' },
+      el('h2', {}, 'Game pings'),
+      el('p', { className: 'card-note' }, 'People pick theirs with /pings. Anyone with this page’s password can add and remove these, which makes and deletes Discord roles.'),
+      games,
+      body,
+      add,
+    );
+  }
+
+  function joinSoundCard(first) {
+    const body = el('div');
+    const who = el('select', { required: true, ariaLabel: 'Person' }, el('option', { value: '' }, 'Pick a person'), first.members.map((m) => el('option', { value: m.id }, m.name)));
+    const sound = el('select', { required: true, ariaLabel: 'Sound' }, el('option', { value: '' }, 'Pick a sound'), first.sounds.map((name) => el('option', { value: name }, name)));
+    const load = async () => paint((await request(api('/join-sounds'))).joinSounds);
     const paint = (current) =>
       body.replaceChildren(
         ...(current.length
@@ -228,20 +322,29 @@ export function renderSettings(main) {
                   confirmButton({ ariaLabel: `Remove ${row.who}’s join sound` }, 'Remove', 'Remove it?', async () => {
                     await request(api(`/join-sounds/${row.id}`), { method: 'DELETE' });
                     toast(`Removed ${row.who}’s join sound.`);
-                    paint((await request(api('/join-sounds'))).joinSounds);
+                    await load();
                   }),
                 ),
               ),
             )
-          : [el('p', { className: 'card-note empty-note' }, 'Nobody has one yet. People pick their own in Discord with /sound join.')]),
+          : [el('p', { className: 'card-note empty-note' }, 'Nobody has one yet. People can pick their own with /sound join, or you can set one here.')]),
       );
-    paint(rows);
-    return card;
+    const set = adder('Set a join sound', 'This replaces any they have.', [who, sound, el('button', { type: 'submit' }, 'Set')], async () => {
+      const person = who.selectedOptions[0].textContent;
+      const result = await request(api(`/join-sounds/${who.value}`), { method: 'PUT', json: { name: sound.value } });
+      toast(`${person}’s join sound is ${sound.value}.`);
+      who.value = '';
+      sound.value = '';
+      await load();
+      return result;
+    });
+    paint(first.joinSounds);
+    return el('section', { className: 'card' }, el('h2', {}, 'Join sounds'), body, set);
   }
 
   void attempt(async () => {
     try {
-      const [data, { joinSounds }] = await Promise.all([request(api('/settings')), request(api('/join-sounds'))]);
+      const [data, joinSounds, gamePings] = await Promise.all([request(api('/settings')), request(api('/join-sounds')), request(api('/game-pings'))]);
       if (guildId !== state.guildId || !main.isConnected) return;
       const byKey = new Map(data.settings.map((s) => [s.key, s]));
       const grouped = new Set(GROUPS.flatMap(([, keys]) => keys));
@@ -256,6 +359,7 @@ export function renderSettings(main) {
             el('h2', {}, title),
             keys.filter((key) => byKey.has(key)).map((key) => field(byKey.get(key), data)),
           );
+          if (title === 'Hop-on pings') return [card, gamePingCard(gamePings)];
           if (title === 'Sale alerts') return [card, salesCard()];
           return title === 'Free games' ? [card, freeGamesCard()] : [card];
         }),

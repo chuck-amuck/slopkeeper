@@ -913,6 +913,11 @@ dialog .actions button:first-child:not(.primary):has(+ button) {
   margin-left: auto;
 }
 
+.field .control.stacked {
+  flex-direction: column;
+  align-items: stretch;
+}
+
 dialog select,
 dialog textarea {
   width: 100%;

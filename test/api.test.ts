@@ -10,6 +10,7 @@ import { after, before, beforeEach, mock, test, type TestContext } from 'node:te
 import path from 'node:path';
 import type { AddressInfo } from 'node:net';
 import { createApi, webApi } from '../src/api.ts';
+import { candidatesFor } from '../src/features/games.ts';
 import { config } from '../src/config.ts';
 import { db } from '../src/db.ts';
 import { logActivity } from '../src/activity.ts';
@@ -56,7 +57,7 @@ const channel = (id: string, name: string, type: ChannelType, rawPosition: numbe
   permissionsFor: () => ({ has: (flag: bigint) => permitted.includes(flag) }),
   toString: () => `<#${id}>`,
 });
-const role = (id: string, name: string, position: number, extra = {}) => ({ id, name, position, managed: false, mentionable: true, guild: null as unknown, toString: () => `<@&${id}>`, ...extra });
+const role = (id: string, name: string, position: number, extra = {}) => ({ id, name, position, managed: false, mentionable: true, members: new Map(), guild: null as unknown, toString: () => `<@&${id}>`, ...extra });
 
 const roles = new Map([
   [GUILD, role(GUILD, '@everyone', 0)],
@@ -64,7 +65,12 @@ const roles = new Map([
   ['r2', role('r2', 'Bot role', 2, { managed: true })],
   ['333', role('333', 'Mods', 5)],
 ]);
-const me = { permissions: { has: () => true }, roles: { highest: { name: 'Slopkeeper', position: 3 } } };
+let manageRoles = true;
+let mentionEveryone = true;
+const me = {
+  permissions: { has: (flag: bigint) => (flag === PermissionFlagsBits.ManageRoles ? manageRoles : flag === PermissionFlagsBits.MentionEveryone ? mentionEveryone : true) },
+  roles: { highest: { name: 'Slopkeeper', position: 3 } },
+};
 for (const r of roles.values()) r.guild = { members: { me } };
 
 const guild = {
@@ -94,7 +100,18 @@ const guild = {
       ['704', channel('704', 'AFK', ChannelType.GuildVoice, 7, [member('u3', 'Cy')])],
     ]),
   },
-  roles: { cache: roles },
+  roles: {
+    cache: roles,
+    create: async ({ name, mentionable }: { name: string; mentionable: boolean }) => {
+      if (refuseDiscord) throw refuseDiscord;
+      const made = role(`made-${roles.size}`, name, 1, { mentionable, guild: { members: { me } } });
+      roles.set(made.id, made);
+      return made;
+    },
+    delete: async (id: string) => {
+      if (!roles.delete(id)) throw new Error('Unknown Role');
+    },
+  },
   emojis: {
     cache: new Collection([['123456789012345678', { id: '123456789012345678', name: 'slop', animated: false, toString: () => '<:slop:123456789012345678>' }]]),
     fetch: async (id: string) => {
@@ -156,6 +173,9 @@ after(() => {
 beforeEach(() => {
   discordSounds = new Map();
   refuseDiscord = null;
+  manageRoles = true;
+  mentionEveryone = true;
+  for (const id of roles.keys()) if (id.startsWith('made-')) roles.delete(id);
   panelEdits = [];
   sent = [];
   deletedEvents = [];
@@ -165,7 +185,7 @@ beforeEach(() => {
   db.exec(`DELETE FROM sound_emoji; DELETE FROM discord_sounds; DELETE FROM sound_plays; DELETE FROM guild_settings; DELETE FROM sound_panels;
     DELETE FROM sound_favourites; DELETE FROM game_nights; DELETE FROM game_night_series; DELETE FROM game_plays; DELETE FROM session_members; DELETE FROM sessions;
     DELETE FROM sound_levels; DELETE FROM join_sounds; DELETE FROM activity; DELETE FROM game_aliases; DELETE FROM deleted_sounds; DELETE FROM games;
-    DELETE FROM steam_links; DELETE FROM steam_owned; DELETE FROM sale_prices`);
+    DELETE FROM steam_links; DELETE FROM steam_owned; DELETE FROM sale_prices; DELETE FROM game_roles; DELETE FROM hidden_apps`);
   db.prepare("INSERT INTO sound_panels (message_id, guild_id, channel_id, page) VALUES ('m', ?, '111', 0)").run(GUILD);
   if (existsSync(soundFolder)) for (const f of readdirSync(soundFolder)) execFileSync('rm', ['-r', path.join(soundFolder, f)]);
 });
@@ -2073,4 +2093,182 @@ test('/steam link, list and unlink work as they did', async (t) => {
   assert.equal((await run('unlink', {})).content, 'Unlinked <@u1>.');
   assert.equal(await account('u1'), null);
   assert.match((await run('list', {})) as string, /Nobody here has linked/);
+});
+
+const pingsUrl = `/guilds/${GUILD}/game-pings`;
+const addPing = (json: unknown) => ok(pingsUrl, { method: 'POST', json });
+const pingRows = () => db.prepare('SELECT role_id, guild_id, name, created FROM game_roles ORDER BY name').all() as any[];
+
+test('makes a role for a game, and removing it deletes the role', async () => {
+  assert.deepEqual(await addPing({ game: '  Valheim ' }), { warning: null });
+  const [ping] = (await ok(pingsUrl)).pings;
+  assert.deepEqual(ping, { id: ping.id, game: 'Valheim', role: 'Valheim', people: 0, made: true });
+  assert.equal(roles.get(ping.id)!.mentionable, true);
+  assert.equal(activityText().at(-1), 'Added game pings for **Valheim**');
+
+  await ok(`${pingsUrl}/${ping.id}`, { method: 'DELETE' });
+  assert.equal(roles.has(ping.id), false);
+  assert.deepEqual(pingRows(), []);
+  assert.equal(activityText().at(-1), 'Removed game pings for **Valheim**');
+});
+
+test('uses a role that’s picked, and leaves it in place when removed', async () => {
+  const gamers = roles.get('r1')!;
+  gamers.members = new Map([['u1', {}], ['u2', {}]]);
+  await addPing({ game: 'Halo', roleId: 'r1' });
+  assert.deepEqual((await ok(pingsUrl)).pings, [{ id: 'r1', game: 'Halo', role: 'Gamers', people: 2, made: false }]);
+  await ok(`${pingsUrl}/r1`, { method: 'DELETE' });
+  assert.equal(roles.has('r1'), true);
+  assert.deepEqual(pingRows(), []);
+  gamers.members = new Map();
+});
+
+test('only offers games and roles that can still be added', async () => {
+  insertGame('Valheim');
+  insertGame('Halo');
+  db.prepare(`INSERT INTO game_plays (guild_id, user_id, game, channel_id, started_at, ended_at) VALUES (?, 'u1', 'Played Game', 'voice', 0, 1)`).run(GUILD);
+  let data = await ok(pingsUrl);
+  assert.deepEqual(data.games, ['Halo', 'Played Game', 'Valheim']);
+  assert.deepEqual(data.roles, [{ id: 'r1', name: 'Gamers' }]);
+  await addPing({ game: 'VALHEIM', roleId: 'r1' });
+  data = await ok(pingsUrl);
+  assert.deepEqual(data.games, ['Halo', 'Played Game']);
+  assert.deepEqual(data.roles, []);
+});
+
+test('refuses roles the bot can’t hand out, and nothing is saved', async () => {
+  for (const roleId of [GUILD, 'r2']) assert.match(await refused(409, pingsUrl, { method: 'POST', json: { game: 'Halo', roleId } }), /^I can’t hand out /);
+  assert.equal(await refused(409, pingsUrl, { method: 'POST', json: { game: 'Halo', roleId: '333' } }), 'I can’t hand out @Mods. Pick a normal role below my role (Slopkeeper), or leave the role out and I’ll make one.');
+  assert.deepEqual(pingRows(), []);
+});
+
+test('a game has one role, and a role is for one game', async () => {
+  roles.set('555', role('555', 'Shooters', 1, { guild: { members: { me } } }));
+  await addPing({ game: 'Halo', roleId: '555' });
+  assert.equal(await refused(409, pingsUrl, { method: 'POST', json: { game: 'halo' } }), 'halo already pings @Shooters.');
+  assert.equal(await refused(409, pingsUrl, { method: 'POST', json: { game: 'Valheim', roleId: '555' } }), '@Shooters already pings for Halo.');
+  assert.equal(pingRows().length, 1);
+  roles.delete('555');
+});
+
+test('refuses a bad game ping', async () => {
+  for (const game of ['', '   ', 'x'.repeat(101), 5, undefined]) await refused(400, pingsUrl, { method: 'POST', json: { game } });
+  await refused(404, pingsUrl, { method: 'POST', json: { game: 'Halo', roleId: 'no-such-role' } });
+  assert.deepEqual(pingRows(), []);
+});
+
+test('needs Manage Roles to add game pings', async () => {
+  manageRoles = false;
+  const sizeBefore = roles.size;
+  assert.match(await refused(409, pingsUrl, { method: 'POST', json: { game: 'Halo' } }), /Manage Roles/);
+  assert.equal(roles.size, sizeBefore);
+});
+
+test('says so when Discord won’t make the role', async () => {
+  refuseDiscord = new Error('Missing Permissions');
+  assert.match(await refused(502, pingsUrl, { method: 'POST', json: { game: 'Halo' } }), /Manage Roles/);
+  assert.deepEqual(pingRows(), []);
+  assert.deepEqual(activityText(), []);
+});
+
+test('warns about a role pings can’t reach', async () => {
+  mentionEveryone = false;
+  roles.set('556', role('556', 'Quiet', 1, { mentionable: false, guild: { members: { me } } }));
+  const { warning } = await addPing({ game: 'Halo', roleId: '556' });
+  assert.equal(warning, '⚠️ Pings for @Quiet won’t notify anyone yet. Turn on Allow anyone to @mention this role in Server Settings → Roles.');
+  roles.delete('556');
+});
+
+test('shows a role deleted while the bot was away, and it can still be cleared', async () => {
+  db.prepare(`INSERT INTO game_roles (role_id, guild_id, name, created) VALUES ('gone', ?, 'Halo', 1)`).run(GUILD);
+  assert.deepEqual((await ok(pingsUrl)).pings, [{ id: 'gone', game: 'Halo', role: null, people: 0, made: true }]);
+  await ok(`${pingsUrl}/gone`, { method: 'DELETE' });
+  assert.deepEqual(pingRows(), []);
+});
+
+test('game pings stay within their server', async () => {
+  db.prepare(`INSERT INTO game_roles (role_id, guild_id, name, created) VALUES ('theirs', 'other', 'Halo', 1)`).run();
+  assert.deepEqual((await ok(pingsUrl)).pings, []);
+  await refused(404, `${pingsUrl}/theirs`, { method: 'DELETE' });
+  assert.equal(pingRows().length, 1);
+  await addPing({ game: 'Halo' });
+  assert.equal(pingRows().length, 2);
+});
+
+const hiddenUrl = `/guilds/${GUILD}/hidden-games`;
+const hiddenNames = async () => ((await ok(hiddenUrl)).games as any[]).map((g) => g.name);
+
+test('a game hidden or let back in changes what’s suggested', async (t) => {
+  fakeSteam(t);
+  const id = insertGame('Portal 2', 620);
+  await mark(id, 'u1', { owns: true });
+  const suggested = async () => (await candidatesFor(guild as never, ['u1']))!.candidates.map((c) => c.name);
+  assert.deepEqual(await suggested(), ['Portal 2']);
+
+  await ok(`${hiddenUrl}/620`, { method: 'PUT' });
+  assert.deepEqual((await ok(hiddenUrl)).games, [{ appid: 620, name: 'Portal 2' }]);
+  assert.deepEqual(await suggested(), []);
+  assert.equal(activityText().at(-1), 'Hid **Portal 2** from suggestions');
+
+  await ok(`${hiddenUrl}/620`, { method: 'DELETE' });
+  assert.deepEqual(await hiddenNames(), []);
+  assert.deepEqual(await suggested(), ['Portal 2']);
+  assert.equal(activityText().at(-1), 'Let **Portal 2** be suggested again');
+  await refused(404, `${hiddenUrl}/620`, { method: 'DELETE' });
+});
+
+test('hiding twice changes nothing', async () => {
+  insertGame('Portal 2', 620);
+  await ok(`${hiddenUrl}/620`, { method: 'PUT' });
+  await ok(`${hiddenUrl}/620`, { method: 'PUT' });
+  assert.deepEqual(await hiddenNames(), ['Portal 2']);
+});
+
+test('only a library game with a Steam link can be hidden', async () => {
+  insertGame('Board Game');
+  for (const id of ['620', '0', 'abc', 'null']) await refused(404, `${hiddenUrl}/${id}`, { method: 'PUT' });
+  assert.deepEqual(await hiddenNames(), []);
+});
+
+test('hidden games stay within their server', async () => {
+  db.prepare(`INSERT INTO games (guild_id, name, steam_appid, added_by) VALUES ('other', 'Theirs', 620, 'u1')`).run();
+  db.prepare(`INSERT INTO hidden_apps (guild_id, appid, name, hidden_by) VALUES ('other', 730, 'Also Theirs', 'u1')`).run();
+  assert.deepEqual(await hiddenNames(), []);
+  await refused(404, `${hiddenUrl}/620`, { method: 'PUT' });
+  await refused(404, `${hiddenUrl}/730`, { method: 'DELETE' });
+  assert.equal((db.prepare('SELECT COUNT(*) AS n FROM hidden_apps').get() as { n: number }).n, 1);
+});
+
+const joinUrl = `/guilds/${GUILD}/join-sounds`;
+const setJoin = (user: string, json: unknown) => ok(`${joinUrl}/${user}`, { method: 'PUT', json });
+
+test('sets anyone’s join sound, and a new one replaces the old', async () => {
+  await upload('horn');
+  await upload('bell');
+  const data = await ok(joinUrl);
+  assert.deepEqual(data.members.map((m: any) => m.name), ['Ana', 'Ben', 'Cy']);
+  assert.deepEqual(data.sounds.sort(), ['bell', 'horn']);
+
+  assert.deepEqual(await setJoin('u2', { name: 'horn' }), { warning: null });
+  assert.deepEqual((await ok(joinUrl)).joinSounds, [{ id: 'u2', who: 'Ben', name: 'horn' }]);
+  await setJoin('u2', { name: 'bell' });
+  assert.deepEqual((await ok(joinUrl)).joinSounds, [{ id: 'u2', who: 'Ben', name: 'bell' }]);
+  assert.equal(activityText().at(-1), 'Set Ben’s join sound to **bell**');
+});
+
+test('refuses a join sound that doesn’t exist, or someone who isn’t here', async () => {
+  await upload('horn');
+  guild.members.cache.set('b1', member('b1', 'Some Bot', true)[1] as never);
+  for (const name of ['nope', '', 5, undefined]) await refused(404, `${joinUrl}/u1`, { method: 'PUT', json: { name } });
+  await refused(404, `${joinUrl}/nobody`, { method: 'PUT', json: { name: 'horn' } });
+  await refused(404, `${joinUrl}/b1`, { method: 'PUT', json: { name: 'horn' } });
+  guild.members.cache.delete('b1');
+  assert.deepEqual((await ok(joinUrl)).joinSounds, []);
+});
+
+test('still sets a join sound while they’re off, and says it won’t play', async () => {
+  await upload('horn');
+  await ok(`/guilds/${GUILD}/settings/joinSounds`, { method: 'PUT', json: { value: false } });
+  assert.match((await setJoin('u1', { name: 'horn' })).warning, /turned off/);
+  assert.equal((await ok(joinUrl)).joinSounds.length, 1);
 });

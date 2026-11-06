@@ -190,6 +190,19 @@ export function setOwned(game: GameRow, userId: string, on: boolean) {
   setWanted(game, userId, false);
 }
 
+export function hiddenGames(guildId: string) {
+  return db.prepare('SELECT appid, name FROM hidden_apps WHERE guild_id = ? ORDER BY name').all(guildId) as { appid: number; name: string }[];
+}
+
+export function hideGame(guildId: string, appid: number, name: string, userId: string) {
+  db.prepare('INSERT OR IGNORE INTO hidden_apps (guild_id, appid, name, hidden_by) VALUES (?, ?, ?, ?)').run(guildId, appid, name, userId);
+}
+
+/** Returns whether it was hidden */
+export function unhideGame(guildId: string, appid: number): boolean {
+  return db.prepare('DELETE FROM hidden_apps WHERE guild_id = ? AND appid = ?').run(guildId, appid).changes > 0;
+}
+
 export function setWanted(game: GameRow, userId: string, on: boolean) {
   if (on) db.prepare('INSERT OR IGNORE INTO game_wants (game_id, user_id) VALUES (?, ?)').run(game.id, userId);
   else db.prepare('DELETE FROM game_wants WHERE game_id = ? AND user_id = ?').run(game.id, userId);
@@ -423,8 +436,10 @@ export const games: Feature = {
 
         if (sub === 'unhide') {
           const name = i.options.getString('name', true);
-          const { changes } = db.prepare('DELETE FROM hidden_apps WHERE guild_id = ? AND name = ?').run(i.guildId, name);
-          return i.reply(changes ? `👀 **${name}** can be suggested again.` : { content: 'That game is not hidden.', flags: MessageFlags.Ephemeral });
+          const hidden = hiddenGames(i.guildId).find((g) => g.name === name);
+          if (!hidden) return i.reply({ content: 'That game is not hidden.', flags: MessageFlags.Ephemeral });
+          unhideGame(i.guildId, hidden.appid);
+          return i.reply(`👀 **${name}** can be suggested again.`);
         }
 
         if (sub === 'want') {
@@ -484,8 +499,7 @@ export const games: Feature = {
     }
     const shown = i.message.embeds[0]?.title?.replace(/^🎲 /, '');
     if (action === 'hide') {
-      const title = shown ?? `App ${target}`;
-      db.prepare('INSERT OR IGNORE INTO hidden_apps (guild_id, appid, name, hidden_by) VALUES (?, ?, ?, ?)').run(i.guildId, Number(target), title, i.user.id);
+      hideGame(i.guildId, Number(target), shown ?? `App ${target}`, i.user.id);
     }
     await i.deferUpdate();
     return i.editReply(await buildPick(i.guild, humansIn(i.member.voice.channel).map((m) => m.id), shown));

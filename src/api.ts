@@ -8,7 +8,8 @@ import { config } from './config.ts';
 import * as discordBoard from './discordSounds.ts';
 import { cancelNight, gameNames, planNight, readWhen, stopSeries, upcomingNights } from './features/gamenight.ts';
 import { reviewGiveaways } from './features/freegames.ts';
-import { addGame, addMemberGame, allGames, gameById, groupMembers, memberGames, ownersOf, parseSteamAppId, removeGame, setGameDetails, setOwned, setWanted, steamOwnersOf, wantedBy, type GameRow } from './features/games.ts';
+import { addGameRole, canHandOut, gameRoles, pingableGames, removeGameRole } from './features/gameroles.ts';
+import { addGame, addMemberGame, allGames, gameById, groupMembers, hiddenGames, hideGame, memberGames, ownersOf, parseSteamAppId, removeGame, setGameDetails, setOwned, setWanted, steamOwnersOf, unhideGame, wantedBy, type GameRow } from './features/games.ts';
 import { onSale, saleName, salePrices, saleReasons, storeUrl } from './features/sales.ts';
 import { linkSteam, profileUrl, refreshAll, steamLinks, unlinkSteam } from './features/steam.ts';
 import { activity, checkpoint, PERIODS, stats } from './features/gamestats.ts';
@@ -57,7 +58,7 @@ import {
 } from './features/soundboard.ts';
 import { DEFAULTS, idSetting, isAllowed, setSetting, setting, type SettingKey } from './settings.ts';
 import type { Feature } from './types.ts';
-import { humansIn, servedGuilds } from './util.ts';
+import { humansIn, pingWarning, servedGuilds } from './util.ts';
 
 // A little over the largest sound, which is the largest thing anything sends
 const MAX_BODY = 5 * 1024 * 1024 + 1024;
@@ -281,7 +282,82 @@ function activityList(guild: Guild, url: URL) {
 }
 
 function joinSoundList(guild: Guild) {
-  return { joinSounds: joinSounds(guild.id).map((r) => ({ id: r.user_id, who: nameOf(guild, r.user_id), name: r.name })) };
+  return {
+    joinSounds: joinSounds(guild.id).map((r) => ({ id: r.user_id, who: nameOf(guild, r.user_id), name: r.name })),
+    members: memberList(guild),
+    sounds: listSounds(guild.id).map((s) => s.name),
+  };
+}
+
+async function setJoinSoundFromWeb(guild: Guild, req: IncomingMessage, userId: string) {
+  const person = guild.members.cache.get(userId);
+  if (!person || person.user.bot) throw new Refused(404, 'They aren’t in this server.');
+  const { name } = await readJson(req);
+  const sound = typeof name === 'string' ? findSound(guild.id, name) : undefined;
+  if (!sound) throw new Refused(404, 'No sound by that name.');
+  setJoinSound(guild.id, userId, sound.name);
+  logActivity(guild.id, FROM_WEB, `Set ${person.displayName}’s join sound to **${sound.name}**`);
+  return { warning: setting(guild.id, 'joinSounds') ? null : 'Join sounds are turned off in this server for now, so it won’t play until they’re turned back on.' };
+}
+
+function gamePingList(guild: Guild) {
+  const taken = gameRoles(guild.id);
+  const used = new Set(taken.map((r) => r.role_id));
+  const named = new Set(taken.map((r) => r.name.toLowerCase()));
+  return {
+    pings: taken.map((r) => {
+      const role = guild.roles.cache.get(r.role_id);
+      return { id: r.role_id, game: r.name, role: role?.name ?? null, people: role?.members.size ?? 0, made: !!r.created };
+    }),
+    games: pingableGames(guild.id).filter((name) => !named.has(name.toLowerCase())),
+    roles: [...guild.roles.cache.values()]
+      .filter((r) => canHandOut(guild, r) && !used.has(r.id))
+      .sort((a, b) => b.position - a.position)
+      .map((r) => ({ id: r.id, name: r.name })),
+  };
+}
+
+async function addGamePing(guild: Guild, req: IncomingMessage) {
+  const { game, roleId } = await readJson(req);
+  const name = typeof game === 'string' ? game.trim() : '';
+  if (!name || name.length > 100) throw new Refused(400, 'Give a game’s name in 100 characters or fewer.');
+  const role = roleId === undefined || roleId === null ? null : guild.roles.cache.get(String(roleId));
+  if (role === undefined) throw new Refused(404, 'That role isn’t in this server.');
+  const result = await addGameRole(guild, name, role, 'the web UI').catch((err: unknown) => {
+    console.error(err);
+    throw new Refused(502, 'Discord wouldn’t make the role. Check that the bot has Manage Roles.');
+  });
+  if (typeof result === 'string') throw new Refused(409, plain(guild, result));
+  logActivity(guild.id, FROM_WEB, `Added game pings for **${name}**`);
+  const warning = pingWarning(result.role).trim();
+  return { warning: warning ? plain(guild, warning) : null };
+}
+
+async function removeGamePing(guild: Guild, roleId: string) {
+  const row = gameRoles(guild.id).find((r) => r.role_id === roleId);
+  if (!row) throw new Refused(404, 'That game has no ping role any more.');
+  await removeGameRole(guild, row, 'the web UI');
+  logActivity(guild.id, FROM_WEB, `Removed game pings for **${row.name}**`);
+  return {};
+}
+
+function handleHidden(guild: Guild, req: IncomingMessage, id: string) {
+  const appid = /^\d+$/.test(id) ? Number(id) : undefined;
+  if (req.method === 'PUT') {
+    const game = allGames(guild.id).find((g) => g.steam_appid === appid);
+    if (!game) throw new Refused(404, 'Only a library game with a Steam link can be hidden.');
+    hideGame(guild.id, game.steam_appid!, game.name, FROM_WEB);
+    logActivity(guild.id, FROM_WEB, `Hid **${game.name}** from suggestions`);
+    return {};
+  }
+  if (req.method === 'DELETE') {
+    const game = hiddenGames(guild.id).find((g) => g.appid === appid);
+    if (!game) throw new Refused(404, 'That game isn’t hidden.');
+    unhideGame(guild.id, game.appid);
+    logActivity(guild.id, FROM_WEB, `Let **${game.name}** be suggested again`);
+    return {};
+  }
+  throw new Refused(405, 'Not here.');
 }
 
 /** The same numbers as /gamestats and /stats, for the web UI's charts */
@@ -735,6 +811,11 @@ async function handle(client: Client<true>, req: IncomingMessage, res: ServerRes
     return { games: memberGames(guild).map((g) => ({ appid: g.appid, name: g.name, owners: g.owners.map((id) => nameOf(guild, id)).sort((a, b) => a.localeCompare(b)) })) };
   }
   if (section === 'games' && rest.length >= 1 && rest.length <= 3) return handleGame(guild, req, rest[0], rest[1], rest[2]);
+  if (section === 'hidden-games' && !rest.length && req.method === 'GET') return { games: hiddenGames(guild.id) };
+  if (section === 'hidden-games' && rest.length === 1) return handleHidden(guild, req, rest[0]);
+  if (section === 'game-pings' && !rest.length && req.method === 'GET') return gamePingList(guild);
+  if (section === 'game-pings' && !rest.length && req.method === 'POST') return addGamePing(guild, req);
+  if (section === 'game-pings' && rest.length === 1 && req.method === 'DELETE') return removeGamePing(guild, rest[0]);
   if (section === 'steam-links' && !rest.length && req.method === 'GET') return steamAccountList(guild);
   if (section === 'steam-links' && rest.length === 1) return handleSteamAccount(guild, req, rest[0]);
   if (section === 'steam-refresh' && !rest.length && req.method === 'POST') {
@@ -758,6 +839,7 @@ async function handle(client: Client<true>, req: IncomingMessage, res: ServerRes
   if (section === 'game-names' && !rest.length && req.method === 'GET') return gameNameList(guild);
   if (section === 'game-names' && rest.length === 1 && (rest[0] === 'merge' || rest[0] === 'separate') && req.method === 'POST') return changeGameNames(guild, req, rest[0]);
   if (section === 'join-sounds' && !rest.length && req.method === 'GET') return joinSoundList(guild);
+  if (section === 'join-sounds' && rest.length === 1 && req.method === 'PUT') return setJoinSoundFromWeb(guild, req, rest[0]);
   if (section === 'join-sounds' && rest.length === 1 && req.method === 'DELETE') {
     const who = joinSounds(guild.id).find((r) => r.user_id === rest[0]);
     if (!who) throw new Refused(404, 'They don’t have a join sound.');
