@@ -285,7 +285,8 @@ function statsFor(guild: Guild, url: URL) {
     user: user ? { id: user, name: nameOf(guild, user) } : null,
     game: game ?? null,
     totals: {
-      gameMs: players.reduce((sum, p) => sum + p.ms, 0),
+      gameMs: games.reduce((sum, g) => sum + g.ms, 0),
+      playerMs: players.reduce((sum, p) => sum + p.ms, 0),
       games: games.length,
       people: players.length,
       voiceMs: voice.reduce((sum, p) => sum + p.secs * 1000, 0),
@@ -293,7 +294,7 @@ function statsFor(guild: Guild, url: URL) {
     games: games.slice(0, MAX_RANKED).map((g) => ({ name: g.key, ms: g.ms, people: g.n })),
     players: players.slice(0, MAX_RANKED).map((p) => ({ id: p.key, name: nameOf(guild, p.key), ms: p.ms, games: p.n })),
     voice: voice.slice(0, MAX_RANKED).map((p) => ({ id: p.userId, name: nameOf(guild, p.userId), ms: p.secs * 1000, nights: p.nights })),
-    activity: activity(guild.id, since, now, setting(guild.id, 'timezone'), isMember, user, game),
+    activity: activity(guild.id, since, now, setting(guild.id, 'timezone'), user, game),
   };
 }
 

@@ -21,14 +21,69 @@ play.run('other', 'a', 'Valheim', t - HOUR, t);
 const hours = (rows: { key: string; ms: number; n: number }[]) => rows.map((r) => [r.key, Math.round(r.ms / HOUR), r.n]);
 
 test('adds up the server’s games over a period', () => {
-  assert.deepEqual(hours(stats('g', t - 7 * DAY, 'none', 'game')), [['Valheim', 3, 2]]);
-  assert.deepEqual(hours(stats('g', t - 30 * DAY, 'none', 'game')), [['Valheim', 5, 2]]);
-  assert.deepEqual(hours(stats('g', 0, 'none', 'game')), [['Valheim', 5, 2], ['Lethal Company', 1, 1]]);
+  // a played 2h and b played 1h of that, so the game was on for 2h
+  assert.deepEqual(hours(stats('g', t - 7 * DAY, 'none', 'game')), [['Valheim', 2, 2]]);
+  assert.deepEqual(hours(stats('g', t - 30 * DAY, 'none', 'game')), [['Valheim', 4, 2]]);
+  assert.deepEqual(hours(stats('g', 0, 'none', 'game')), [['Valheim', 4, 2], ['Lethal Company', 1, 1]]);
 });
 
 test('breaks down per person and per game', () => {
   assert.deepEqual(hours(stats('g', 0, 'user', 'game', 'a')), [['Valheim', 4, 1], ['Lethal Company', 1, 1]]);
   assert.deepEqual(hours(stats('g', 0, 'game', 'user_id', undefined, 'Valheim')), [['a', 4, 1], ['b', 1, 1]]);
+});
+
+test('a game’s time is how long anyone was playing it', () => {
+  const add = (game: string, user: string, from: number, to: number, channel = 'voice') =>
+    db.prepare('INSERT INTO game_plays (guild_id, user_id, game, channel_id, started_at, ended_at) VALUES (?, ?, ?, ?, ?, ?)').run('length', user, game, channel, t - from * HOUR, t - to * HOUR);
+  add('Overlap', 'a', 10, 8);
+  add('Overlap', 'b', 9, 7);
+  add('Apart', 'a', 10, 9);
+  add('Apart', 'b', 8, 7);
+  add('Inside', 'a', 10, 6);
+  add('Inside', 'b', 9, 8);
+  add('Touching', 'a', 10, 9);
+  add('Touching', 'b', 9, 8);
+  add('Two rooms', 'a', 10, 8, 'v1');
+  add('Two rooms', 'b', 10, 8, 'v2');
+  add('Crowded', 'a', 3, 2);
+  add('Crowded', 'b', 3, 2);
+  add('Crowded', 'c', 3, 2);
+  add('Crowded', 'd', 3, 2);
+  // Old rows aren't counted, even where they'd add time
+  db.prepare(`INSERT INTO game_plays (guild_id, user_id, game, started_at, ended_at) VALUES ('length', 'e', 'Crowded', ?, ?)`).run(t - 5 * HOUR, t - 4 * HOUR);
+
+  assert.deepEqual(
+    hours(stats('length', 0, 'none', 'game')).sort(),
+    [['Apart', 2, 2], ['Crowded', 1, 4], ['Inside', 4, 2], ['Overlap', 3, 2], ['Touching', 2, 2], ['Two rooms', 2, 2]],
+  );
+  // Ranked by that, not by everyone's time: Crowded has 4h of that but was only on for 1h
+  assert.equal(stats('length', 0, 'none', 'game').at(-1)!.key, 'Crowded');
+  // Cut off at the period, partly through Overlap's second person
+  assert.deepEqual(hours(stats('length', 0, 'game', 'game', undefined, 'Overlap', t - 8 * HOUR)), [['Overlap', 2, 2]]);
+  assert.deepEqual(hours(stats('length', t - 9 * HOUR, 'game', 'game', undefined, 'Overlap')), [['Overlap', 2, 2]]);
+  // Each person's own time stays their own
+  assert.deepEqual(hours(stats('length', 0, 'game', 'user_id', undefined, 'Overlap')).sort(), [['a', 2, 1], ['b', 2, 1]]);
+  assert.deepEqual(hours(stats('length', 0, 'user', 'game', 'a')).find((r) => r[0] === 'Overlap'), ['Overlap', 2, 1]);
+  assert.deepEqual(hours(stats('length', 0, 'both', 'game', 'b', 'Overlap')), [['Overlap', 2, 1]]);
+});
+
+test('plays stored out of time order still join up, as ones from the upgrade are', () => {
+  const add = (user: string, from: number, to: number) =>
+    db.prepare(`INSERT INTO game_plays (guild_id, user_id, game, channel_id, started_at, ended_at) VALUES ('shuffled', ?, 'Valheim', 'voice', ?, ?)`).run(user, t - from * HOUR, t - to * HOUR);
+  add('b', 5, 4);
+  add('a', 10, 6);
+  add('c', 7, 3);
+  assert.deepEqual(hours(stats('shuffled', 0, 'none', 'game')), [['Valheim', 7, 3]]);
+  assert.equal(Math.round(activity('shuffled', t - 20 * HOUR, t, 'UTC').buckets.reduce((sum, b) => sum + b.ms, 0) / HOUR), 7);
+});
+
+test('the chart shows how long games were played, or one person’s own time', () => {
+  const total = (buckets: { ms: number }[]) => buckets.reduce((sum, b) => sum + b.ms, 0);
+  const everyone = activity('length', t - 20 * HOUR, t, 'UTC');
+  assert.equal(Math.round(total(everyone.buckets) / HOUR), 14);
+  assert.equal(Math.round(total(activity('length', t - 20 * HOUR, t, 'UTC', undefined, 'Overlap').buckets) / HOUR), 3);
+  // Two games on at once are both counted, for a person as for the server
+  assert.equal(Math.round(total(activity('length', t - 20 * HOUR, t, 'UTC', 'a').buckets) / HOUR), 11);
 });
 
 test('only counts the part of a play inside the period', () => {
@@ -63,6 +118,15 @@ test('says people, not persons', async () => {
   assert.match((await gamestats({})).description, /by 3 people/);
   assert.match((await gamestats({ game: 'Valheim' })).description, /by 2 people/);
   assert.match((await gamestats({ game: 'Deep Rock' })).description, /by 1 person/);
+});
+
+test('/gamestats shows how long games were played, and each person’s own time for one game', async () => {
+  const overall = await gamestats({});
+  assert.match(overall.fields![0].value, /Valheim\*\* · 4h/);
+  const one = await gamestats({ game: 'Valheim' });
+  assert.match(one.description, /^\*\*4h\*\* played by 2 people/);
+  assert.match(one.description, /<@a> · 4h/);
+  assert.match(one.description, /<@b> · 1h/);
 });
 
 test('uses the server nickname', async () => {
@@ -365,7 +429,7 @@ test('plays from before voice tracking aren’t counted anywhere', async (t) => 
   old.run('a', t2(4), t2(1));
   old.run('b', t2(4), t2(1));
   assert.deepEqual(stats('old', 0, 'none', 'game'), []);
-  assert.deepEqual(activity('old', 0, Date.now(), 'UTC', () => true).buckets, []);
+  assert.deepEqual(activity('old', 0, Date.now(), 'UTC').buckets, []);
   assert.deepEqual(playedTogether('old', 'a', 'b'), []);
 
   let names: { name: string }[] = [];

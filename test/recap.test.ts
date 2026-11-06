@@ -65,8 +65,9 @@ test('counts only that month, only this server and only current members', () => 
   assert.equal(embed.title, '🗓️ October 2026 recap');
   assert.match(embed.description!, /3 games/);
   assert.match(embed.description!, /2 voice sessions/);
-  assert.match(field(embed, 'Most played')!, /Deep Rock.*11h/);
-  assert.match(field(embed, 'Most played')!, /Valheim.*4h/);
+  // How long each was on, however many people were playing
+  assert.match(field(embed, 'Most played')!, /Deep Rock.*9h/);
+  assert.match(field(embed, 'Most played')!, /Valheim.*3h/);
   assert.match(field(embed, 'Most played')!, /Lethal Company.*1h/);
   assert.doesNotMatch(field(embed, 'Most played')!, /September/);
   assert.match(field(embed, 'Biggest gamers')!, /🥇 <@a> · 6h/);
