@@ -20,6 +20,37 @@ function run(guildId: string, sub: string, values: Record<string, unknown>) {
 
 const log = (guildId: string) => recentActivity(guildId, 10).map((r) => r.action);
 
+test('the delay is set with /setup sounds, within its limits', async () => {
+  assert.equal(setting('setup-delay', 'joinSoundDelayMs'), 500);
+  await run('setup-delay', 'sounds', { join_delay_ms: 1200 });
+  assert.equal(setting('setup-delay', 'joinSoundDelayMs'), 1200);
+  assert.deepEqual(log('setup-delay'), ['Set Join sound delay to 1200 ms']);
+  const sounds = (setup.commands![0].data.toJSON().options as any[]).find((o) => o.name === 'sounds');
+  const option = sounds.options.find((o: { name: string }) => o.name === 'join_delay_ms');
+  assert.deepEqual([option.min_value, option.max_value], [0, 10_000]);
+});
+
+test('/setup reset searches every setting, and refuses anything else', async () => {
+  let offered: { name: string; value: string }[] = [];
+  const search = (typed: string) =>
+    setup.commands![0].autocomplete!({ options: { getSubcommand: () => 'reset', getFocused: () => typed }, respond: async (r: typeof offered) => void (offered = r) } as never);
+  await search('');
+  assert.equal(offered.length, 25);
+  await search('JOIN SOUND DEL');
+  assert.deepEqual(offered, [{ name: 'Join sound delay', value: 'joinSoundDelayMs' }]);
+
+  let reply: { content: string } | undefined;
+  await setup.commands![0].run({
+    inCachedGuild: () => true,
+    guildId: 'setup-typed',
+    guild: { id: 'setup-typed' },
+    options: { getSubcommand: () => 'reset', getString: () => 'made up' },
+    reply: async (r: { content: string }) => (reply = r),
+  } as never);
+  assert.equal(reply!.content, 'Pick a setting from the list.');
+  assert.deepEqual(log('setup-typed'), []);
+});
+
 test('records settings changed in Discord, including ones set to nothing or zero', async () => {
   await run('setup-log', 'hopon', { cooldown_minutes: 0 });
   await run('setup-log', 'hopon-role', {});

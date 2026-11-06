@@ -39,6 +39,7 @@ export const DEFAULTS = {
   // Nothing plays until someone picks a sound for themselves, so this can default to on
   joinSounds: process.env.JOIN_SOUNDS !== 'false',
   joinSoundCooldownMin: num('JOIN_SOUND_COOLDOWN_MIN', 10),
+  joinSoundDelayMs: num('JOIN_SOUND_DELAY_MS', 500),
   // Unset lets everyone change sounds
   soundManagerRole: null as string | null,
 };
@@ -65,6 +66,7 @@ export const DEFAULT_ENV: Partial<Record<SettingKey, string>> = {
   evenVolume: 'EVEN_VOLUME',
   joinSounds: 'JOIN_SOUNDS',
   joinSoundCooldownMin: 'JOIN_SOUND_COOLDOWN_MIN',
+  joinSoundDelayMs: 'JOIN_SOUND_DELAY_MS',
 };
 
 export type SettingKey = keyof typeof DEFAULTS;

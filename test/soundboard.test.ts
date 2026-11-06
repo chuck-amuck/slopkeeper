@@ -196,8 +196,10 @@ test('plays are counted for the recap, whether from a panel or /sound play, and 
 async function joiner(t: { after(fn: () => void): void }, guildId: string) {
   await saveUpload(guildId, 'horn', '.wav', wav());
   setJoinSound(guildId, 'person', 'horn');
+  setSetting(guildId, 'joinSoundDelayMs', 0);
   const voice = channel(guildId) as any;
   voice.guild.afkChannelId = 'afk';
+  voice.guild.voiceStates = { cache: new Map([['person', { channelId: 'voice' }]]) };
   t.after(() => getVoiceConnection(guildId)?.destroy());
   const state = (channelId: string | null, bot = false) => ({ id: 'person', channelId, channel: channelId ? { ...voice, id: channelId } : null, guild: voice.guild, member: { user: { bot } } }) as never;
   /** Whether this change of voice state makes the bot head for a channel, and which */
@@ -209,7 +211,7 @@ async function joiner(t: { after(fn: () => void): void }, guildId: string) {
     connection?.destroy();
     return target;
   };
-  return { headsFor };
+  return { headsFor, state, here: voice.guild.voiceStates.cache as Map<string, { channelId: string }> };
 }
 
 function wav() {
@@ -282,6 +284,56 @@ test('it plays if the bot is already in that channel', async (t) => {
   assert.equal(await headsFor(null, 'voice'), 'voice');
   spawned.mock.restore();
   assert.equal(await headsFor(null, 'voice'), null, 'the first one counted towards the cooldown');
+});
+
+test('a delayed join sound starts once the delay is up', async (t) => {
+  const { state } = await joiner(t, 'join-delay');
+  setSetting('join-delay', 'joinSoundDelayMs', 30);
+  const playing = playJoinSound(state(null), state('voice')).catch(() => {});
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(getVoiceConnection('join-delay'), undefined, 'not yet');
+  await new Promise((resolve) => setTimeout(resolve, 60));
+  assert.equal(getVoiceConnection('join-delay')?.joinConfig.channelId, 'voice');
+  void playing;
+});
+
+test('leaving before the delay is up plays nothing, and doesn’t use up the cooldown', async (t) => {
+  const { state, here, headsFor } = await joiner(t, 'join-left');
+  setSetting('join-left', 'joinSoundDelayMs', 10);
+  const leaving = playJoinSound(state(null), state('voice'));
+  here.delete('person');
+  await leaving;
+  assert.equal(getVoiceConnection('join-left'), undefined);
+  setSetting('join-left', 'joinSoundDelayMs', 0);
+  here.set('person', { channelId: 'voice' });
+  assert.equal(await headsFor(null, 'voice'), 'voice');
+});
+
+test('moving to another channel during the delay plays nothing', async (t) => {
+  const { state, here } = await joiner(t, 'join-moved');
+  setSetting('join-moved', 'joinSoundDelayMs', 10);
+  const moving = playJoinSound(state(null), state('voice'));
+  here.set('person', { channelId: 'other' });
+  await moving;
+  assert.equal(getVoiceConnection('join-moved'), undefined);
+});
+
+test('a bot that gets busy during the delay isn’t pulled away', async (t) => {
+  const { state } = await joiner(t, 'join-taken');
+  setSetting('join-taken', 'joinSoundDelayMs', 10);
+  const waiting = playJoinSound(state(null), state('voice'));
+  joinVoiceChannel({ channelId: 'elsewhere', guildId: 'join-taken', adapterCreator: () => ({ sendPayload: () => true, destroy() {} }) });
+  await waiting;
+  assert.equal(getVoiceConnection('join-taken')?.joinConfig.channelId, 'elsewhere');
+});
+
+test('joining twice during the delay plays once', async (t) => {
+  const { state } = await joiner(t, 'join-twice');
+  setSetting('join-twice', 'joinSoundDelayMs', 10);
+  const first = playJoinSound(state(null), state('voice')).catch(() => {});
+  await playJoinSound(state(null), state('voice'));
+  void first;
+  assert.equal(getVoiceConnection('join-twice'), undefined, 'the second one returned straight away, without playing');
 });
 
 /** Runs a /sound subcommand and returns what it replied */
