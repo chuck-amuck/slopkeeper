@@ -50,3 +50,12 @@ test('free game filters set the lowest rating and whether unlisted games show', 
   assert.equal(setting(guildId, 'freeGamesMinRating'), 85);
   assert.equal(setting(guildId, 'freeGamesUnlisted'), true);
 });
+
+test('sets and clears the sound managers role', async () => {
+  await run('setup-managers', 'sound-managers', { role: { id: 'managers', toString: () => '<@&managers>' } });
+  assert.equal(setting('setup-managers', 'soundManagerRole'), 'managers');
+  await run('setup-managers', 'sound-managers', {});
+  assert.equal(setting('setup-managers', 'soundManagerRole'), '');
+  assert.equal(log('setup-managers')[0], 'Set Sound managers to everyone can change sounds');
+  assert.equal(log('setup-managers')[1], 'Set Sound managers to <@&managers>');
+});

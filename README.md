@@ -351,6 +351,12 @@ Examples:
 
 The web UI's Library page also shows everything on Discord's soundboard, including sounds people added there themselves. You can play or preview any of them, save them to the library, and swap one for a library sound. Nothing is lost: a sound that comes off and isn't in the library is saved there first.
 
+### Who can change sounds
+
+Everyone can, until a role is set with `/setup sound-managers`. Then only people with that role or **Manage Server** can use `/sound add`, `emoji`, `remove`, `restore`, `volume`, `discord-add`, `discord-remove` and `discord-sync`, or the changes under a panel's **⚙️ Settings**. Everyone else can still play and test sounds, stop playback, post a panel and set their own join sound. If the role is deleted, only people with **Manage Server** can change sounds until a new one is set.
+
+The web UI isn't limited by the role, because it doesn't know who's using it. Anyone with its password can change everything.
+
 ### Even volume
 
 Every sound is measured when it's added, so a whisper and an air horn play about as loud as each other. Your file isn't changed: the bot stores how much to turn each sound up or down and applies that as it plays, so turning it off with `/setup sounds` puts everything back. A quiet sound with one loud spike only comes up until the spike would clip, and no sound is boosted by more than 12 dB, so very quiet sounds can still need `/sound volume`.
@@ -410,6 +416,7 @@ Every setting has a sensible default, so only the announce channel needs setting
 | `/setup gamenight-reminder minutes` | How long before a game night to remind the people who are in. `0` turns reminders off. |
 | `/setup monthly-recap enabled` | Turns the post on the 1st of each month on or off. |
 | `/setup sounds [even_volume] [join_sounds] [join_cooldown_minutes]` | Turns [even volume](#even-volume) and join sounds on or off, and sets how often one person's join sound can play. |
+| `/setup sound-managers [role]` | Limits changing sounds to a role, plus people with **Manage Server**. Leave `role` empty to let everyone change them, which is the default. See [who can change sounds](#who-can-change-sounds). |
 | `/setup reset setting` | Puts one setting back to its default. |
 
 For the commands with several options, only the options you fill in change.

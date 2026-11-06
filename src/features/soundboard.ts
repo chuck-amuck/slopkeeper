@@ -27,6 +27,7 @@ import {
   StringSelectMenuOptionBuilder,
   TextInputBuilder,
   TextInputStyle,
+  type BaseInteraction,
   type ButtonInteraction,
   type ChatInputCommandInteraction,
   type Client,
@@ -43,7 +44,7 @@ import { db } from '../db.ts';
 import * as discordBoard from '../discordSounds.ts';
 import { measureGain } from '../loudness.ts';
 import { Mixer } from '../mixer.ts';
-import { isAllowed, setSetting, setting } from '../settings.ts';
+import { idSetting, isAllowed, setSetting, setting } from '../settings.ts';
 import { cutAudio } from '../trim.ts';
 import type { Feature } from '../types.ts';
 import type { DiscordSound } from '../discordSounds.ts';
@@ -78,6 +79,8 @@ const STOP = 'sb:#stop';
 const SETTINGS = 'sb:#settings';
 const VOLUME_STEP = 25;
 const INPUT = 'value';
+/** The /sound subcommands that don't change any sound. Anything else needs the sound managers role, if there is one */
+const OPEN_TO_ALL = new Set(['play', 'stop', 'join', 'panel']);
 
 /** Each server has its own sounds, in sounds/<server id>/ */
 function soundDir(guildId: string): string {
@@ -734,8 +737,17 @@ function actionButton(action: string, page: number, name: string, label: string,
   return new ButtonBuilder().setCustomId(settingId(action, page, name)).setLabel(label).setEmoji(emoji).setStyle(style);
 }
 
+/** With a sound managers role set, changing sounds takes that role or Manage Server. Anyone can still play them */
+function canChangeSounds(i: BaseInteraction<'cached'>) {
+  const role = idSetting(i.guildId, 'soundManagerRole');
+  return !role || i.memberPermissions.has(PermissionFlagsBits.ManageGuild) || i.member.roles.cache.has(role);
+}
+
+const managersOnly = (guildId: string) => `Only <@&${idSetting(guildId, 'soundManagerRole')}> and people with **Manage Server** can change sounds.`;
+
 /** The first step of ⚙️ Settings: the sounds on a panel's page, and the server's switches for those allowed them */
-function settingsMenu(guildId: string, page: number, canManage: boolean, note?: string) {
+function settingsMenu(i: BaseInteraction<'cached'>, page: number, note?: string) {
+  const { guildId } = i;
   const sounds = listSounds(guildId);
   const rows: ActionRowBuilder<StringSelectMenuBuilder | ButtonBuilder>[] = [];
   page = Math.min(Math.max(page, 0), Math.max(pageCount(sounds) - 1, 0));
@@ -747,7 +759,7 @@ function settingsMenu(guildId: string, page: number, canManage: boolean, note?: 
     });
     rows.push(new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(new StringSelectMenuBuilder().setCustomId(`sb:#pick:${page}`).setPlaceholder('Pick a sound').addOptions(options)));
   }
-  if (canManage) {
+  if (i.memberPermissions.has(PermissionFlagsBits.ManageGuild)) {
     const toggle = (action: string, label: string, on: boolean) =>
       new ButtonBuilder().setCustomId(settingId(action, page)).setLabel(`${label}: ${on ? 'on' : 'off'}`).setStyle(on ? ButtonStyle.Success : ButtonStyle.Secondary);
     rows.push(
@@ -757,15 +769,23 @@ function settingsMenu(guildId: string, page: number, canManage: boolean, note?: 
       ),
     );
   }
-  return { content: [note, shown.length ? '⚙️ Pick a sound to change.' : '🔊 No sounds yet. Add one with `/sound add`.'].filter(Boolean).join('\n'), components: rows };
+  const prompt = canChangeSounds(i) ? '⚙️ Pick a sound to change.' : `⚙️ Pick a sound to test. ${managersOnly(guildId)}`;
+  return { content: [note, shown.length ? prompt : '🔊 No sounds yet. Add one with `/sound add`.'].filter(Boolean).join('\n'), components: rows };
 }
 
-/** Everything that can be changed about one sound */
-function soundSettings(guildId: string, sound: Sound, page: number, note?: string) {
+/** Everything that can be changed about one sound, for those allowed to */
+function soundSettings(i: BaseInteraction<'cached'>, sound: Sound, page: number, note?: string) {
+  const { guildId } = i;
   const percent = soundLevels(guildId).get(sound.name)?.percent ?? 100;
   const [lowest, highest] = VOLUME_PERCENT;
   const volume = (action: string, emoji: string, disabled: boolean) => new ButtonBuilder().setCustomId(settingId(action, page, sound.name)).setEmoji(emoji).setStyle(ButtonStyle.Secondary).setDisabled(disabled);
   const heading = `${sound.emoji ? `${sound.emoji} ` : ''}**${sound.name}** · ${percent}% volume · ${sound.onDiscord ? 'on Discord’s soundboard' : 'bot only'}`;
+  if (!canChangeSounds(i)) {
+    return {
+      content: [note, heading, managersOnly(guildId)].filter(Boolean).join('\n'),
+      components: [new ActionRowBuilder<ButtonBuilder>().addComponents(actionButton('test', page, sound.name, 'Test', '▶️'), actionButton('back', page, '', 'Back', '◀️'))],
+    };
+  }
   return {
     content: [note, heading].filter(Boolean).join('\n'),
     components: [
@@ -801,27 +821,28 @@ const SOUND_GONE = { content: 'That sound was removed.', components: [] };
 async function onSetting(i: ButtonInteraction<'cached'>) {
   const [action, pageText, name] = i.customId.slice('sb:#'.length).split(':');
   const page = Number(pageText);
-  const canManage = i.memberPermissions.has(PermissionFlagsBits.ManageGuild);
   const notify = () => refreshPanels(i.client, i.guildId);
 
-  if (action === 'back') return i.update(settingsMenu(i.guildId, page, canManage));
+  if (action === 'back') return i.update(settingsMenu(i, page));
 
   if (action === 'even' || action === 'joins') {
-    if (!canManage) return i.update(settingsMenu(i.guildId, page, false, 'You need **Manage Server** for that.'));
+    if (!i.memberPermissions.has(PermissionFlagsBits.ManageGuild)) return i.update(settingsMenu(i, page, 'You need **Manage Server** for that.'));
     await i.deferUpdate();
     const [key, label] = action === 'even' ? (['evenVolume', 'Even volume'] as const) : (['joinSounds', 'Join sounds'] as const);
     const on = !setting(i.guildId, key);
     setSetting(i.guildId, key, on);
     if (action === 'even') await applyLevels(i.guild);
     logActivity(i.guildId, i.user.id, `Set ${label} to ${on ? 'on' : 'off'}`);
-    return i.editReply(settingsMenu(i.guildId, page, canManage));
+    return i.editReply(settingsMenu(i, page));
   }
 
   const sound = findSound(i.guildId, name);
   if (!sound) return i.update(SOUND_GONE);
-  const show = (note?: string) => i.editReply(soundSettings(i.guildId, findSound(i.guildId, sound.name) ?? sound, page, note));
+  const show = (note?: string) => i.editReply(soundSettings(i, findSound(i.guildId, sound.name) ?? sound, page, note));
 
-  if (action === 'open') return i.update(soundSettings(i.guildId, sound, page));
+  if (action === 'open') return i.update(soundSettings(i, sound, page));
+  // A button or box opened before the role was set, or taken away, still arrives here
+  if (action !== 'test' && !canChangeSounds(i)) return i.update(soundSettings(i, sound, page));
   if (action === 'emoji') return i.showModal(askFor(settingId('emoji', page, sound.name), `Emoji for ${sound.name}`, 'Emoji, or leave empty to clear it', sound.emoji, false));
   if (action === 'rename') return i.showModal(askFor(settingId('rename', page, sound.name), `Rename ${sound.name}`, 'New name', sound.name, true));
   if (action === 'delete') {
@@ -842,7 +863,7 @@ async function onSetting(i: ButtonInteraction<'cached'>) {
     logActivity(i.guildId, i.user.id, `Removed sound **${sound.name}**`);
     await notify();
     const removed = `🗑️ Removed **${sound.name}**. Bring it back within ${BIN_DAYS} days with \`/sound restore\`.${problem ? ` Couldn’t remove it from Discord’s soundboard: ${problem}.` : ''}`;
-    return i.editReply(settingsMenu(i.guildId, page, canManage, removed));
+    return i.editReply(settingsMenu(i, page, removed));
   }
   if (action === 'test') {
     if (!i.member.voice.channel) return show('Join a voice channel first.');
@@ -1004,6 +1025,7 @@ export const soundboard: Feature = {
         const ephemeral = { flags: MessageFlags.Ephemeral } as const;
         if (!i.inCachedGuild()) return i.reply({ content: 'Use this in a server.', ...ephemeral });
         const sub = i.options.getSubcommand();
+        if (!OPEN_TO_ALL.has(sub) && !canChangeSounds(i)) return i.reply({ content: managersOnly(i.guildId), ...ephemeral });
 
         if (sub === 'play') {
           const sound = findSound(i.guildId, i.options.getString('name', true));
@@ -1206,7 +1228,7 @@ export const soundboard: Feature = {
 
     if (i.customId === SETTINGS) {
       const { page } = db.prepare('SELECT page FROM sound_panels WHERE message_id = ?').get(i.message.id) as { page: number };
-      return i.reply({ ...settingsMenu(i.guildId, page, i.memberPermissions.has(PermissionFlagsBits.ManageGuild)), flags: MessageFlags.Ephemeral });
+      return i.reply({ ...settingsMenu(i, page), flags: MessageFlags.Ephemeral });
     }
 
     const sound = findSound(i.guildId, i.customId.slice('sb:'.length));
@@ -1222,7 +1244,7 @@ export const soundboard: Feature = {
     if (!i.inCachedGuild()) return;
     const page = Number(i.customId.split(':')[2]);
     const sound = findSound(i.guildId, i.values[0]);
-    return i.update(sound ? soundSettings(i.guildId, sound, page) : SOUND_GONE);
+    return i.update(sound ? soundSettings(i, sound, page) : SOUND_GONE);
   },
   async onModal(i) {
     if (!i.inCachedGuild() || !i.isFromMessage()) return;
@@ -1230,24 +1252,25 @@ export const soundboard: Feature = {
     const page = Number(pageText);
     const sound = findSound(i.guildId, name);
     if (!sound) return i.update(SOUND_GONE);
+    if (!canChangeSounds(i)) return i.update(soundSettings(i, sound, page));
     await i.deferUpdate();
     const value = i.fields.getTextInputValue(INPUT).trim();
     const done = async (shown: Sound, note?: string) => {
       await refreshPanels(i.client, i.guildId);
-      return i.editReply(soundSettings(i.guildId, shown, page, note));
+      return i.editReply(soundSettings(i, shown, page, note));
     };
 
     if (action === 'emoji') {
       const emoji = value ? await parseEmoji(i.guild, value) : null;
-      if (emoji && 'error' in emoji) return i.editReply(soundSettings(i.guildId, sound, page, emoji.error));
+      if (emoji && 'error' in emoji) return i.editReply(soundSettings(i, sound, page, emoji.error));
       await changeEmoji(i.guild, sound.name, emoji?.emoji ?? null);
       logActivity(i.guildId, i.user.id, emoji ? `Set the emoji on **${sound.name}**` : `Cleared the emoji on **${sound.name}**`);
       return done(findSound(i.guildId, sound.name)!);
     }
 
-    if (value === sound.name) return i.editReply(soundSettings(i.guildId, sound, page));
+    if (value === sound.name) return i.editReply(soundSettings(i, sound, page));
     const problem = await renameSound(i.guild, sound, value);
-    if (problem) return i.editReply(soundSettings(i.guildId, sound, page, problem));
+    if (problem) return i.editReply(soundSettings(i, sound, page, problem));
     logActivity(i.guildId, i.user.id, `Renamed **${sound.name}** to **${value}**`);
     return done(findSound(i.guildId, value)!);
   },

@@ -1857,3 +1857,15 @@ test('removing a game clears its marks, and a game in another server can’t be 
   assert.equal(activityText().at(-1), 'Removed **Valheim** from the game library');
   db.prepare(`DELETE FROM games WHERE guild_id = 'elsewhere'`).run();
 });
+
+test('the web UI sets and clears the sound managers role, but isn’t limited by it', async () => {
+  const url = `/guilds/${GUILD}/settings/soundManagerRole`;
+  assert.equal(await refused(400, url, { method: 'PUT', json: { value: 'nope' } }), 'Pick a role.');
+  await ok(url, { method: 'PUT', json: { value: '333' } });
+  assert.equal(setting(GUILD, 'soundManagerRole'), '333');
+  await upload('horn');
+  assert.equal((await sounds()).length, 1);
+  await remove('horn');
+  await ok(url, { method: 'DELETE' });
+  assert.equal(setting(GUILD, 'soundManagerRole'), null);
+});

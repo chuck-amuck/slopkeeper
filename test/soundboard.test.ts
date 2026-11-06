@@ -360,3 +360,34 @@ test('/sound remove can be undone with /sound restore', async () => {
   assert.ok(existsSync(path.join(process.env.DATA_DIR!, 'sounds', guild, 'horn.wav')));
   assert.equal(recentActivity(guild, 1)[0].action, 'Restored sound **horn**');
 });
+
+test('with a sound managers role, /sound only lets others play, stop, set a join sound and post a panel', async () => {
+  const guild = 'slash-managers';
+  await saveUpload(guild, 'horn', '.wav', wav());
+  setSetting(guild, 'soundManagerRole', 'managers');
+  const run = async (sub: string, roles: string[], admin = false) => {
+    let reply: any;
+    const answer = async (r: unknown) => void (reply = r);
+    await soundboard.commands![0].run({
+      inCachedGuild: () => true,
+      guildId: guild,
+      guild: { id: guild },
+      channel: { isSendable: () => false },
+      client: { channels: { cache: new Map(), fetch: async () => null } },
+      user: { id: 'person' },
+      member: { voice: { channel: null }, roles: { cache: new Set(roles) } },
+      memberPermissions: { has: (flag: bigint) => admin && flag === PermissionFlagsBits.ManageGuild },
+      options: { getSubcommand: () => sub, getString: () => 'horn', getInteger: () => 100, getAttachment: () => ({ name: 'x.wav', size: 1, url: 'http://x' }) },
+      reply: answer,
+      deferReply: async () => {},
+      editReply: answer,
+    } as never).catch(() => {});
+    return String(reply?.content ?? reply);
+  };
+  const LOCKED = /Only <@&managers> and people with \*\*Manage Server\*\* can change sounds/;
+  for (const sub of ['add', 'emoji', 'remove', 'restore', 'volume', 'discord-add', 'discord-remove', 'discord-sync']) assert.match(await run(sub, []), LOCKED, sub);
+  assert.ok(existsSync(path.join(process.env.DATA_DIR!, 'sounds', guild, 'horn.wav')), 'nothing was deleted');
+  for (const sub of ['play', 'stop', 'join']) assert.doesNotMatch(await run(sub, []), LOCKED, sub);
+  assert.doesNotMatch(await run('volume', ['managers']), LOCKED);
+  assert.doesNotMatch(await run('emoji', [], true), LOCKED);
+});

@@ -63,6 +63,7 @@ export const LABELS: Record<SettingKey, string> = {
   evenVolume: 'Even volume',
   joinSounds: 'Join sounds',
   joinSoundCooldownMin: 'Join sound cooldown',
+  soundManagerRole: 'Sound managers',
 };
 
 export function show(key: SettingKey, value: unknown): string {
@@ -71,6 +72,8 @@ export function show(key: SettingKey, value: unknown): string {
       return value ? `<#${value}>` : 'not set, so nothing gets posted';
     case 'hopOnRole':
       return value ? `<@&${value}>` : 'none, hop-on pings don’t ping anyone';
+    case 'soundManagerRole':
+      return value ? `<@&${value}>` : 'everyone can change sounds';
     case 'weeklyPostDay':
       return DAYS[value as number];
     case 'weeklyPostHour':
@@ -155,6 +158,10 @@ export function checkSetting(guild: Guild, key: SettingKey, value: unknown): Che
       if (!role) return { error: 'Pick a role.' };
       const problem = cantHandOut(guild, role);
       return problem ? { error: problem } : { value: role.id, warning: roleWarning(guild, role).trim() || undefined };
+    }
+    case 'soundManagerRole': {
+      const role = guild.roles.cache.get(String(value));
+      return role ? { value: role.id } : { error: 'Pick a role.' };
     }
     case 'timezone': {
       const zone = String(value).trim();
@@ -316,6 +323,12 @@ export const setup: Feature = {
         )
         .addSubcommand((s) =>
           s
+            .setName('sound-managers')
+            .setDescription('Limit changing sounds to a role, plus people with Manage Server')
+            .addRoleOption((o) => o.setName('role').setDescription('Leave empty to let everyone change sounds')),
+        )
+        .addSubcommand((s) =>
+          s
             .setName('reset')
             .setDescription('Put a setting back to its default')
             .addStringOption((o) =>
@@ -425,6 +438,8 @@ export const setup: Feature = {
           return;
         }
 
+        if (sub === 'sound-managers') return apply(i, [['soundManagerRole', i.options.getRole('role')?.id ?? '']]);
+
         if (sub === 'reset') {
           const key = i.options.getString('setting', true) as SettingKey;
           setSetting(i.guildId, key, undefined);
@@ -443,7 +458,7 @@ export const setup: Feature = {
           .setDescription(
             (Object.keys(DEFAULTS) as SettingKey[])
               .map((key) => {
-                const value = key === 'announceChannel' || key === 'hopOnRole' || key === 'freeGamesChannel' || key === 'saleChannel' ? setting(i.guildId, key) || null : setting(i.guildId, key);
+                const value = key === 'announceChannel' || key === 'hopOnRole' || key === 'freeGamesChannel' || key === 'saleChannel' || key === 'soundManagerRole' ? setting(i.guildId, key) || null : setting(i.guildId, key);
                 return `**${LABELS[key]}:** ${show(key, value)} · *${source(i.guildId, key)}*`;
               })
               .join('\n'),
