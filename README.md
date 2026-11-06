@@ -71,6 +71,8 @@ Game pings are opt-in roles per game, like **@Valheim** or **@Lethal Company**. 
 
 Game roles are normal mentionable roles, so anyone can also ping one by hand (`@Valheim anyone up?`).
 
+They can be added and removed on the web UI's Settings page too. That page only asks for its password, so anyone who has it can create and delete these roles without **Manage Roles**. They can't make a role with any permissions.
+
 | Command | What it does |
 | --- | --- |
 | `/pings` | Opens a menu of the server's game roles with yours ticked. Tick or untick games to change your pings. Only you see it. |
@@ -152,7 +154,7 @@ The reply also shows:
 Buttons:
 - **🎲 Reroll** picks again from the games that qualify. It's greyed out when only one game qualifies.
 - **🗳️ Vote** starts a 1-minute `/gamevote`. It's greyed out when only one game qualifies.
-- **Never suggest this** hides a game from future picks. Undo it with `/game unhide`.
+- **Never suggest this** hides a game from future picks. Undo it with `/game unhide`, or on the web UI's Games page.
 
 How a vote works:
 - The ballot has up to 10 games from the same list: the 5 you've played most, then a random mix of the rest.
@@ -330,7 +332,7 @@ You have to be in a voice channel to play a sound. The bot joins whichever chann
 
 **⚙️ Settings** on a panel changes sounds without leaving Discord. Everything it opens is only visible to you. Pick a sound from the panel's current page to change its volume, test it, put it on or take it off Discord's soundboard, set its emoji, rename it or delete it. People with **Manage Server** also get switches for even volume and join sounds. Trimming, picking part of a long sound and uploading are on the web UI, or in the commands below.
 
-**Join sounds** are opt-in: nothing plays until someone picks one with `/sound join`. A sound plays when you connect to voice, not when you switch channels, and not again until the cooldown is up (10 minutes unless `/setup sounds` says otherwise). If the bot is already in a different channel, it stays there rather than leaving the people using it. They don't count towards the monthly recap's top sounds.
+**Join sounds** are opt-in: nothing plays until someone picks one with `/sound join`, or it's set for them on the web UI's Settings page. A sound plays when you connect to voice, not when you switch channels, and not again until the cooldown is up (10 minutes unless `/setup sounds` says otherwise). If the bot is already in a different channel, it stays there rather than leaving the people using it. They don't count towards the monthly recap's top sounds.
 
 ### Managing sounds
 
@@ -491,12 +493,12 @@ A page for your home network, in [`web/`](web), that runs as a second container 
 - **Soundboard:** big buttons that play in voice, with favourites first and then whatever gets played most.
 - **Library:** upload files or whole folders, preview, rename and delete sounds, set a sound's volume, trim it with a way back to the original, and choose what's on Discord's soundboard, with a waveform for picking part of a long sound. **Recently deleted** restores a sound or erases it for good.
 - **Game nights:** plan a night, see what's coming up, cancel one or stop a repeating one.
-- **Games:** the game library, with who has each game, who needs it, who wants it and any sale. Add games from a searchable list of what members own on Steam, or by name or store link. **Steam accounts** links, changes and unlinks anyone's Steam account and refreshes libraries. Remove games, set player limits and Steam links, and tick who owns or wants what. Ownership from a Steam library is locked.
+- **Games:** the game library, with who has each game, who needs it, who wants it and any sale. Add games from a searchable list of what members own on Steam, or by name or store link. **Steam accounts** links, changes and unlinks anyone's Steam account and refreshes libraries. Remove games, set player limits and Steam links, tick who owns or wants what, and hide a game from `/whatdoweplay` or let it back in. Ownership from a Steam library is locked.
 - **Stats:** game and voice time, overall or for one person or game.
 - **Discord's soundboard:** on Library, see what fills the slots, play or save any sound, and swap sounds between Discord and the library.
 - **Merging games:** on Stats, Merge games puts different spellings of a game together, and Separate on a clicked game takes one back out.
 - **Activity:** a history of changes to sounds, games, settings and game nights.
-- **Settings:** everything in `/setup`, for each server, which free games are being posted or hidden and why, and what's on sale now.
+- **Settings:** everything in `/setup`, for each server, game ping roles, everyone's join sounds, which free games are being posted or hidden and why, and what's on sale now.
 
 It holds no data of its own. The bot does everything through its [management API](#management-api), so the rules are the same as for the slash commands, and a change here updates the bot's posted soundboard panels too.
 
@@ -584,7 +586,14 @@ It applies the same rules as `/sound` and `/setup`, and every request needs an `
 | `POST /guilds/:id/game-nights/:night/cancel` | Cancels a night, as its Cancel button does |
 | `DELETE /guilds/:id/game-night-series/:series` | Stops a series; nights already posted stay on |
 | `GET /guilds/:id/join-sounds` | Lists who has a join sound |
+| `PUT /guilds/:id/join-sounds/:user` | Sets someone's join sound: `{ "name": "airhorn" }`. `warning` is set if join sounds are turned off |
 | `DELETE /guilds/:id/join-sounds/:user` | Removes someone's join sound |
+| `GET /guilds/:id/game-pings` | Lists games with ping roles, plus the games and roles that can be added |
+| `POST /guilds/:id/game-pings` | Adds pings for a game: `{ "game": "Valheim", "roleId": "..." }`. Leave out `roleId` to make a new role |
+| `DELETE /guilds/:id/game-pings/:role` | Stops pings for a game, and deletes the role if the bot made it |
+| `GET /guilds/:id/hidden-games` | Lists games hidden from `/whatdoweplay` |
+| `PUT /guilds/:id/hidden-games/:appid` | Hides a library game from `/whatdoweplay` |
+| `DELETE /guilds/:id/hidden-games/:appid` | Lets a hidden game be suggested again |
 | `GET /guilds/:id/activity?before=<id>` | The last year of changes to sounds, settings and game nights, 50 at a time, newest first |
 | `GET /guilds/:id/stats?period=<week\|month\|year\|all>&user=<id>&game=<name>` | Game and voice totals, with game time over the period |
 | `GET /guilds/:id/settings` | Lists settings, channels, roles and time zones |

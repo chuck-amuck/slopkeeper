@@ -133,6 +133,17 @@ function manageDialog(main, gameId, data, reload) {
   const save = el('button', { type: 'submit' }, 'Save');
   const search = el('input', { type: 'search', placeholder: 'Search people', ariaLabel: 'Search people', oninput: () => paint() });
   const list = el('div', { className: 'merge-list' });
+  const hide = el('input', { type: 'checkbox', onchange: (e) => setHidden(e.target.checked) });
+  const hideNote = el('p', { className: 'hint' });
+
+  function setHidden(on) {
+    return attempt(() =>
+      guarded(async () => {
+        await request(api(`/hidden-games/${find().appid}`), { method: on ? 'PUT' : 'DELETE' });
+        await reload();
+      }).finally(paint),
+    );
+  }
 
   function mark(member, field, on) {
     return attempt(() =>
@@ -175,6 +186,9 @@ function manageDialog(main, gameId, data, reload) {
   function paint() {
     const game = find();
     if (!game) return;
+    hide.disabled = game.appid === null;
+    hide.checked = data().hidden.some((h) => h.appid === game.appid);
+    hideNote.textContent = game.appid === null ? 'Needs a Steam link, which is how a hidden game is told apart.' : 'Keeps it out of /whatdoweplay, and out of sale alerts unless someone asked for it.';
     const query = search.value.trim().toLowerCase();
     const shown = data().members.filter((m) => m.name.toLowerCase().includes(query));
     list.replaceChildren(...shown.map((m) => memberRow(game, m)));
@@ -204,6 +218,8 @@ function manageDialog(main, gameId, data, reload) {
       row('Steam link', steam),
       el('div', { className: 'actions' }, save),
     ),
+    el('label', { className: 'game-mark' }, hide, 'Never suggest this'),
+    hideNote,
     el('h3', {}, 'Who has it'),
     search,
     list,
@@ -449,18 +465,48 @@ export function renderGames(main) {
       el('button', { ariaLabel: `Manage ${g.name}`, onclick: () => manageDialog(main, g.id, () => data, load) }, 'Manage'),
     );
 
+  function library() {
+    if (!data.games.length) return el('div', { className: 'empty' }, 'The library is empty. Add a game to start it off.');
+    const shown = data.games.filter((g) => g.name.toLowerCase().includes(query) && (filter === 'all' || (filter === 'wanted' ? g.wanted.length > 0 : g.sale)));
+    if (!shown.length) return el('div', { className: 'empty' }, 'No games match that.');
+    return el('section', { className: 'card' }, shown.map(gameRow));
+  }
+
+  function hiddenRow(game) {
+    const again = el(
+      'button',
+      {
+        ariaLabel: `Suggest ${game.name} again`,
+        onclick: () => {
+          again.disabled = true;
+          void attempt(async () => {
+            await request(api(`/hidden-games/${game.appid}`), { method: 'DELETE' });
+            toast(`${game.name} can be suggested again.`);
+            await load();
+          }).finally(() => {
+            again.disabled = false;
+          });
+        },
+      },
+      'Suggest again',
+    );
+    return el('div', { className: 'field' }, el('div', { className: 'series-name' }, game.name), el('div', { className: 'control' }, again));
+  }
+
   function paint() {
     if (!data) return;
-    if (!data.games.length) return box.replaceChildren(el('div', { className: 'empty' }, 'The library is empty. Add a game to start it off.'));
-    const shown = data.games.filter((g) => g.name.toLowerCase().includes(query) && (filter === 'all' || (filter === 'wanted' ? g.wanted.length > 0 : g.sale)));
-    if (!shown.length) return box.replaceChildren(el('div', { className: 'empty' }, 'No games match that.'));
-    box.replaceChildren(el('section', { className: 'card' }, shown.map(gameRow)));
+    box.replaceChildren(
+      library(),
+      ...(data.hidden.length
+        ? [el('section', { className: 'card' }, el('h2', {}, 'Hidden from suggestions'), el('p', { className: 'card-note' }, 'Hidden with Never suggest this, so /whatdoweplay leaves them out.'), data.hidden.map(hiddenRow))]
+        : []),
+    );
   }
 
   async function load() {
-    const fresh = await request(api('/games'));
+    const [fresh, { games: hidden }] = await Promise.all([request(api('/games')), request(api('/hidden-games'))]);
     if (guildId !== state.guildId || !main.isConnected) return;
-    data = fresh;
+    data = { ...fresh, hidden };
     paint();
   }
 

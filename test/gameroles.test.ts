@@ -63,3 +63,71 @@ test('says so when the bot can’t change roles', async () => {
 test('matches game names without caring about case', () => {
   assert.deepEqual(rolesForGames('g', ['valheim', 'Unknown Game']), ['r1']);
 });
+
+/** Runs a /gamerole subcommand, recording what it does to the server's roles */
+async function gamerole(sub: string, game: string, role: object | null = null, guildId = 'cmd', manages = true) {
+  const made: { name: string; mentionable: boolean; reason: string }[] = [];
+  const deleted: [string, string][] = [];
+  const me = { permissions: { has: () => manages }, roles: { highest: { name: 'Bot', position: 3 } } };
+  const guild = {
+    id: guildId,
+    members: { me },
+    roles: {
+      cache: new Map(),
+      create: async (o: (typeof made)[number]) => {
+        made.push(o);
+        return { id: `new-${game}`, mentionable: true, toString: () => `<@&new-${game}>` };
+      },
+      delete: async (id: string, reason: string) => void deleted.push([id, reason]),
+    },
+  };
+  let reply: { content: string } | undefined;
+  await gamePings.commands![1].run({
+    inCachedGuild: () => true,
+    guildId,
+    guild,
+    user: { tag: 'ana' },
+    options: { getSubcommand: () => sub, getString: () => game, getRole: () => role },
+    reply: async (r: { content: string }) => (reply = r),
+  } as never);
+  return { made, deleted, content: reply!.content };
+}
+
+const plainRole = (id: string, position: number, extra = {}) => ({ id, position, managed: false, mentionable: true, guild: { members: { me: { permissions: { has: () => true } } } }, toString: () => `<@&${id}>`, ...extra });
+const rowsIn = (guildId: string) => db.prepare('SELECT role_id, name, created FROM game_roles WHERE guild_id = ? ORDER BY name').all(guildId).map((r) => ({ ...r }));
+
+test('/gamerole add makes a mentionable role, and remove deletes it', async () => {
+  const add = await gamerole('add', 'Halo', null, 'cmd-make');
+  assert.deepEqual(add.made, [{ name: 'Halo', mentionable: true, reason: '/gamerole add by ana' }]);
+  assert.equal(add.content, '✅ Made <@&new-Halo> for **Halo**. People pick it with `/pings`.');
+  assert.deepEqual(rowsIn('cmd-make'), [{ role_id: 'new-Halo', name: 'Halo', created: 1 }]);
+
+  const remove = await gamerole('remove', 'Halo', null, 'cmd-make');
+  assert.deepEqual(remove.deleted, [['new-Halo', '/gamerole remove by ana']]);
+  assert.equal(remove.content, '🗑️ Removed pings for **Halo**.');
+  assert.deepEqual(rowsIn('cmd-make'), []);
+});
+
+test('/gamerole add uses a role it’s given, and remove leaves that role', async () => {
+  const add = await gamerole('add', 'Halo', plainRole('mine', 1), 'cmd-use');
+  assert.deepEqual(add.made, []);
+  assert.equal(add.content, '✅ Using <@&mine> for **Halo**. People pick it with `/pings`.');
+  assert.deepEqual((await gamerole('remove', 'Halo', null, 'cmd-use')).deleted, []);
+  assert.deepEqual(rowsIn('cmd-use'), []);
+});
+
+test('/gamerole add refuses what it can’t do', async () => {
+  assert.match((await gamerole('add', 'Halo', null, 'cmd-no', false)).content, /needs the \*\*Manage Roles\*\*/);
+  for (const role of [plainRole('cmd-no', 0), plainRole('managed', 1, { managed: true }), plainRole('high', 3)]) {
+    assert.match((await gamerole('add', 'Halo', role, 'cmd-no')).content, /^I can’t hand out <@&.*below my role \(\*\*Bot\*\*\)/);
+  }
+  assert.deepEqual(rowsIn('cmd-no'), []);
+  assert.equal((await gamerole('remove', 'Halo', null, 'cmd-no')).content, '**Halo** has no ping role.');
+});
+
+test('/gamerole add says when a game or role is taken', async () => {
+  await gamerole('add', 'Halo', plainRole('mine', 1), 'cmd-taken');
+  assert.equal((await gamerole('add', 'halo', null, 'cmd-taken')).content, '**halo** already pings <@&mine>.');
+  assert.equal((await gamerole('add', 'Valheim', plainRole('mine', 1), 'cmd-taken')).content, '<@&mine> already pings for **Halo**.');
+  assert.equal(rowsIn('cmd-taken').length, 1);
+});

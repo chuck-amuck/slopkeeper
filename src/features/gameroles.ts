@@ -9,6 +9,7 @@ import {
   StringSelectMenuBuilder,
   type Guild,
   type GuildMember,
+  type Role,
 } from 'discord.js';
 import { db } from '../db.ts';
 import { gameKey, gameName } from '../gameNames.ts';
@@ -23,8 +24,43 @@ interface GameRole {
   created: number;
 }
 
-function gameRoles(guildId: string): GameRole[] {
+export function gameRoles(guildId: string): GameRole[] {
   return db.prepare('SELECT role_id, name, created FROM game_roles WHERE guild_id = ? ORDER BY name').all(guildId) as unknown as GameRole[];
+}
+
+/** What a ping role can be for: the library, plus anything people have played */
+export function pingableGames(guildId: string): string[] {
+  return [
+    ...new Set([
+      ...allGames(guildId).map((g) => g.name),
+      ...(db.prepare('SELECT DISTINCT game FROM named_plays WHERE guild_id = ?').all(guildId) as { game: string }[]).map((r) => r.game),
+    ]),
+  ].sort();
+}
+
+/** Normal roles below the bot's own: the only ones it can give to people */
+export function canHandOut(guild: Guild, role: Role): boolean {
+  return role.id !== guild.id && !role.managed && role.position < guild.members.me!.roles.highest.position;
+}
+
+/** Makes a role for a game, or uses `role` if given. Returns why it can't, in place of the role */
+export async function addGameRole(guild: Guild, game: string, role: Role | null, by: string): Promise<{ role: Role; created: boolean } | string> {
+  const me = guild.members.me!;
+  if (!me.permissions.has(PermissionFlagsBits.ManageRoles)) return 'My role needs the **Manage Roles** permission to hand out game roles.';
+  const existing = db.prepare('SELECT role_id FROM game_roles WHERE guild_id = ? AND name = ?').get(guild.id, game) as { role_id: string } | undefined;
+  if (existing) return `**${game}** already pings <@&${existing.role_id}>.`;
+  if (role && !canHandOut(guild, role)) return `I can’t hand out ${role}. Pick a normal role below my role (**${me.roles.highest.name}**), or leave the role out and I’ll make one.`;
+  const taken = role && gameRoles(guild.id).find((r) => r.role_id === role.id);
+  if (taken) return `${role} already pings for **${taken.name}**.`;
+  const made = role ?? (await guild.roles.create({ name: game.slice(0, 100), mentionable: true, reason: `/gamerole add by ${by}` }));
+  db.prepare('INSERT INTO game_roles (role_id, guild_id, name, created) VALUES (?, ?, ?, ?)').run(made.id, guild.id, game, role ? 0 : 1);
+  return { role: made, created: !role };
+}
+
+/** Stops offering pings for a game, and deletes the role if the bot made it */
+export async function removeGameRole(guild: Guild, row: GameRole, by: string) {
+  db.prepare('DELETE FROM game_roles WHERE role_id = ?').run(row.role_id);
+  if (row.created) await guild.roles.delete(row.role_id, `/gamerole remove by ${by}`).catch(() => {});
 }
 
 /** Ping roles for the games named, matched by the name each game goes by, however either is spelled */
@@ -99,15 +135,7 @@ export const gamePings: Feature = {
       async autocomplete(i) {
         if (!i.inGuild()) return i.respond([]);
         const query = i.options.getFocused().toLowerCase();
-        const names =
-          i.options.getSubcommand() === 'remove'
-            ? gameRoles(i.guildId).map((r) => r.name)
-            : [
-                ...new Set([
-                  ...allGames(i.guildId).map((g) => g.name),
-                  ...(db.prepare('SELECT DISTINCT game FROM named_plays WHERE guild_id = ?').all(i.guildId) as { game: string }[]).map((r) => r.game),
-                ]),
-              ].sort();
+        const names = i.options.getSubcommand() === 'remove' ? gameRoles(i.guildId).map((r) => r.name) : pingableGames(i.guildId);
         return i.respond(
           names
             .filter((n) => n.toLowerCase().includes(query))
@@ -135,31 +163,14 @@ export const gamePings: Feature = {
         if (sub === 'remove') {
           const row = db.prepare('SELECT role_id, name, created FROM game_roles WHERE guild_id = ? AND name = ?').get(i.guildId, game) as GameRole | undefined;
           if (!row) return i.reply({ content: `**${game}** has no ping role.`, flags: MessageFlags.Ephemeral });
-          db.prepare('DELETE FROM game_roles WHERE role_id = ?').run(row.role_id);
-          if (row.created) await i.guild.roles.delete(row.role_id, `/gamerole remove by ${i.user.tag}`).catch(() => {});
+          await removeGameRole(i.guild, row, i.user.tag);
           return i.reply({ content: `🗑️ Removed pings for **${row.name}**.`, flags: MessageFlags.Ephemeral });
         }
 
-        const me = i.guild.members.me!;
-        if (!me.permissions.has(PermissionFlagsBits.ManageRoles)) {
-          return i.reply({ content: 'My role needs the **Manage Roles** permission to hand out game roles.', flags: MessageFlags.Ephemeral });
-        }
-        const existing = db.prepare('SELECT role_id FROM game_roles WHERE guild_id = ? AND name = ?').get(i.guildId, game) as { role_id: string } | undefined;
-        if (existing) return i.reply({ content: `**${game}** already pings <@&${existing.role_id}>.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
-
-        let role = i.options.getRole('role');
-        if (role && (role.id === i.guildId || role.managed || role.position >= me.roles.highest.position)) {
-          return i.reply({
-            content: `I can’t hand out ${role}. Pick a normal role below my role (**${me.roles.highest.name}**), or leave the role out and I’ll make one.`,
-            flags: MessageFlags.Ephemeral,
-            allowedMentions: { parse: [] },
-          });
-        }
-        const created = !role;
-        role ??= await i.guild.roles.create({ name: game.slice(0, 100), mentionable: true, reason: `/gamerole add by ${i.user.tag}` });
-        db.prepare('INSERT INTO game_roles (role_id, guild_id, name, created) VALUES (?, ?, ?, ?)').run(role.id, i.guildId, game, created ? 1 : 0);
+        const result = await addGameRole(i.guild, game, i.options.getRole('role'), i.user.tag);
+        if (typeof result === 'string') return i.reply({ content: result, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
         return i.reply({
-          content: `✅ ${created ? 'Made' : 'Using'} ${role} for **${game}**. People pick it with \`/pings\`.${pingWarning(role)}`,
+          content: `✅ ${result.created ? 'Made' : 'Using'} ${result.role} for **${game}**. People pick it with \`/pings\`.${pingWarning(result.role)}`,
           flags: MessageFlags.Ephemeral,
           allowedMentions: { parse: [] },
         });

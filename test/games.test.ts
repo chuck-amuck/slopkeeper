@@ -1,7 +1,7 @@
 import './helpers.ts';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { choose, games } from '../src/features/games.ts';
+import { choose, games, hiddenGames } from '../src/features/games.ts';
 import { hopOn } from '../src/features/hopon.ts';
 import { setup } from '../src/features/setup.ts';
 import { DiscordAPIError } from 'discord.js';
@@ -73,4 +73,37 @@ test('/setup show lists sources without stray markdown', async () => {
   const text = reply!.embeds[0].toJSON().description;
   assert.doesNotMatch(text, /-#/);
   assert.match(text, /\*default\*/);
+});
+
+test('Never suggest this hides a game, and /game unhide lets it back', async () => {
+  const guild = { id: 'hide', members: { cache: new Map() } };
+  let shown: { content?: string } | undefined;
+  await games.onButton!({
+    customId: 'wdp:hide:620',
+    inCachedGuild: () => true,
+    guildId: 'hide',
+    guild,
+    user: { id: 'u1' },
+    member: { voice: { channel: { members: new Map() } } },
+    message: { embeds: [{ title: '🎲 Portal 2' }] },
+    deferUpdate: async () => {},
+    editReply: async (r: typeof shown) => (shown = r),
+  } as never);
+  assert.ok(shown, 'the card is redrawn');
+  assert.deepEqual(hiddenGames('hide').map((g) => ({ ...g })), [{ appid: 620, name: 'Portal 2' }]);
+
+  const unhide = async (name: string) => {
+    let reply: string | { content: string } | undefined;
+    await games.commands![0].run({
+      inCachedGuild: () => true,
+      guildId: 'hide',
+      guild,
+      options: { getSubcommand: () => 'unhide', getString: () => name },
+      reply: async (r: typeof reply) => (reply = r),
+    } as never);
+    return reply;
+  };
+  assert.equal(await unhide('Portal 2'), '👀 **Portal 2** can be suggested again.');
+  assert.deepEqual(hiddenGames('hide'), []);
+  assert.equal(((await unhide('Portal 2')) as { content: string }).content, 'That game is not hidden.');
 });
