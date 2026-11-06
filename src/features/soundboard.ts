@@ -19,9 +19,15 @@ import {
   DiscordAPIError,
   Events,
   MessageFlags,
+  ModalBuilder,
   PermissionFlagsBits,
   RESTJSONErrorCodes,
   SlashCommandBuilder,
+  StringSelectMenuBuilder,
+  StringSelectMenuOptionBuilder,
+  TextInputBuilder,
+  TextInputStyle,
+  type ButtonInteraction,
   type ChatInputCommandInteraction,
   type Client,
   type Guild,
@@ -37,7 +43,7 @@ import { db } from '../db.ts';
 import * as discordBoard from '../discordSounds.ts';
 import { measureGain } from '../loudness.ts';
 import { Mixer } from '../mixer.ts';
-import { isAllowed, setting } from '../settings.ts';
+import { isAllowed, setSetting, setting } from '../settings.ts';
 import { cutAudio } from '../trim.ts';
 import type { Feature } from '../types.ts';
 import type { DiscordSound } from '../discordSounds.ts';
@@ -67,6 +73,9 @@ const VOICE_PERMISSIONS = [
 const PREV = 'sb:#prev';
 const NEXT = 'sb:#next';
 const STOP = 'sb:#stop';
+const SETTINGS = 'sb:#settings';
+const VOLUME_STEP = 25;
+const INPUT = 'value';
 
 /** Each server has its own sounds, in sounds/<server id>/ */
 function soundDir(guildId: string): string {
@@ -620,7 +629,10 @@ function panel(guildId: string, page: number) {
       new ButtonBuilder().setCustomId(NEXT).setEmoji('▶️').setStyle(ButtonStyle.Secondary),
     );
   }
-  controls.addComponents(new ButtonBuilder().setCustomId(STOP).setEmoji('⏹️').setLabel('Stop').setStyle(ButtonStyle.Danger));
+  controls.addComponents(
+    new ButtonBuilder().setCustomId(STOP).setEmoji('⏹️').setLabel('Stop').setStyle(ButtonStyle.Danger),
+    new ButtonBuilder().setCustomId(SETTINGS).setEmoji('⚙️').setLabel('Settings').setStyle(ButtonStyle.Secondary),
+  );
   rows.push(controls);
 
   const title = pages > 1 ? `🔊 **Soundboard** · page ${page + 1} of ${pages}` : '🔊 **Soundboard**';
@@ -634,6 +646,164 @@ function trackPanel(messageId: string, guildId: string, channelId: string, page:
   ).run(messageId, guildId, channelId, page);
 }
 
+/** Sound names can't contain ':', so these split cleanly into action, page and sound */
+const settingId = (action: string, page: number, name = '') => `sb:#${action}:${page}:${name}`;
+const isSetting = (customId: string) => customId.split(':').length === 4;
+
+function actionButton(action: string, page: number, name: string, label: string, emoji: string, style = ButtonStyle.Secondary) {
+  return new ButtonBuilder().setCustomId(settingId(action, page, name)).setLabel(label).setEmoji(emoji).setStyle(style);
+}
+
+/** The first step of ⚙️ Settings: the sounds on a panel's page, and the server's switches for those allowed them */
+function settingsMenu(guildId: string, page: number, canManage: boolean, note?: string) {
+  const sounds = listSounds(guildId);
+  const rows: ActionRowBuilder<StringSelectMenuBuilder | ButtonBuilder>[] = [];
+  page = Math.min(Math.max(page, 0), Math.max(pageCount(sounds) - 1, 0));
+  const shown = sounds.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
+  if (shown.length) {
+    const options = shown.map((s) => {
+      const option = new StringSelectMenuOptionBuilder().setLabel(s.name).setValue(s.name);
+      return s.emoji ? option.setEmoji(s.emoji) : option;
+    });
+    rows.push(new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(new StringSelectMenuBuilder().setCustomId(`sb:#pick:${page}`).setPlaceholder('Pick a sound').addOptions(options)));
+  }
+  if (canManage) {
+    const toggle = (action: string, label: string, on: boolean) =>
+      new ButtonBuilder().setCustomId(settingId(action, page)).setLabel(`${label}: ${on ? 'on' : 'off'}`).setStyle(on ? ButtonStyle.Success : ButtonStyle.Secondary);
+    rows.push(
+      new ActionRowBuilder<ButtonBuilder>().addComponents(
+        toggle('even', 'Even volume', setting(guildId, 'evenVolume')),
+        toggle('joins', 'Join sounds', setting(guildId, 'joinSounds')),
+      ),
+    );
+  }
+  return { content: [note, shown.length ? '⚙️ Pick a sound to change.' : '🔊 No sounds yet. Add one with `/sound add`.'].filter(Boolean).join('\n'), components: rows };
+}
+
+/** Everything that can be changed about one sound */
+function soundSettings(guildId: string, sound: Sound, page: number, note?: string) {
+  const percent = soundLevels(guildId).get(sound.name)?.percent ?? 100;
+  const [lowest, highest] = VOLUME_PERCENT;
+  const volume = (action: string, emoji: string, disabled: boolean) => new ButtonBuilder().setCustomId(settingId(action, page, sound.name)).setEmoji(emoji).setStyle(ButtonStyle.Secondary).setDisabled(disabled);
+  const heading = `${sound.emoji ? `${sound.emoji} ` : ''}**${sound.name}** · ${percent}% volume · ${sound.onDiscord ? 'on Discord’s soundboard' : 'bot only'}`;
+  return {
+    content: [note, heading].filter(Boolean).join('\n'),
+    components: [
+      new ActionRowBuilder<ButtonBuilder>().addComponents(
+        volume('down', '➖', percent <= lowest),
+        volume('up', '➕', percent >= highest),
+        actionButton('test', page, sound.name, 'Test', '▶️'),
+      ),
+      new ActionRowBuilder<ButtonBuilder>().addComponents(
+        actionButton('discord', page, sound.name, sound.onDiscord ? 'Take off Discord' : 'Put on Discord', '🟦', sound.onDiscord ? ButtonStyle.Primary : ButtonStyle.Secondary),
+        actionButton('emoji', page, sound.name, 'Emoji', '😀'),
+        actionButton('rename', page, sound.name, 'Rename', '✏️'),
+      ),
+      new ActionRowBuilder<ButtonBuilder>().addComponents(
+        actionButton('delete', page, sound.name, 'Delete', '🗑️', ButtonStyle.Danger),
+        actionButton('back', page, '', 'Back', '◀️'),
+      ),
+    ],
+  };
+}
+
+function askFor(id: string, title: string, label: string, value: string | undefined, required: boolean) {
+  const input = new TextInputBuilder().setCustomId(INPUT).setLabel(label).setStyle(TextInputStyle.Short).setRequired(required).setMaxLength(100);
+  return new ModalBuilder()
+    .setCustomId(id)
+    .setTitle(title)
+    .addComponents(new ActionRowBuilder<TextInputBuilder>().addComponents(value ? input.setValue(value) : input));
+}
+
+const SOUND_GONE = { content: 'That sound was removed.', components: [] };
+
+/** The buttons under ⚙️ Settings, which live on a private message rather than the panel */
+async function onSetting(i: ButtonInteraction<'cached'>) {
+  const [action, pageText, name] = i.customId.slice('sb:#'.length).split(':');
+  const page = Number(pageText);
+  const canManage = i.memberPermissions.has(PermissionFlagsBits.ManageGuild);
+  const notify = () => refreshPanels(i.client, i.guildId);
+
+  if (action === 'back') return i.update(settingsMenu(i.guildId, page, canManage));
+
+  if (action === 'even' || action === 'joins') {
+    if (!canManage) return i.update(settingsMenu(i.guildId, page, false, 'You need **Manage Server** for that.'));
+    await i.deferUpdate();
+    const [key, label] = action === 'even' ? (['evenVolume', 'Even volume'] as const) : (['joinSounds', 'Join sounds'] as const);
+    const on = !setting(i.guildId, key);
+    setSetting(i.guildId, key, on);
+    if (action === 'even') await applyLevels(i.guild);
+    logActivity(i.guildId, i.user.id, `Set ${label} to ${on ? 'on' : 'off'}`);
+    return i.editReply(settingsMenu(i.guildId, page, canManage));
+  }
+
+  const sound = findSound(i.guildId, name);
+  if (!sound) return i.update(SOUND_GONE);
+  const show = (note?: string) => i.editReply(soundSettings(i.guildId, findSound(i.guildId, sound.name) ?? sound, page, note));
+
+  if (action === 'open') return i.update(soundSettings(i.guildId, sound, page));
+  if (action === 'emoji') return i.showModal(askFor(settingId('emoji', page, sound.name), `Emoji for ${sound.name}`, 'Emoji, or leave empty to clear it', sound.emoji, false));
+  if (action === 'rename') return i.showModal(askFor(settingId('rename', page, sound.name), `Rename ${sound.name}`, 'New name', sound.name, true));
+  if (action === 'delete') {
+    return i.update({
+      content: `Delete **${sound.name}**? This can’t be undone.`,
+      components: [
+        new ActionRowBuilder<ButtonBuilder>().addComponents(
+          actionButton('confirm', page, sound.name, 'Yes, delete it', '🗑️', ButtonStyle.Danger),
+          actionButton('open', page, sound.name, 'Keep it', '◀️'),
+        ),
+      ],
+    });
+  }
+
+  await i.deferUpdate();
+  if (action === 'confirm') {
+    const problem = await removeSound(i.guild, sound);
+    logActivity(i.guildId, i.user.id, `Removed sound **${sound.name}**`);
+    await notify();
+    const removed = `🗑️ Removed **${sound.name}**.${problem ? ` Couldn’t remove it from Discord’s soundboard: ${problem}.` : ''}`;
+    return i.editReply(settingsMenu(i.guildId, page, canManage, removed));
+  }
+  if (action === 'test') {
+    if (!i.member.voice.channel) return show('Join a voice channel first.');
+    const problem = await play(i.member.voice.channel, sound.file, soundGain(i.guildId, sound.name));
+    return show(problem ?? undefined);
+  }
+  if (action === 'down' || action === 'up') {
+    const current = soundLevels(i.guildId).get(sound.name)?.percent ?? 100;
+    // Lands on a whole step, as the web UI's slider can leave it between two
+    const next = action === 'up' ? (Math.floor(current / VOLUME_STEP) + 1) * VOLUME_STEP : (Math.ceil(current / VOLUME_STEP) - 1) * VOLUME_STEP;
+    const percent = Math.min(Math.max(next, VOLUME_PERCENT[0]), VOLUME_PERCENT[1]);
+    await setSoundVolume(i.guild, sound.name, percent);
+    logActivity(i.guildId, i.user.id, `Set the volume of **${sound.name}** to ${percent}%`);
+    return show();
+  }
+  if (action === 'discord') {
+    if (sound.onDiscord) {
+      const problem = await discordBoard.remove(i.guild, sound.name).then(() => null, (err: Error) => err.message);
+      if (problem) return show(`Couldn’t take it off Discord’s soundboard: ${problem}.`);
+      logActivity(i.guildId, i.user.id, `Took **${sound.name}** off Discord’s soundboard`);
+    } else {
+      const problem = await addToDiscord(i.guild, sound);
+      if (problem) return show(`Couldn’t add it to Discord’s soundboard: ${problem}.`);
+      logActivity(i.guildId, i.user.id, `Added **${sound.name}** to Discord’s soundboard`);
+    }
+    await notify();
+    return show();
+  }
+}
+
+/** Sends a panel's current state to Discord, which needs the bot to be able to see its channel */
+async function editPanel(client: Client, guildId: string, p: { message_id: string; channel_id: string; page: number }) {
+  const channel = await client.channels.fetch(p.channel_id);
+  if (!channel?.isTextBased()) throw new Error(`channel ${p.channel_id} is not text-based`);
+  // Editing by id avoids fetching the message, which would need Read Message History
+  await channel.messages.edit(p.message_id, panel(guildId, p.page));
+}
+
+/** Why each panel last couldn't be updated, so a sound change doesn't log the same thing every time */
+const stuckPanels = new Map<string, string>();
+
 /** Re-renders a server's posted panels after its sound list changes */
 export async function refreshPanels(client: Client, guildId: string) {
   const panels = db.prepare('SELECT message_id, channel_id, page FROM sound_panels WHERE guild_id = ?').all(guildId) as {
@@ -643,15 +813,17 @@ export async function refreshPanels(client: Client, guildId: string) {
   }[];
   for (const p of panels) {
     try {
-      const channel = await client.channels.fetch(p.channel_id);
-      if (!channel?.isTextBased()) throw new Error(`channel ${p.channel_id} is not text-based`);
-      // Editing by id avoids fetching the message, which would need Read Message History
-      await channel.messages.edit(p.message_id, panel(guildId, p.page));
+      await editPanel(client, guildId, p);
+      stuckPanels.delete(p.message_id);
     } catch (err) {
       const gone =
         err instanceof DiscordAPIError && (err.code === RESTJSONErrorCodes.UnknownMessage || err.code === RESTJSONErrorCodes.UnknownChannel);
       if (gone) db.prepare('DELETE FROM sound_panels WHERE message_id = ?').run(p.message_id);
-      else console.error(`Soundboard panel ${p.message_id} refresh failed:`, err instanceof Error ? err.message : err);
+      else {
+        const reason = err instanceof Error ? err.message : String(err);
+        if (stuckPanels.get(p.message_id) !== reason) console.error(`Soundboard panel ${p.message_id} in channel ${p.channel_id} can’t be updated:`, reason);
+        stuckPanels.set(p.message_id, reason);
+      }
     }
   }
 }
@@ -863,7 +1035,12 @@ export const soundboard: Feature = {
 
         const reply = await i.reply({ ...panel(i.guildId, 0), withResponse: true });
         const message = reply.resource?.message;
-        if (message) trackPanel(message.id, i.guildId, message.channelId, 0);
+        if (!message) return;
+        trackPanel(message.id, i.guildId, message.channelId, 0);
+        // Slash commands work in channels the bot can't see, but it can't keep a panel up to date there
+        await editPanel(i.client, i.guildId, { message_id: message.id, channel_id: message.channelId, page: 0 }).catch(() =>
+          i.followUp({ content: 'This panel works, but it can’t update itself when sounds change, because I can’t see this channel. If it’s private, add me to it under **Edit Channel → Permissions**.', ...ephemeral }),
+        );
       },
     },
   ],
@@ -893,6 +1070,7 @@ export const soundboard: Feature = {
   componentPrefix: 'sb',
   async onButton(i) {
     if (!i.inCachedGuild()) return;
+    if (isSetting(i.customId)) return onSetting(i);
     // Discord greys the button out until the click is acknowledged, so do that before anything else
     if (!i.customId.startsWith('sb:#') || i.customId === STOP) await i.deferUpdate();
 
@@ -913,6 +1091,11 @@ export const soundboard: Feature = {
 
     if (i.customId === STOP) return stopPlayback(i.guildId);
 
+    if (i.customId === SETTINGS) {
+      const { page } = db.prepare('SELECT page FROM sound_panels WHERE message_id = ?').get(i.message.id) as { page: number };
+      return i.reply({ ...settingsMenu(i.guildId, page, i.memberPermissions.has(PermissionFlagsBits.ManageGuild)), flags: MessageFlags.Ephemeral });
+    }
+
     const sound = findSound(i.guildId, i.customId.slice('sb:'.length));
     if (!sound) return i.followUp({ content: 'That sound was removed.', flags: MessageFlags.Ephemeral });
     if (!i.member.voice.channel) {
@@ -921,5 +1104,38 @@ export const soundboard: Feature = {
     const problem = await play(i.member.voice.channel, sound.file, soundGain(i.guildId, sound.name));
     if (problem) return i.followUp({ content: problem, flags: MessageFlags.Ephemeral });
     recordPlay(i.guildId, i.user.id, sound.name);
+  },
+  async onSelect(i) {
+    if (!i.inCachedGuild()) return;
+    const page = Number(i.customId.split(':')[2]);
+    const sound = findSound(i.guildId, i.values[0]);
+    return i.update(sound ? soundSettings(i.guildId, sound, page) : SOUND_GONE);
+  },
+  async onModal(i) {
+    if (!i.inCachedGuild() || !i.isFromMessage()) return;
+    const [action, pageText, name] = i.customId.slice('sb:#'.length).split(':');
+    const page = Number(pageText);
+    const sound = findSound(i.guildId, name);
+    if (!sound) return i.update(SOUND_GONE);
+    await i.deferUpdate();
+    const value = i.fields.getTextInputValue(INPUT).trim();
+    const done = async (shown: Sound, note?: string) => {
+      await refreshPanels(i.client, i.guildId);
+      return i.editReply(soundSettings(i.guildId, shown, page, note));
+    };
+
+    if (action === 'emoji') {
+      const emoji = value ? await parseEmoji(i.guild, value) : null;
+      if (emoji && 'error' in emoji) return i.editReply(soundSettings(i.guildId, sound, page, emoji.error));
+      await changeEmoji(i.guild, sound.name, emoji?.emoji ?? null);
+      logActivity(i.guildId, i.user.id, emoji ? `Set the emoji on **${sound.name}**` : `Cleared the emoji on **${sound.name}**`);
+      return done(findSound(i.guildId, sound.name)!);
+    }
+
+    if (value === sound.name) return i.editReply(soundSettings(i.guildId, sound, page));
+    const problem = await renameSound(i.guild, sound, value);
+    if (problem) return i.editReply(soundSettings(i.guildId, sound, page, problem));
+    logActivity(i.guildId, i.user.id, `Renamed **${sound.name}** to **${value}**`);
+    return done(findSound(i.guildId, value)!);
   },
 };
