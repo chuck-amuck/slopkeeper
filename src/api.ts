@@ -38,6 +38,7 @@ import {
   trimProblem,
   trimSound,
   uploadProblem,
+  voiceVolume,
   volumeProblem,
   type Sound,
 } from './features/soundboard.ts';
@@ -138,6 +139,7 @@ async function soundList(guild: Guild) {
       gainDb: levels.get(sound.name)?.gainDb ?? null,
       percent: levels.get(sound.name)?.percent ?? 100,
       volume: discordVolume(guild.id, sound.name),
+      loudness: voiceVolume(guild.id, sound.name),
       trimmed: isTrimmed(guild.id, sound.name),
     });
   }
