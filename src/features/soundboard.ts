@@ -178,8 +178,11 @@ export function soundGain(guildId: string, name: string): number {
   return 10 ** (levelled / 20) * ((level?.percent ?? 100) / 100);
 }
 
+/** How loud a sound plays in voice, where 1 is the file as it is */
+export const voiceVolume = (guildId: string, name: string) => VOLUME * soundGain(guildId, name);
+
 /** Discord's own volume for a sound's copy. It can't go over 1, so that's as far as it can be turned up there */
-export const discordVolume = (guildId: string, name: string) => Math.min(1, Math.round(VOLUME * soundGain(guildId, name) * 100) / 100);
+export const discordVolume = (guildId: string, name: string) => Math.min(1, Math.round(voiceVolume(guildId, name) * 100) / 100);
 
 /** Measures a sound, starting from its picked volume being reset, since that was for the audio it had before */
 async function levelSound(guildId: string, sound: Sound, keepPercent = false) {

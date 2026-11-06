@@ -769,6 +769,15 @@ test('Discord’s volume stops at its limit of 1', async () => {
   assert.ok(soundGain(GUILD, 'quiet') > 2.8);
 });
 
+test('a sound’s loudness is what plays in voice, even past Discord’s limit', async () => {
+  await upload('quiet', 'q.wav', quietWav() as BodyInit);
+  await ok(`/guilds/${GUILD}/sounds/quiet`, { method: 'PATCH', json: { volume: 200 } });
+  const [sound] = await sounds();
+  assert.equal(sound.volume, 1);
+  assert.equal(sound.loudness, soundGain(GUILD, 'quiet') / 2);
+  assert.ok(sound.loudness > 1);
+});
+
 test('the picked volume multiplies the measured one and reaches Discord without re-uploading', async () => {
   await upload('horn');
   const before = soundGain(GUILD, 'horn');
