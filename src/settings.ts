@@ -39,6 +39,8 @@ export const DEFAULTS = {
   // Nothing plays until someone picks a sound for themselves, so this can default to on
   joinSounds: process.env.JOIN_SOUNDS !== 'false',
   joinSoundCooldownMin: num('JOIN_SOUND_COOLDOWN_MIN', 10),
+  // Unset lets everyone change sounds
+  soundManagerRole: null as string | null,
 };
 
 /** Env var that sets each setting's default, for /setup show */
@@ -95,7 +97,7 @@ export function setSetting(guildId: string, key: SettingKey, value: string | num
   }
 }
 
-export type IdSettingKey = 'announceChannel' | 'hopOnRole' | 'freeGamesChannel' | 'saleChannel';
+export type IdSettingKey = 'announceChannel' | 'hopOnRole' | 'freeGamesChannel' | 'saleChannel' | 'soundManagerRole';
 
 /** Channel and role settings store '' for "deliberately none", which reads back as null */
 export const idSetting = (guildId: string, key: IdSettingKey) => setting(guildId, key) || null;

@@ -7,8 +7,8 @@ import path from 'node:path';
 import { mock, test } from 'node:test';
 import { recentActivity } from '../src/activity.ts';
 import { db } from '../src/db.ts';
-import { findSound, refreshPanels, soundboard, soundLevels } from '../src/features/soundboard.ts';
-import { setting } from '../src/settings.ts';
+import { findSound, listSounds, refreshPanels, soundboard, soundLevels } from '../src/features/soundboard.ts';
+import { setSetting, setting } from '../src/settings.ts';
 
 const hasFfmpeg = spawnSync('ffmpeg', ['-version']).status === 0;
 const logged = mock.method(console, 'error', () => {});
@@ -43,7 +43,7 @@ function server(sounds: string[] = ['horn']) {
 type Reply = { content: string; components: { toJSON(): { components: Record<string, any>[] } }[]; flags?: number };
 
 /** Fakes a click on a settings control, and keeps what the private message shows afterwards */
-function clicker(s: ReturnType<typeof server>, options: { admin?: boolean; voice?: unknown } = {}) {
+function clicker(s: ReturnType<typeof server>, options: { admin?: boolean; voice?: unknown; roles?: string[] } = {}) {
   const state: { shown?: Reply; modal?: { toJSON(): Record<string, any> } } = {};
   const edits: unknown[] = [];
   const base = {
@@ -52,7 +52,7 @@ function clicker(s: ReturnType<typeof server>, options: { admin?: boolean; voice
     guild: s.guild,
     channelId: 'text',
     user: { id: 'clicker' },
-    member: { voice: { channel: options.voice } },
+    member: { voice: { channel: options.voice }, roles: { cache: new Set(options.roles) } },
     memberPermissions: { has: (flag: bigint) => flag === PermissionFlagsBits.ManageGuild && !!options.admin },
     client: { channels: { fetch: async () => ({ isTextBased: () => true, messages: { edit: async (...args: unknown[]) => edits.push(args) } }) } },
     deferUpdate: async () => {},
@@ -329,4 +329,67 @@ test('the even volume switch updates the copies on Discord too', async (t) => {
   const edited = t.mock.method(s.guild.soundboardSounds, 'edit', async () => {});
   await clicker(s, { admin: true }).press('sb:#even:0:');
   assert.equal(edited.mock.callCount(), 1);
+});
+
+const CHANGES = ['up', 'down', 'discord', 'emoji', 'rename', 'delete', 'confirm'];
+
+test('with a sound managers role, everyone else can test a sound but not change it', async () => {
+  const s = server();
+  setSetting(s.id, 'soundManagerRole', 'managers');
+  insertPanel(s.id, 'managers-panel');
+  const c = clicker(s, { roles: ['someone-else'] });
+  await c.press('sb:#settings', { id: 'managers-panel' });
+  assert.match(c.state.shown!.content, /Pick a sound to test\. Only <@&managers> and people with \*\*Manage Server\*\* can change sounds\./);
+  assert.equal(flat(c.state.shown!).length, 1, 'just the sound picker');
+
+  await c.pick('horn');
+  assert.deepEqual(flat(c.state.shown!).map((b) => b.custom_id), ['sb:#test:0:horn', 'sb:#back:0:']);
+  assert.match(c.state.shown!.content, /Only <@&managers>/);
+  await c.press('sb:#test:0:horn');
+  assert.match(c.state.shown!.content, /Join a voice channel first/);
+});
+
+test('a control left open is refused once someone isn’t allowed, and changes nothing', async () => {
+  const s = server();
+  setSetting(s.id, 'soundManagerRole', 'managers');
+  const c = clicker(s);
+  for (const action of CHANGES) {
+    c.state.modal = undefined;
+    c.state.shown = undefined;
+    await c.press(`sb:#${action}:0:horn`);
+    assert.equal(c.state.modal, undefined, action);
+    assert.match(c.state.shown!.content, /Only <@&managers>/, action);
+  }
+  for (const [action, value] of [['rename', 'other'], ['emoji', '📯']]) {
+    c.state.shown = undefined;
+    await c.submit(`sb:#${action}:0:horn`, value);
+    assert.match(c.state.shown!.content, /Only <@&managers>/, action);
+  }
+  assert.deepEqual(listSounds(s.id).map((sound) => [sound.name, sound.emoji]), [['horn', undefined]]);
+  assert.equal(soundLevels(s.id).get('horn')?.percent ?? 100, 100);
+  assert.deepEqual(s.uploads, []);
+  assert.deepEqual(log(s.id), []);
+});
+
+test('the role or Manage Server can change sounds, and with no role set anyone can', async () => {
+  const check = async (options: Parameters<typeof clicker>[1], role: string | null) => {
+    const s = server();
+    if (role) setSetting(s.id, 'soundManagerRole', role);
+    const c = clicker(s, options);
+    await c.pick('horn');
+    assert.ok(flat(c.state.shown!).some((b) => b.custom_id === 'sb:#up:0:horn'));
+    await c.press('sb:#up:0:horn');
+    assert.equal(soundLevels(s.id).get('horn')!.percent, 125);
+  };
+  await check({ roles: ['managers'] }, 'managers');
+  await check({ admin: true }, 'managers');
+  await check({}, null);
+});
+
+test('an empty sound managers setting means everyone', async () => {
+  const s = server();
+  setSetting(s.id, 'soundManagerRole', null);
+  const c = clicker(s);
+  await c.press('sb:#up:0:horn');
+  assert.equal(soundLevels(s.id).get('horn')!.percent, 125);
 });

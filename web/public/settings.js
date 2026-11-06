@@ -27,6 +27,7 @@ const FIELDS = {
   evenVolume: { kind: 'boolean', hint: 'Levels sounds so they play about as loud as each other. Your files aren’t changed, so this can be turned off at any time.' },
   joinSounds: { kind: 'boolean', hint: 'Lets people pick a sound that plays when they join voice, with /sound join.' },
   joinSoundCooldownMin: { kind: 'number', unit: 'min', hint: 'Shortest time between one person’s join sounds.' },
+  soundManagerRole: { kind: 'role', none: 'Everyone', hint: 'Who can change sounds in Discord, along with people with Manage Server. Anyone can still play them. This page isn’t limited by it: it only asks for the password.' },
 };
 
 const GROUPS = [
@@ -37,7 +38,7 @@ const GROUPS = [
   ['Games', ['steamCountry', 'gameNightReminderMin']],
   ['Sale alerts', ['saleMinDiscount', 'saleSteamWishlists', 'saleChannel']],
   ['Free games', ['freeGames', 'freeGamesChannel', 'freeGamesMinRating', 'freeGamesTaste', 'freeGamesMultiplayer', 'freeGamesUnlisted']],
-  ['Soundboard', ['evenVolume', 'joinSounds', 'joinSoundCooldownMin']],
+  ['Soundboard', ['evenVolume', 'joinSounds', 'joinSoundCooldownMin', 'soundManagerRole']],
 ];
 
 export function renderSettings(main) {
