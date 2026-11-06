@@ -219,13 +219,15 @@ Every Sunday at 8 PM, in the server's time zone, the bot posts the past week's l
 
 The bot records how long each person plays each game while they're in a voice channel, from the "Playing" status Discord shows on their profile. They don't need anyone else there, but games played outside voice, or in the AFK channel, aren't recorded at all. It keeps the record per server. Anyone who doesn't want this can turn off **Settings → Activity Privacy → Share my activity** in Discord. Plays under a minute (launchers, crashes) aren't kept.
 
+A game's time is how long anyone was playing it, so two people playing for the same hour add one hour to the game and one hour each to themselves. That's why the players of a game can add up to more than the game itself. If the same game is running in two voice channels at once, it still only counts once.
+
 Game time from before this rule is an estimate: the bot kept what fell inside saved voice sessions, up to each person's time in that session.
 
 | Command | What it does |
 | --- | --- |
-| `/gamestats` | The whole server: hours played, the 10 most played games with how many people play them, and the 10 people who play the most. |
+| `/gamestats` | The whole server: how long games were played, the 10 most played with how many people play them, and the 10 people who play the most. |
 | `/gamestats user` | One person: their total and their top games, with when they last played each. |
-| `/gamestats game` | One game: the server's total and who plays it most. The name autocompletes from what's been played. |
+| `/gamestats game` | One game: how long it was played, and how long each person played it. The name autocompletes from what's been played. |
 | `/gamestats user game` | One person and one game: their hours, number of sessions, and where they rank among the server's players. |
 
 Every form takes `period`: past week, past month (default), past year or all time.

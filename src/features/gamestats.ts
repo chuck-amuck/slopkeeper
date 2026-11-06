@@ -83,6 +83,35 @@ function playsWhere(user?: string, game?: string): string {
   return where.join(' AND ');
 }
 
+interface Span {
+  start: number;
+  end: number;
+}
+
+/** Each game's plays in a period, in time order, with overlaps joined up so people playing together only count once */
+function gameSpans(plays: (Span & { game: string })[]) {
+  const games = new Map<string, Span[]>();
+  for (const { game, start, end } of plays) {
+    const spans = games.get(game) ?? [];
+    const last = spans.at(-1);
+    if (last && start <= last.end) last.end = Math.max(last.end, end);
+    else spans.push({ start, end });
+    games.set(game, spans);
+  }
+  return games;
+}
+
+/** Selects what `gameSpans` and `activity` need, clipped to the period and in time order */
+const clippedPlays = (where: string) =>
+  `SELECT game, MAX(started_at, :since) AS start, MIN(ended_at, :until) AS end FROM game_plays WHERE ${where} ORDER BY start`;
+
+/** How long each game was being played by anyone, whoever and however many */
+function gameLengths(guildId: string, since: number, until: number, game?: string) {
+  const plays = db.prepare(clippedPlays(playsWhere(undefined, game))).all({ guild: guildId, since, until, ...(game ? { game } : {}) }) as unknown as (Span & { game: string })[];
+  return new Map([...gameSpans(plays)].map(([name, spans]) => [name, spans.reduce((sum, s) => sum + s.end - s.start, 0)]));
+}
+
+/** Totals by game or person. With nobody picked, a game's time is how long it was being played, not everyone's time added up */
 export function stats(
   guildId: string,
   since: number,
@@ -94,7 +123,7 @@ export function stats(
 ) {
   const where = playsWhere(filter === 'user' || filter === 'both' ? 'user' : undefined, filter === 'game' || filter === 'both' ? 'game' : undefined);
   const other = groupBy === 'game' ? 'user_id' : 'game';
-  return db
+  const rows = db
     .prepare(
       `SELECT ${groupBy} AS key, SUM(${CLIPPED}) AS ms, COUNT(DISTINCT ${other}) AS n, MAX(ended_at) AS last
        FROM game_plays WHERE ${where}
@@ -104,19 +133,19 @@ export function stats(
     key: string;
     last: number;
   })[];
+  if (groupBy !== 'game' || filter === 'user' || filter === 'both') return rows;
+  const lengths = gameLengths(guildId, since, until, game);
+  return rows.map((r) => ({ ...r, ms: lengths.get(r.key)! })).sort((a, b) => b.ms - a.ms);
 }
 
 /**
- * Game time per day, week or month in the server's time zone, whichever suits the length of the period.
- * `keep` picks whose time counts. Every step is listed, so a quiet one shows up as a gap.
+ * Game time per day, week or month in the server's time zone, whichever suits the length of the period, counted
+ * as in `stats`. Every step is listed, so a quiet one shows up as a gap.
  */
-export function activity(guildId: string, since: number, until: number, timeZone: string, keep: (userId: string) => boolean, user?: string, game?: string) {
-  const plays = (
-    db
-      .prepare(`SELECT user_id AS userId, MAX(started_at, :since) AS start, MIN(ended_at, :until) AS end FROM game_plays WHERE ${playsWhere(user, game)}`)
-      .all({ guild: guildId, since, until, ...(user ? { user } : {}), ...(game ? { game } : {}) }) as { userId: string; start: number; end: number }[]
-  ).filter((p) => keep(p.userId));
-  if (!plays.length) return { step: 'day', buckets: [] };
+export function activity(guildId: string, since: number, until: number, timeZone: string, user?: string, game?: string) {
+  const rows = db.prepare(clippedPlays(playsWhere(user, game))).all({ guild: guildId, since, until, ...(user ? { user } : {}), ...(game ? { game } : {}) }) as unknown as (Span & { game: string })[];
+  if (!rows.length) return { step: 'day', buckets: [] };
+  const plays = [...gameSpans(rows).values()].flat();
 
   const first = since || plays.reduce((earliest, p) => Math.min(earliest, p.start), Infinity);
   const days = (until - first) / DAY;
@@ -252,7 +281,7 @@ export const gameStats: Feature = {
         if (game) {
           const players = stats(i.guildId, since, 'game', 'user_id', undefined, game).filter((r) => isMember(r.key));
           if (!players.length) return nothing(`${game} plays`);
-          const total = players.reduce((sum, p) => sum + p.ms, 0);
+          const total = stats(i.guildId, since, 'game', 'game', undefined, game).reduce((sum, g) => sum + g.ms, 0);
           embed
             .setTitle(`🎮 ${game}`)
             .setDescription(

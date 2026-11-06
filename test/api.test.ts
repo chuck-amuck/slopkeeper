@@ -643,7 +643,9 @@ test('stats match what /gamestats works from, leaving out people who’ve left',
   assert.deepEqual(data.players.map((p: any) => [p.id, p.name, Math.round(p.ms / HOUR), p.games]), [['u1', 'Ana', 5, 2], ['u2', 'Ben', 1, 1]]);
   assert.deepEqual(data.games.map((g: any) => [g.name, g.people]), [['Doom', 2], ['Halo', 2]]);
   assert.deepEqual(data.voice.map((p: any) => [p.name, p.ms, p.nights]), [['Ana', 3_600_000, 1], ['Ben', 1_800_000, 1]]);
-  assert.equal(Math.round(data.totals.gameMs / HOUR), 6);
+  // Halo was on for 3h and Doom for 4h, some of that by someone who's since left
+  assert.equal(Math.round(data.totals.gameMs / HOUR), 7);
+  assert.equal(Math.round(data.totals.playerMs / HOUR), 6);
   assert.equal(data.totals.voiceMs, 5_400_000);
   assert.equal(data.totals.people, 2);
 });
@@ -672,6 +674,17 @@ test('filters by person, by game and by both', async () => {
   assert.equal(Math.round(both.totals.gameMs / HOUR), 1);
 });
 
+test('a picked game shows how long it was played, a picked person their own time', async () => {
+  seedStats();
+  const halo = await ok(`/guilds/${GUILD}/stats?period=week&game=Halo`);
+  assert.equal(Math.round(halo.totals.gameMs / HOUR), 3);
+  assert.equal(Math.round(halo.totals.playerMs / HOUR), 4);
+  assert.deepEqual(halo.players.map((p: any) => [p.name, Math.round(p.ms / HOUR)]), [['Ana', 3], ['Ben', 1]]);
+  const ben = await ok(`/guilds/${GUILD}/stats?period=week&user=u2`);
+  assert.equal(Math.round(ben.totals.gameMs / HOUR), 1);
+  assert.equal(Math.round(ben.activity.buckets.reduce((sum: number, b: any) => sum + b.ms, 0) / HOUR), 1);
+});
+
 test('game time over time adds up to the total, by day for a short period', async () => {
   seedStats();
   const data = await ok(`/guilds/${GUILD}/stats?period=week`);
@@ -690,7 +703,7 @@ test('stats are empty for a quiet server', async () => {
 test('a play across midnight is split between the days', () => {
   const midnight = Date.parse('2026-03-10T05:00:00Z'); // In Chicago, on CDT
   db.prepare(`INSERT INTO game_plays (guild_id, user_id, game, channel_id, started_at, ended_at) VALUES (?, ?, ?, 'voice', ?, ?)`).run(GUILD, 'u1', 'Halo', midnight - HOUR / 2, midnight + HOUR);
-  const { step, buckets } = activity(GUILD, midnight - 2 * 24 * HOUR, midnight + 24 * HOUR, 'America/Chicago', () => true);
+  const { step, buckets } = activity(GUILD, midnight - 2 * 24 * HOUR, midnight + 24 * HOUR, 'America/Chicago');
   assert.equal(step, 'day');
   assert.deepEqual(buckets.filter((b) => b.ms).map((b) => b.ms), [HOUR / 2, HOUR]);
   assert.equal(buckets.filter((b) => b.ms)[1].start, midnight);
@@ -700,8 +713,8 @@ test('longer periods are grouped by week, then by month from the 1st', () => {
   const now = Date.parse('2026-06-15T17:00:00Z');
   db.prepare(`INSERT INTO game_plays (guild_id, user_id, game, channel_id, started_at, ended_at) VALUES (?, ?, ?, 'voice', ?, ?)`).run(GUILD, 'u1', 'Halo', now - 500 * 24 * HOUR, now - 500 * 24 * HOUR + HOUR);
   db.prepare(`INSERT INTO game_plays (guild_id, user_id, game, channel_id, started_at, ended_at) VALUES (?, ?, ?, 'voice', ?, ?)`).run(GUILD, 'u1', 'Halo', now - 50 * 24 * HOUR, now - 50 * 24 * HOUR + HOUR);
-  assert.equal(activity(GUILD, now - 100 * 24 * HOUR, now, 'UTC', () => true).step, 'week');
-  const months = activity(GUILD, 0, now, 'UTC', () => true);
+  assert.equal(activity(GUILD, now - 100 * 24 * HOUR, now, 'UTC').step, 'week');
+  const months = activity(GUILD, 0, now, 'UTC');
   assert.equal(months.step, 'month');
   assert.equal(new Date(months.buckets[1].start).getUTCDate(), 1);
   assert.equal(months.buckets.reduce((sum, b) => sum + b.ms, 0), 2 * HOUR);
