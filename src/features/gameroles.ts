@@ -11,6 +11,7 @@ import {
   type GuildMember,
 } from 'discord.js';
 import { db } from '../db.ts';
+import { gameKey, gameName } from '../gameNames.ts';
 import { isAllowed } from '../settings.ts';
 import type { Feature } from '../types.ts';
 import { listNames, pingWarning } from '../util.ts';
@@ -26,10 +27,13 @@ function gameRoles(guildId: string): GameRole[] {
   return db.prepare('SELECT role_id, name, created FROM game_roles WHERE guild_id = ? ORDER BY name').all(guildId) as unknown as GameRole[];
 }
 
-/** Ping roles for the games named, matched without caring about case */
+/** Ping roles for the games named, matched by the name each game goes by, however either is spelled */
 export function rolesForGames(guildId: string, games: string[]): string[] {
-  const find = db.prepare('SELECT role_id FROM game_roles WHERE guild_id = ? AND name = ?');
-  return games.flatMap((game) => (find.get(guildId, game) as { role_id: string } | undefined)?.role_id ?? []);
+  const keyOf = (name: string) => gameKey(gameName(guildId, name));
+  const wanted = new Set(games.map(keyOf));
+  return gameRoles(guildId)
+    .filter((r) => wanted.has(keyOf(r.name)))
+    .map((r) => r.role_id);
 }
 
 const heldBy = (member: GuildMember) => new Set(member.roles.cache.keys());
@@ -101,7 +105,7 @@ export const gamePings: Feature = {
             : [
                 ...new Set([
                   ...allGames(i.guildId).map((g) => g.name),
-                  ...(db.prepare('SELECT DISTINCT game FROM game_plays WHERE guild_id = ?').all(i.guildId) as { game: string }[]).map((r) => r.game),
+                  ...(db.prepare('SELECT DISTINCT game FROM named_plays WHERE guild_id = ?').all(i.guildId) as { game: string }[]).map((r) => r.game),
                 ]),
               ].sort();
         return i.respond(

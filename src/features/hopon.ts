@@ -1,6 +1,7 @@
 import { DiscordAPIError, Events, MessageFlags, RESTJSONErrorCodes, SlashCommandBuilder, type Client, type VoiceState } from 'discord.js';
 import { idSetting, isAllowed, setting } from '../settings.ts';
 import type { Feature } from '../types.ts';
+import { gameName } from '../gameNames.ts';
 import { announceChannel, humansIn, listNames, playingGames } from '../util.ts';
 import { rolesForGames } from './gameroles.ts';
 
@@ -21,7 +22,7 @@ async function onVoiceState(client: Client<true>, oldState: VoiceState, newState
   if (!out) return;
   lastPingAt.set(guildId, Date.now());
 
-  const games = [...new Set(humans.flatMap(playingGames))];
+  const games = [...new Set(humans.flatMap(playingGames).map((game) => gameName(guildId, game)))];
   let text = `🎮 ${listNames(humans.map((m) => `**${m.displayName}**`))} are in ${channel}`;
   if (games.length) text += `, playing ${listNames(games.map((g) => `**${g}**`))}`;
   text += '. Hop on!';
