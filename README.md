@@ -332,7 +332,7 @@ You have to be in a voice channel to play a sound. The bot joins whichever chann
 
 **⚙️ Settings** on a panel changes sounds without leaving Discord. Everything it opens is only visible to you. Pick a sound from the panel's current page to change its volume, test it, put it on or take it off Discord's soundboard, set its emoji, rename it or delete it. People with **Manage Server** also get switches for even volume and join sounds. Trimming, picking part of a long sound and uploading are on the web UI, or in the commands below.
 
-**Join sounds** are opt-in: nothing plays until someone picks one with `/sound join`, or it's set for them on the web UI's Settings page. A sound plays half a second after you connect to voice, so your own Discord is ready to hear it, and not if you leave first. It doesn't play when you switch channels, or again until the cooldown is up (10 minutes unless `/setup sounds` says otherwise). If the bot is already in a different channel, it stays there rather than leaving the people using it. They don't count towards the monthly recap's top sounds.
+**Join sounds** are opt-in: nothing plays until someone picks one with `/sound join`, or it's set for them on the web UI's Settings page. When you connect to voice the bot joins straight away, then waits half a second before playing, so the sound clears Discord's joining noises. Nothing plays if you leave during that wait. It doesn't play when you switch channels, or again until the cooldown is up (10 minutes unless `/setup sounds` says otherwise). If the bot is already in a different channel, it stays there rather than leaving the people using it. They don't count towards the monthly recap's top sounds.
 
 ### Managing sounds
 
@@ -419,7 +419,7 @@ Every setting has a sensible default, so only the announce channel needs setting
 | `/setup free-games enabled [channel]` | Turns free game posts on or off. `channel` gives them their own channel; without it they go to the announce channel. To move them back to the announce channel, use `/setup reset setting:Free games channel`. |
 | `/setup gamenight-reminder minutes` | How long before a game night to remind the people who are in. `0` turns reminders off. |
 | `/setup monthly-recap enabled` | Turns the post on the 1st of each month on or off. |
-| `/setup sounds [even_volume] [join_sounds] [join_cooldown_minutes] [join_delay_ms]` | Turns [even volume](#even-volume) and join sounds on or off, and sets how often one person's join sound can play and how long after they connect it plays. |
+| `/setup sounds [even_volume] [join_sounds] [join_cooldown_minutes] [join_delay_ms]` | Turns [even volume](#even-volume) and join sounds on or off, and sets how often one person's join sound can play and how long the bot waits after connecting before it plays. |
 | `/setup sound-managers [role]` | Limits changing sounds to a role, plus people with **Manage Server**. Leave `role` empty to let everyone change them, which is the default. See [who can change sounds](#who-can-change-sounds). |
 | `/setup reset setting` | Puts one setting back to its default. |
 
@@ -471,7 +471,7 @@ So the host can change a default for every server at once, and each server can s
 | Even volume | `sounds` | `EVEN_VOLUME` (`false` to turn off) | on |
 | Join sounds | `sounds` | `JOIN_SOUNDS` (`false` to turn off) | on |
 | Minutes between one person's join sounds | `sounds` | `JOIN_SOUND_COOLDOWN_MIN` | 10 |
-| Milliseconds after connecting before a join sound plays | `sounds` | `JOIN_SOUND_DELAY_MS` | 500 |
+| Milliseconds the bot waits after connecting before a join sound | `sounds` | `JOIN_SOUND_DELAY_MS` | 500 |
 
 ## Multiple servers
 

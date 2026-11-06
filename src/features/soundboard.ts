@@ -542,12 +542,14 @@ function audioFor(guildId: string): GuildAudio {
   const player = createAudioPlayer({ behaviors: { noSubscriber: NoSubscriberBehavior.Stop } });
   const a: GuildAudio = { player };
   player.on('error', (err) => console.error('Audio player error:', err.message));
-  player.on(AudioPlayerStatus.Idle, () => {
-    clearTimeout(a.idleTimer);
-    a.idleTimer = setTimeout(() => getVoiceConnection(guildId)?.destroy(), IDLE_LEAVE_MS);
-  });
+  player.on(AudioPlayerStatus.Idle, () => leaveWhenIdle(guildId, a));
   audio.set(guildId, a);
   return a;
+}
+
+function leaveWhenIdle(guildId: string, a: GuildAudio) {
+  clearTimeout(a.idleTimer);
+  a.idleTimer = setTimeout(() => getVoiceConnection(guildId)?.destroy(), IDLE_LEAVE_MS).unref();
 }
 
 /** Why the bot can't play in a channel, or null if it can */
@@ -579,8 +581,8 @@ function watch(connection: VoiceConnection, guildId: string) {
   });
 }
 
-/** Plays a sound in a channel. Returns null on success or the reason it couldn't, for the user */
-export async function play(channel: VoiceBasedChannel, file: string, gain = 1): Promise<string | null> {
+/** Gets the bot into a channel, ready to play. Returns null on success or the reason it couldn't, for the user */
+async function connect(channel: VoiceBasedChannel): Promise<string | null> {
   const problem = cantJoin(channel);
   if (problem) return problem;
 
@@ -607,15 +609,27 @@ export async function play(channel: VoiceBasedChannel, file: string, gain = 1): 
     destroy(connection);
     return `I couldn’t connect to ${channel}. Try again in a moment.`;
   }
+  return null;
+}
+
+function mixIn(guildId: string, file: string, gain: number) {
+  const a = audioFor(guildId);
+  clearTimeout(a.idleTimer);
   // Layer onto whatever is already playing (or restart this sound if it's one of them); a fresh mixer is only needed once the last one has gone quiet
   if (a.mixer && !a.mixer.finished) {
     a.mixer.add(file, gain);
-    return null;
+    return;
   }
   a.mixer = new Mixer(VOLUME, MAX_VOICES);
   a.mixer.add(file, gain);
   a.player.play(createAudioResource(a.mixer, { inputType: StreamType.Raw }));
-  return null;
+}
+
+/** Plays a sound in a channel. Returns null on success or the reason it couldn't, for the user */
+export async function play(channel: VoiceBasedChannel, file: string, gain = 1): Promise<string | null> {
+  const problem = await connect(channel);
+  if (!problem) mixIn(channel.guild.id, file, gain);
+  return problem;
 }
 
 /** For the monthly recap */
@@ -662,17 +676,21 @@ export async function playJoinSound(oldState: VoiceState, newState: VoiceState) 
   const now = Date.now();
   if (now - (lastJoinSound.get(key) ?? -Infinity) < setting(guild.id, 'joinSoundCooldownMin') * 60_000) return;
   lastJoinSound.set(key, now);
+  // The bot joins straight away, and the delay comes after that, so the sound clears Discord's joining noises
+  const problem = await connect(channel);
+  if (problem) return console.log(`Join sound ${sound.name} in ${guild.name} didn’t play: ${problem}`);
   const delay = setting(guild.id, 'joinSoundDelayMs');
   if (delay) {
-    // Their own Discord takes a moment to connect, and they'd miss the start of the sound
     await sleep(delay);
     if (guild.voiceStates.cache.get(newState.id)?.channelId !== channel.id || busyElsewhere()) {
       lastJoinSound.delete(key);
+      // Connecting cancelled this, and with no sound to finish nothing would set it again
+      const a = audioFor(guild.id);
+      if (a.player.state.status === AudioPlayerStatus.Idle) leaveWhenIdle(guild.id, a);
       return;
     }
   }
-  const problem = await play(channel, sound.file, soundGain(guild.id, sound.name));
-  if (problem) console.log(`Join sound ${sound.name} in ${guild.name} didn’t play: ${problem}`);
+  mixIn(guild.id, sound.file, soundGain(guild.id, sound.name));
 }
 
 export function stopPlayback(guildId: string) {
