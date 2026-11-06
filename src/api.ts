@@ -8,7 +8,7 @@ import { config } from './config.ts';
 import * as discordBoard from './discordSounds.ts';
 import { cancelNight, gameNames, planNight, readWhen, stopSeries, upcomingNights } from './features/gamenight.ts';
 import { reviewGiveaways } from './features/freegames.ts';
-import { addGame, allGames, gameById, groupMembers, ownersOf, parseSteamAppId, removeGame, setGameDetails, setOwned, setWanted, steamOwnersOf, wantedBy, type GameRow } from './features/games.ts';
+import { addGame, addMemberGame, allGames, gameById, groupMembers, memberGames, ownersOf, parseSteamAppId, removeGame, setGameDetails, setOwned, setWanted, steamOwnersOf, wantedBy, type GameRow } from './features/games.ts';
 import { onSale, saleName, salePrices, saleReasons, storeUrl } from './features/sales.ts';
 import { activity, checkpoint, PERIODS, stats } from './features/gamestats.ts';
 import { gameName, gameSpellings, mergeGames, separateGame } from './gameNames.ts';
@@ -572,7 +572,13 @@ function gameList(guild: Guild) {
 }
 
 async function addGameFromWeb(guild: Guild, req: IncomingMessage) {
-  const { name } = await readJson(req);
+  const { name, appid } = await readJson(req);
+  if (appid !== undefined) {
+    const owned = Number.isInteger(appid) ? addMemberGame(guild, appid as number, FROM_WEB) : null;
+    if (!owned) throw new Refused(404, 'That game isn’t on the list any more.');
+    if (owned.added) logActivity(guild.id, FROM_WEB, `Added **${owned.name}** to the game library`);
+    return owned;
+  }
   const input = typeof name === 'string' ? name.trim() : '';
   if (!input || input.length > (input.includes('/') ? 200 : 100)) throw new Refused(400, 'Give a game’s name in 100 characters or fewer, or its Steam store link.');
   const result = await addGame(guild.id, input, FROM_WEB).catch((err: unknown) => {
@@ -680,6 +686,9 @@ async function handle(client: Client<true>, req: IncomingMessage, res: ServerRes
   if (section === 'deleted-sounds' && (rest.length === 1 || rest.length === 2)) return handleDeleted(client, guild, req, rest[0], rest[1]);
   if (section === 'games' && !rest.length && req.method === 'GET') return gameList(guild);
   if (section === 'games' && !rest.length && req.method === 'POST') return addGameFromWeb(guild, req);
+  if (section === 'games' && rest.length === 1 && rest[0] === 'owned' && req.method === 'GET') {
+    return { games: memberGames(guild).map((g) => ({ appid: g.appid, name: g.name, owners: g.owners.map((id) => nameOf(guild, id)).sort((a, b) => a.localeCompare(b)) })) };
+  }
   if (section === 'games' && rest.length >= 1 && rest.length <= 3) return handleGame(guild, req, rest[0], rest[1], rest[2]);
   if (section === 'discord-sounds' && (rest.length === 1 || rest.length === 2)) return handleDiscordSound(client, guild, req, res, rest[0], rest[1]);
   if (section === 'settings' && rest.length <= 1) return handleSettings(guild, req, rest[0]);

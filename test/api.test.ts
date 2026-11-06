@@ -1869,3 +1869,60 @@ test('the web UI sets and clears the sound managers role, but isn’t limited by
   await ok(url, { method: 'DELETE' });
   assert.equal(setting(GUILD, 'soundManagerRole'), null);
 });
+
+function linkSteam(user: string, games: [number, string | null][]) {
+  db.prepare('INSERT INTO steam_links (user_id, steam_id) VALUES (?, ?)').run(user, `steam-${user}`);
+  for (const [appid, name] of games) db.prepare('INSERT INTO steam_owned (steam_id, appid, name, playtime) VALUES (?, ?, ?, 1)').run(`steam-${user}`, appid, name);
+}
+const owned = async () => (await ok(`/guilds/${GUILD}/games/owned`)).games as { appid: number; name: string; owners: string[] }[];
+
+test('lists what members own, most shared first, without the library or people from other servers', async () => {
+  insertGame('Already Listed', 1);
+  linkSteam('u1', [[1, 'Already Listed'], [2, 'Zebra Game'], [3, 'Shared Game'], [4, 'Alpha Game']]);
+  linkSteam('u2', [[3, 'Shared Game'], [5, null]]);
+  linkSteam('stranger', [[6, 'Not From Here'], [3, 'Shared Game']]);
+  db.prepare(`INSERT OR REPLACE INTO app_info (appid, name, multiplayer) VALUES (5, 'Named By Steam', 0), (3, 'Other Spelling', 0)`).run();
+  assert.deepEqual(await owned(), [
+    { appid: 3, name: 'Shared Game', owners: ['Ana', 'Ben'] },
+    { appid: 4, name: 'Alpha Game', owners: ['Ana'] },
+    { appid: 5, name: 'Named By Steam', owners: ['Ben'] },
+    { appid: 2, name: 'Zebra Game', owners: ['Ana'] },
+  ]);
+  db.prepare('DELETE FROM app_info WHERE appid IN (3, 5)').run();
+});
+
+test('a game nobody has a name for is left off', async () => {
+  linkSteam('u1', [[8, null]]);
+  db.prepare('DELETE FROM app_info WHERE appid = 8').run();
+  assert.deepEqual(await owned(), []);
+});
+
+test('adds a game from the owned list, once, with its app ID', async () => {
+  linkSteam('u1', [[3, 'Shared Game']]);
+  assert.deepEqual(await ok(`/guilds/${GUILD}/games`, { method: 'POST', json: { appid: 3 } }), { name: 'Shared Game', added: true });
+  const game = await gameCalled('Shared Game');
+  assert.equal(game.appid, 3);
+  assert.deepEqual(game.owners, [{ id: 'u1', name: 'Ana', steam: true }]);
+  assert.deepEqual(await owned(), []);
+  assert.deepEqual(activityText(), ['Added **Shared Game** to the game library']);
+  assert.match(await refused(404, `/guilds/${GUILD}/games`, { method: 'POST', json: { appid: 3 } }), /isn’t on the list/);
+});
+
+test('picking a game already listed without Steam links it instead of adding it twice', async () => {
+  insertGame('shared game');
+  linkSteam('u1', [[3, 'Shared Game']]);
+  assert.deepEqual(await ok(`/guilds/${GUILD}/games`, { method: 'POST', json: { appid: 3 } }), { name: 'shared game', added: false });
+  const { games } = await library();
+  assert.equal(games.length, 1);
+  assert.equal(games[0].appid, 3);
+});
+
+test('only games on the list can be picked', async () => {
+  linkSteam('stranger', [[6, 'Not From Here']]);
+  for (const appid of [6, 999, 'abc', 1.5, null]) await refused(404, `/guilds/${GUILD}/games`, { method: 'POST', json: { appid } });
+  assert.deepEqual((await library()).games, []);
+});
+
+test('the owned list only takes GET', async () => {
+  await refused(404, `/guilds/${GUILD}/games/owned`, { method: 'DELETE' });
+});
