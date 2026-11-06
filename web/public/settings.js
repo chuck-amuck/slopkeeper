@@ -1,4 +1,4 @@
-import { api, attempt, confirmButton, el, request, RequestError, state, toast } from './lib.js';
+import { api, attempt, confirmButton, el, openDialog, postDialog, request, RequestError, state, toast } from './lib.js';
 
 const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
@@ -250,6 +250,68 @@ export function renderSettings(main) {
     return el('div', { className: 'field' }, el('div', {}, el('div', { className: 'series-name' }, title), el('p', { className: 'hint' }, hint)), form, message);
   }
 
+  /** The page doesn't know who's using it, so this is for anyone, as Steam accounts are */
+  function pingsDialog() {
+    const who = el('select', { ariaLabel: 'Person', onchange: () => show() });
+    const list = el('div', { className: 'merge-list' });
+    const problem = el('div', { className: 'bad-text plan-problem', hidden: true });
+    const say = (text) => {
+      problem.textContent = text ?? '';
+      problem.hidden = !text;
+    };
+
+    const toggle = (ping, box) =>
+      attempt(async () => {
+        say(null);
+        box.disabled = true;
+        try {
+          await request(api(`/members/${who.value}/pings`), { method: 'PUT', json: { roleId: ping.id, on: box.checked } });
+        } catch (err) {
+          if (!(err instanceof RequestError)) throw err;
+          box.checked = !box.checked;
+          say(err.message);
+        } finally {
+          box.disabled = false;
+        }
+      });
+
+    const pingRow = (ping) => {
+      const box = el('input', { type: 'checkbox', checked: ping.on, onchange: () => toggle(ping, box) });
+      return el('label', { className: 'merge-row' }, box, el('span', { className: 'rank-name' }, ping.label));
+    };
+
+    function show() {
+      say(null);
+      const person = who.value;
+      return attempt(async () => {
+        const { pings } = await request(api(`/members/${person}/pings`));
+        if (person !== who.value) return;
+        list.replaceChildren(...(pings.length ? pings.map(pingRow) : [el('p', {}, 'There are no pings to choose yet.')]));
+      });
+    }
+
+    const node = openDialog(
+      main,
+      el('h2', {}, 'Who gets pinged'),
+      el('p', {}, 'Pick a person and tick what they get pinged for. They can change these themselves with /notify and /pings.'),
+      who,
+      list,
+      problem,
+      el('div', { className: 'actions' }, el('button', { type: 'button', onclick: () => node.close() }, 'Close')),
+    );
+    void attempt(async () => {
+      const { members } = await request(api('/pick/options'));
+      who.replaceChildren(...members.map((m) => el('option', { value: m.id }, m.name)));
+      if (members.length) await show();
+    });
+  }
+
+  const postPingMenu = () =>
+    postDialog(main, 'Post the Choose games button', 'Lets anyone pick their game pings from a Discord channel.', async (channelId, channel) => {
+      await request(api('/game-pings/menu'), { method: 'POST', json: { channelId } });
+      toast(`Button posted in ${channel}.`);
+    });
+
   function gamePingCard(first) {
     const body = el('div');
     const games = el('datalist', { id: 'ping-games' });
@@ -301,6 +363,7 @@ export function renderSettings(main) {
       games,
       body,
       add,
+      el('div', { className: 'card-actions' }, el('button', { onclick: pingsDialog }, 'Who gets pinged'), el('button', { onclick: postPingMenu }, 'Post Choose games button')),
     );
   }
 

@@ -1,4 +1,4 @@
-import { attempt, el, emojiNode, request, soundPath, state, api } from './lib.js';
+import { attempt, el, emojiNode, postDialog, request, soundPath, state, api, toast } from './lib.js';
 import { voiceBar } from './voice.js';
 
 const byUse = (a, b) => b.plays - a.plays || a.name.localeCompare(b.name);
@@ -21,7 +21,12 @@ export function renderBoard(main) {
     },
   });
   const board = el('div', { className: 'board' });
-  main.append(voice.node, el('div', { className: 'toolbar' }, search), board);
+  const postPanel = () =>
+    postDialog(main, 'Post a panel', 'Puts the soundboard buttons in a Discord channel. The panel keeps itself up to date as sounds change.', async (channelId, channel) => {
+      await request(api('/sound-panels'), { method: 'POST', json: { channelId } });
+      toast(`Panel posted in ${channel}.`);
+    });
+  main.append(voice.node, el('div', { className: 'toolbar' }, search, el('button', { onclick: postPanel }, 'Post panel')), board);
   board.append(el('div', { className: 'empty' }, 'Loading sounds…'));
 
   function paint() {

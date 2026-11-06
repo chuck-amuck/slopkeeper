@@ -69,6 +69,15 @@ export async function attempt(action) {
   }
 }
 
+/** A rough age, as Discord shows it */
+export function ago(ms) {
+  const days = Math.floor((Date.now() - ms) / 86_400_000);
+  if (days < 1) return 'today';
+  if (days === 1) return 'yesterday';
+  if (days < 60) return `${days} days ago`;
+  return days < 730 ? `${Math.round(days / 30)} months ago` : `${Math.round(days / 365)} years ago`;
+}
+
 export const state = { guilds: [], guildId: null };
 export const api = (path) => `/api/guilds/${state.guildId}${path}`;
 export const soundPath = (name, part = '') => api(`/sounds/${encodeURIComponent(name)}${part}`);
@@ -87,6 +96,49 @@ export function openDialog(parent, ...children) {
   parent.append(node);
   node.showModal();
   return node;
+}
+
+/** Asks which channel to post something in, starting on the announce channel */
+export function postDialog(parent, title, text, post) {
+  const channel = el('select', { required: true, ariaLabel: 'Channel' });
+  const problem = el('div', { className: 'bad-text plan-problem', hidden: true });
+  const submit = el('button', { className: 'primary', type: 'submit', disabled: true }, 'Post');
+  const node = openDialog(
+    parent,
+    el('h2', {}, title),
+    el('p', {}, text),
+    el(
+      'form',
+      {
+        className: 'plan',
+        onsubmit: (e) => {
+          e.preventDefault();
+          submit.disabled = true;
+          problem.hidden = true;
+          void attempt(async () => {
+            try {
+              await post(channel.value, channel.selectedOptions[0].textContent);
+              node.close();
+            } catch (err) {
+              if (!(err instanceof RequestError)) throw err;
+              problem.textContent = err.message;
+              problem.hidden = false;
+            } finally {
+              submit.disabled = false;
+            }
+          });
+        },
+      },
+      channel,
+      problem,
+      el('div', { className: 'actions' }, el('button', { type: 'button', onclick: () => node.close() }, 'Cancel'), submit),
+    ),
+  );
+  void attempt(async () => {
+    const { channels, announceChannel } = await request(api('/pick/options'));
+    channel.replaceChildren(...channels.map((c) => el('option', { value: c.id, selected: c.id === announceChannel }, `#${c.name}`)));
+    submit.disabled = !channels.length;
+  });
 }
 
 /** A button that asks once more before acting, and goes back to normal if it isn't pressed again */

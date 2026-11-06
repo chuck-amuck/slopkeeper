@@ -250,6 +250,14 @@ main {
     padding-left: 8px;
     padding-right: 8px;
   }
+
+  .brand span {
+    display: none;
+  }
+
+  .guild select {
+    max-width: 160px;
+  }
 }
 
 /* Sounds */
@@ -1605,4 +1613,121 @@ textarea {
 .steam-form input {
   flex: 1 1 200px;
   min-width: 0;
+}
+
+/* Pick a game */
+
+.views {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.views button[aria-current='page'] {
+  background: var(--raised);
+  font-weight: 500;
+}
+
+.pick-people {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+}
+
+.pick-game {
+  border-top: 1px solid var(--line);
+}
+
+.card h2 + .pick-game,
+.card-head + .pick-game {
+  border-top: 0;
+}
+
+.pick-game summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 12px;
+  padding: 10px 16px;
+  cursor: pointer;
+}
+
+.pick-game summary:hover {
+  background: var(--raised);
+}
+
+.pick-name {
+  font-weight: 500;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.pick-facts {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.pick-detail {
+  display: grid;
+  gap: 10px;
+  padding: 4px 16px 14px;
+  overflow-x: auto;
+}
+
+.pick-detail table {
+  width: 100%;
+}
+
+.pick-detail th,
+.pick-detail td {
+  padding: 2px 12px 2px 0;
+  text-align: left;
+  font-size: 13px;
+}
+
+.pick-detail th {
+  color: var(--muted);
+  font-weight: 400;
+}
+
+.pick-actions,
+.card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.card-actions {
+  padding: 12px 16px;
+  border-top: 1px solid var(--line);
+}
+
+.pick-result h2 {
+  font-size: 18px;
+}
+
+.pick-result p {
+  margin: 0;
+  padding: 0 16px 14px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.shared-games {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.recap-field {
+  padding: 10px 16px;
+  border-top: 1px solid var(--line);
+}
+
+.recap-value {
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 14px;
+  white-space: pre-line;
+  overflow-wrap: anywhere;
 }

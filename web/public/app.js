@@ -4,6 +4,7 @@ import { renderGames } from './games.js';
 import { attempt, el, player, recall, remember, request, RequestError, session, state } from './lib.js';
 import { renderLibrary } from './library.js';
 import { renderNights } from './nights.js';
+import { renderPick } from './pick.js';
 import { renderSettings } from './settings.js';
 import { renderStats } from './stats.js';
 
@@ -13,6 +14,7 @@ const TABS = [
   ['library', 'Library', renderLibrary],
   ['nights', 'Game nights', renderNights],
   ['games', 'Games', renderGames],
+  ['pick', 'Pick a game', renderPick],
   ['stats', 'Stats', renderStats],
   ['activity', 'Activity', renderActivity],
   ['settings', 'Settings', renderSettings],

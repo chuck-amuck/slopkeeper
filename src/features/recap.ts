@@ -91,6 +91,15 @@ export function buildRecap(guild: Guild, start: number, end: number): EmbedBuild
   return embed;
 }
 
+/** Last month's recap, or this month's so far */
+export function recapFor(guild: Guild, current: boolean) {
+  checkpoint();
+  const timeZone = setting(guild.id, 'timezone');
+  const now = zonedParts(Date.now(), timeZone);
+  const { start, end } = monthBounds(now.year, current ? now.month : now.month - 1, timeZone);
+  return buildRecap(guild, start, Math.min(end, Date.now()));
+}
+
 /** Last month's recap on the 1st, at the hour the weekly leaderboard goes out, or as soon as the bot is back if it missed that */
 export async function maybePostMonthly(client: Client<true>) {
   await eachGuild(client, 'Monthly recap', async (guild) => {
@@ -130,12 +139,8 @@ export const recap: Feature = {
         ),
       async run(i) {
         if (!i.inCachedGuild()) return i.reply({ content: 'Use this in a server.', flags: MessageFlags.Ephemeral });
-        checkpoint();
-        const timeZone = setting(i.guildId, 'timezone');
-        const now = zonedParts(Date.now(), timeZone);
         const current = i.options.getString('month') === 'this';
-        const { start, end } = monthBounds(now.year, current ? now.month : now.month - 1, timeZone);
-        const embed = buildRecap(i.guild, start, Math.min(end, Date.now()));
+        const embed = recapFor(i.guild, current);
         if (embed) return i.reply({ embeds: [embed], allowedMentions: { parse: [] } });
         return i.reply({ content: `Nothing to recap for ${current ? 'this month' : 'last month'} yet.`, flags: MessageFlags.Ephemeral });
       },

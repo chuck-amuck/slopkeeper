@@ -1,4 +1,4 @@
-import { ChannelType, type Client, type Guild, type VoiceBasedChannel } from 'discord.js';
+import { ChannelType, type Client, type Guild, type GuildTextBasedChannel, type VoiceBasedChannel } from 'discord.js';
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { createReadStream, statSync } from 'node:fs';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
@@ -8,11 +8,13 @@ import { config } from './config.ts';
 import * as discordBoard from './discordSounds.ts';
 import { cancelNight, gameNames, planNight, readWhen, stopSeries, upcomingNights } from './features/gamenight.ts';
 import { reviewGiveaways } from './features/freegames.ts';
-import { addGameRole, canHandOut, gameRoles, pingableGames, removeGameRole } from './features/gameroles.ts';
-import { addGame, addMemberGame, allGames, gameById, groupMembers, hiddenGames, hideGame, memberGames, ownersOf, parseSteamAppId, removeGame, setGameDetails, setOwned, setWanted, steamOwnersOf, unhideGame, wantedBy, type GameRow } from './features/games.ts';
+import { addGameRole, canHandOut, gameRoles, pingableGames, pingChoices, pingMenu, removeGameRole } from './features/gameroles.ts';
+import { addGame, addMemberGame, allGames, gameById, groupMembers, hiddenGames, hideGame, memberGames, NOBODY_COUNTED, ownersOf, parseSteamAppId, removeGame, setGameDetails, setOwned, setWanted, steamOwnersOf, unhideGame, wantedBy, type GameRow } from './features/games.ts';
 import { onSale, saleName, salePrices, saleReasons, storeUrl } from './features/sales.ts';
 import { linkSteam, profileUrl, refreshAll, steamLinks, unlinkSteam } from './features/steam.ts';
-import { activity, checkpoint, PERIODS, stats } from './features/gamestats.ts';
+import { activity, checkpoint, comparison, PERIODS, pickFor, sessionCount, stats } from './features/gamestats.ts';
+import { postVote } from './features/gamevote.ts';
+import { recapFor } from './features/recap.ts';
 import { gameName, gameSpellings, mergeGames, separateGame } from './gameNames.ts';
 import { voiceTotals } from './features/sessions.ts';
 import { checkSetting, LABELS, LIMITS, show, source } from './features/setup.ts';
@@ -51,6 +53,7 @@ import {
   voiceVolume,
   volumeProblem,
   playDiscordSound,
+  postPanel,
   saveFromDiscord,
   swapOnDiscord,
   takeOffDiscord,
@@ -92,7 +95,9 @@ function plain(guild: Guild, text: string): string {
     .replaceAll('**', '')
     .replaceAll('`', '')
     .replace(/<#(\d+)>/g, (_, id: string) => `#${guild.channels.cache.get(id)?.name ?? 'unknown channel'}`)
-    .replace(/<@&(\d+)>/g, (_, id: string) => `@${guild.roles.cache.get(id)?.name ?? 'unknown role'}`);
+    .replace(/<@&(\d+)>/g, (_, id: string) => `@${guild.roles.cache.get(id)?.name ?? 'unknown role'}`)
+    .replace(/<@!?(\d+)>/g, (_, id: string) => nameOf(guild, id))
+    .replace(/<t:(\d+)(:\w)?>/g, (_, secs: string) => new Date(Number(secs) * 1000).toLocaleDateString('en-US', { timeZone: setting(guild.id, 'timezone'), dateStyle: 'medium' }));
 }
 
 const hash = (text: string) => createHash('sha256').update(text).digest();
@@ -341,13 +346,16 @@ async function removeGamePing(guild: Guild, roleId: string) {
   return {};
 }
 
-function handleHidden(guild: Guild, req: IncomingMessage, id: string) {
+async function handleHidden(guild: Guild, req: IncomingMessage, id: string) {
   const appid = /^\d+$/.test(id) ? Number(id) : undefined;
   if (req.method === 'PUT') {
-    const game = allGames(guild.id).find((g) => g.steam_appid === appid);
-    if (!game) throw new Refused(404, 'Only a library game with a Steam link can be hidden.');
-    hideGame(guild.id, game.steam_appid!, game.name, FROM_WEB);
-    logActivity(guild.id, FROM_WEB, `Hid **${game.name}** from suggestions`);
+    // Suggestions also come from members' Steam libraries, so a game needn't be in this server's library
+    const { name } = await readJson(req);
+    const given = typeof name === 'string' && name.length <= 100 ? name.trim() : '';
+    const title = allGames(guild.id).find((g) => g.steam_appid === appid)?.name ?? given;
+    if (!appid || !title) throw new Refused(404, 'Only a game with a Steam link can be hidden.');
+    hideGame(guild.id, appid, title, FROM_WEB);
+    logActivity(guild.id, FROM_WEB, `Hid **${title}** from suggestions`);
     return {};
   }
   if (req.method === 'DELETE') {
@@ -358,6 +366,13 @@ function handleHidden(guild: Guild, req: IncomingMessage, id: string) {
     return {};
   }
   throw new Refused(405, 'Not here.');
+}
+
+/** Where someone ranks among a game's players */
+function placeOf(guild: Guild, user: string, game: string, since: number) {
+  const players = stats(guild.id, since, 'game', 'user_id', undefined, game).filter((r) => guild.members.cache.has(r.key));
+  const idx = players.findIndex((r) => r.key === user);
+  return idx < 0 ? null : { rank: idx + 1, of: players.length, sessions: sessionCount(guild.id, user, game, since) };
 }
 
 /** The same numbers as /gamestats and /stats, for the web UI's charts */
@@ -389,8 +404,9 @@ function statsFor(guild: Guild, url: URL) {
       people: players.length,
       voiceMs: voice.reduce((sum, p) => sum + p.secs * 1000, 0),
     },
-    games: games.slice(0, MAX_RANKED).map((g) => ({ name: g.key, ms: g.ms, people: g.n })),
-    players: players.slice(0, MAX_RANKED).map((p) => ({ id: p.key, name: nameOf(guild, p.key), ms: p.ms, games: p.n })),
+    place: user && game ? placeOf(guild, user, game, since) : null,
+    games: games.slice(0, MAX_RANKED).map((g) => ({ name: g.key, ms: g.ms, people: g.n, last: g.last })),
+    players: players.slice(0, MAX_RANKED).map((p) => ({ id: p.key, name: nameOf(guild, p.key), ms: p.ms, games: p.n, last: p.last })),
     voice: voice.slice(0, MAX_RANKED).map((p) => ({ id: p.userId, name: nameOf(guild, p.userId), ms: p.secs * 1000, nights: p.nights })),
     activity: activity(guild.id, since, now, setting(guild.id, 'timezone'), user, game),
   };
@@ -739,6 +755,95 @@ const steamDown = (err: unknown) => {
   throw new Refused(502, 'Steam couldn’t be reached just now. Try again in a bit.');
 };
 
+/** A text channel the bot can post in, from what the page sent */
+function postingChannel(guild: Guild, id: unknown) {
+  const checked = checkSetting(guild, 'announceChannel', id);
+  if ('error' in checked) throw new Refused(400, plain(guild, checked.error));
+  return guild.channels.cache.get(String(checked.value)) as GuildTextBasedChannel;
+}
+
+const cantPost = (err: unknown) => {
+  console.error(err);
+  throw new Refused(502, 'Discord wouldn’t take the message. Try again in a bit.');
+};
+
+function memberIn(guild: Guild, id: string) {
+  const member = guild.members.cache.get(id);
+  if (!member || member.user.bot) throw new Refused(404, 'They aren’t in this server.');
+  return member;
+}
+
+/** What the page needs to choose people and channels */
+function pickOptions(guild: Guild) {
+  return { members: memberList(guild), voice: voiceList(guild).channels, channels: textChannels(guild), announceChannel: idSetting(guild.id, 'announceChannel') };
+}
+
+async function pickFromWeb(guild: Guild, url: URL) {
+  const channelId = url.searchParams.get('channel');
+  const channel = channelId ? voiceChannelFor(guild, channelId) : null;
+  const users = channel ? humansIn(channel).map((m) => m.id) : [...new Set((url.searchParams.get('users') ?? '').split(',').filter(Boolean))];
+  if (!users.length) throw new Refused(400, 'Pick at least one person.');
+  for (const id of users) memberIn(guild, id);
+  const picked = await pickFor(guild, users).catch(steamDown);
+  const person = <T extends { missing: string[]; players: { id: string }[]; appid: number | null }>(row: T) => ({
+    ...row,
+    url: row.appid === null ? null : storeUrl(row.appid),
+    missing: row.missing.map((id) => nameOf(guild, id)),
+    players: row.players.map((p) => ({ ...p, name: nameOf(guild, p.id) })),
+  });
+  if (!picked) return { people: users.length, counted: 0, notes: [plain(guild, NOBODY_COUNTED)], ready: [], almost: [] };
+  return { people: users.length, counted: picked.counted.length, notes: picked.notes.map((n) => plain(guild, n)), ready: picked.ready.map(person), almost: picked.almost.map(person) };
+}
+
+async function voteFromWeb(guild: Guild, req: IncomingMessage) {
+  const { voiceChannelId, channelId, minutes } = await readJson(req);
+  const length = minutes ?? 1;
+  if (!Number.isInteger(length) || (length as number) < 1 || (length as number) > 10) throw new Refused(400, 'A vote lasts from 1 to 10 minutes.');
+  const voice = voiceChannelFor(guild, voiceChannelId);
+  const channel = postingChannel(guild, channelId);
+  refuse(guild, await postVote(channel, voice, length as number).catch(cantPost));
+  logActivity(guild.id, FROM_WEB, `Started a game vote for <#${voice.id}> in <#${channel.id}>`);
+  return {};
+}
+
+function compareFromWeb(guild: Guild, url: URL) {
+  const [a, b] = ['a', 'b'].map((key) => memberIn(guild, url.searchParams.get(key) ?? ''));
+  if (a.id === b.id) throw new Refused(400, 'Pick two different people.');
+  const { games, voice, shared, totals } = comparison(guild.id, a.id, b.id);
+  return {
+    people: [a, b].map((m, idx) => ({ id: m.id, name: m.displayName, ms: totals[idx] })),
+    togetherMs: games.reduce((sum, g) => sum + g.ms, 0),
+    games: games.slice(0, MAX_RANKED).map((g) => ({ name: g.game, ms: g.ms })),
+    voice: { sessions: voice.n, ms: voice.seconds * 1000 },
+    shared: shared.map((g) => g.name),
+  };
+}
+
+function recapFromWeb(guild: Guild, url: URL) {
+  const month = url.searchParams.get('month') ?? 'last';
+  if (month !== 'last' && month !== 'this') throw new Refused(400, 'No such month.');
+  const recap = recapFor(guild, month === 'this')?.toJSON();
+  if (!recap) return { recap: null };
+  return { recap: { title: recap.title, description: recap.description ? plain(guild, recap.description) : null, fields: (recap.fields ?? []).map((f) => ({ name: f.name, value: plain(guild, f.value) })) } };
+}
+
+async function handlePings(guild: Guild, req: IncomingMessage, userId: string) {
+  memberIn(guild, userId);
+  // The cached member lags behind role changes
+  const member = await guild.members.fetch({ user: userId, force: true });
+  const choices = pingChoices(guild);
+  if (req.method === 'GET') return { pings: choices.map((c) => ({ ...c, on: member.roles.cache.has(c.id) })) };
+  if (req.method !== 'PUT') throw new Refused(405, 'Not here.');
+  const { roleId, on } = await readJson(req);
+  const choice = choices.find((c) => c.id === roleId);
+  if (!choice || typeof on !== 'boolean') throw new Refused(400, 'Pick a ping to change.');
+  await (on ? member.roles.add(choice.id, 'Set on the web UI') : member.roles.remove(choice.id, 'Set on the web UI')).catch(() => {
+    throw new Refused(409, `I couldn’t change their roles. My role needs Manage Roles and has to be above @${guild.roles.cache.get(choice.id)?.name}.`);
+  });
+  logActivity(guild.id, FROM_WEB, `Turned ${choice.label} ${on ? 'on' : 'off'} for ${member.displayName}`);
+  return {};
+}
+
 async function handleSteamAccount(guild: Guild, req: IncomingMessage, userId: string) {
   if (!guild.members.cache.has(userId)) throw new Refused(404, 'They aren’t in this server.');
   needSteam();
@@ -811,6 +916,24 @@ async function handle(client: Client<true>, req: IncomingMessage, res: ServerRes
     return { games: memberGames(guild).map((g) => ({ appid: g.appid, name: g.name, owners: g.owners.map((id) => nameOf(guild, id)).sort((a, b) => a.localeCompare(b)) })) };
   }
   if (section === 'games' && rest.length >= 1 && rest.length <= 3) return handleGame(guild, req, rest[0], rest[1], rest[2]);
+  if (section === 'pick' && !rest.length && req.method === 'GET') return pickFromWeb(guild, url);
+  if (section === 'pick' && rest.length === 1 && rest[0] === 'options' && req.method === 'GET') return pickOptions(guild);
+  if (section === 'votes' && !rest.length && req.method === 'POST') return voteFromWeb(guild, req);
+  if (section === 'compare' && !rest.length && req.method === 'GET') return compareFromWeb(guild, url);
+  if (section === 'recap' && !rest.length && req.method === 'GET') return recapFromWeb(guild, url);
+  if (section === 'members' && rest.length === 2 && rest[1] === 'pings') return handlePings(guild, req, rest[0]);
+  if (section === 'sound-panels' && !rest.length && req.method === 'POST') {
+    const channel = postingChannel(guild, (await readJson(req)).channelId);
+    await postPanel(channel).catch(cantPost);
+    logActivity(guild.id, FROM_WEB, `Posted a soundboard panel in <#${channel.id}>`);
+    return {};
+  }
+  if (section === 'game-pings' && rest.length === 1 && rest[0] === 'menu' && req.method === 'POST') {
+    const channel = postingChannel(guild, (await readJson(req)).channelId);
+    await channel.send(pingMenu()).catch(cantPost);
+    logActivity(guild.id, FROM_WEB, `Posted the game pings button in <#${channel.id}>`);
+    return {};
+  }
   if (section === 'hidden-games' && !rest.length && req.method === 'GET') return { games: hiddenGames(guild.id) };
   if (section === 'hidden-games' && rest.length === 1) return handleHidden(guild, req, rest[0]);
   if (section === 'game-pings' && !rest.length && req.method === 'GET') return gamePingList(guild);
