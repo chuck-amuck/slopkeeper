@@ -144,6 +144,39 @@ export async function addGame(guildId: string, input: string, userId: string) {
   return { game: findGame(guildId, input)!, added: true };
 }
 
+/** Steam games the server's members own that aren't in the library yet, those the most people have first */
+export function memberGames(guild: Guild) {
+  const rows = db
+    .prepare(
+      `SELECT l.user_id AS userId, o.appid, COALESCE(o.name, i.name) AS name
+       FROM steam_links l JOIN steam_owned o ON o.steam_id = l.steam_id LEFT JOIN app_info i ON i.appid = o.appid`,
+    )
+    .all() as { userId: string; appid: number; name: string | null }[];
+  const library = new Set(allGames(guild.id).map((g) => g.steam_appid));
+  const found = new Map<number, { appid: number; name: string | null; owners: string[] }>();
+  for (const { userId, appid, name } of rows) {
+    // Steam links are shared between servers
+    if (library.has(appid) || !guild.members.cache.has(userId)) continue;
+    const game = found.get(appid) ?? { appid, name: null, owners: [] };
+    game.name ??= name;
+    game.owners.push(userId);
+    found.set(appid, game);
+  }
+  return [...found.values()]
+    .flatMap((g) => (g.name ? [{ ...g, name: g.name }] : []))
+    .sort((a, b) => b.owners.length - a.owners.length || a.name.localeCompare(b.name));
+}
+
+/** Adds a game a member owns, or links it to a game of that name already listed without Steam. Null if it isn't one of memberGames */
+export function addMemberGame(guild: Guild, appid: number, userId: string) {
+  const owned = memberGames(guild).find((g) => g.appid === appid);
+  if (!owned) return null;
+  const listed = findGame(guild.id, owned.name);
+  if (listed) db.prepare('UPDATE games SET steam_appid = ? WHERE id = ?').run(appid, listed.id);
+  else db.prepare('INSERT INTO games (guild_id, name, steam_appid, added_by) VALUES (?, ?, ?, ?)').run(guild.id, owned.name, appid, userId);
+  return { name: listed?.name ?? owned.name, added: !listed };
+}
+
 export function setGameDetails(game: GameRow, maxPlayers: number | null, appid: number | null) {
   db.prepare('UPDATE games SET max_players = ?, steam_appid = ? WHERE id = ?').run(maxPlayers, appid, game.id);
 }

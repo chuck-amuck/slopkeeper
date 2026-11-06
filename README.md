@@ -489,7 +489,7 @@ A page for your home network, in [`web/`](web), that runs as a second container 
 - **Soundboard:** big buttons that play in voice, with favourites first and then whatever gets played most.
 - **Library:** upload files or whole folders, preview, rename and delete sounds, set a sound's volume, trim it with a way back to the original, and choose what's on Discord's soundboard, with a waveform for picking part of a long sound. **Recently deleted** restores a sound or erases it for good.
 - **Game nights:** plan a night, see what's coming up, cancel one or stop a repeating one.
-- **Games:** the game library, with who has each game, who needs it, who wants it and any sale. Add and remove games, set player limits and Steam links, and tick who owns or wants what. Ownership from a Steam library is locked.
+- **Games:** the game library, with who has each game, who needs it, who wants it and any sale. Add games from a searchable list of what members own on Steam, or by name or store link. Remove games, set player limits and Steam links, and tick who owns or wants what. Ownership from a Steam library is locked.
 - **Stats:** game and voice time, overall or for one person or game.
 - **Discord's soundboard:** on Library, see what fills the slots, play or save any sound, and swap sounds between Discord and the library.
 - **Merging games:** on Stats, Merge games puts different spellings of a game together, and Separate on a clicked game takes one back out.
@@ -564,7 +564,8 @@ It applies the same rules as `/sound` and `/setup`, and every request needs an `
 | `DELETE /guilds/:id/discord-sounds/:soundId` | Takes it off Discord's soundboard, saving it to the library first |
 | `GET /guilds/:id/sales` | Lists what's watched and on sale, from the last check, with why |
 | `GET /guilds/:id/games` | Lists the game library with owners, who needs each game, who wants it and any sale, plus the server's members |
-| `POST /guilds/:id/games` | Adds a game: `{ "name": "..." }` takes a name or Steam store link |
+| `GET /guilds/:id/games/owned` | Lists Steam games members own that aren't in the library, those the most people have first |
+| `POST /guilds/:id/games` | Adds a game: `{ "name": "..." }` takes a name or Steam store link, `{ "appid": 620 }` takes one from the owned list |
 | `PATCH /guilds/:id/games/:game` | Sets its details: `{ "maxPlayers": 4 }`, `{ "steam": "<link or app ID>" }`, with null or an empty link to clear |
 | `DELETE /guilds/:id/games/:game` | Removes it and its marks |
 | `PATCH /guilds/:id/games/:game/members/:user` | Marks someone: `{ "owns": true }`, `{ "wants": true }`. Owning clears wanting, and Steam ownership can't be changed |

@@ -1529,3 +1529,34 @@ textarea {
   min-height: 0;
   accent-color: var(--accent);
 }
+
+.owned-game {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 2px 12px;
+  padding: 6px 4px;
+  border-radius: 6px;
+}
+
+.owned-game:hover {
+  background: var(--raised);
+}
+
+.owned-game .rank-name {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* Who owns what still matters on a phone, where other notes are hidden */
+.owned-game .rank-note {
+  display: block;
+  flex-basis: 100%;
+  white-space: normal;
+}
+
+.game-member .rank-note {
+  display: inline;
+}
