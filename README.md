@@ -22,6 +22,7 @@ Everything happens through slash commands (type `/` in any channel, or run `/hel
 - [Soundboard](#soundboard): [playing sounds](#playing-sounds) · [managing sounds](#managing-sounds) · [even volume](#even-volume) · [Discord's soundboard](#discords-soundboard)
 - [Server settings](#server-settings): [settings and defaults](#settings-and-defaults)
 - [Multiple servers](#multiple-servers)
+- [Web UI](#web-ui)
 - [Configuration](#configuration)
 - [Setup](#setup): [hosting the bot](#hosting-the-bot) · [adding the bot to a server](#adding-the-bot-to-a-server)
 
@@ -471,6 +472,39 @@ One running bot can serve several servers. Each server gets its own:
 
 **Choosing which servers can use it:** with `ALLOWED_GUILD_IDS` set, the bot leaves any server that isn't on the list as soon as it's added. Without it, anyone with the invite link can add the bot. Set it if the bot is public (see [Setup](#setup)).
 
+## Web UI
+
+A page for your home network, in [`web/`](web), that runs as a second container next to the bot:
+
+- **Soundboard:** big buttons that play in voice, with favourites first and then whatever gets played most.
+- **Library:** upload files or whole folders, preview, rename and delete sounds, set a sound's volume, trim it with a way back to the original, and choose what's on Discord's soundboard, with a waveform for picking part of a long sound.
+- **Game nights:** plan a night, see what's coming up, cancel one or stop a repeating one.
+- **Stats:** game and voice time, overall or for one person or game.
+- **Discord's soundboard:** on Library, see what fills the slots, play or save any sound, and swap sounds between Discord and the library.
+- **Merging games:** on Stats, Merge games puts different spellings of a game together, and Separate on a clicked game takes one back out.
+- **Activity:** a history of changes to sounds, settings and game nights.
+- **Settings:** everything in `/setup`, for each server, which free games are being posted or hidden and why, and what's on sale now.
+
+It holds no data of its own. The bot does everything through its [management API](#management-api), so the rules are the same as for the slash commands, and a change here updates the bot's posted soundboard panels too.
+
+```
+browser → web UI (password, session cookie) → bot API (token) → database and sounds
+```
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `WEB_PASSWORD` | required | The password for the page. Changing it logs everyone out |
+| `API_TOKEN` | required | Same value as the bot's `API_TOKEN`. It turns the bot's API on, and never reaches the browser |
+| `BOT_URL` | `http://slopkeeper:8787` | Where the bot's API is |
+| `PORT` | 8080 | Port inside the container |
+
+Build the image from `web/Dockerfile`. Keep the page on your home network: it serves plain HTTP, so the password isn't encrypted on the way in.
+
+There are no runtime dependencies. In `web/`, `npm test` runs the tests with Node 24, and `npm run typecheck` needs `npm ci` first.
+
+- `src/server.ts`: login, sessions and passing requests to the bot.
+- `public/`: the page, plain JavaScript with no build step. `app.js` is the frame, and each tab has its own file.
+
 ## Configuration
 
 Set in `.env` (see `.env.example`).
@@ -489,7 +523,7 @@ Everything else is a per-server setting. Servers set their own with `/setup`; th
 
 ### Management API
 
-With `API_TOKEN` set, the bot serves an HTTP API for managing sounds and settings, for a separate admin page to use. It's off by default, and the bot works the same without it.
+With `API_TOKEN` set, the bot serves an HTTP API for managing sounds and settings, for the [web UI](#web-ui) to use. It's off by default, and the bot works the same without it.
 
 It applies the same rules as `/sound` and `/setup`, and every request needs an `Authorization: Bearer <token>` header. It has no other login, so keep it on the container network: don't publish the port or put it behind a proxy.
 
