@@ -18,6 +18,7 @@ import {
   discordVolume,
   favourites,
   findSound,
+  isTrimmed,
   joinSounds,
   listSounds,
   parseEmoji,
@@ -26,12 +27,15 @@ import {
   refreshPanels,
   removeSound,
   renameSound,
+  restoreSound,
   setFavourite,
   setJoinSound,
   setSoundVolume,
   soundLevels,
   stopPlayback,
   syncToDiscord,
+  trimProblem,
+  trimSound,
   uploadProblem,
   volumeProblem,
   type Sound,
@@ -133,6 +137,7 @@ async function soundList(guild: Guild) {
       gainDb: levels.get(sound.name)?.gainDb ?? null,
       percent: levels.get(sound.name)?.percent ?? 100,
       volume: discordVolume(guild.id, sound.name),
+      trimmed: isTrimmed(guild.id, sound.name),
     });
   }
   return {
@@ -331,6 +336,23 @@ async function handleSounds(client: Client<true>, guild: Guild, req: IncomingMes
     // With nobody there, the bot would leave as soon as it joined
     if (!humansIn(channel).length) throw new Refused(400, `Nobody’s in ${channel.name} any more.`);
     refuse(guild, await playFromWeb(channel, sound));
+    return {};
+  }
+
+  if (part === 'trim' && method === 'POST') {
+    const sound = soundOf(guild, name);
+    const { start, end } = await readJson(req);
+    refuse(guild, trimProblem(start, end, await discordBoard.durationOf(sound.file).catch(() => NaN)));
+    const [from, to] = [start as number, end as number];
+    if (!(await trimSound(guild, sound, from, to))) throw new Refused(400, 'That sound couldn’t be cut, so it wasn’t changed.');
+    note(`Trimmed **${sound.name}** to ${(to - from).toFixed(1)} s`);
+    return {};
+  }
+
+  if (part === 'restore' && method === 'POST') {
+    const sound = soundOf(guild, name);
+    if (!(await restoreSound(guild, sound))) throw new Refused(400, 'That sound hasn’t been trimmed.');
+    note(`Restored the original **${sound.name}**`);
     return {};
   }
 

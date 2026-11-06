@@ -3,9 +3,9 @@ import { joinVoiceChannel, VoiceConnectionStatus } from '@discordjs/voice';
 import { ChannelType, Collection, PermissionFlagsBits } from 'discord.js';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { request } from 'node:http';
-import { after, before, beforeEach, mock, test } from 'node:test';
+import { after, before, beforeEach, mock, test, type TestContext } from 'node:test';
 import path from 'node:path';
 import type { AddressInfo } from 'node:net';
 import { createApi, webApi } from '../src/api.ts';
@@ -154,7 +154,7 @@ beforeEach(() => {
     DELETE FROM sound_favourites; DELETE FROM game_nights; DELETE FROM game_night_series; DELETE FROM game_plays; DELETE FROM session_members; DELETE FROM sessions;
     DELETE FROM sound_levels; DELETE FROM join_sounds; DELETE FROM activity`);
   db.prepare("INSERT INTO sound_panels (message_id, guild_id, channel_id, page) VALUES ('m', ?, '111', 0)").run(GUILD);
-  if (existsSync(soundFolder)) for (const f of readdirSync(soundFolder)) execFileSync('rm', [path.join(soundFolder, f)]);
+  if (existsSync(soundFolder)) for (const f of readdirSync(soundFolder)) execFileSync('rm', ['-r', path.join(soundFolder, f)]);
 });
 
 function call(url: string, init: RequestInit & { json?: unknown } = {}) {
@@ -1010,4 +1010,170 @@ test('activity stays with its server and goes after a year', async () => {
   db.prepare("INSERT INTO activity (guild_id, at, actor, action) VALUES (?, ?, 'u1', 'Ancient')").run(GUILD, Date.now() - 366 * 86_400_000);
   logActivity(GUILD, 'u1', 'Recent');
   assert.deepEqual((await ok(`/guilds/${GUILD}/activity`)).entries.map((e: any) => e.action), ['Recent']);
+});
+
+/** A sound of the given format, quiet for the first half and loud for the second, so what's kept can be told apart by its loudness */
+function steps(ext: string, seconds = 4) {
+  const half = seconds / 2;
+  const filter = `sine=frequency=440:duration=${half},volume=-30dB[a];sine=frequency=440:duration=${half},volume=-3dB[b];[a][b]concat=n=2:v=0:a=1`;
+  const out = path.join(process.env.DATA_DIR!, `steps${ext}`);
+  execFileSync('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-y', '-filter_complex', filter, out]);
+  return readFileSync(out);
+}
+
+const lengthOf = (file: string) => Number(execFileSync('ffprobe', ['-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', file]).toString());
+const addFile = (name: string, ext: string, data: Buffer) => ok(`/guilds/${GUILD}/sounds/${name}?file=${name}${ext}`, { method: 'PUT', body: data as never });
+const trim = (name: string, json: unknown) => call(`/guilds/${GUILD}/sounds/${name}/trim`, { method: 'POST', json });
+const listed = async (name: string) => (await ok(`/guilds/${GUILD}/sounds`)).sounds.find((s: { name: string }) => s.name === name);
+
+for (const ext of ['.mp3', '.ogg', '.wav', '.m4a', '.opus', '.webm', '.flac']) {
+  test(`trims ${ext} to the right length and keeps the format`, async () => {
+    await addFile('cutme', ext, steps(ext));
+    assert.equal((await trim('cutme', { start: 1, end: 2.5 })).status, 200);
+    assert.ok(Math.abs(lengthOf(path.join(soundFolder, `cutme${ext}`)) - 1.5) < 0.1, String(lengthOf(path.join(soundFolder, `cutme${ext}`))));
+    assert.equal((await listed('cutme')).trimmed, true);
+  });
+}
+
+test('trimming keeps the part asked for, and the sound is measured again', async () => {
+  await addFile('quietloud', '.wav', steps('.wav'));
+  const whole = (await listed('quietloud')).gainDb;
+  await ok(`/guilds/${GUILD}/sounds/quietloud/trim`, { method: 'POST', json: { start: 2.2, end: 3.8 } });
+  const loud = (await listed('quietloud')).gainDb;
+  assert.ok(loud < whole, `${loud} should be under ${whole}`);
+
+  await addFile('loudquiet', '.wav', steps('.wav'));
+  await ok(`/guilds/${GUILD}/sounds/loudquiet/trim`, { method: 'POST', json: { start: 0.2, end: 1.8 } });
+  assert.ok((await listed('loudquiet')).gainDb > whole);
+});
+
+test('a second trim keeps the first original, and restoring brings it back exactly', async () => {
+  const data = wav(3);
+  await addFile('twice', '.wav', data);
+  await ok(`/guilds/${GUILD}/sounds/twice/trim`, { method: 'POST', json: { start: 0, end: 2 } });
+  await ok(`/guilds/${GUILD}/sounds/twice/trim`, { method: 'POST', json: { start: 0.5, end: 1.5 } });
+  assert.ok(Math.abs(lengthOf(path.join(soundFolder, 'twice.wav')) - 1) < 0.1);
+  await ok(`/guilds/${GUILD}/sounds/twice/restore`, { method: 'POST' });
+  assert.ok(readFileSync(path.join(soundFolder, 'twice.wav')).equals(data));
+  assert.equal((await listed('twice')).trimmed, false);
+  assert.equal((await listed('twice')).seconds, 3);
+});
+
+test('restoring measures the sound again and needs something to restore', async () => {
+  await addFile('backagain', '.wav', steps('.wav'));
+  const whole = (await listed('backagain')).gainDb;
+  await ok(`/guilds/${GUILD}/sounds/backagain/trim`, { method: 'POST', json: { start: 2.2, end: 3.8 } });
+  await ok(`/guilds/${GUILD}/sounds/backagain/restore`, { method: 'POST' });
+  assert.equal((await listed('backagain')).gainDb, whole);
+  const res = await call(`/guilds/${GUILD}/sounds/backagain/restore`, { method: 'POST' });
+  assert.equal(res.status, 400);
+});
+
+test('an original follows a renamed sound, and goes with a deleted or replaced one', async () => {
+  const data = wav(3);
+  await addFile('first', '.wav', data);
+  await ok(`/guilds/${GUILD}/sounds/first/trim`, { method: 'POST', json: { start: 0, end: 1 } });
+  await ok(`/guilds/${GUILD}/sounds/first`, { method: 'PATCH', json: { name: 'second' } });
+  assert.equal((await listed('second')).trimmed, true);
+  await ok(`/guilds/${GUILD}/sounds/second/restore`, { method: 'POST' });
+  assert.ok(readFileSync(path.join(soundFolder, 'second.wav')).equals(data));
+
+  await ok(`/guilds/${GUILD}/sounds/second/trim`, { method: 'POST', json: { start: 0, end: 1 } });
+  await addFile('second', '.mp3', steps('.mp3'));
+  assert.equal((await listed('second')).trimmed, false);
+
+  await ok(`/guilds/${GUILD}/sounds/second/trim`, { method: 'POST', json: { start: 0, end: 1 } });
+  await ok(`/guilds/${GUILD}/sounds/second`, { method: 'DELETE' });
+  assert.deepEqual(readdirSync(path.join(soundFolder, 'originals')), []);
+});
+
+test('originals aren’t listed as sounds', async () => {
+  await addFile('shadow', '.wav', wav(3));
+  await ok(`/guilds/${GUILD}/sounds/shadow/trim`, { method: 'POST', json: { start: 0, end: 1 } });
+  assert.deepEqual((await ok(`/guilds/${GUILD}/sounds`)).sounds.map((s: { name: string }) => s.name), ['shadow']);
+});
+
+test('refuses a range that doesn’t make sense and leaves the sound alone', async () => {
+  const data = wav(3);
+  await addFile('safe', '.wav', data);
+  for (const [json, why] of [
+    [{ start: 'a', end: 1 }, /numbers/],
+    [{ start: 1 }, /numbers/],
+    [{ start: 1, end: null }, /numbers/],
+    [{ start: -1, end: 1 }, /inside/],
+    [{ start: 1, end: 4 }, /inside/],
+    [{ start: 2, end: 1 }, /at least/],
+    [{ start: 1, end: 1.05 }, /at least/],
+    [{ start: 0, end: 3 }, /whole/],
+  ] as [unknown, RegExp][]) {
+    const res = await trim('safe', json);
+    assert.equal(res.status, 400, JSON.stringify(json));
+    assert.match(((await res.json()) as { error: string }).error, why);
+  }
+  assert.ok(readFileSync(path.join(soundFolder, 'safe.wav')).equals(data));
+  assert.equal((await listed('safe')).trimmed, false);
+  assert.equal((await trim('nothing-here', { start: 0, end: 1 })).status, 404);
+});
+
+/** Swaps a program for a small script until the test ends */
+function fakeProgram(t: TestContext, name: string, script: string) {
+  mock.method(console, 'error', () => {});
+  const bin = mkdtempSync(path.join(process.env.DATA_DIR!, 'bin-'));
+  writeFileSync(path.join(bin, name), `#!/bin/sh\n${script}\n`, { mode: 0o755 });
+  const realPath = process.env.PATH;
+  process.env.PATH = `${bin}:${realPath}`;
+  t.after(() => {
+    process.env.PATH = realPath;
+    mock.restoreAll();
+  });
+}
+
+test('a sound whose length can’t be read isn’t trimmed', async (t) => {
+  const data = wav(3);
+  await addFile('unknown', '.wav', data);
+  fakeProgram(t, 'ffprobe', 'exit 1');
+  const res = await trim('unknown', { start: 1, end: 2 });
+  assert.equal(res.status, 400);
+  assert.match(((await res.json()) as { error: string }).error, /can’t tell how long/);
+  assert.ok(readFileSync(path.join(soundFolder, 'unknown.wav')).equals(data));
+});
+
+for (const [what, script] of [
+  ['fails', 'exit 1'],
+  ['writes nothing', 'for last; do :; done; : > "$last"'],
+]) {
+  test(`when ffmpeg ${what}, the sound stays as it was with nothing left behind`, async (t) => {
+    const data = wav(3);
+    await addFile('stuck', '.wav', data);
+    fakeProgram(t, 'ffmpeg', script);
+    const res = await trim('stuck', { start: 1, end: 2 });
+    assert.equal(res.status, 400);
+    assert.match(((await res.json()) as { error: string }).error, /couldn’t be cut/);
+    assert.ok(readFileSync(path.join(soundFolder, 'stuck.wav')).equals(data));
+    assert.equal((await listed('stuck')).trimmed, false);
+    assert.deepEqual(readdirSync(path.join(soundFolder, 'originals')), []);
+  });
+}
+
+test('a trimmed sound keeps its volume, emoji and star, and logs what happened', async () => {
+  await addFile('kept', '.wav', wav(3));
+  await ok(`/guilds/${GUILD}/sounds/kept`, { method: 'PATCH', json: { volume: 150, emoji: '📯', favourite: true } });
+  await ok(`/guilds/${GUILD}/sounds/kept/trim`, { method: 'POST', json: { start: 0, end: 1.5 } });
+  await ok(`/guilds/${GUILD}/sounds/kept/restore`, { method: 'POST' });
+  const sound = await listed('kept');
+  assert.deepEqual([sound.percent, sound.emoji, sound.favourite], [150, '📯', true]);
+  const { entries } = await ok(`/guilds/${GUILD}/activity`);
+  const actions = entries.map((e: { action: string }) => e.action);
+  assert.ok(actions.includes('Trimmed kept to 1.5 s'), actions.join(', '));
+  assert.ok(actions.includes('Restored the original kept'), actions.join(', '));
+});
+
+test('trimming leaves Discord’s copy alone', async () => {
+  await addFile('mirrored', '.wav', wav(3));
+  const before = new Map(discordSounds);
+  await ok(`/guilds/${GUILD}/sounds/mirrored/trim`, { method: 'POST', json: { start: 0, end: 1 } });
+  assert.deepEqual(discordSounds, before);
+  assert.equal((await listed('mirrored')).onDiscord, true);
+  await ok(`/guilds/${GUILD}/sounds/mirrored/restore`, { method: 'POST' });
+  assert.deepEqual(discordSounds, before);
 });

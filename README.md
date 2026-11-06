@@ -292,6 +292,8 @@ You have to be in a voice channel to play a sound. The bot joins whichever chann
 | `/sound remove name` | Deletes a sound from the bot, and from Discord's soundboard if it's there. |
 | `/sound volume name percent` | Sets how loud one sound plays, from 25 to 200, where 100 is normal. |
 
+The [management API](#management-api) can also trim a sound. The bot keeps the first version, so it can be restored until the sound is replaced or deleted. A copy on Discord's soundboard stays as it is until it's added again.
+
 Examples:
 ```
 /sound add name:airhorn file:<airhorn.mp3> emoji:📯
@@ -445,6 +447,8 @@ It applies the same rules as `/sound` and `/setup`, and every request needs an `
 | `DELETE /guilds/:id/sounds/:name` | Deletes it |
 | `GET /guilds/:id/sounds/:name/audio` | Downloads its audio |
 | `POST /guilds/:id/sounds/:name/play` | Plays it in a voice channel with people in it: `{ "channelId": "..." }` |
+| `POST /guilds/:id/sounds/:name/trim` | Keeps only part of it, in seconds: `{ "start": 1.5, "end": 4 }` |
+| `POST /guilds/:id/sounds/:name/restore` | Puts a trimmed sound back as it was |
 | `PUT /guilds/:id/sounds/:name/discord` | Copies it to Discord's soundboard: `{ "start": 12.5 }` picks a part of a long sound |
 | `DELETE /guilds/:id/sounds/:name/discord` | Takes it off Discord's soundboard |
 | `POST /guilds/:id/discord-sync` | Copies every sound that fits to Discord's soundboard |
@@ -495,7 +499,7 @@ For whoever runs the bot.
 
 Local dev (Node 24+): `npm install && npm run dev`. `npm run typecheck` runs tsc, and `npm test` runs the tests (the audio ones need ffmpeg and are skipped without it). GitHub Actions runs both on every push, and the image is only built if they pass.
 
-Data (SQLite DB and uploaded sounds) lives in the `slopkeeper-data` volume at `/data`, with each server's sounds in `sounds/<server id>/`. The bot copies its database to `backups/` in that volume once a day and keeps the last 7 copies. Those guard against a bad update or a damaged database, not against losing the disk, and they don't include sounds, so back the volume up elsewhere too.
+Data (SQLite DB and uploaded sounds) lives in the `slopkeeper-data` volume at `/data`, with each server's sounds in `sounds/<server id>/`, and the first version of any trimmed sound in `originals/` inside that. The bot copies its database to `backups/` in that volume once a day and keeps the last 7 copies. Those guard against a bad update or a damaged database, not against losing the disk, and they don't include sounds, so back the volume up elsewhere too.
 
 Voice sessions in progress are saved when the bot stops, without a recap, so a restart mid-session splits it in two. A crash loses them. Game stats are saved every 5 minutes and when the bot stops, so a crash loses at most a few minutes of them.
 
