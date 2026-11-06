@@ -194,6 +194,21 @@ async function refused(status: number, url: string, init?: RequestInit & { json?
 const upload = (name: string, file = 'clip.wav', body: BodyInit = wav() as BodyInit) => call(`/guilds/${GUILD}/sounds/${name}?file=${file}`, { method: 'PUT', body });
 const sounds = async () => (await ok(`/guilds/${GUILD}/sounds`)).sounds as any[];
 
+test('lists the current free games with why each is or isn’t posted', async (t) => {
+  const real = fetch;
+  const asked: string[] = [];
+  t.mock.method(globalThis, 'fetch', async (url: string, init?: RequestInit) => {
+    if (String(url).startsWith(base)) return real(url, init);
+    asked.push(String(url));
+    if (String(url).includes('gamerpower')) {
+      return new Response(JSON.stringify([{ id: 1, title: 'Great Game (Steam) Giveaway', worth: '$9.99', image: '', description: '', open_giveaway_url: 'https://example.com/g', platforms: 'PC, Steam', end_date: 'N/A', status: 'Active' }]));
+    }
+    return new Response(JSON.stringify({ items: [] }));
+  });
+  const { games } = await ok(`/guilds/${GUILD}/free-games`);
+  assert.deepEqual(games, [{ title: 'Great Game', url: 'https://example.com/g', worth: '$9.99', platforms: 'Steam', show: false, reason: 'Not on Steam, so it can’t be rated' }]);
+});
+
 test('every route needs the token', async () => {
   for (const authorization of [undefined, 'Bearer wrong', TOKEN]) {
     const res = await fetch(`${base}/guilds`, { headers: authorization ? { authorization } : {} });

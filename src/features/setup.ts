@@ -31,6 +31,7 @@ export const LIMITS = {
   sessionGraceMin: [1, 60],
   gameNightReminderMin: [0, 1440],
   joinSoundCooldownMin: [0, 1440],
+  freeGamesMinRating: [0, 100],
 } as const;
 
 const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -49,6 +50,10 @@ export const LABELS: Record<SettingKey, string> = {
   steamCountry: 'Steam price region',
   freeGames: 'Free game alerts',
   freeGamesChannel: 'Free games channel',
+  freeGamesMinRating: 'Lowest Steam rating',
+  freeGamesTaste: 'Only games like what you play',
+  freeGamesMultiplayer: 'Only multiplayer games',
+  freeGamesUnlisted: 'Games not on Steam',
   gameNightReminderMin: 'Game night reminder',
   monthlyRecap: 'Monthly recap',
   evenVolume: 'Even volume',
@@ -76,10 +81,16 @@ export function show(key: SettingKey, value: unknown): string {
     case 'steamCountry':
       return String(value).toUpperCase();
     case 'freeGames':
+    case 'freeGamesTaste':
+    case 'freeGamesMultiplayer':
     case 'monthlyRecap':
     case 'evenVolume':
     case 'joinSounds':
       return value ? 'on' : 'off';
+    case 'freeGamesUnlisted':
+      return value ? 'shown' : 'hidden';
+    case 'freeGamesMinRating':
+      return value ? `${value}% positive` : 'off';
     case 'freeGamesChannel':
       return value ? `<#${value}>` : 'the announce channel';
     case 'gameNightReminderMin':
@@ -248,6 +259,17 @@ export const setup: Feature = {
         )
         .addSubcommand((s) =>
           s
+            .setName('free-game-filters')
+            .setDescription('Choose which free games are worth posting')
+            .addIntegerOption((o) =>
+              o.setName('min_rating').setDescription('Lowest share of positive Steam reviews, in percent. 0 turns it off').setMinValue(LIMITS.freeGamesMinRating[0]).setMaxValue(LIMITS.freeGamesMinRating[1]),
+            )
+            .addBooleanOption((o) => o.setName('like_what_we_play').setDescription('Only games like the ones this server plays most'))
+            .addBooleanOption((o) => o.setName('multiplayer_only').setDescription('Only games with multiplayer or co-op'))
+            .addBooleanOption((o) => o.setName('not_on_steam').setDescription('Show games with no Steam page, which can’t be rated')),
+        )
+        .addSubcommand((s) =>
+          s
             .setName('gamenight-reminder')
             .setDescription('How long before a game night to ping the people who are in')
             .addIntegerOption((o) => o.setName('minutes').setDescription('0 turns reminders off').setRequired(true).setMinValue(LIMITS.gameNightReminderMin[0]).setMaxValue(LIMITS.gameNightReminderMin[1])),
@@ -346,6 +368,14 @@ export const setup: Feature = {
           return apply(i, [
             ['freeGames', i.options.getBoolean('enabled', true)],
             ['freeGamesChannel', channel?.id ?? null],
+          ]);
+        }
+        if (sub === 'free-game-filters') {
+          return apply(i, [
+            ['freeGamesMinRating', i.options.getInteger('min_rating')],
+            ['freeGamesTaste', i.options.getBoolean('like_what_we_play')],
+            ['freeGamesMultiplayer', i.options.getBoolean('multiplayer_only')],
+            ['freeGamesUnlisted', i.options.getBoolean('not_on_steam')],
           ]);
         }
         if (sub === 'gamenight-reminder') return apply(i, [['gameNightReminderMin', i.options.getInteger('minutes', true)]]);

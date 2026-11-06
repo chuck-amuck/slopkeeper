@@ -114,6 +114,14 @@ db.exec(`
     page INTEGER NOT NULL DEFAULT 0
   );
 
+  CREATE TABLE IF NOT EXISTS game_facts (
+    key TEXT PRIMARY KEY,
+    appid INTEGER,
+    positive INTEGER NOT NULL,
+    negative INTEGER NOT NULL,
+    tags TEXT NOT NULL,
+    checked_at INTEGER NOT NULL
+  );
   CREATE TABLE IF NOT EXISTS free_game_posts (
     guild_id TEXT NOT NULL,
     giveaway_id INTEGER NOT NULL,

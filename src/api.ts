@@ -7,6 +7,7 @@ import { FROM_WEB, logActivity, recentActivity } from './activity.ts';
 import { config } from './config.ts';
 import * as discordBoard from './discordSounds.ts';
 import { cancelNight, gameNames, planNight, readWhen, stopSeries, upcomingNights } from './features/gamenight.ts';
+import { reviewGiveaways } from './features/freegames.ts';
 import { activity, checkpoint, PERIODS, stats } from './features/gamestats.ts';
 import { gameName, gameSpellings, mergeGames, separateGame } from './gameNames.ts';
 import { voiceTotals } from './features/sessions.ts';
@@ -546,6 +547,12 @@ async function handle(client: Client<true>, req: IncomingMessage, res: ServerRes
   if (section === 'voice' && !rest.length && req.method === 'GET') return voiceList(guild);
   if (section === 'stats' && !rest.length && req.method === 'GET') return statsFor(guild, url);
   if (section === 'activity' && !rest.length && req.method === 'GET') return activityList(guild, url);
+  if (section === 'free-games' && !rest.length && req.method === 'GET') {
+    const games = await reviewGiveaways(guild).catch(() => {
+      throw new Refused(502, 'The free game list couldn’t be read just now.');
+    });
+    return { games: games.map(({ title, url: link, worth, platforms, show, reason }) => ({ title, url: link, worth, platforms, show, reason })) };
+  }
   if (section === 'game-names' && !rest.length && req.method === 'GET') return gameNameList(guild);
   if (section === 'game-names' && rest.length === 1 && (rest[0] === 'merge' || rest[0] === 'separate') && req.method === 'POST') return changeGameNames(guild, req, rest[0]);
   if (section === 'join-sounds' && !rest.length && req.method === 'GET') return joinSoundList(guild);

@@ -195,7 +195,20 @@ It's **off by default**. A server admin turns it on with `/setup free-games enab
 
 | Command | What it does |
 | --- | --- |
-| `/freegames` | Shows everything that's free to keep right now. |
+| `/freegames [all]` | Shows what's free to keep right now and passes this server's filters. `all` includes the ones they hide. |
+
+Most giveaways are filler, so a game is only posted if it looks worth having. Each post says why it got through.
+
+| Filter | Default | What it does |
+| --- | --- | --- |
+| Lowest Steam rating | 70% | Needs this share of positive Steam reviews, from at least 50 reviews. 0 turns it off. |
+| Only games like what you play | on | Needs 2 tags in common with the 10 games this server played most in the past 6 months. It's skipped until 3 of those games are on Steam. Tags on nearly everything, like Singleplayer and Indie, don't count. |
+| Only multiplayer games | off | Needs a multiplayer or co-op tag. |
+| Games not on Steam | hidden | A game with no Steam page can't be rated, so it's hidden unless you show these. |
+
+A game is also hidden if everyone here with a linked Steam account already owns it. Ratings and tags come from [SteamSpy](https://steamspy.com) and are kept for a month. A hidden game is looked at again at each check, so loosening a filter can still catch it while it's free. If the lookup fails, the game waits for the next check.
+
+The web UI's Settings page lists what's free right now, with the reason each game is posted or hidden.
 
 ---
 
@@ -360,6 +373,7 @@ Every setting has a sensible default, so only the announce channel needs setting
 | `/setup leaderboard [day] [hour]` | When the weekly voice leaderboard is posted. |
 | `/setup timezone zone` | The server's time zone, used for the weekly post, counting "nights" on leaderboards, and reading game night times. Autocompletes, e.g. `America/Chicago`, `Europe/London`. |
 | `/setup steam-region country` | Steam store region for sale prices, as a two-letter country code. |
+| `/setup free-game-filters [min_rating] [like_what_we_play] [multiplayer_only] [not_on_steam]` | Chooses which free games are worth posting. See [Free games](#free-games). |
 | `/setup free-games enabled [channel]` | Turns free game posts on or off. `channel` gives them their own channel; without it they go to the announce channel. To move them back to the announce channel, use `/setup reset setting:Free games channel`. |
 | `/setup gamenight-reminder minutes` | How long before a game night to remind the people who are in. `0` turns reminders off. |
 | `/setup monthly-recap enabled` | Turns the post on the 1st of each month on or off. |
@@ -402,6 +416,10 @@ So the host can change a default for every server at once, and each server can s
 | Steam store region | `steam-region` | `STEAM_CC` | `us` |
 | Free game posts | `free-games` | `FREE_GAMES` (`true` to turn on) | off |
 | Free games channel | `free-games` | | the announce channel |
+| Lowest Steam rating | `free-game-filters` | `FREE_GAMES_MIN_RATING` | 70 |
+| Only games like what you play | `free-game-filters` | `FREE_GAMES_TASTE` (`false` to turn off) | on |
+| Only multiplayer games | `free-game-filters` | `FREE_GAMES_MULTIPLAYER` (`true` to turn on) | off |
+| Games not on Steam | `free-game-filters` | `FREE_GAMES_UNLISTED` (`true` to show them) | hidden |
 | Game night reminder (minutes before) | `gamenight-reminder` | `GAMENIGHT_REMINDER_MIN` | 15 |
 | Monthly recap | `monthly-recap` | `MONTHLY_RECAP` (`false` to turn off) | on |
 | Even volume | `sounds` | `EVEN_VOLUME` (`false` to turn off) | on |
@@ -465,6 +483,7 @@ It applies the same rules as `/sound` and `/setup`, and every request needs an `
 | `POST /guilds/:id/discord-sounds/:soundId/play` | Plays it in a voice channel: `{ "channelId": "..." }` |
 | `POST /guilds/:id/discord-sounds/:soundId/save` | Saves it to the library and links the two |
 | `DELETE /guilds/:id/discord-sounds/:soundId` | Takes it off Discord's soundboard, saving it to the library first |
+| `GET /guilds/:id/free-games` | Lists what's free right now, with whether each game is posted and why |
 | `GET /guilds/:id/voice` | Lists voice channels with people in them, busiest first |
 | `POST /guilds/:id/stop` | Stops whatever is playing |
 | `GET /guilds/:id/game-nights` | Lists upcoming game nights and repeating series, and what a new night can be set to |
