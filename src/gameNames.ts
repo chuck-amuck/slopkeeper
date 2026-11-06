@@ -6,8 +6,15 @@ interface Alias {
   manual: number;
 }
 
-/** What's left of a name once case, spaces and punctuation are gone. A name with nothing left only matches itself */
-export const gameKey = (name: string) => name.toLowerCase().replace(/[^\p{L}\p{N}]/gu, '') || name;
+const NUMERALS: Record<string, number> = { II: 2, III: 3, IV: 4, V: 5, VI: 6, VII: 7, VIII: 8, IX: 9 };
+// Capitals and on its own at the end, so a word like "Vi" stays a word. X is left out, as it's as often just a letter
+const LAST_NUMERAL = /(?<=[^\p{L}\p{N}])(II|III|IV|V|VI|VII|VIII|IX)\s*$/u;
+
+/**
+ * What's left of a name once case, spaces and punctuation are gone, with a sequel's Roman numeral as a digit.
+ * A name with nothing left only matches itself
+ */
+export const gameKey = (name: string) => name.replace(LAST_NUMERAL, (numeral) => String(NUMERALS[numeral.trim()])).toLowerCase().replace(/[^\p{L}\p{N}]/gu, '') || name;
 
 /** How much a spelling looks like a proper title, so a name someone typed beats a program's */
 const titleScore = (name: string) => (/\s/.test(name) ? 2 : 0) + (/\p{Lu}/u.test(name) && /\p{Ll}/u.test(name) ? 1 : 0);
@@ -91,4 +98,25 @@ function fillAliases() {
   }
 }
 
+/** Matching can improve after spellings are recorded, so ones that now match join up, leaving hand-picked names alone */
+function refreshKeys() {
+  const rows = db.prepare('SELECT guild_id AS guildId, raw, key FROM game_aliases').all() as { guildId: string; raw: string; key: string }[];
+  const stale = rows.filter((r) => r.key !== gameKey(r.raw));
+  if (!stale.length) return;
+  db.exec('BEGIN');
+  try {
+    for (const { guildId, raw } of stale) {
+      const key = gameKey(raw);
+      db.prepare('UPDATE game_aliases SET key = ? WHERE guild_id = ? AND raw = ?').run(key, guildId, raw);
+      const names = inGroup(guildId, key).filter((m) => !m.manual).map((m) => m.name);
+      if (names.length) db.prepare('UPDATE game_aliases SET name = ? WHERE guild_id = ? AND key = ? AND manual = 0').run(best(names), guildId, key);
+    }
+    db.exec('COMMIT');
+  } catch (err) {
+    db.exec('ROLLBACK');
+    throw err;
+  }
+}
+
+refreshKeys();
 fillAliases();
