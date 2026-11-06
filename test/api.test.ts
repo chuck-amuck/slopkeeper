@@ -2239,6 +2239,14 @@ test('hidden games stay within their server', async () => {
   assert.equal((db.prepare('SELECT COUNT(*) AS n FROM hidden_apps').get() as { n: number }).n, 1);
 });
 
+test('letting a game back in here leaves it hidden in another server', async () => {
+  insertGame('Portal 2', 620);
+  await ok(`${hiddenUrl}/620`, { method: 'PUT' });
+  db.prepare(`INSERT INTO hidden_apps (guild_id, appid, name, hidden_by) VALUES ('other', 620, 'Portal 2', 'u1')`).run();
+  await ok(`${hiddenUrl}/620`, { method: 'DELETE' });
+  assert.deepEqual((db.prepare('SELECT guild_id FROM hidden_apps').all() as { guild_id: string }[]).map((r) => r.guild_id), ['other']);
+});
+
 const joinUrl = `/guilds/${GUILD}/join-sounds`;
 const setJoin = (user: string, json: unknown) => ok(`${joinUrl}/${user}`, { method: 'PUT', json });
 

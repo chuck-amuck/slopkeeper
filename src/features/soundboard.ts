@@ -38,6 +38,7 @@ import {
 import { copyFileSync, existsSync, mkdirSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { setTimeout as sleep } from 'node:timers/promises';
 import { logActivity } from '../activity.ts';
 import { config } from '../config.ts';
 import { db } from '../db.ts';
@@ -652,12 +653,24 @@ export async function playJoinSound(oldState: VoiceState, newState: VoiceState) 
   const sound = name && findSound(guild.id, name);
   if (!sound) return;
   // One person arriving shouldn't pull the bot away from people using it in another channel
-  const botChannel = getVoiceConnection(guild.id)?.joinConfig.channelId;
-  if (botChannel && botChannel !== channel.id) return;
+  const busyElsewhere = () => {
+    const botChannel = getVoiceConnection(guild.id)?.joinConfig.channelId;
+    return !!botChannel && botChannel !== channel.id;
+  };
+  if (busyElsewhere()) return;
   const key = `${guild.id}:${newState.id}`;
   const now = Date.now();
   if (now - (lastJoinSound.get(key) ?? -Infinity) < setting(guild.id, 'joinSoundCooldownMin') * 60_000) return;
   lastJoinSound.set(key, now);
+  const delay = setting(guild.id, 'joinSoundDelayMs');
+  if (delay) {
+    // Their own Discord takes a moment to connect, and they'd miss the start of the sound
+    await sleep(delay);
+    if (guild.voiceStates.cache.get(newState.id)?.channelId !== channel.id || busyElsewhere()) {
+      lastJoinSound.delete(key);
+      return;
+    }
+  }
   const problem = await play(channel, sound.file, soundGain(guild.id, sound.name));
   if (problem) console.log(`Join sound ${sound.name} in ${guild.name} didn’t play: ${problem}`);
 }

@@ -31,6 +31,7 @@ export const LIMITS = {
   sessionGraceMin: [1, 60],
   gameNightReminderMin: [0, 1440],
   joinSoundCooldownMin: [0, 1440],
+  joinSoundDelayMs: [0, 10_000],
   freeGamesMinRating: [0, 100],
   saleMinDiscount: [1, 100],
 } as const;
@@ -63,6 +64,7 @@ export const LABELS: Record<SettingKey, string> = {
   evenVolume: 'Even volume',
   joinSounds: 'Join sounds',
   joinSoundCooldownMin: 'Join sound cooldown',
+  joinSoundDelayMs: 'Join sound delay',
   soundManagerRole: 'Sound managers',
 };
 
@@ -85,6 +87,8 @@ export function show(key: SettingKey, value: unknown): string {
     case 'sessionGraceMin':
     case 'joinSoundCooldownMin':
       return `${value} min`;
+    case 'joinSoundDelayMs':
+      return `${value} ms`;
     case 'steamCountry':
       return String(value).toUpperCase();
     case 'freeGames':
@@ -319,6 +323,9 @@ export const setup: Feature = {
             .addBooleanOption((o) => o.setName('join_sounds').setDescription('Let people pick a sound for joining voice with /sound join (on by default)'))
             .addIntegerOption((o) =>
               o.setName('join_cooldown_minutes').setDescription('Shortest time between one person’s join sounds').setMinValue(LIMITS.joinSoundCooldownMin[0]).setMaxValue(LIMITS.joinSoundCooldownMin[1]),
+            )
+            .addIntegerOption((o) =>
+              o.setName('join_delay_ms').setDescription('How long after someone connects their join sound plays, 500 is half a second').setMinValue(LIMITS.joinSoundDelayMs[0]).setMaxValue(LIMITS.joinSoundDelayMs[1]),
             ),
         )
         .addSubcommand((s) =>
@@ -336,10 +343,20 @@ export const setup: Feature = {
                 .setName('setting')
                 .setDescription('Setting')
                 .setRequired(true)
-                .addChoices(...(Object.keys(LABELS) as SettingKey[]).map((key) => ({ name: LABELS[key], value: key }))),
+                .setAutocomplete(true),
             ),
         ),
       async autocomplete(i) {
+        // Discord allows 25 fixed choices, and there are more settings than that
+        if (i.options.getSubcommand() === 'reset') {
+          const typed = i.options.getFocused().toLowerCase();
+          return i.respond(
+            (Object.keys(LABELS) as SettingKey[])
+              .filter((key) => LABELS[key].toLowerCase().includes(typed))
+              .slice(0, 25)
+              .map((key) => ({ name: LABELS[key], value: key })),
+          );
+        }
         const query = i.options.getFocused().toLowerCase().replaceAll(' ', '_');
         return i.respond(
           TIME_ZONES.filter((zone) => zone.toLowerCase().includes(query))
@@ -433,6 +450,7 @@ export const setup: Feature = {
             ['evenVolume', evenVolume],
             ['joinSounds', i.options.getBoolean('join_sounds')],
             ['joinSoundCooldownMin', i.options.getInteger('join_cooldown_minutes')],
+            ['joinSoundDelayMs', i.options.getInteger('join_delay_ms')],
           ]);
           if (evenVolume !== null) await applyLevels(i.guild);
           return;
@@ -442,6 +460,7 @@ export const setup: Feature = {
 
         if (sub === 'reset') {
           const key = i.options.getString('setting', true) as SettingKey;
+          if (!Object.hasOwn(LABELS, key)) return i.reply({ content: 'Pick a setting from the list.', flags: MessageFlags.Ephemeral });
           setSetting(i.guildId, key, undefined);
           logActivity(i.guildId, i.user.id, `Put ${LABELS[key]} back to the default`);
           if (key === 'evenVolume') await applyLevels(i.guild);
