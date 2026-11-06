@@ -14,7 +14,7 @@ const add = (guildId: string, user: string, raw: string, from: number, to: numbe
 add('start', 'a', 'slaythespire2', 20, 10);
 add('start', 'b', 'Slay the Spire 2', 12, 11);
 add('start', 'a', 'SLAY THE SPIRE 2', 12, 11.5);
-add('start', 'a', 'Slay the Spire II', 12, 11);
+add('start', 'a', 'Slay the Spire Two', 12, 11);
 add('elsewhere', 'a', 'slaythespire2', 3, 1);
 add('ties', 'a', 'Deep rock galactic', 10, 9);
 add('ties', 'a', 'Deep Rock Galactic', 9, 5);
@@ -37,7 +37,7 @@ test('a key ignores case, spaces and punctuation, in any alphabet', () => {
   assert.equal(gameKey('SLAY-THE: SPIRE_2™'), 'slaythespire2');
   assert.equal(gameKey('Ведьмак 3'), 'ведьмак3');
   assert.equal(gameKey('原神'), '原神');
-  assert.notEqual(gameKey('Slay the Spire 2'), gameKey('Slay the Spire II'));
+  assert.notEqual(gameKey('Slay the Spire 2'), gameKey('Slay the Spire Two'));
 });
 
 test('a name with nothing but symbols only matches itself', () => {
@@ -51,7 +51,7 @@ test('a name with nothing but symbols only matches itself', () => {
 test('names already in the stats are matched at the first start, by proper title', () => {
   assert.equal(gameName('start', 'slaythespire2'), 'Slay the Spire 2');
   assert.equal(gameName('start', 'SLAY THE SPIRE 2'), 'Slay the Spire 2');
-  assert.equal(gameName('start', 'Slay the Spire II'), 'Slay the Spire II', 'too risky to match by itself');
+  assert.equal(gameName('start', 'Slay the Spire Two'), 'Slay the Spire Two', 'too risky to match by itself');
   assert.equal(gameName('start', 'Only In A Session'), 'Only In A Session');
   assert.ok(gameSpellings('start').has('Only In A Session'), 'seen in a session but never as a play');
   assert.equal(log.mock.calls[0].arguments[0], 'Matched 3 game spellings to the same game');
@@ -121,16 +121,16 @@ test('a spelling not seen yet still reads as the game it matches', () => {
 });
 
 test('a merge joins everything up, counting overlaps once', () => {
-  for (const raw of ['Slay the Spire 2', 'Slay the Spire II', 'slaythespire2']) noteGame('merged', raw);
+  for (const raw of ['Slay the Spire 2', 'Slay the Spire Two', 'slaythespire2']) noteGame('merged', raw);
   add('merged', 'a', 'Slay the Spire 2', 10, 8);
-  add('merged', 'b', 'Slay the Spire II', 9, 7);
+  add('merged', 'b', 'Slay the Spire Two', 9, 7);
   add('merged', 'a', 'slaythespire2', 8.5, 6); // Overlaps a's other spelling too
-  add('merged', 'c', 'Slay the Spire II', 8, 7, 'other');
+  add('merged', 'c', 'Slay the Spire Two', 8, 7, 'other');
   add('merged', 'a', 'Valheim', 5, 4);
   noteGame('merged', 'Valheim');
-  assert.deepEqual(stats('merged', 0, 'none', 'game').map((r) => r.key).sort(), ['Slay the Spire 2', 'Slay the Spire II', 'Valheim'], 'II stands alone until it’s merged');
+  assert.deepEqual(stats('merged', 0, 'none', 'game').map((r) => r.key).sort(), ['Slay the Spire 2', 'Slay the Spire Two', 'Valheim'], 'Two stands alone until it’s merged');
 
-  assert.equal(mergeGames('merged', ['Slay the Spire 2', 'Slay the Spire II'], 'Slay the Spire 2'), null);
+  assert.equal(mergeGames('merged', ['Slay the Spire 2', 'Slay the Spire Two'], 'Slay the Spire 2'), null);
   assert.deepEqual(hours(stats('merged', 0, 'none', 'game')), [['Slay the Spire 2', 4], ['Valheim', 1]]);
   // a's own 2h and 2.5h overlap, so 4h plus an hour of Valheim, not 5.5h
   assert.deepEqual(hours(stats('merged', 0, 'none', 'user_id')).sort(), [['a', 5], ['b', 2], ['c', 1]]);
@@ -223,13 +223,13 @@ test('plays from before voice tracking stay out under a merged name too', () => 
 
 test('stored plays aren’t changed by any of it', () => {
   const names = db.prepare(`SELECT game FROM game_plays WHERE guild_id = 'merged' ORDER BY id`).all() as { game: string }[];
-  assert.deepEqual(names.map((n) => n.game), ['Slay the Spire 2', 'Slay the Spire II', 'slaythespire2', 'Slay the Spire II', 'Valheim']);
+  assert.deepEqual(names.map((n) => n.game), ['Slay the Spire 2', 'Slay the Spire Two', 'slaythespire2', 'Slay the Spire Two', 'Valheim']);
 });
 
 test('a ping role reaches anyone showing any spelling, once', () => {
   db.prepare(`INSERT INTO game_roles (role_id, guild_id, name) VALUES ('sts', 'merged', 'Slay the Spire 2'), ('val', 'merged', 'Valheim')`).run();
   assert.deepEqual(rolesForGames('merged', ['slaythespire2']), ['sts']);
-  assert.deepEqual(rolesForGames('merged', ['Slay the Spire II', 'SLAY THE SPIRE 2']), ['sts']);
+  assert.deepEqual(rolesForGames('merged', ['Slay the Spire Two', 'SLAY THE SPIRE 2']), ['sts']);
   assert.deepEqual(rolesForGames('merged', ['Nothing']), []);
   db.prepare(`INSERT INTO game_roles (role_id, guild_id, name) VALUES ('typed', 'early', 'Foo Bar'), ('other', 'early', 'Merged Name')`).run();
   assert.deepEqual(rolesForGames('early', ['foobar']), ['typed'], 'matches before anyone’s played it');
@@ -240,7 +240,7 @@ test('a ping role reaches anyone showing any spelling, once', () => {
 });
 
 test('a role named with a merged-away spelling still matches', () => {
-  db.prepare(`INSERT INTO game_roles (role_id, guild_id, name) VALUES ('ii', 'merged', 'Slay the Spire II')`).run();
+  db.prepare(`INSERT INTO game_roles (role_id, guild_id, name) VALUES ('ii', 'merged', 'Slay the Spire Two')`).run();
   assert.deepEqual(rolesForGames('merged', ['Slay the Spire 2']).sort(), ['ii', 'sts']);
 });
 
