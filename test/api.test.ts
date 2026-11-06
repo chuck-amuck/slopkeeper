@@ -1,9 +1,10 @@
 import './helpers.ts';
 import { joinVoiceChannel, VoiceConnectionStatus } from '@discordjs/voice';
-import { ChannelType, Collection, PermissionFlagsBits } from 'discord.js';
+import { ChannelType, Collection, DiscordAPIError, PermissionFlagsBits, RESTJSONErrorCodes } from 'discord.js';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { request } from 'node:http';
 import { after, before, beforeEach, mock, test, type TestContext } from 'node:test';
 import path from 'node:path';
@@ -12,6 +13,7 @@ import { createApi, webApi } from '../src/api.ts';
 import { config } from '../src/config.ts';
 import { db } from '../src/db.ts';
 import { logActivity } from '../src/activity.ts';
+import { Mixer } from '../src/mixer.ts';
 import { noteGame } from '../src/gameNames.ts';
 import { activity, stats } from '../src/features/gamestats.ts';
 import { levelLibrary, setJoinSound, soundboard, soundGain } from '../src/features/soundboard.ts';
@@ -26,7 +28,8 @@ const wav = (seconds = 0.2) =>
     maxBuffer: 16 * 1024 * 1024,
   });
 
-let discordSounds: Map<string, { name: string; volume?: number }>;
+let discordSounds: Map<string, { name: string; volume?: number; emoji?: { id: string | null; name: string | null } | null; user?: { id: string } | null }>;
+let refuseDiscord: Error | null;
 let nextSoundId = 0;
 let panelEdits: unknown[][];
 let permitted: bigint[];
@@ -66,6 +69,7 @@ for (const r of roles.values()) r.guild = { members: { me } };
 const guild = {
   id: GUILD,
   name: 'Test server',
+  client: { user: { id: 'the-bot' } },
   afkChannelId: '704',
   voiceAdapterCreator: () => ({ sendPayload: () => true, destroy() {} }),
   iconURL: () => null,
@@ -98,18 +102,23 @@ const guild = {
     },
   },
   soundboardSounds: {
-    fetch: async () => new Map(discordSounds),
+    fetch: async () => new Map([...discordSounds].map(([id, sound]) => [id, { ...sound, url: `https://cdn.test/${id}` }])),
     create: async ({ name, volume }: { name: string; volume: number }) => {
+      if (refuseDiscord) throw refuseDiscord;
       const soundId = `s${++nextSoundId}`;
       discordSounds.set(soundId, { name, volume });
       return { soundId };
     },
     edit: async (id: string, data: { name?: string; volume?: number }) => {
+      if (refuseDiscord) throw refuseDiscord;
       const sound = discordSounds.get(id)!;
       if (data.name) sound.name = data.name;
       if (data.volume !== undefined) sound.volume = data.volume;
     },
-    delete: async (id: string) => void discordSounds.delete(id),
+    delete: async (id: string) => {
+      if (refuseDiscord) throw refuseDiscord;
+      discordSounds.delete(id);
+    },
   },
 };
 
@@ -145,6 +154,7 @@ after(() => {
 
 beforeEach(() => {
   discordSounds = new Map();
+  refuseDiscord = null;
   panelEdits = [];
   sent = [];
   deletedEvents = [];
@@ -1238,4 +1248,314 @@ test('bad game name changes are refused', async () => {
     assert.match(((await res.json()) as { error: string }).error, why);
   }
   assert.equal((await call(`/guilds/${GUILD}/game-names/other`, { method: 'POST', json: {} })).status, 404);
+});
+
+const realFetch = fetch;
+const missingPermissions = () => new DiscordAPIError({ code: RESTJSONErrorCodes.MissingPermissions, message: 'Missing Permissions' }, RESTJSONErrorCodes.MissingPermissions, 403, 'DELETE', '', {});
+
+/** Serves Discord's copies of sounds, or whatever a test wants instead. Other addresses, like this API's, go through */
+function discordCdn(t: TestContext, answer: () => Response = () => new Response(new Uint8Array(wav()), { headers: { 'content-type': 'audio/mpeg' } })) {
+  const asked: string[] = [];
+  t.mock.method(globalThis, 'fetch', async (url: string, init?: RequestInit) => {
+    if (!String(url).startsWith('https://cdn.test/')) return realFetch(url, init);
+    asked.push(String(url));
+    return answer();
+  });
+  return asked;
+}
+
+const discordList = async () => (await ok(`/guilds/${GUILD}/sounds`)).discordSounds as any[];
+const save = (id: string) => ok(`/guilds/${GUILD}/discord-sounds/${id}/save`, { method: 'POST' });
+const takeOff = (id: string) => `/guilds/${GUILD}/discord-sounds/${id}`;
+const swapIn = (name: string, replacing: string, start?: number) => [`/guilds/${GUILD}/sounds/${name}/discord`, { method: 'PUT', json: { replacing, start } }] as const;
+const libraryOnly = (name: string, body: Buffer = wav()) => call(`/guilds/${GUILD}/sounds/${name}?file=clip.wav&discord=0`, { method: 'PUT', body: body as BodyInit });
+
+test('lists what’s on Discord’s soundboard, whoever added it', async () => {
+  await upload('horn');
+  discordSounds.set('theirs', { name: 'Their Sound', volume: 0.8, emoji: { id: null, name: '🔊' } });
+  discordSounds.set('own', { name: 'custom', emoji: { id: '123456789012345678', name: null } });
+  discordSounds.set('other', { name: 'foreign', emoji: { id: '999999999999999999', name: null } });
+  const list = await discordList();
+  assert.deepEqual(
+    list.map((s) => [s.name, s.library, s.emoji]),
+    [
+      ['horn', 'horn', null],
+      ['Their Sound', null, '🔊'],
+      ['custom', null, '<:slop:123456789012345678>'],
+      ['foreign', null, null],
+    ],
+  );
+  assert.equal(list[1].volume, 0.8);
+  assert.ok(list.every((s) => !('url' in s)));
+  assert.deepEqual((await ok(`/guilds/${GUILD}/sounds`)).slots, { used: 4, total: 8 });
+});
+
+test('says which sounds the bot can’t remove', async (t) => {
+  discordSounds.set('mine', { name: 'mine', user: { id: 'the-bot' } });
+  discordSounds.set('theirs', { name: 'theirs', user: { id: 'u1' } });
+  discordSounds.set('unknown', { name: 'unknown', user: null });
+  assert.ok((await discordList()).every((s) => s.removable));
+  t.mock.method(me.permissions, 'has', (flag: bigint) => flag !== PermissionFlagsBits.ManageGuildExpressions);
+  assert.deepEqual(
+    (await discordList()).map((s) => [s.name, s.removable]),
+    [
+      ['mine', true],
+      ['theirs', false],
+      ['unknown', true],
+    ],
+  );
+});
+
+test('a soundboard Discord won’t show leaves the library working', async (t) => {
+  await upload('horn');
+  t.mock.method(guild.soundboardSounds, 'fetch', async () => {
+    throw new Error('Discord is down');
+  });
+  const body = await ok(`/guilds/${GUILD}/sounds`);
+  assert.equal(body.slots, null);
+  assert.deepEqual(body.discordSounds, []);
+  assert.equal(body.sounds.length, 1);
+});
+
+test('names saved from Discord fit the library', async (t) => {
+  discordCdn(t);
+  const names = [
+    ['a', 'Air Horn!', 'air-horn'],
+    ['b', 'Été fou', 'ete-fou'],
+    ['c', '  --spaced--  ', 'spaced'],
+    ['1234567890', '🔊🔊', 'sound-567890'],
+    ['0000000001', 'x', 'sound-000001'],
+    ['f', 'y'.repeat(32), 'y'.repeat(32)],
+    ['g', 'y'.repeat(32), `${'y'.repeat(30)}-2`],
+    ['h', 'AIR HORN', 'air-horn-2'],
+    ['i', 'air horn', 'air-horn-3'],
+  ];
+  for (const [id, name, saved] of names) {
+    discordSounds.set(id, { name });
+    assert.equal((await save(id)).name, saved);
+  }
+});
+
+test('saving keeps the sound’s emoji and links it, without touching Discord’s copy or the sound with that name', async (t) => {
+  discordCdn(t);
+  await libraryOnly('horn');
+  const before = readFileSync(path.join(soundFolder, 'horn.wav'));
+  discordSounds.set('theirs', { name: 'Horn', volume: 0.8, emoji: { id: null, name: '🔊' } });
+  const { name } = await save('theirs');
+  assert.equal(name, 'horn-2');
+  assert.ok(readFileSync(path.join(soundFolder, 'horn.wav')).equals(before));
+  const sound = (await sounds()).find((s) => s.name === 'horn-2');
+  assert.equal(sound.emoji, '🔊');
+  assert.equal(sound.onDiscord, true);
+  assert.deepEqual(discordSounds.get('theirs'), { name: 'Horn', volume: 0.8, emoji: { id: null, name: '🔊' } });
+  assert.equal((await discordList()).find((s) => s.id === 'theirs').library, 'horn-2');
+});
+
+test('saving twice keeps one copy and one line of history', async (t) => {
+  const asked = discordCdn(t);
+  discordSounds.set('theirs', { name: 'Horn' });
+  assert.equal((await save('theirs')).name, 'horn');
+  assert.equal((await save('theirs')).name, 'horn');
+  assert.equal(asked.length, 1);
+  assert.equal((await sounds()).length, 1);
+  const saves = (await ok(`/guilds/${GUILD}/activity`)).entries.filter((e: any) => e.action.includes('Saved'));
+  assert.equal(saves.length, 1);
+});
+
+test('an ogg from Discord is stored as one', async (t) => {
+  discordCdn(t, () => new Response(new Uint8Array(wav()), { headers: { 'content-type': 'audio/ogg' } }));
+  discordSounds.set('theirs', { name: 'Horn' });
+  await save('theirs');
+  assert.ok(existsSync(path.join(soundFolder, 'horn.ogg')));
+});
+
+test('a download that fails or isn’t audio saves nothing', async (t) => {
+  discordSounds.set('theirs', { name: 'Horn' });
+  let answer = new Response('nope', { status: 500 });
+  discordCdn(t, () => answer);
+  const url = `/guilds/${GUILD}/discord-sounds/theirs/save`;
+  assert.match(await refused(400, url, { method: 'POST' }), /wouldn’t hand over Horn/);
+  answer = new Response('this is not audio', { headers: { 'content-type': 'audio/mpeg' } });
+  assert.match(await refused(400, url, { method: 'POST' }), /couldn’t be read/);
+  assert.equal((await sounds()).length, 0);
+  assert.equal((await discordList())[0].library, null);
+});
+
+test('taking off a sound that isn’t saved saves it first', async (t) => {
+  discordCdn(t);
+  discordSounds.set('theirs', { name: 'Horn' });
+  await ok(takeOff('theirs'), { method: 'DELETE' });
+  assert.equal(discordSounds.size, 0);
+  const [sound] = await sounds();
+  assert.equal(sound.name, 'horn');
+  assert.equal(sound.onDiscord, false);
+});
+
+test('a sound that can’t be saved stays on Discord', async (t) => {
+  discordCdn(t, () => new Response('nope', { status: 500 }));
+  discordSounds.set('theirs', { name: 'Horn' });
+  await refused(400, takeOff('theirs'), { method: 'DELETE' });
+  assert.ok(discordSounds.has('theirs'));
+});
+
+test('taking off a saved sound only frees the slot', async (t) => {
+  const asked = discordCdn(t);
+  await upload('horn');
+  const [{ id }] = await discordList();
+  await ok(takeOff(id), { method: 'DELETE' });
+  assert.equal(discordSounds.size, 0);
+  assert.equal(asked.length, 0);
+  assert.equal((await sounds())[0].onDiscord, false);
+});
+
+test('without permission a sound stays where it is, and the page says what’s needed', async (t) => {
+  discordCdn(t);
+  discordSounds.set('theirs', { name: 'Horn' });
+  await libraryOnly('bell');
+  refuseDiscord = missingPermissions();
+  assert.match(await refused(400, takeOff('theirs'), { method: 'DELETE' }), /Manage Expressions/);
+  assert.ok(discordSounds.has('theirs'));
+  assert.equal((await sounds()).find((s) => s.name === 'horn').onDiscord, true);
+  assert.match(await refused(400, ...swapIn('bell', 'theirs')), /Manage Expressions/);
+});
+
+test('renaming a saved sound that was someone else’s says what’s needed', async (t) => {
+  discordCdn(t);
+  discordSounds.set('theirs', { name: 'Horn' });
+  await save('theirs');
+  refuseDiscord = missingPermissions();
+  assert.match(await refused(400, `/guilds/${GUILD}/sounds/horn`, { method: 'PATCH', json: { name: 'bell' } }), /Manage Expressions/);
+});
+
+test('deleting a saved sound Discord won’t let go of unlinks it', async (t) => {
+  discordCdn(t);
+  discordSounds.set('theirs', { name: 'Horn' });
+  await save('theirs');
+  refuseDiscord = missingPermissions();
+  assert.match((await ok(`/guilds/${GUILD}/sounds/horn`, { method: 'DELETE' })).discordProblem, /Manage Expressions/);
+  refuseDiscord = null;
+  assert.equal((await discordList())[0].library, null);
+  assert.equal((await save('theirs')).name, 'horn');
+});
+
+test('swapping puts a library sound in another’s slot, keeping the one that came off', async (t) => {
+  discordCdn(t);
+  await libraryOnly('bell');
+  discordSounds.set('theirs', { name: 'Theirs' });
+  await ok(...swapIn('bell', 'theirs'));
+  assert.ok(!discordSounds.has('theirs'));
+  assert.ok([...discordSounds.values()].some((s) => s.name === 'bell'));
+  const list = await sounds();
+  assert.equal(list.find((s) => s.name === 'theirs').onDiscord, false);
+  assert.equal(list.find((s) => s.name === 'bell').onDiscord, true);
+  const { entries } = await ok(`/guilds/${GUILD}/activity`);
+  assert.ok(entries.some((e: any) => e.action === 'Swapped Theirs for bell on Discord’s soundboard'));
+});
+
+test('swapping in a long sound uses the part picked', async (t) => {
+  discordCdn(t);
+  await libraryOnly('long', wav(7));
+  discordSounds.set('theirs', { name: 'Theirs' });
+  await ok(...swapIn('long', 'theirs', 1.5));
+  assert.ok([...discordSounds.values()].some((s) => s.name === 'long'));
+});
+
+test('a sound that can’t go on leaves the old one alone', async (t) => {
+  const asked = discordCdn(t);
+  await libraryOnly('long', wav(7));
+  discordSounds.set('theirs', { name: 'Theirs' });
+  assert.match(await refused(400, ...swapIn('long', 'theirs')), /7\.0 s long/);
+  assert.match(await refused(400, ...swapIn('long', 'theirs', 50)), /only 7\.0 s/);
+  assert.ok(discordSounds.has('theirs'));
+  assert.equal(asked.length, 0);
+  assert.equal((await sounds()).length, 1);
+});
+
+test('a sound already on Discord can’t be swapped in', async (t) => {
+  discordCdn(t);
+  await upload('bell');
+  discordSounds.set('theirs', { name: 'Theirs' });
+  assert.match(await refused(400, ...swapIn('bell', 'theirs')), /already on Discord/);
+  assert.ok(discordSounds.has('theirs'));
+});
+
+test('if Discord turns the new sound down, the old one goes back', async (t) => {
+  discordCdn(t);
+  await libraryOnly('bell');
+  discordSounds.set('theirs', { name: 'Theirs' });
+  const { create } = guild.soundboardSounds;
+  t.mock.method(guild.soundboardSounds, 'create', async (sound: { name: string; volume: number }) => {
+    if (sound.name === 'bell') throw new Error('Discord said no');
+    return create(sound);
+  });
+  assert.match(await refused(400, ...swapIn('bell', 'theirs')), /Discord said no/);
+  assert.deepEqual([...discordSounds.values()].map((s) => s.name), ['theirs']);
+  const list = await sounds();
+  assert.equal(list.find((s) => s.name === 'theirs').onDiscord, true);
+  assert.equal(list.find((s) => s.name === 'bell').onDiscord, false);
+});
+
+test('if the old sound can’t go back, the page says it’s in the library', async (t) => {
+  discordCdn(t);
+  await libraryOnly('bell');
+  discordSounds.set('theirs', { name: 'Theirs' });
+  t.mock.method(guild.soundboardSounds, 'create', async () => {
+    throw new Error('Discord said no');
+  });
+  assert.match(await refused(400, ...swapIn('bell', 'theirs')), /theirs couldn’t go back on, but it’s safe in the library/);
+  assert.ok((await sounds()).some((s) => s.name === 'theirs'));
+});
+
+test('only sounds on this server’s soundboard can be asked for', async (t) => {
+  const asked = discordCdn(t);
+  await upload('bell');
+  for (const part of ['/audio', '/save']) await refused(404, `/guilds/${GUILD}/discord-sounds/nope${part}`, { method: part === '/audio' ? 'GET' : 'POST' });
+  await refused(404, takeOff('nope'), { method: 'DELETE' });
+  await refused(404, ...swapIn('bell', 'nope'));
+  assert.equal(asked.length, 0);
+  discordSounds.set('theirs', { name: 'Theirs' });
+  await refused(404, `/guilds/${GUILD}/discord-sounds/theirs/nope`);
+  await refused(404, `/guilds/${GUILD}/discord-sounds/theirs/save`);
+  await refused(404, '/guilds/other/discord-sounds/theirs/audio');
+});
+
+test('previews a Discord sound without saving it', async (t) => {
+  const asked = discordCdn(t);
+  discordSounds.set('theirs', { name: 'Theirs' });
+  const res = await call(`/guilds/${GUILD}/discord-sounds/theirs/audio`);
+  assert.equal(res.status, 200);
+  assert.equal(res.headers.get('content-type'), 'audio/mpeg');
+  assert.ok(Buffer.from(await res.arrayBuffer()).equals(wav()));
+  assert.deepEqual(asked, ['https://cdn.test/theirs']);
+  assert.equal((await sounds()).length, 0);
+});
+
+test('plays a Discord sound in voice as loud as it is there, or as the library has it', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const asked = discordCdn(t);
+  permitted.push(PermissionFlagsBits.Connect, PermissionFlagsBits.Speak);
+  const connection = joinVoiceChannel({ channelId: '702', guildId: GUILD, adapterCreator: guild.voiceAdapterCreator as never });
+  Object.assign(connection, { state: { ...connection.state, status: VoiceConnectionStatus.Ready } });
+  t.after(async () => {
+    await ok(`/guilds/${GUILD}/stop`, { method: 'POST' });
+    soundboard.shutdown!();
+  });
+  const added = t.mock.method(Mixer.prototype, 'add', () => {});
+  const id = `played${Date.now()}`;
+  discordSounds.set(id, { name: 'Theirs', volume: 0.8 });
+  const url = `/guilds/${GUILD}/discord-sounds/${id}/play`;
+  await ok(url, { method: 'POST', json: { channelId: '702' } });
+  await ok(url, { method: 'POST', json: { channelId: '702' } });
+  const file = path.join(tmpdir(), `slopkeeper-discord-${id}`);
+  t.after(() => rmSync(file));
+  assert.ok(readFileSync(file).equals(wav()));
+  assert.equal(asked.length, 1, 'the second play uses the same copy');
+  assert.deepEqual(added.mock.calls[0].arguments, [file, 0.8 / 0.5]);
+  assert.deepEqual(plays(), [], 'not a library sound, so nothing to count');
+
+  await save(id);
+  await ok(url, { method: 'POST', json: { channelId: '702' } });
+  assert.equal(added.mock.calls[2].arguments[0], path.join(soundFolder, 'theirs.mp3'));
+  assert.deepEqual(plays(), ['web:theirs']);
+  assert.match(await refused(400, url, { method: 'POST', json: { channelId: 'v1' } }), /Nobody’s in voice/);
 });
