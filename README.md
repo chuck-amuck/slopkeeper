@@ -221,6 +221,8 @@ The bot records how long each person plays each game while they're in a voice ch
 
 A game's time is how long anyone was playing it, so two people playing for the same hour add one hour to the game and one hour each to themselves. That's why the players of a game can add up to more than the game itself. If the same game is running in two voice channels at once, it still only counts once.
 
+Different spellings of a game count as one. Discord can report a game several ways, so spellings that only differ by case, spaces or punctuation match by themselves: `slaythespire2` joins "Slay the Spire 2". For anything else, like "Slay the Spire II", use **Merge games** on the web UI's Stats page. Merges apply to past stats, ping roles and new plays. Nothing stored is changed, so **Separate** puts a spelling back at any time.
+
 Game time from before this rule is an estimate: the bot kept what fell inside saved voice sessions, up to each person's time in that session.
 
 | Command | What it does |
@@ -449,6 +451,9 @@ It applies the same rules as `/sound` and `/setup`, and every request needs an `
 | `DELETE /guilds/:id/sounds/:name` | Deletes it |
 | `GET /guilds/:id/sounds/:name/audio` | Downloads its audio |
 | `POST /guilds/:id/sounds/:name/play` | Plays it in a voice channel with people in it: `{ "channelId": "..." }` |
+| `GET /guilds/:id/game-names` | Every game with what else it's been called |
+| `POST /guilds/:id/game-names/merge` | Merges games: `{ "names": ["A", "B"], "into": "A" }` |
+| `POST /guilds/:id/game-names/separate` | Puts a spelling back as its own game: `{ "name": "B" }` |
 | `POST /guilds/:id/sounds/:name/trim` | Keeps only part of it, in seconds: `{ "start": 1.5, "end": 4 }` |
 | `POST /guilds/:id/sounds/:name/restore` | Puts a trimmed sound back as it was |
 | `PUT /guilds/:id/sounds/:name/discord` | Copies it to Discord's soundboard: `{ "start": 12.5 }` picks a part of a long sound |

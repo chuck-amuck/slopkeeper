@@ -6,6 +6,7 @@ import { Events } from 'discord.js';
 import { config } from '../src/config.ts';
 import { db } from '../src/db.ts';
 import { sharedGames } from '../src/features/games.ts';
+import { gameName, gameSpellings, noteGame } from '../src/gameNames.ts';
 import { activity, checkpoint, gameStats, playedTogether, resync, stats, voiceTogether } from '../src/features/gamestats.ts';
 
 const HOUR = 3_600_000;
@@ -390,6 +391,38 @@ test('muting doesn’t split a play', (t) => {
   mute(sam);
   t.mock.timers.tick(5 * MINUTE);
   assert.deepEqual(plays(), [['sam', 'Valheim', 'v1', 10]]);
+});
+
+test('two spellings of a game showing at once are one play', (t) => {
+  const { member, moveTo, play, plays } = voiceServer(t, 'spellings');
+  const sam = member('sam');
+  moveTo(sam, 'v1');
+  play(sam, 'Slay the Spire 2', 'slaythespire2');
+  t.mock.timers.tick(5 * MINUTE);
+  assert.deepEqual(plays(), [['sam', 'Slay the Spire 2', 'v1', 5]]);
+  play(sam, 'slaythespire2');
+  t.mock.timers.tick(5 * MINUTE);
+  assert.deepEqual(plays(), [['sam', 'Slay the Spire 2', 'v1', 10]], 'the same play carries on under its other spelling');
+});
+
+test('a play keeps the spelling it was seen under, so it can be separated later', (t) => {
+  const { member, moveTo, play } = voiceServer(t, 'stored');
+  noteGame('stored', 'Lethal Company');
+  const sam = member('sam');
+  moveTo(sam, 'v1');
+  play(sam, 'lethalcompany');
+  assert.deepEqual(db.prepare(`SELECT game FROM game_plays WHERE guild_id = 'stored'`).all().map((r) => r.game), ['lethalcompany']);
+});
+
+test('a new spelling is recorded as it’s first played', (t) => {
+  const { member, moveTo, play } = voiceServer(t, 'spotted');
+  const sam = member('sam');
+  moveTo(sam, 'v1');
+  play(sam, 'Lethal Company');
+  play(sam, 'Lethal Company', 'lethalcompany');
+  assert.equal(gameName('spotted', 'lethalcompany'), 'Lethal Company');
+  assert.deepEqual([...gameSpellings('spotted').keys()], ['Lethal Company']);
+  assert.deepEqual(gameSpellings('spotted').get('Lethal Company'), ['Lethal Company', 'lethalcompany']);
 });
 
 test('bots aren’t recorded', (t) => {

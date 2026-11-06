@@ -12,6 +12,7 @@ import { createApi, webApi } from '../src/api.ts';
 import { config } from '../src/config.ts';
 import { db } from '../src/db.ts';
 import { logActivity } from '../src/activity.ts';
+import { noteGame } from '../src/gameNames.ts';
 import { activity, stats } from '../src/features/gamestats.ts';
 import { levelLibrary, setJoinSound, soundboard, soundGain } from '../src/features/soundboard.ts';
 import { setting, setSetting } from '../src/settings.ts';
@@ -152,7 +153,7 @@ beforeEach(() => {
   permitted = [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.EmbedLinks];
   db.exec(`DELETE FROM sound_emoji; DELETE FROM discord_sounds; DELETE FROM sound_plays; DELETE FROM guild_settings; DELETE FROM sound_panels;
     DELETE FROM sound_favourites; DELETE FROM game_nights; DELETE FROM game_night_series; DELETE FROM game_plays; DELETE FROM session_members; DELETE FROM sessions;
-    DELETE FROM sound_levels; DELETE FROM join_sounds; DELETE FROM activity`);
+    DELETE FROM sound_levels; DELETE FROM join_sounds; DELETE FROM activity; DELETE FROM game_aliases`);
   db.prepare("INSERT INTO sound_panels (message_id, guild_id, channel_id, page) VALUES ('m', ?, '111', 0)").run(GUILD);
   if (existsSync(soundFolder)) for (const f of readdirSync(soundFolder)) execFileSync('rm', ['-r', path.join(soundFolder, f)]);
 });
@@ -1189,4 +1190,43 @@ test('trimming leaves Discord’s copy alone', async () => {
   assert.equal((await listed('mirrored')).onDiscord, true);
   await ok(`/guilds/${GUILD}/sounds/mirrored/restore`, { method: 'POST' });
   assert.deepEqual(discordSounds, before);
+});
+
+test('games can be merged and separated, and it shows in the stats and activity', async () => {
+  addPlay('u1', 'Halo Infinite', 10, 2);
+  addPlay('u2', 'haloinfinite', 9, 2);
+  addPlay('u1', 'Halo 6', 5, 1);
+  noteGame(GUILD, 'Halo Infinite');
+  noteGame(GUILD, 'haloinfinite');
+  noteGame(GUILD, 'Halo 6');
+  const before = (await ok(`/guilds/${GUILD}/game-names`)).games;
+  assert.deepEqual(before.map((g: any) => [g.name, Math.round(g.ms / HOUR), g.spellings]), [['Halo Infinite', 3, ['haloinfinite']], ['Halo 6', 1, []]]);
+
+  await ok(`/guilds/${GUILD}/game-names/merge`, { method: 'POST', json: { names: ['Halo Infinite', 'Halo 6'], into: 'Halo Infinite' } });
+  const merged = await ok(`/guilds/${GUILD}/stats?period=week&game=Halo Infinite`);
+  assert.equal(Math.round(merged.totals.gameMs / HOUR), 4);
+  assert.deepEqual(merged.spellings, ['Halo 6', 'haloinfinite']);
+  assert.deepEqual((await ok(`/guilds/${GUILD}/stats?period=week`)).spellings, []);
+
+  await ok(`/guilds/${GUILD}/game-names/separate`, { method: 'POST', json: { name: 'Halo 6' } });
+  assert.deepEqual((await ok(`/guilds/${GUILD}/game-names`)).games.map((g: any) => g.name), ['Halo Infinite', 'Halo 6']);
+  const actions = (await ok(`/guilds/${GUILD}/activity`)).entries.map((e: { action: string }) => e.action);
+  assert.ok(actions.includes('Merged Halo Infinite, Halo 6 into Halo Infinite'), actions.join(', '));
+  assert.ok(actions.includes('Separated Halo 6'), actions.join(', '));
+});
+
+test('bad game name changes are refused', async () => {
+  for (const [path, json, why] of [
+    ['merge', { names: 'Halo', into: 'Halo' }, /Pick the games/],
+    ['merge', { names: [1, 2], into: 'Halo' }, /Pick the games/],
+    ['merge', { names: ['A', 'B'] }, /Pick the games/],
+    ['merge', { names: ['A', 'B'], into: 'A' }, /no game called A/],
+    ['separate', {}, /Pick a spelling/],
+    ['separate', { name: 'Nothing' }, /no game called/],
+  ] as [string, unknown, RegExp][]) {
+    const res = await call(`/guilds/${GUILD}/game-names/${path}`, { method: 'POST', json });
+    assert.equal(res.status, 400, JSON.stringify(json));
+    assert.match(((await res.json()) as { error: string }).error, why);
+  }
+  assert.equal((await call(`/guilds/${GUILD}/game-names/other`, { method: 'POST', json: {} })).status, 404);
 });

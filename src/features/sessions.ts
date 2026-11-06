@@ -1,5 +1,6 @@
 import { EmbedBuilder, Events, MessageFlags, SlashCommandBuilder, type Client, type GuildMember, type VoiceBasedChannel } from 'discord.js';
 import { db, getKv, setKv } from '../db.ts';
+import { gameName } from '../gameNames.ts';
 import { isAllowed, setting } from '../settings.ts';
 import type { Feature } from '../types.ts';
 import { announceChannel, eachGuild, formatDuration, humansIn, playingGames, servedGuilds, zonedDate, zonedParts } from '../util.ts';
@@ -63,7 +64,7 @@ async function finish(client: Client<true>, channelId: string) {
     .setDescription(ranked.map(([userId, ms]) => `<@${userId}> · ${formatDuration(ms)}`).join('\n'))
     .setColor(0x5865f2)
     .setTimestamp(endedAt);
-  if (s.games.size) embed.addFields({ name: 'Played', value: [...s.games].join(', ') });
+  if (s.games.size) embed.addFields({ name: 'Played', value: [...new Set([...s.games].map((game) => gameName(s.guildId, game)))].join(', ') });
 
   await (await announceChannel(client, s.guildId))?.send({ embeds: [embed] });
 }
@@ -136,10 +137,11 @@ function leaderboard(guildId: string, sinceMs: number, title: string): EmbedBuil
 
   const games = db
     .prepare(
-      `SELECT sg.game AS game, COUNT(*) AS n
+      `SELECT COALESCE(a.name, sg.game) AS game, COUNT(DISTINCT s.id) AS n
        FROM session_games sg JOIN sessions s ON s.id = sg.session_id
+       LEFT JOIN game_aliases a ON a.guild_id = s.guild_id AND a.raw = sg.game
        WHERE s.guild_id = ? AND s.started_at >= ?
-       GROUP BY sg.game ORDER BY n DESC LIMIT 5`,
+       GROUP BY 1 ORDER BY n DESC LIMIT 5`,
     )
     .all(guildId, sinceMs) as { game: string; n: number }[];
 

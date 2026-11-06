@@ -8,6 +8,7 @@ import { config } from './config.ts';
 import * as discordBoard from './discordSounds.ts';
 import { cancelNight, gameNames, planNight, readWhen, stopSeries, upcomingNights } from './features/gamenight.ts';
 import { activity, checkpoint, PERIODS, stats } from './features/gamestats.ts';
+import { gameName, gameSpellings, mergeGames, separateGame } from './gameNames.ts';
 import { voiceTotals } from './features/sessions.ts';
 import { checkSetting, LABELS, LIMITS, show, source } from './features/setup.ts';
 import {
@@ -284,6 +285,7 @@ function statsFor(guild: Guild, url: URL) {
     timeZone: setting(guild.id, 'timezone'),
     user: user ? { id: user, name: nameOf(guild, user) } : null,
     game: game ?? null,
+    spellings: game ? (gameSpellings(guild.id).get(gameName(guild.id, game)) ?? []).filter((raw) => raw !== gameName(guild.id, game)) : [],
     totals: {
       gameMs: games.reduce((sum, g) => sum + g.ms, 0),
       playerMs: players.reduce((sum, p) => sum + p.ms, 0),
@@ -296,6 +298,27 @@ function statsFor(guild: Guild, url: URL) {
     voice: voice.slice(0, MAX_RANKED).map((p) => ({ id: p.userId, name: nameOf(guild, p.userId), ms: p.secs * 1000, nights: p.nights })),
     activity: activity(guild.id, since, now, setting(guild.id, 'timezone'), user, game),
   };
+}
+
+/** Every game with time on record, longest first, and what else it's been called */
+function gameNameList(guild: Guild) {
+  const spellings = gameSpellings(guild.id);
+  return { games: stats(guild.id, 0, 'none', 'game').map((g) => ({ name: g.key, ms: g.ms, spellings: (spellings.get(g.key) ?? []).filter((raw) => raw !== g.key) })) };
+}
+
+async function changeGameNames(guild: Guild, req: IncomingMessage, action: string) {
+  const body = await readJson(req);
+  if (action === 'merge') {
+    const { names, into } = body;
+    if (!Array.isArray(names) || !names.every((n) => typeof n === 'string') || typeof into !== 'string') throw new Refused(400, 'Pick the games to merge and the name to keep.');
+    refuse(guild, mergeGames(guild.id, names as string[], into));
+    logActivity(guild.id, FROM_WEB, `Merged ${(names as string[]).map((n) => `**${n}**`).join(', ')} into **${into}**`);
+    return {};
+  }
+  if (typeof body.name !== 'string') throw new Refused(400, 'Pick a spelling to separate.');
+  refuse(guild, separateGame(guild.id, body.name));
+  logActivity(guild.id, FROM_WEB, `Separated **${body.name}**`);
+  return {};
 }
 
 const soundOf = (guild: Guild, name: string): Sound => {
@@ -464,6 +487,8 @@ async function handle(client: Client<true>, req: IncomingMessage, res: ServerRes
   if (section === 'voice' && !rest.length && req.method === 'GET') return voiceList(guild);
   if (section === 'stats' && !rest.length && req.method === 'GET') return statsFor(guild, url);
   if (section === 'activity' && !rest.length && req.method === 'GET') return activityList(guild, url);
+  if (section === 'game-names' && !rest.length && req.method === 'GET') return gameNameList(guild);
+  if (section === 'game-names' && rest.length === 1 && (rest[0] === 'merge' || rest[0] === 'separate') && req.method === 'POST') return changeGameNames(guild, req, rest[0]);
   if (section === 'join-sounds' && !rest.length && req.method === 'GET') return joinSoundList(guild);
   if (section === 'join-sounds' && rest.length === 1 && req.method === 'DELETE') {
     const who = joinSounds(guild.id).find((r) => r.user_id === rest[0]);

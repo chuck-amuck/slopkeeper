@@ -425,7 +425,7 @@ export async function stopSeries(client: Client<true>, guild: Guild, id: number)
 }
 
 export function gameNames(guildId: string): string[] {
-  const played = db.prepare('SELECT DISTINCT game FROM game_plays WHERE guild_id = ?').all(guildId) as { game: string }[];
+  const played = db.prepare('SELECT DISTINCT game FROM named_plays WHERE guild_id = ?').all(guildId) as { game: string }[];
   return [...new Set([...allGames(guildId).map((g) => g.name), ...played.map((r) => r.game)])].sort();
 }
 

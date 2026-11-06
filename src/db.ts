@@ -198,6 +198,22 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS game_plays_by_guild ON game_plays (guild_id, started_at);
 
+  -- Every spelling Discord has shown for a game and the name it goes by. manual: someone chose this
+  CREATE TABLE IF NOT EXISTS game_aliases (
+    guild_id TEXT NOT NULL,
+    raw TEXT NOT NULL,
+    key TEXT NOT NULL,
+    name TEXT NOT NULL,
+    manual INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (guild_id, raw)
+  );
+  CREATE INDEX IF NOT EXISTS game_aliases_by_key ON game_aliases (guild_id, key);
+
+  -- game_plays under the name each game goes by, so stored plays never need rewriting
+  CREATE VIEW IF NOT EXISTS named_plays AS
+    SELECT p.id, p.guild_id, p.user_id, COALESCE(a.name, p.game) AS game, p.game AS raw, p.channel_id, p.started_at, p.ended_at
+    FROM game_plays p LEFT JOIN game_aliases a ON a.guild_id = p.guild_id AND a.raw = p.game;
+
   CREATE TABLE IF NOT EXISTS sound_favourites (
     guild_id TEXT NOT NULL,
     name TEXT NOT NULL,

@@ -1,5 +1,6 @@
 import { EmbedBuilder, Events, MessageFlags, SlashCommandBuilder, type Client, type GuildMember } from 'discord.js';
 import { db, MIN_PLAY } from '../db.ts';
+import { gameName, noteGame } from '../gameNames.ts';
 import { isAllowed } from '../settings.ts';
 import type { Feature } from '../types.ts';
 import { eachGuild, formatDuration, playingGames, servedGuilds, zonedParts, zonedTimeToUtc } from '../util.ts';
@@ -30,15 +31,23 @@ function sync(member: GuildMember, now: number) {
   if (member.user.bot) return;
   const key = `${member.guild.id}:${member.id}`;
   const channelId = countedChannel(member);
-  const playing = new Set(channelId ? playingGames(member) : []);
+  // By the name each goes by, so two spellings of one game showing at once are one play
+  const playing = new Map<string, string>();
+  if (channelId) {
+    for (const raw of playingGames(member)) {
+      noteGame(member.guild.id, raw);
+      const name = gameName(member.guild.id, raw);
+      if (!playing.has(name)) playing.set(name, raw);
+    }
+  }
   const mine = open.get(key) ?? new Map<string, { id: number; channelId: string }>();
   for (const [game, play] of mine) {
     if (playing.has(game) && play.channelId === channelId) continue;
     close(play.id, now);
     mine.delete(game);
   }
-  for (const game of playing) {
-    if (!mine.has(game)) mine.set(game, { id: Number(insertPlay.run(member.guild.id, member.id, game, channelId, now, now).lastInsertRowid), channelId: channelId! });
+  for (const [game, raw] of playing) {
+    if (!mine.has(game)) mine.set(game, { id: Number(insertPlay.run(member.guild.id, member.id, raw, channelId, now, now).lastInsertRowid), channelId: channelId! });
   }
   if (mine.size) open.set(key, mine);
   else open.delete(key);
@@ -68,14 +77,6 @@ export function checkpoint() {
   for (const mine of open.values()) for (const { id } of mine.values()) extendPlay.run(now, id);
 }
 
-/** Time in each play that falls inside the period */
-const CLIPPED = 'MIN(ended_at, :until) - MAX(started_at, :since)';
-
-interface Totals {
-  ms: number;
-  n: number;
-}
-
 function playsWhere(user?: string, game?: string): string {
   const where = ['guild_id = :guild', 'channel_id IS NOT NULL', 'ended_at > :since', 'started_at < :until'];
   if (user) where.push('user_id = :user');
@@ -101,17 +102,17 @@ function gameSpans(plays: (Span & { game: string })[]) {
   return games;
 }
 
-/** Selects what `gameSpans` and `activity` need, clipped to the period and in time order */
+/** Selects plays by the name each game goes by, clipped to the period and in time order */
 const clippedPlays = (where: string) =>
-  `SELECT game, MAX(started_at, :since) AS start, MIN(ended_at, :until) AS end FROM game_plays WHERE ${where} ORDER BY start`;
+  `SELECT user_id AS userId, game, MAX(started_at, :since) AS start, MIN(ended_at, :until) AS end, ended_at AS last FROM named_plays WHERE ${where} ORDER BY start`;
 
-/** How long each game was being played by anyone, whoever and however many */
-function gameLengths(guildId: string, since: number, until: number, game?: string) {
-  const plays = db.prepare(clippedPlays(playsWhere(undefined, game))).all({ guild: guildId, since, until, ...(game ? { game } : {}) }) as unknown as (Span & { game: string })[];
-  return new Map([...gameSpans(plays)].map(([name, spans]) => [name, spans.reduce((sum, s) => sum + s.end - s.start, 0)]));
+interface Play extends Span {
+  userId: string;
+  game: string;
+  last: number;
 }
 
-/** Totals by game or person. With nobody picked, a game's time is how long it was being played, not everyone's time added up */
+/** Totals by game or person. Overlaps count once: a game's time is how long it was being played, not everyone's time added up */
 export function stats(
   guildId: string,
   since: number,
@@ -122,20 +123,16 @@ export function stats(
   until = Date.now(),
 ) {
   const where = playsWhere(filter === 'user' || filter === 'both' ? 'user' : undefined, filter === 'game' || filter === 'both' ? 'game' : undefined);
-  const other = groupBy === 'game' ? 'user_id' : 'game';
-  const rows = db
-    .prepare(
-      `SELECT ${groupBy} AS key, SUM(${CLIPPED}) AS ms, COUNT(DISTINCT ${other}) AS n, MAX(ended_at) AS last
-       FROM game_plays WHERE ${where}
-       GROUP BY ${groupBy} ORDER BY ms DESC`,
-    )
-    .all({ guild: guildId, since, until, ...(user ? { user } : {}), ...(game ? { game } : {}) }) as unknown as (Totals & {
-    key: string;
-    last: number;
-  })[];
-  if (groupBy !== 'game' || filter === 'user' || filter === 'both') return rows;
-  const lengths = gameLengths(guildId, since, until, game);
-  return rows.map((r) => ({ ...r, ms: lengths.get(r.key)! })).sort((a, b) => b.ms - a.ms);
+  const plays = db.prepare(clippedPlays(where)).all({ guild: guildId, since, until, ...(user ? { user } : {}), ...(game ? { game } : {}) }) as unknown as Play[];
+  const groups = Map.groupBy(plays, (p) => (groupBy === 'game' ? p.game : p.userId));
+  return [...groups]
+    .map(([key, group]) => ({
+      key,
+      ms: [...gameSpans(group).values()].flat().reduce((sum, s) => sum + s.end - s.start, 0),
+      n: new Set(group.map((p) => (groupBy === 'game' ? p.userId : p.game))).size,
+      last: Math.max(...group.map((p) => p.last)),
+    }))
+    .sort((a, b) => b.ms - a.ms);
 }
 
 /**
@@ -143,7 +140,7 @@ export function stats(
  * as in `stats`. Every step is listed, so a quiet one shows up as a gap.
  */
 export function activity(guildId: string, since: number, until: number, timeZone: string, user?: string, game?: string) {
-  const rows = db.prepare(clippedPlays(playsWhere(user, game))).all({ guild: guildId, since, until, ...(user ? { user } : {}), ...(game ? { game } : {}) }) as unknown as (Span & { game: string })[];
+  const rows = db.prepare(clippedPlays(playsWhere(user, game))).all({ guild: guildId, since, until, ...(user ? { user } : {}), ...(game ? { game } : {}) }) as unknown as Play[];
   if (!rows.length) return { step: 'day', buckets: [] };
   const plays = [...gameSpans(rows).values()].flat();
 
@@ -172,7 +169,7 @@ export function playedTogether(guildId: string, a: string, b: string) {
   return db
     .prepare(
       `SELECT x.game AS game, SUM(MIN(x.ended_at, y.ended_at) - MAX(x.started_at, y.started_at)) AS ms
-       FROM game_plays x JOIN game_plays y
+       FROM named_plays x JOIN named_plays y
          ON y.guild_id = x.guild_id AND y.game = x.game AND y.channel_id = x.channel_id AND y.user_id = ? AND y.started_at < x.ended_at AND y.ended_at > x.started_at
        WHERE x.guild_id = ? AND x.user_id = ?
        GROUP BY x.game ORDER BY ms DESC`,
@@ -226,7 +223,7 @@ export const gameStats: Feature = {
         if (!i.inGuild()) return i.respond([]);
         const query = `%${i.options.getFocused().replace(/[%_]/g, '')}%`;
         const rows = db
-          .prepare('SELECT game, SUM(ended_at - started_at) AS ms FROM game_plays WHERE guild_id = ? AND channel_id IS NOT NULL AND game LIKE ? GROUP BY game ORDER BY ms DESC LIMIT 25')
+          .prepare('SELECT game, SUM(ended_at - started_at) AS ms FROM named_plays WHERE guild_id = ? AND channel_id IS NOT NULL AND game LIKE ? GROUP BY game ORDER BY ms DESC LIMIT 25')
           .all(i.guildId, query) as { game: string }[];
         return i.respond(rows.map((r) => ({ name: r.game.slice(0, 100), value: r.game.slice(0, 100) })));
       },
@@ -247,7 +244,7 @@ export const gameStats: Feature = {
           const idx = players.findIndex((r) => r.key === user.id);
           if (idx < 0) return nothing(`${game} for ${name}`);
           const sessions = (
-            db.prepare('SELECT COUNT(*) AS n FROM game_plays WHERE guild_id = ? AND channel_id IS NOT NULL AND user_id = ? AND game = ? COLLATE NOCASE AND ended_at > ?').get(i.guildId, user.id, game, since) as {
+            db.prepare('SELECT COUNT(*) AS n FROM named_plays WHERE guild_id = ? AND channel_id IS NOT NULL AND user_id = ? AND game = ? COLLATE NOCASE AND ended_at > ?').get(i.guildId, user.id, game, since) as {
               n: number;
             }
           ).n;
