@@ -28,7 +28,7 @@ import {
   type VoiceBasedChannel,
   type VoiceState,
 } from 'discord.js';
-import { mkdirSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { logActivity } from '../activity.ts';
 import { config } from '../config.ts';
@@ -37,6 +37,7 @@ import * as discordBoard from '../discordSounds.ts';
 import { measureGain } from '../loudness.ts';
 import { Mixer } from '../mixer.ts';
 import { isAllowed, setting } from '../settings.ts';
+import { cutAudio } from '../trim.ts';
 import type { Feature } from '../types.ts';
 import { humansIn, requestTimeout, servedGuilds } from '../util.ts';
 
@@ -49,6 +50,9 @@ const CONNECT_TIMEOUT_MS = 15_000;
 const RECONNECT_TIMEOUT_MS = 5_000;
 const NAME_PATTERN = /^[a-z0-9_-]{1,32}$/;
 export const VOLUME_PERCENT = [25, 200] as const;
+const SHORTEST_TRIM = 0.1;
+/** How far apart two times can be and still be the same moment, since the page rounds what it sends */
+const TRIM_TOLERANCE = 0.05;
 const PAGE_SIZE = 20; // 4 rows of 5 buttons; the fifth row holds the controls
 const CUSTOM_EMOJI = /^<a?:\w{2,32}:(\d{17,20})>$/;
 const UNICODE_EMOJI = /^\p{RGI_Emoji}$/v;
@@ -67,6 +71,22 @@ function soundDir(guildId: string): string {
   const dir = path.join(config.dataDir, 'sounds', guildId);
   mkdirSync(dir, { recursive: true });
   return dir;
+}
+
+/** Untrimmed sounds, in their own folder so they aren't listed as sounds */
+const originalsDir = (guildId: string) => path.join(soundDir(guildId), 'originals');
+
+function originalOf(guildId: string, name: string): string | undefined {
+  const dir = originalsDir(guildId);
+  const file = existsSync(dir) ? readdirSync(dir).find((f) => path.parse(f).name === name) : undefined;
+  return file && path.join(dir, file);
+}
+
+export const isTrimmed = (guildId: string, name: string) => originalOf(guildId, name) !== undefined;
+
+function dropOriginal(guildId: string, name: string) {
+  const original = originalOf(guildId, name);
+  if (original) rmSync(original);
 }
 
 export interface Sound {
@@ -133,6 +153,8 @@ export async function saveUpload(guildId: string, name: string, ext: string, dat
   renameSync(upload, target);
   // The new file may have a different extension
   if (existing && existing.file !== target) rmSync(existing.file);
+  // That was the old audio, so restoring it now would bring back the wrong sound
+  dropOriginal(guildId, name);
   return true;
 }
 
@@ -225,6 +247,7 @@ export async function removeSound(guild: Guild, sound: Sound): Promise<string | 
     (err: Error) => err.message,
   );
   rmSync(sound.file);
+  dropOriginal(guild.id, sound.name);
   setEmoji(guild.id, sound.name, null);
   setFavourite(guild.id, sound.name, false);
   db.prepare('DELETE FROM sound_levels WHERE guild_id = ? AND name = ?').run(guild.id, sound.name);
@@ -261,12 +284,60 @@ export async function renameSound(guild: Guild, sound: Sound, name: string): Pro
   const problem = await discordBoard.rename(guild, sound.name, name);
   if (problem) return problem;
   renameSync(sound.file, path.join(path.dirname(sound.file), name + path.extname(sound.file)));
+  const original = originalOf(guild.id, sound.name);
+  if (original) renameSync(original, path.join(path.dirname(original), name + path.extname(original)));
   db.prepare('UPDATE OR REPLACE sound_emoji SET name = ? WHERE guild_id = ? AND name = ?').run(name, guild.id, sound.name);
   db.prepare('UPDATE sound_plays SET name = ? WHERE guild_id = ? AND name = ?').run(name, guild.id, sound.name);
   db.prepare('UPDATE OR REPLACE sound_favourites SET name = ? WHERE guild_id = ? AND name = ?').run(name, guild.id, sound.name);
   db.prepare('UPDATE OR REPLACE sound_levels SET name = ? WHERE guild_id = ? AND name = ?').run(name, guild.id, sound.name);
   db.prepare('UPDATE join_sounds SET name = ? WHERE guild_id = ? AND name = ?').run(name, guild.id, sound.name);
   return null;
+}
+
+/** Why this part of a sound can't be kept, or null if it can. `seconds` is how long the sound is */
+export function trimProblem(start: unknown, end: unknown, seconds: number): string | null {
+  if (!Number.isFinite(seconds)) return 'The bot can’t tell how long that sound is, so it can’t be trimmed.';
+  if (!Number.isFinite(start) || !Number.isFinite(end)) return 'Start and end have to be numbers of seconds.';
+  const [from, to] = [start as number, end as number];
+  if (from < 0 || to > seconds + TRIM_TOLERANCE) return 'Pick a start and end inside the sound.';
+  if (to - from < SHORTEST_TRIM) return `Keep at least ${SHORTEST_TRIM} s of the sound.`;
+  return from < TRIM_TOLERANCE && to > seconds - TRIM_TOLERANCE ? 'That keeps the whole sound.' : null;
+}
+
+/**
+ * Cuts a sound down, keeping the first version so it can be restored. It only takes the place of the file once it's
+ * known to be good. Discord's copy stays as it is. Returns whether it worked.
+ */
+export async function trimSound(guild: Guild, sound: Sound, start: number, end: number): Promise<boolean> {
+  const ext = path.extname(sound.file);
+  const dir = originalsDir(guild.id);
+  mkdirSync(dir, { recursive: true });
+  const cut = path.join(dir, `${sound.name}.cut${ext}`);
+  const seconds = await cutAudio(sound.file, cut, start, end - start)
+    .then(() => discordBoard.durationOf(cut))
+    .catch((err: Error) => {
+      console.error(`Couldn’t trim ${sound.name} in server ${guild.id}:`, err.message);
+      return 0;
+    });
+  // ffmpeg is happy to write nothing at all if the audio stops before the start
+  if (!(seconds > 0)) {
+    rmSync(cut, { force: true });
+    return false;
+  }
+  if (!isTrimmed(guild.id, sound.name)) copyFileSync(sound.file, path.join(dir, path.basename(sound.file)));
+  renameSync(cut, sound.file);
+  // The part that's left may be louder or quieter than the whole was
+  await levelSound(guild.id, sound, true);
+  return true;
+}
+
+/** Puts a trimmed sound back as it was. Returns whether there was anything to put back */
+export async function restoreSound(guild: Guild, sound: Sound): Promise<boolean> {
+  const original = originalOf(guild.id, sound.name);
+  if (!original) return false;
+  renameSync(original, sound.file);
+  await levelSound(guild.id, sound, true);
+  return true;
 }
 
 export const addToDiscord = (guild: Guild, sound: Sound, start?: number) => discordBoard.upload(guild, sound, discordVolume(guild.id, sound.name), start);
