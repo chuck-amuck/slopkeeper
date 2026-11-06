@@ -1603,6 +1603,19 @@ textarea {
   gap: 8px;
 }
 
+.steam-family {
+  flex-basis: 100%;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+span.steam-family {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+}
+
 .steam-form {
   display: flex;
   flex-wrap: wrap;

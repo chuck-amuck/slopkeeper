@@ -3,11 +3,22 @@ import { config } from '../config.ts';
 import { db } from '../db.ts';
 import { DEFAULTS } from '../settings.ts';
 import type { Feature } from '../types.ts';
-import { requestTimeout } from '../util.ts';
+import { listNames, requestTimeout } from '../util.ts';
 
 // Steam category ids: 1 Multi-player, 36 Online PvP, 38 Online Co-op
 const MULTIPLAYER_CATEGORIES = new Set([1, 36, 38]);
+// 9 Co-op, 38 Online Co-op, 39 Shared/Split Screen Co-op, 48 LAN Co-op
+const COOP_CATEGORIES = new Set([9, 38, 39, 48]);
+// 36 Online PvP, 37 Shared/Split Screen PvP, 47 LAN PvP, 49 PvP
+const PVP_CATEGORIES = new Set([36, 37, 47, 49]);
+const FAMILY_SHARING_CATEGORY = 62;
 const REFRESH_EVERY_MS = 6 * 3_600_000;
+const FACTS_LAST_MS = 30 * 86_400_000;
+const PLAYER_COUNT_LASTS_MS = 10 * 60_000;
+export const FAMILY_SIZE = 6;
+/** Steam's own values for a game on the Steam Deck */
+export const DECK_PLAYABLE = 2;
+export const DECK_VERIFIED = 3;
 
 export interface SteamLink {
   user_id: string;
@@ -20,6 +31,8 @@ export interface OwnedGame {
   name: string | null;
   /** minutes */
   playtime: number;
+  /** minutes in the last two weeks */
+  recent: number;
 }
 
 async function steamGet<T>(endpoint: string, params: Record<string, string>): Promise<T> {
@@ -52,7 +65,7 @@ async function resolveSteamId(input: string): Promise<string | null> {
 /** Returns null when the profile's game details are private */
 async function fetchOwned(steamId: string) {
   const body = await steamGet<{
-    response: { game_count?: number; games?: { appid: number; name?: string; playtime_forever: number }[] };
+    response: { game_count?: number; games?: { appid: number; name?: string; playtime_forever: number; playtime_2weeks?: number }[] };
   }>('/IPlayerService/GetOwnedGames/v1/', {
     key: apiKey(),
     steamid: steamId,
@@ -68,9 +81,9 @@ export function linkFor(userId: string): SteamLink | undefined {
 
 export function ownedSteamGames(userId: string): Map<number, OwnedGame> {
   const rows = db
-    .prepare('SELECT o.appid, o.name, o.playtime FROM steam_owned o JOIN steam_links l ON l.steam_id = o.steam_id WHERE l.user_id = ?')
-    .all(userId) as { appid: number; name: string | null; playtime: number }[];
-  return new Map(rows.map((r) => [r.appid, { name: r.name, playtime: r.playtime }]));
+    .prepare('SELECT o.appid, o.name, o.playtime, o.recent FROM steam_owned o JOIN steam_links l ON l.steam_id = o.steam_id WHERE l.user_id = ?')
+    .all(userId) as { appid: number; name: string | null; playtime: number; recent: number }[];
+  return new Map(rows.map((r) => [r.appid, { name: r.name, playtime: r.playtime, recent: r.recent }]));
 }
 
 async function refreshUser(userId: string): Promise<number | null> {
@@ -81,8 +94,8 @@ async function refreshUser(userId: string): Promise<number | null> {
   try {
     if (games) {
       db.prepare('DELETE FROM steam_owned WHERE steam_id = ?').run(link.steam_id);
-      const insert = db.prepare('INSERT INTO steam_owned (steam_id, appid, name, playtime) VALUES (?, ?, ?, ?)');
-      for (const g of games) insert.run(link.steam_id, g.appid, g.name ?? null, g.playtime_forever);
+      const insert = db.prepare('INSERT INTO steam_owned (steam_id, appid, name, playtime, recent) VALUES (?, ?, ?, ?, ?)');
+      for (const g of games) insert.run(link.steam_id, g.appid, g.name ?? null, g.playtime_forever, g.playtime_2weeks ?? 0);
     }
     db.prepare('UPDATE steam_links SET private = ?, refreshed_at = ? WHERE user_id = ?').run(games ? 0 : 1, Date.now(), userId);
     db.exec('COMMIT');
@@ -126,6 +139,41 @@ export function unlinkSteam(userId: string) {
   const { changes } = db.prepare('DELETE FROM steam_links WHERE user_id = ?').run(userId);
   forgetUnlinked();
   return changes > 0;
+}
+
+/** Everyone in someone's Steam family, them included. Empty if they aren't in one. Shared between servers, as links are */
+export function familyOf(userId: string) {
+  const rows = db.prepare('SELECT user_id FROM steam_family WHERE family = (SELECT family FROM steam_family WHERE user_id = ?) ORDER BY user_id').all(userId) as { user_id: string }[];
+  return rows.map((r) => r.user_id);
+}
+
+/** Returns whether they were in one */
+export function leaveFamily(userId: string) {
+  const family = familyOf(userId);
+  db.prepare('DELETE FROM steam_family WHERE user_id = ?').run(userId);
+  // One person left isn't a family
+  if (family.length === 2) db.prepare('DELETE FROM steam_family WHERE user_id = ?').run(family.find((id) => id !== userId)!);
+  return family.length > 0;
+}
+
+/** Puts someone in another person's family, starting one if needed. Returns why it can't, or null */
+export function joinFamily(userId: string, otherId: string) {
+  if (userId === otherId) return 'Pick two different people.';
+  const family = familyOf(otherId);
+  if (family.includes(userId)) return null;
+  if (family.length >= FAMILY_SIZE) return `A Steam family holds ${FAMILY_SIZE} people at most.`;
+  leaveFamily(userId);
+  const add = db.prepare('INSERT INTO steam_family (user_id, family) VALUES (?, ?)');
+  const row = db.prepare('SELECT family FROM steam_family WHERE user_id = ?').get(otherId) as { family: number } | undefined;
+  const id = row?.family ?? (db.prepare('SELECT COALESCE(MAX(family), 0) + 1 AS id FROM steam_family').get() as { id: number }).id;
+  if (!row) add.run(otherId, id);
+  add.run(userId, id);
+  return null;
+}
+
+/** Every family someone in a list belongs to */
+export function familiesOf(userIds: string[]) {
+  return [...new Map(userIds.map((id) => familyOf(id)).filter((family) => family.length).map((family) => [family.join(), family])).values()];
 }
 
 /** Everyone linked, in any server, since links are shared between them */
@@ -185,40 +233,83 @@ export async function refreshAll() {
   // Warm the category cache so /whatdoweplay rarely has to wait on the store API
   const appids = db.prepare('SELECT DISTINCT appid FROM steam_owned').all() as { appid: number }[];
   await ensureAppInfo(appids.map((r) => r.appid));
+  // Steam Deck ratings and the like change, so facts don't last forever
+  const old = db.prepare('SELECT appid FROM app_info WHERE read_at < ?').all(Date.now() - FACTS_LAST_MS) as { appid: number }[];
+  await readFacts(old.map((r) => r.appid));
 }
 
 /** Fetches and caches store categories for any appids we haven't seen yet */
 export async function ensureAppInfo(appids: number[]) {
   const known = new Set((db.prepare('SELECT appid FROM app_info').all() as { appid: number }[]).map((r) => r.appid));
-  const missing = [...new Set(appids)].filter((id) => !known.has(id));
-  const insert = db.prepare('INSERT OR REPLACE INTO app_info (appid, name, multiplayer) VALUES (?, ?, ?)');
+  await readFacts([...new Set(appids)].filter((id) => !known.has(id)));
+}
 
-  for (let idx = 0; idx < missing.length; idx += 100) {
-    const chunk = missing.slice(idx, idx + 100);
+async function readFacts(appids: number[]) {
+  const save = db.prepare('INSERT OR REPLACE INTO app_info (appid, name, multiplayer, coop, pvp, deck, shareable, read_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
+  // Delisted apps come back unsuccessful; cache them as non-multiplayer so we don't keep asking
+  const unlisted = db.prepare('INSERT INTO app_info (appid, name, multiplayer, read_at) VALUES (?, NULL, 0, ?) ON CONFLICT (appid) DO UPDATE SET read_at = excluded.read_at');
+
+  for (let idx = 0; idx < appids.length; idx += 100) {
+    const chunk = appids.slice(idx, idx + 100);
     const body = await steamGet<{
-      response: { store_items?: { appid?: number; id: number; success: number; name?: string; categories?: { supported_player_categoryids?: number[] } }[] };
+      response: {
+        store_items?: {
+          appid?: number;
+          id: number;
+          success: number;
+          name?: string;
+          categories?: { supported_player_categoryids?: number[]; feature_categoryids?: number[] };
+          platforms?: { steam_deck_compat_category?: number };
+        }[];
+      };
     }>('/IStoreBrowseService/GetItems/v1/', {
       input_json: JSON.stringify({
         ids: chunk.map((appid) => ({ appid })),
         context: { language: 'english', country_code: DEFAULTS.steamCountry.toUpperCase() },
-        data_request: { include_basic_info: false },
+        data_request: { include_basic_info: false, include_platforms: true },
       }),
     });
     const found = new Map((body.response.store_items ?? []).map((item) => [item.appid ?? item.id, item]));
     db.exec('BEGIN');
     for (const appid of chunk) {
-      // Delisted apps come back unsuccessful; cache them as non-multiplayer so we don't keep asking
       const item = found.get(appid);
-      const cats = item?.success === 1 ? (item.categories?.supported_player_categoryids ?? []) : [];
-      insert.run(appid, item?.name ?? null, cats.some((c) => MULTIPLAYER_CATEGORIES.has(c)) ? 1 : 0);
+      if (item?.success !== 1) {
+        unlisted.run(appid, Date.now());
+        continue;
+      }
+      const cats = item.categories?.supported_player_categoryids ?? [];
+      const any = (wanted: Set<number>) => (cats.some((c) => wanted.has(c)) ? 1 : 0);
+      const shareable = item.categories?.feature_categoryids?.includes(FAMILY_SHARING_CATEGORY) ? 1 : 0;
+      save.run(appid, item.name ?? null, any(MULTIPLAYER_CATEGORIES), any(COOP_CATEGORIES), any(PVP_CATEGORIES), item.platforms?.steam_deck_compat_category ?? 0, shareable, Date.now());
     }
     db.exec('COMMIT');
   }
 }
 
-export function appInfo(): Map<number, { name: string | null; multiplayer: boolean }> {
-  const rows = db.prepare('SELECT appid, name, multiplayer FROM app_info').all() as { appid: number; name: string | null; multiplayer: number }[];
-  return new Map(rows.map((r) => [r.appid, { name: r.name, multiplayer: r.multiplayer === 1 }]));
+export function appInfo(): Map<number, { name: string | null; multiplayer: boolean; coop: boolean; pvp: boolean; deck: number; shareable: boolean }> {
+  const rows = db.prepare('SELECT appid, name, multiplayer, coop, pvp, deck, shareable FROM app_info').all() as {
+    appid: number;
+    name: string | null;
+    multiplayer: number;
+    coop: number;
+    pvp: number;
+    deck: number;
+    shareable: number;
+  }[];
+  return new Map(rows.map((r) => [r.appid, { name: r.name, multiplayer: r.multiplayer === 1, coop: r.coop === 1, pvp: r.pvp === 1, deck: r.deck, shareable: r.shareable === 1 }]));
+}
+
+const playerCounts = new Map<number, { count: number | null; at: number }>();
+
+/** How many people are playing a game on Steam right now, or null if Steam won't say */
+export async function currentPlayers(appid: number) {
+  const known = playerCounts.get(appid);
+  if (known && Date.now() - known.at < PLAYER_COUNT_LASTS_MS) return known.count;
+  const count = await steamGet<{ response: { player_count?: number } }>('/ISteamUserStats/GetNumberOfCurrentPlayers/v1/', { appid: String(appid) })
+    .then((body) => body.response.player_count ?? null)
+    .catch((err) => (console.error(err), null));
+  playerCounts.set(appid, { count, at: Date.now() });
+  return count;
 }
 
 const PRIVACY_HELP =
@@ -244,6 +335,19 @@ export const steam: Feature = {
             .setDescription('Unlink a Steam account')
             .addUserOption((o) => o.setName('user').setDescription('Who to unlink (default: you)')),
         )
+        .addSubcommand((s) =>
+          s
+            .setName('family')
+            .setDescription('Say who shares a Steam library, so shared games count for them')
+            .addUserOption((o) => o.setName('with').setDescription('Someone in the family').setRequired(true))
+            .addUserOption((o) => o.setName('user').setDescription('Who to add to it (default: you)')),
+        )
+        .addSubcommand((s) =>
+          s
+            .setName('unfamily')
+            .setDescription('Take someone out of their Steam family')
+            .addUserOption((o) => o.setName('user').setDescription('Who to take out (default: you)')),
+        )
         .addSubcommand((s) => s.setName('list').setDescription('Show linked accounts'))
         .addSubcommand((s) => s.setName('refresh').setDescription('Re-sync everyone\'s Steam libraries now')),
       async run(i) {
@@ -266,6 +370,19 @@ export const steam: Feature = {
           return i.reply({ content: `Unlinked ${user}.`, allowedMentions: { parse: [] } });
         }
 
+        if (sub === 'family') {
+          const other = i.options.getUser('with', true);
+          const problem = other.bot || user.bot ? 'Bots don’t have Steam families.' : joinFamily(user.id, other.id);
+          if (problem) return i.reply({ content: problem, flags: MessageFlags.Ephemeral });
+          const family = familyOf(user.id).map((id) => `<@${id}>`);
+          return i.reply({ content: `👪 Sharing a Steam library: ${listNames(family)}. Shareable games one of them owns now count for the others, with one person playing per copy.`, allowedMentions: { parse: [] } });
+        }
+
+        if (sub === 'unfamily') {
+          if (!leaveFamily(user.id)) return i.reply({ content: `${user} isn’t in a Steam family.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
+          return i.reply({ content: `Took ${user} out of their Steam family.`, allowedMentions: { parse: [] } });
+        }
+
         if (sub === 'refresh') {
           await i.deferReply();
           await refreshAll();
@@ -275,10 +392,11 @@ export const steam: Feature = {
         // Links are shared between servers; only list this server's members
         const links = i.inCachedGuild() ? steamLinks().filter((l) => i.guild.members.cache.has(l.user_id)) : [];
         if (!links.length) return i.reply('Nobody here has linked Steam yet. Use `/steam link`.');
-        const lines = links.map(
-          (l) =>
-            `<@${l.user_id}> · [profile](${profileUrl(l.steam_id)}) · ${l.private ? '🔒 game details private' : `${l.games} games`}`,
-        );
+        const lines = links.map((l) => {
+          const family = familyOf(l.user_id).filter((id) => id !== l.user_id);
+          const shares = family.length ? ` · 👪 ${listNames(family.map((id) => `<@${id}>`))}` : '';
+          return `<@${l.user_id}> · [profile](${profileUrl(l.steam_id)}) · ${l.private ? '🔒 game details private' : `${l.games} games`}${shares}`;
+        });
         return i.reply({ embeds: [new EmbedBuilder().setTitle('🔗 Linked Steam accounts').setDescription(lines.join('\n')).setColor(0x1b2838)] });
       },
     },

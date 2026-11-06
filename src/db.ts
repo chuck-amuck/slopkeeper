@@ -105,12 +105,22 @@ db.exec(`
     appid INTEGER NOT NULL,
     name TEXT,
     playtime INTEGER NOT NULL,
+    recent INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (steam_id, appid)
+  );
+  CREATE TABLE IF NOT EXISTS steam_family (
+    user_id TEXT PRIMARY KEY,
+    family INTEGER NOT NULL
   );
   CREATE TABLE IF NOT EXISTS app_info (
     appid INTEGER PRIMARY KEY,
     name TEXT,
-    multiplayer INTEGER NOT NULL
+    multiplayer INTEGER NOT NULL,
+    coop INTEGER NOT NULL DEFAULT 0,
+    pvp INTEGER NOT NULL DEFAULT 0,
+    deck INTEGER NOT NULL DEFAULT 0,
+    shareable INTEGER NOT NULL DEFAULT 0,
+    read_at INTEGER NOT NULL DEFAULT 0
   );
   CREATE TABLE IF NOT EXISTS steam_wishlist (
     steam_id TEXT NOT NULL,
@@ -323,6 +333,16 @@ if (db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'sal
 // Added after schema 3 came out, so a database from then won't have it yet
 if (!db.prepare("SELECT 1 FROM pragma_table_info('game_nights') WHERE name = 'series_id'").get()) {
   db.exec('ALTER TABLE game_nights ADD COLUMN series_id INTEGER');
+}
+
+// So are these. Older rows get their facts on the next library refresh
+if (!db.prepare("SELECT 1 FROM pragma_table_info('steam_owned') WHERE name = 'recent'").get()) {
+  db.exec('ALTER TABLE steam_owned ADD COLUMN recent INTEGER NOT NULL DEFAULT 0');
+}
+for (const column of ['coop', 'pvp', 'deck', 'shareable', 'read_at']) {
+  if (!db.prepare("SELECT 1 FROM pragma_table_info('app_info') WHERE name = ?").get(column)) {
+    db.exec(`ALTER TABLE app_info ADD COLUMN ${column} INTEGER NOT NULL DEFAULT 0`);
+  }
 }
 
 /** Plays shorter than this (launchers, crashes) aren't kept */

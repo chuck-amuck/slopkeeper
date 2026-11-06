@@ -208,7 +208,7 @@ beforeEach(() => {
   db.exec(`DELETE FROM sound_emoji; DELETE FROM discord_sounds; DELETE FROM sound_plays; DELETE FROM guild_settings; DELETE FROM sound_panels;
     DELETE FROM sound_favourites; DELETE FROM game_nights; DELETE FROM game_night_series; DELETE FROM game_plays; DELETE FROM session_members; DELETE FROM sessions;
     DELETE FROM sound_levels; DELETE FROM join_sounds; DELETE FROM activity; DELETE FROM game_aliases; DELETE FROM deleted_sounds; DELETE FROM games;
-    DELETE FROM steam_links; DELETE FROM steam_owned; DELETE FROM sale_prices; DELETE FROM game_roles; DELETE FROM hidden_apps; DELETE FROM game_votes`);
+    DELETE FROM steam_links; DELETE FROM steam_owned; DELETE FROM steam_family; DELETE FROM sale_prices; DELETE FROM game_roles; DELETE FROM hidden_apps; DELETE FROM game_votes`);
   db.prepare("INSERT INTO sound_panels (message_id, guild_id, channel_id, page) VALUES ('m', ?, '111', 0)").run(GUILD);
   if (existsSync(soundFolder)) for (const f of readdirSync(soundFolder)) execFileSync('rm', ['-r', path.join(soundFolder, f)]);
 });
@@ -2355,6 +2355,82 @@ test('adds Steam hours per person, and leaves out what’s hidden or too full', 
   assert.deepEqual((await pick('users=u1')).ready.map((g: any) => g.name).sort(), ['Hades', 'Halo']);
 });
 
+test('leaves Steam hours blank for someone with no Steam copy, rather than zero', async (t) => {
+  await ownedGames(t);
+  db.prepare(`INSERT INTO steam_links (user_id, steam_id) VALUES ('u1', 's1')`).run();
+  db.prepare(`INSERT INTO steam_owned (steam_id, appid, name, playtime, recent) VALUES ('s1', 892970, 'Valheim', 120, 30)`).run();
+  const valheim = (await pick('users=u1,u2')).ready.find((g: any) => g.name === 'Valheim');
+  assert.deepEqual(valheim.players.map((p: any) => [p.name, p.steamMinutes, p.recentMinutes]), [['Ana', 120, 30], ['Ben', null, 0]]);
+  assert.deepEqual([valheim.steamMinutes, valheim.recentMinutes], [120, 30]);
+});
+
+test('finds time played under another spelling of a game', async (t) => {
+  await ownedGames(t);
+  playedIn('u1', 'HALO', Date.now() - hours(2), Date.now() - hours(1));
+  assert.equal((await pick('users=u1,u2')).ready.find((g: any) => g.name === 'Halo').playedMs, hours(1));
+});
+
+test('shows a game’s kind and who’s on a family copy', async (t) => {
+  await ownedGames(t);
+  db.prepare(`INSERT INTO steam_links (user_id, steam_id) VALUES ('u1', 's1')`).run();
+  db.prepare(`INSERT INTO steam_owned (steam_id, appid, name, playtime) VALUES ('s1', 620, 'Portal 2', 1)`).run();
+  db.prepare(`INSERT OR REPLACE INTO app_info (appid, name, multiplayer, coop, pvp, deck, shareable) VALUES (620, 'Portal 2', 1, 1, 0, 3, 1)`).run();
+  await ok(`/guilds/${GUILD}/steam-links/u2/family`, { method: 'PUT', json: { with: 'u3' } });
+  await ok(`/guilds/${GUILD}/steam-links/u1/family`, { method: 'PUT', json: { with: 'u3' } });
+  await ok(`/guilds/${GUILD}/steam-links/u1/family`, { method: 'DELETE' });
+  assert.equal((await pick('users=u1,u2')).almost.find((g: any) => g.name === 'Portal 2').missing[0], 'Ben');
+  db.prepare(`INSERT INTO steam_links (user_id, steam_id) VALUES ('u3', 's3')`).run();
+  db.prepare(`INSERT INTO steam_owned (steam_id, appid, name, playtime) VALUES ('s3', 620, 'Portal 2', 1)`).run();
+  await ok(`/guilds/${GUILD}/steam-links/u2/family`, { method: 'DELETE' });
+  await refused(404, `/guilds/${GUILD}/steam-links/u2/family`, { method: 'DELETE' });
+  await ok(`/guilds/${GUILD}/steam-links/u2/family`, { method: 'PUT', json: { with: 'u3' } });
+  const game = (await pick('users=u1,u2')).ready.find((g: any) => g.name === 'Portal 2');
+  assert.deepEqual([game.borrowed, game.coop, game.pvp, game.deck], [['Ben'], true, false, 3]);
+});
+
+test('shows families on Steam accounts, and on the game list', async (t) => {
+  fakeSteam(t);
+  insertGame('Portal 2', 620);
+  db.prepare(`INSERT INTO steam_links (user_id, steam_id) VALUES ('u1', 's1')`).run();
+  db.prepare(`INSERT INTO steam_owned (steam_id, appid, name, playtime) VALUES ('s1', 620, 'Portal 2', 1)`).run();
+  db.prepare(`INSERT OR REPLACE INTO app_info (appid, name, multiplayer, shareable) VALUES (620, 'Portal 2', 1, 1)`).run();
+  await mark(insertGame('Linked Ben'), 'u2', { owns: true });
+  const before = (await ok(`/guilds/${GUILD}/games`)).games.find((g: any) => g.name === 'Portal 2');
+  assert.deepEqual([before.family, before.needs.map((p: any) => p.name)], [[], ['Ben']]);
+
+  await ok(`/guilds/${GUILD}/steam-links/u2/family`, { method: 'PUT', json: { with: 'u1' } });
+  const after = (await ok(`/guilds/${GUILD}/games`)).games.find((g: any) => g.name === 'Portal 2');
+  assert.deepEqual([after.family.map((p: any) => p.name), after.needs], [['Ben'], []]);
+  const { members } = await ok(`/guilds/${GUILD}/steam-links`);
+  assert.deepEqual(members.find((m: any) => m.name === 'Ana').family, ['Ben']);
+  assert.deepEqual(members.find((m: any) => m.name === 'Cy').family, []);
+  assert.deepEqual(activityText().at(-1), 'Put Ben in a Steam family with Ana');
+});
+
+test('refuses a family with someone who isn’t here, a bot, or themselves', async () => {
+  const url = `/guilds/${GUILD}/steam-links/u1/family`;
+  await refused(404, url, { method: 'PUT', json: { with: 'nobody' } });
+  await refused(404, url, { method: 'PUT', json: {} });
+  await refused(404, url, { method: 'PUT', json: { with: 'b1' } });
+  await refused(404, `/guilds/${GUILD}/steam-links/nobody/family`, { method: 'PUT', json: { with: 'u1' } });
+  assert.equal(await refused(400, url, { method: 'PUT', json: { with: 'u1' } }), 'Pick two different people.');
+  await refused(405, url, { method: 'POST', json: { with: 'u2' } });
+});
+
+test('says how many are playing a game on Steam, and refuses nonsense', async (t) => {
+  const real = fetch;
+  t.mock.method(globalThis, 'fetch', async (url: string, init?: RequestInit) => (String(url).startsWith(base) ? real(url, init) : new Response(JSON.stringify({ response: { player_count: 42 } }))));
+  assert.deepEqual(await ok(`/guilds/${GUILD}/steam-apps/620`), { players: 42 });
+  await refused(404, `/guilds/${GUILD}/steam-apps/abc`);
+});
+
+test('bots can’t be picked, compared or given pings', async (t) => {
+  await ownedGames(t);
+  await refused(404, `/guilds/${GUILD}/pick?users=u1,b1`);
+  await refused(404, `/guilds/${GUILD}/compare?a=u1&b=b1`);
+  await refused(404, `/guilds/${GUILD}/members/b1/pings`);
+});
+
 test('says who isn’t counted, by name', async (t) => {
   await ownedGames(t);
   guild.members.cache.set('777', member('777', 'Numeric Ned')[1] as never);
@@ -2423,7 +2499,7 @@ test('won’t start a vote with nothing to vote on', async (t) => {
 
 test('refuses a bad vote', async () => {
   const url = `/guilds/${GUILD}/votes`;
-  for (const minutes of [0, 11, 1.5, 'two']) await refused(400, url, { method: 'POST', json: { voiceChannelId: '702', channelId: '111', minutes } });
+  for (const minutes of [0, 11, 1.5, 'two']) assert.equal(await refused(400, url, { method: 'POST', json: { voiceChannelId: '702', channelId: '111', minutes } }), 'A vote lasts from 1 to 10 minutes.');
   await refused(400, url, { method: 'POST', json: { voiceChannelId: 'c2', channelId: '111' } });
   await refused(400, url, { method: 'POST', json: { voiceChannelId: '703', channelId: '111' } });
   permitted = [];
@@ -2537,6 +2613,12 @@ test('only hop-on and game roles can be changed', async () => {
 test('doesn’t offer a role from another server, or one that’s gone', async () => {
   db.prepare(`INSERT INTO game_roles (role_id, guild_id, name) VALUES ('r1', 'other', 'Halo'), ('gone', ?, 'Valheim')`).run(GUILD);
   assert.deepEqual((await ok(pings('u1'))).pings, []);
+});
+
+test('lists a role used for hop-ons and a game once', async () => {
+  setSetting(GUILD, 'hopOnRole', 'r1');
+  db.prepare(`INSERT INTO game_roles (role_id, guild_id, name) VALUES ('r1', ?, 'Halo')`).run(GUILD);
+  assert.deepEqual((await ok(pings('u1'))).pings.map((p: any) => p.label), ['Hop-on pings']);
 });
 
 test('says so when the bot can’t change someone’s roles', async () => {

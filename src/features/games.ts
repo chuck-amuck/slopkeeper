@@ -12,7 +12,7 @@ import { db } from '../db.ts';
 import type { Feature } from '../types.ts';
 import { humansIn, paginate } from '../util.ts';
 import { findOnSteam } from './gamefacts.ts';
-import { appInfo, ensureAppInfo, linkFor, ownedSteamGames, refreshStale, type OwnedGame } from './steam.ts';
+import { appInfo, DECK_PLAYABLE, DECK_VERIFIED, ensureAppInfo, familiesOf, familyOf, linkFor, ownedSteamGames, refreshStale, type OwnedGame } from './steam.ts';
 
 export interface GameRow {
   id: number;
@@ -65,6 +65,27 @@ export function steamOwnersOf(game: GameRow): Set<string> {
   return new Set(rows.map((r) => r.user_id));
 }
 
+/** Those in a server who don't own a game but could play it on a family member's copy, leaving aside who else wants that copy */
+export function familyPlayersOf(game: GameRow, guild: Guild, owners: Set<string>): Set<string> {
+  if (game.steam_appid === null || !appInfo().get(game.steam_appid)?.shareable) return new Set();
+  const family = [...steamOwnersOf(game)].flatMap(familyOf);
+  return new Set(family.filter((id) => guild.members.cache.has(id) && !owners.has(id)));
+}
+
+/**
+ * Who of those without a game can play it on a family member's copy. Each person playing at once needs a copy, so
+ * only copies nobody in the group is using count. Whether the owners are using them can't be seen.
+ */
+function borrowers(appid: number, families: string[][], group: string[], without: string[], libraries: Map<string, Map<number, OwnedGame>>) {
+  return families.flatMap((family) => {
+    const copies = family.filter((id) => libraries.get(id)?.has(appid)).length;
+    const playing = family.filter((id) => group.includes(id) && !without.includes(id)).length;
+    return family.filter((id) => without.includes(id)).slice(0, Math.max(copies - playing, 0));
+  });
+}
+
+const librariesOf = (ids: string[]) => new Map(ids.map((id) => [id, ownedSteamGames(id)]));
+
 function manualGameIds(userId: string, guildId: string): Set<number> {
   const rows = db
     .prepare('SELECT o.game_id FROM game_owners o JOIN games g ON g.id = o.game_id WHERE o.user_id = ? AND g.guild_id = ?')
@@ -85,18 +106,26 @@ export function sharedGames(guildId: string, a: string, b: string) {
   const library = allGames(guildId);
   const marks = [manualGameIds(a, guildId), manualGameIds(b, guildId)];
   const steam = [ownedSteamGames(a), ownedSteamGames(b)];
+  const pair = [a, b];
+  const families = familiesOf(pair);
+  const libraries = librariesOf([...pair, ...families.flat()]);
   const info = appInfo();
   const minutes = (appid: number | null) => (appid === null ? 0 : (steam[0].get(appid)?.playtime ?? 0) + (steam[1].get(appid)?.playtime ?? 0));
+  const bothPlay = (appid: number, owns: (who: number) => boolean) => {
+    const without = pair.filter((_, who) => !owns(who));
+    return !without.length || (info.get(appid)?.shareable === true && borrowers(appid, families, pair, without, libraries).length === without.length);
+  };
 
   const shared: { name: string; minutes: number }[] = [];
   for (const g of library) {
     const owns = (who: number) => marks[who].has(g.id) || (g.steam_appid !== null && steam[who].has(g.steam_appid));
-    if (owns(0) && owns(1)) shared.push({ name: g.name, minutes: minutes(g.steam_appid) });
+    if (g.steam_appid === null ? owns(0) && owns(1) : bothPlay(g.steam_appid, owns)) shared.push({ name: g.name, minutes: minutes(g.steam_appid) });
   }
   const inLibrary = new Set(library.map((g) => g.steam_appid));
-  for (const [appid, game] of steam[0]) {
-    if (!steam[1].has(appid) || inLibrary.has(appid) || !info.get(appid)?.multiplayer) continue;
-    shared.push({ name: game.name ?? info.get(appid)?.name ?? `App ${appid}`, minutes: minutes(appid) });
+  for (const appid of new Set([...libraries.values()].flatMap((owned) => [...owned.keys()]))) {
+    if (inLibrary.has(appid) || !info.get(appid)?.multiplayer || !bothPlay(appid, (who) => steam[who].has(appid))) continue;
+    const name = [...libraries.values()].find((owned) => owned.get(appid)?.name)?.get(appid)?.name;
+    shared.push({ name: name ?? info.get(appid)?.name ?? `App ${appid}`, minutes: minutes(appid) });
   }
   return shared.sort((x, y) => y.minutes - x.minutes);
 }
@@ -233,19 +262,37 @@ export interface Candidate {
   missing: string[];
   /** combined minutes played by the people in voice */
   playtime: number;
+  /** combined minutes they played in the last two weeks */
+  recent: number;
+  /** those who'd play on a family member's copy */
+  borrowed: string[];
+  coop: boolean;
+  pvp: boolean;
+  /** Steam's rating, from 0 for unknown to DECK_VERIFIED */
+  deck: number;
 }
+
+export interface PickFilter {
+  type?: 'coop' | 'pvp';
+  deck?: number;
+}
+
+const passes = (c: Candidate, filter: PickFilter) => (!filter.type || c[filter.type]) && c.deck >= (filter.deck ?? 0);
 
 /** What the people in voice could play, or null if nobody there has linked Steam or marked any games */
 export async function candidatesFor(guild: Guild, here: string[]) {
-  await refreshStale(here, 3_600_000);
+  const families = familiesOf(here);
+  await refreshStale([...new Set([...here, ...families.flat()])], 3_600_000);
 
   const library = allGames(guild.id);
   const libByApp = new Map(library.filter((g) => g.steam_appid !== null).map((g) => [g.steam_appid!, g]));
   const manual = new Map(here.map((id) => [id, manualGameIds(id, guild.id)]));
-  const steamLibs = new Map<string, Map<number, OwnedGame>>(here.map((id) => [id, ownedSteamGames(id)]));
+  // Family members who aren't here still lend their copies
+  const steamLibs = librariesOf([...new Set([...here, ...families.flat()])]);
 
   // People with no Steam link and no manual marks would block every game, so leave them out and say so
-  const counted = here.filter((id) => linkFor(id) || manual.get(id)!.size > 0);
+  const inFamily = new Set(families.flat());
+  const counted = here.filter((id) => linkFor(id) || manual.get(id)!.size > 0 || inFamily.has(id));
   const unknown = here.filter((id) => !counted.includes(id));
   const privateIds = counted.filter((id) => linkFor(id)?.private);
   if (!counted.length) return null;
@@ -260,10 +307,15 @@ export async function candidatesFor(guild: Guild, here: string[]) {
   for (const lib of steamLibs.values()) for (const appid of lib.keys()) appids.add(appid);
 
   const maxMissing = counted.length >= 2 ? 1 : 0;
-  const steamCands: { appid: number; missing: string[] }[] = [];
+  // Who's missing a game depends on whether it can be shared, so a family's games have to be known first
+  if (families.length) await ensureAppInfo([...appids]).catch(console.error);
+  const shareable = appInfo();
+  const steamCands: { appid: number; missing: string[]; borrowed: string[] }[] = [];
   for (const appid of appids) {
-    const missing = counted.filter((id) => !ownsApp(id, appid));
-    if (missing.length <= maxMissing) steamCands.push({ appid, missing });
+    const without = counted.filter((id) => !ownsApp(id, appid));
+    const borrowed = shareable.get(appid)?.shareable ? borrowers(appid, families, counted, without, steamLibs) : [];
+    const missing = without.filter((id) => !borrowed.includes(id));
+    if (missing.length <= maxMissing) steamCands.push({ appid, missing, borrowed });
   }
   await ensureAppInfo(steamCands.map((c) => c.appid)).catch(console.error);
 
@@ -271,23 +323,25 @@ export async function candidatesFor(guild: Guild, here: string[]) {
   const hidden = new Set((db.prepare('SELECT appid FROM hidden_apps WHERE guild_id = ?').all(guild.id) as { appid: number }[]).map((r) => r.appid));
   const candidates: Candidate[] = [];
 
-  for (const { appid, missing } of steamCands) {
+  for (const { appid, missing, borrowed } of steamCands) {
     const lib = libByApp.get(appid);
     // Library entries count as group games even if Steam doesn't tag them multiplayer
     if (hidden.has(appid) || !fits(lib) || (!lib && !info.get(appid)?.multiplayer)) continue;
     let playtime = 0;
-    let steamName: string | null = null;
+    let recent = 0;
     for (const id of counted) {
       const owned = steamLibs.get(id)!.get(appid);
       playtime += owned?.playtime ?? 0;
-      steamName ??= owned?.name ?? null;
+      recent += owned?.recent ?? 0;
     }
-    candidates.push({ name: lib?.name ?? steamName ?? info.get(appid)?.name ?? `App ${appid}`, appid, missing, playtime });
+    const steamName = [...steamLibs.values()].find((owned) => owned.get(appid)?.name)?.get(appid)?.name;
+    const { coop = false, pvp = false, deck = 0 } = info.get(appid) ?? {};
+    candidates.push({ name: lib?.name ?? steamName ?? info.get(appid)?.name ?? `App ${appid}`, appid, missing, playtime, recent, borrowed, coop, pvp, deck });
   }
   for (const g of library) {
     if (g.steam_appid !== null || !fits(g)) continue;
     const missing = counted.filter((id) => !manual.get(id)!.has(g.id));
-    if (missing.length <= maxMissing) candidates.push({ name: g.name, appid: null, missing, playtime: 0 });
+    if (missing.length <= maxMissing) candidates.push({ name: g.name, appid: null, missing, playtime: 0, recent: 0, borrowed: [], coop: false, pvp: false, deck: 0 });
   }
 
   const notes: string[] = [];
@@ -296,10 +350,11 @@ export async function candidatesFor(guild: Guild, here: string[]) {
   return { counted, candidates, notes };
 }
 
-async function buildPick(guild: Guild, here: string[], avoid?: string) {
+async function buildPick(guild: Guild, here: string[], filter: PickFilter, avoid?: string) {
   const found = await candidatesFor(guild, here);
   if (!found) return { content: NOBODY_COUNTED, embeds: [], components: [] };
-  const { counted, candidates, notes } = found;
+  const { counted, notes } = found;
+  const candidates = found.candidates.filter((c) => passes(c, filter));
 
   const byPlaytime = (a: Candidate, b: Candidate) => b.playtime - a.playtime;
   const ready = candidates.filter((c) => c.missing.length === 0);
@@ -310,7 +365,8 @@ async function buildPick(guild: Guild, here: string[], avoid?: string) {
   let pick: Candidate | undefined;
   if (ready.length) {
     pick = choose(ready, avoid);
-    embed.setTitle(`🎲 ${pick.name}`).setDescription([`All ${counted.length} of you own it.`, ...notes].join('\n'));
+    const sharing = pick.borrowed.length ? ` ${mentions(pick.borrowed)} through family sharing.` : '';
+    embed.setTitle(`🎲 ${pick.name}`).setDescription([`All ${counted.length} of you can play it.${sharing}`, ...notes].join('\n'));
     if (pick.appid) embed.setURL(`https://store.steampowered.com/app/${pick.appid}`);
     const others = ready.filter((c) => c !== pick).sort(byPlaytime);
     if (others.length) {
@@ -319,18 +375,18 @@ async function buildPick(guild: Guild, here: string[], avoid?: string) {
   } else {
     embed
       .setTitle('🤷 Nothing fits')
-      .setDescription([`No multiplayer game is owned by all ${counted.length} of you and fits ${here.length} players.`, ...notes].join('\n'));
+      .setDescription([`No multiplayer game${filter.type || filter.deck ? ' like that' : ''} is owned by all ${counted.length} of you and fits ${here.length} players.`, ...notes].join('\n'));
   }
   if (almost.length) {
     embed.addFields({ name: 'One purchase away', value: almost.map((c) => `${c.name} · needs ${mentions(c.missing)}`).join('\n').slice(0, 1024) });
   }
 
   const buttons = new ActionRowBuilder<ButtonBuilder>().addComponents(
-    new ButtonBuilder().setCustomId('wdp:reroll').setLabel('Reroll').setEmoji('🎲').setStyle(ButtonStyle.Primary).setDisabled(ready.length < 2),
+    new ButtonBuilder().setCustomId(`wdp:reroll:${filter.type ?? ''}:${filter.deck ?? 0}`).setLabel('Reroll').setEmoji('🎲').setStyle(ButtonStyle.Primary).setDisabled(ready.length < 2),
     new ButtonBuilder().setCustomId('vote:start').setLabel('Vote').setEmoji('🗳️').setStyle(ButtonStyle.Secondary).setDisabled(ready.length < 2),
   );
   if (pick?.appid) {
-    buttons.addComponents(new ButtonBuilder().setCustomId(`wdp:hide:${pick.appid}`).setLabel('Never suggest this').setStyle(ButtonStyle.Secondary));
+    buttons.addComponents(new ButtonBuilder().setCustomId(`wdp:hide:${pick.appid}:${filter.type ?? ''}:${filter.deck ?? 0}`).setLabel('Never suggest this').setStyle(ButtonStyle.Secondary));
   }
   return { content: '', embeds: [embed], components: [buttons], allowedMentions: { parse: [] } };
 }
@@ -348,9 +404,11 @@ function libraryPage(guild: Guild, wanted: number) {
   const group = groupMembers(guild);
   const lines = rows.map((g) => {
     const owners = ownersOf(g, guild);
-    const missing = group.filter((id) => !owners.has(id));
+    const family = familyPlayersOf(g, guild, owners);
+    const missing = group.filter((id) => !owners.has(id) && !family.has(id));
     let line = `**${g.name}**${g.max_players ? ` · up to ${g.max_players}` : ''}`;
     if (owners.size) line += `\n  owned: ${mentions(owners)}`;
+    if (family.size) line += `\n  through family: ${mentions(family)}`;
     if (missing.length) line += `\n  needs it: ${mentions(missing)}`;
     const wanted = wantedBy(g, guild);
     if (wanted.length) line += `\n  wanted: ${mentions(wanted)}`;
@@ -480,19 +538,27 @@ export const games: Feature = {
       },
     },
     {
-      data: new SlashCommandBuilder().setName('whatdoweplay').setDescription('Pick a multiplayer game everyone in your voice channel owns'),
+      data: new SlashCommandBuilder()
+        .setName('whatdoweplay')
+        .setDescription('Pick a multiplayer game everyone in your voice channel owns')
+        .addStringOption((o) => o.setName('type').setDescription('Only this kind of game').addChoices({ name: 'Co-op', value: 'coop' }, { name: 'PvP', value: 'pvp' }))
+        .addIntegerOption((o) =>
+          o.setName('deck').setDescription('Only games that work on Steam Deck').addChoices({ name: 'Verified', value: DECK_VERIFIED }, { name: 'Playable or Verified', value: DECK_PLAYABLE }),
+        ),
       async run(i) {
         if (!i.inCachedGuild() || !i.member.voice.channel) {
           return i.reply({ content: 'Join a voice channel first, then I can check what everyone owns.', flags: MessageFlags.Ephemeral });
         }
         await i.deferReply();
-        return i.editReply(await buildPick(i.guild, humansIn(i.member.voice.channel).map((m) => m.id)));
+        const filter = { type: (i.options.getString('type') ?? undefined) as PickFilter['type'], deck: i.options.getInteger('deck') ?? undefined };
+        return i.editReply(await buildPick(i.guild, humansIn(i.member.voice.channel).map((m) => m.id), filter));
       },
     },
   ],
   componentPrefix: 'wdp',
   async onButton(i) {
-    const [, action, target] = i.customId.split(':');
+    const [, action, ...rest] = i.customId.split(':');
+    const [target] = rest;
     if (i.inCachedGuild() && action === 'list') return i.update(libraryPage(i.guild, Number(target)));
     if (!i.inCachedGuild() || !i.member.voice.channel) {
       return i.reply({ content: 'Join a voice channel first.', flags: MessageFlags.Ephemeral });
@@ -501,7 +567,10 @@ export const games: Feature = {
     if (action === 'hide') {
       hideGame(i.guildId, Number(target), shown ?? `App ${target}`, i.user.id);
     }
+    // Buttons posted before filters existed have nothing here
+    const [type, deck] = action === 'hide' ? rest.slice(1) : rest;
+    const filter = { type: (type || undefined) as PickFilter['type'], deck: Number(deck ?? 0) };
     await i.deferUpdate();
-    return i.editReply(await buildPick(i.guild, humansIn(i.member.voice.channel).map((m) => m.id), shown));
+    return i.editReply(await buildPick(i.guild, humansIn(i.member.voice.channel).map((m) => m.id), filter, shown));
   },
 };

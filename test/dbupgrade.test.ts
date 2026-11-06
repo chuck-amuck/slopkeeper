@@ -18,6 +18,10 @@ test('a database from before repeating nights keeps its nights and gains the new
     CREATE TABLE sessions (id INTEGER PRIMARY KEY, guild_id TEXT NOT NULL, channel_id TEXT NOT NULL, started_at INTEGER NOT NULL, ended_at INTEGER NOT NULL);
     CREATE TABLE session_members (session_id INTEGER NOT NULL, user_id TEXT NOT NULL, seconds INTEGER NOT NULL, PRIMARY KEY (session_id, user_id));
     CREATE TABLE game_plays (id INTEGER PRIMARY KEY, guild_id TEXT NOT NULL, user_id TEXT NOT NULL, game TEXT NOT NULL, started_at INTEGER NOT NULL, ended_at INTEGER NOT NULL);
+    CREATE TABLE steam_owned (steam_id TEXT NOT NULL, appid INTEGER NOT NULL, name TEXT, playtime INTEGER NOT NULL, PRIMARY KEY (steam_id, appid));
+    INSERT INTO steam_owned (steam_id, appid, name, playtime) VALUES ('s', 10, 'Valheim', 60);
+    CREATE TABLE app_info (appid INTEGER PRIMARY KEY, name TEXT, multiplayer INTEGER NOT NULL);
+    INSERT INTO app_info (appid, name, multiplayer) VALUES (10, 'Valheim', 1);
     PRAGMA user_version = 3;
   `);
   const play = (guildId: string, userId: string, game: string, start: number, end: number) =>
@@ -87,4 +91,6 @@ test('a database from before repeating nights keeps its nights and gains the new
 
   assert.deepEqual({ ...(db.prepare('SELECT game, series_id FROM game_nights').get() as object) }, { game: 'Valheim', series_id: null });
   assert.ok(db.prepare("SELECT 1 FROM sqlite_master WHERE name = 'game_night_series'").get());
+  assert.deepEqual({ ...(db.prepare('SELECT * FROM steam_owned').get() as object) }, { steam_id: 's', appid: 10, name: 'Valheim', playtime: 60, recent: 0 });
+  assert.deepEqual({ ...(db.prepare('SELECT * FROM app_info').get() as object) }, { appid: 10, name: 'Valheim', multiplayer: 1, coop: 0, pvp: 0, deck: 0, shareable: 0, read_at: 0 });
 });

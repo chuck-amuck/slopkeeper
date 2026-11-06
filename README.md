@@ -129,16 +129,20 @@ The bot builds a picture of who owns what from two sources:
 | --- | --- |
 | `/steam link profile [user]` | Links a Steam account and immediately reads its library. `profile` can be a profile URL (`https://steamcommunity.com/id/samplays`), a vanity name (`samplays`) or a 17-digit SteamID64. Use `user` to link it for someone else. |
 | `/steam unlink [user]` | Removes a link and forgets that library. Defaults to you. |
-| `/steam list` | Shows everyone who's linked, with a profile link and game count. 🔒 means their game details are private. |
+| `/steam list` | Shows everyone who's linked, with a profile link, game count and family. 🔒 means their game details are private. |
+| `/steam family with [user]` | Says who shares a Steam library. `user` joins the family of `with`, and defaults to you. |
+| `/steam unfamily [user]` | Takes someone out of their family. Defaults to you. |
 | `/steam refresh` | Re-reads every linked library now. Useful right after someone buys a game, or after fixing their privacy setting. |
 
 All of this can also be done for anyone from **Steam accounts** on the web UI's Games page.
+
+Steam doesn't tell the bot who's in a Steam family, so you say. A family holds up to 6 people, and applies in every server, as links do. Someone in a family counts as owning a game if a family member owns it on Steam and Steam tags it for Family Sharing, even if that member isn't in the server. Each person playing at once needs their own copy, so two people in a family with one copy show as one short. The bot can't see whether an owner outside the group is using their copy. Games only marked by hand don't count, as there's no way to know if they're shareable.
 
 ### What do we play?
 
 | Command | What it does |
 | --- | --- |
-| `/whatdoweplay` | Run it while you're in voice. It picks a random game that everyone in your channel owns. |
+| `/whatdoweplay [type] [deck]` | Run it while you're in voice. It picks a random game that everyone in your channel can play. `type` keeps to co-op or PvP games, and `deck` to games that work on Steam Deck. Those come from Steam's store, so they leave out games with no Steam link, and Steam doesn't list a game's player limit. |
 | `/gamevote [minutes]` | Run it while you're in voice. Everyone in your channel votes on the games they all own. It stays open for 1 minute by default, up to 10. |
 
 Which games qualify:
@@ -155,6 +159,8 @@ Buttons:
 - **🎲 Reroll** picks again from the games that qualify. It's greyed out when only one game qualifies.
 - **🗳️ Vote** starts a 1-minute `/gamevote`. It's greyed out when only one game qualifies.
 - **Never suggest this** hides a game from future picks. Undo it with `/game unhide`, or on the web UI's Games page.
+
+**🎲 Reroll** keeps to the `type` and `deck` you chose. **🗳️ Vote** covers every game that qualifies.
 
 How a vote works:
 - The ballot has up to 10 games from the same list: the 5 you've played most, then a random mix of the rest.
@@ -494,8 +500,8 @@ A page for your home network, in [`web/`](web), that runs as a second container 
 - **Soundboard:** big buttons that play in voice, with favourites first and then whatever gets played most.
 - **Library:** upload files or whole folders, preview, rename and delete sounds, set a sound's volume, trim it with a way back to the original, and choose what's on Discord's soundboard, with a waveform for picking part of a long sound. **Recently deleted** restores a sound or erases it for good.
 - **Game nights:** plan a night, see what's coming up, cancel one or stop a repeating one.
-- **Games:** the game library, with who has each game, who needs it, who wants it and any sale. Add games from a searchable list of what members own on Steam, or by name or store link. **Steam accounts** links, changes and unlinks anyone's Steam account and refreshes libraries. Remove games, set player limits and Steam links, tick who owns or wants what, and hide a game from `/whatdoweplay` or let it back in. Ownership from a Steam library is locked.
-- **Pick a game:** choose a voice channel, or tick people to plan before anyone's in voice, and see the games everyone owns and those one purchase away, using the same rules as `/whatdoweplay`. Each game shows time played here, Steam hours and when it was last played, in total and per person. Sort or search them, **Pick for us** chooses one at random, and **Start a vote** posts the usual `/gamevote` card in a channel.
+- **Games:** the game library, with who has each game, who needs it, who wants it and any sale. Add games from a searchable list of what members own on Steam, or by name or store link. **Steam accounts** links, changes and unlinks anyone's Steam account, says who shares a Steam family, and refreshes libraries. Remove games, set player limits and Steam links, tick who owns or wants what, and hide a game from `/whatdoweplay` or let it back in. Ownership from a Steam library is locked.
+- **Pick a game:** choose a voice channel, or tick people to plan before anyone's in voice, and see the games everyone owns and those one purchase away, using the same rules as `/whatdoweplay`. Each game shows time played here, Steam hours, its last two weeks on Steam and when it was last played, in total and per person, plus who'd play on a family copy. Opening one shows how many are playing it on Steam right now. Sort them, with **Hot right now** for the last two weeks, search them, or filter to co-op, PvP or Steam Deck. **Pick for us** chooses one at random, and **Start a vote** posts the usual `/gamevote` card in a channel.
 - **Stats:** **Overview** has game and voice time, overall or for one person or game, with sessions, rank and when it was last played. **Compare** is `/compare` with every game two people both own, and **Monthly recap** is `/recap`.
 - **Discord's soundboard:** on Library, see what fills the slots, play or save any sound, and swap sounds between Discord and the library.
 - **Merging games:** on Stats, Merge games puts different spellings of a game together, and Separate on a clicked game takes one back out.
@@ -582,6 +588,8 @@ It applies the same rules as `/sound` and `/setup`, and every request needs an `
 | `PATCH /guilds/:id/games/:game` | Sets its details: `{ "maxPlayers": 4 }`, `{ "steam": "<link or app ID>" }`, with null or an empty link to clear |
 | `DELETE /guilds/:id/games/:game` | Removes it and its marks |
 | `PATCH /guilds/:id/games/:game/members/:user` | Marks someone: `{ "owns": true }`, `{ "wants": true }`. Owning clears wanting, and Steam ownership can't be changed |
+| `PUT /guilds/:id/steam-links/:user/family` | Puts someone in another person's Steam family: `{ "with": "<user id>" }` |
+| `DELETE /guilds/:id/steam-links/:user/family` | Takes someone out of their Steam family |
 | `GET /guilds/:id/free-games` | Lists what's free right now, with whether each game is posted and why |
 | `GET /guilds/:id/voice` | Lists voice channels with people in them, busiest first |
 | `POST /guilds/:id/stop` | Stops whatever is playing |
@@ -599,7 +607,8 @@ It applies the same rules as `/sound` and `/setup`, and every request needs an `
 | `GET /guilds/:id/hidden-games` | Lists games hidden from `/whatdoweplay` |
 | `PUT /guilds/:id/hidden-games/:appid` | Hides a game from `/whatdoweplay`. `{ "name": "..." }` names a Steam game that isn't in the library |
 | `DELETE /guilds/:id/hidden-games/:appid` | Lets a hidden game be suggested again |
-| `GET /guilds/:id/pick?channel=<id>` or `?users=<id>,<id>` | Games those people could play, as `/whatdoweplay` works out, with time played and Steam hours for each person |
+| `GET /guilds/:id/pick?channel=<id>` or `?users=<id>,<id>` | Games those people could play, as `/whatdoweplay` works out, with time played, Steam hours and game facts for each |
+| `GET /guilds/:id/steam-apps/:appid` | How many are playing a game on Steam now, kept for 10 minutes. `players` is null if Steam won't say |
 | `GET /guilds/:id/pick/options` | Lists the members, voice channels and text channels to choose from |
 | `POST /guilds/:id/votes` | Starts a vote: `{ "voiceChannelId", "channelId", "minutes" }`, with 1 to 10 minutes |
 | `GET /guilds/:id/compare?a=<id>&b=<id>` | Compares two people, as `/compare` does |

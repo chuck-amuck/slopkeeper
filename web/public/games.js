@@ -316,6 +316,36 @@ function accountsDialog(main, onChanged) {
     return form;
   }
 
+  const changeFamily = (member, options, message) =>
+    guarded(async () => {
+      await request(api(`/steam-links/${member.id}/family`), options);
+      await refresh();
+    }, message);
+
+  function familyControl(member) {
+    if (member.family.length) {
+      return el(
+        'span',
+        { className: 'steam-family' },
+        `Shares with ${member.family.join(', ')}`,
+        el('button', { ariaLabel: `Take ${member.name} out of their family`, onclick: () => changeFamily(member, { method: 'DELETE' }, () => `Took ${member.name} out of their family.`) }, 'Leave'),
+      );
+    }
+    return el(
+      'select',
+      {
+        className: 'steam-family',
+        ariaLabel: `Who ${member.name} shares a library with`,
+        onchange: (e) => {
+          const other = data.members.find((m) => m.id === e.target.value);
+          void changeFamily(member, { method: 'PUT', json: { with: other.id } }, () => `${member.name} now shares a library with ${other.name}.`);
+        },
+      },
+      el('option', { value: '' }, 'Shares a library with…'),
+      data.members.filter((m) => m.id !== member.id).map((m) => el('option', { value: m.id }, m.name)),
+    );
+  }
+
   function accountRow(member) {
     const { steam } = member;
     const edit = (label) =>
@@ -354,6 +384,7 @@ function accountsDialog(main, onChanged) {
             ),
           ),
       ),
+      familyControl(member),
       editing === member.id && linkForm(member),
     );
   }
@@ -394,7 +425,7 @@ function accountsDialog(main, onChanged) {
   const node = openDialog(
     main,
     el('h2', {}, 'Steam accounts'),
-    el('p', {}, 'Who’s who on Steam, for working out who owns what. A link applies in every server someone shares with the bot.'),
+    el('p', {}, 'Who’s who on Steam, for working out who owns what. A link applies in every server someone shares with the bot. People who share a Steam family can play each other’s shareable games, with one person playing per copy.'),
     search,
     list,
     help,
@@ -459,6 +490,7 @@ export function renderGames(main) {
           g.sale && el('span', { className: 'game-sale' }, `${g.sale.discount}% off · ${g.sale.price}`, el('s', {}, g.sale.was)),
         ),
         fact('Has it', g.owners),
+        fact('Through family', g.family),
         fact('Needs it', g.needs),
         fact('Wants it', g.wanted),
       ),

@@ -31,7 +31,7 @@ async function press(customId: string, user: string, inVoice: string | null, peo
 }
 
 test('options are capped, keep the most played and don’t repeat', () => {
-  const ready = Array.from({ length: 30 }, (_, n) => ({ name: `Game ${n}`, appid: null, missing: [], playtime: n }));
+  const ready = Array.from({ length: 30 }, (_, n) => ({ name: `Game ${n}`, appid: null, missing: [], playtime: n, recent: 0, borrowed: [], coop: false, pvp: false, deck: 0 }));
   const options = chooseOptions(ready);
   assert.equal(options.length, 10);
   assert.equal(new Set(options.map((o) => o.name)).size, 10);

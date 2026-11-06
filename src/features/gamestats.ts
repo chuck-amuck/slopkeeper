@@ -219,13 +219,19 @@ export async function pickFor(guild: Guild, here: string[]) {
   const rows = found.candidates.map((c) => {
     const players = found.counted.map((id) => {
       const here = played.get(id)!.get(keyOf(c.name));
-      return { id, steamMinutes: c.appid === null ? null : (steam.get(id)!.get(c.appid)?.playtime ?? null), playedMs: here?.ms ?? 0, last: here?.last ?? null };
+      const owned = c.appid === null ? undefined : steam.get(id)!.get(c.appid);
+      return { id, steamMinutes: owned?.playtime ?? null, recentMinutes: owned?.recent ?? 0, playedMs: here?.ms ?? 0, last: here?.last ?? null };
     });
     const lasts = players.flatMap((p) => p.last ?? []);
     return {
       name: c.name,
       appid: c.appid,
       missing: c.missing,
+      borrowed: c.borrowed,
+      coop: c.coop,
+      pvp: c.pvp,
+      deck: c.deck,
+      recentMinutes: c.recent,
       steamMinutes: players.reduce((sum, p) => sum + (p.steamMinutes ?? 0), 0),
       playedMs: players.reduce((sum, p) => sum + p.playedMs, 0),
       last: lasts.length ? Math.max(...lasts) : null,
