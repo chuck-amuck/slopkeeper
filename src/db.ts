@@ -63,9 +63,27 @@ db.exec(`
     user_id TEXT NOT NULL,
     PRIMARY KEY (game_id, user_id)
   );
-  CREATE TABLE IF NOT EXISTS sale_state (
-    game_id INTEGER PRIMARY KEY REFERENCES games(id) ON DELETE CASCADE,
-    discount INTEGER NOT NULL
+  CREATE TABLE IF NOT EXISTS game_wants (
+    game_id INTEGER NOT NULL REFERENCES games(id) ON DELETE CASCADE,
+    user_id TEXT NOT NULL,
+    PRIMARY KEY (game_id, user_id)
+  );
+  -- The discount each server was last told about
+  CREATE TABLE IF NOT EXISTS sale_alerts (
+    guild_id TEXT NOT NULL,
+    appid INTEGER NOT NULL,
+    discount INTEGER NOT NULL,
+    PRIMARY KEY (guild_id, appid)
+  );
+  -- What was on sale at the last check, by store region
+  CREATE TABLE IF NOT EXISTS sale_prices (
+    country TEXT NOT NULL,
+    appid INTEGER NOT NULL,
+    discount INTEGER NOT NULL,
+    was TEXT NOT NULL,
+    price TEXT NOT NULL,
+    final INTEGER NOT NULL,
+    PRIMARY KEY (country, appid)
   );
   CREATE TABLE IF NOT EXISTS hidden_apps (
     guild_id TEXT NOT NULL,
@@ -93,6 +111,11 @@ db.exec(`
     appid INTEGER PRIMARY KEY,
     name TEXT,
     multiplayer INTEGER NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS steam_wishlist (
+    steam_id TEXT NOT NULL,
+    appid INTEGER NOT NULL,
+    PRIMARY KEY (steam_id, appid)
   );
 
   CREATE TABLE IF NOT EXISTS sound_emoji (
@@ -268,6 +291,23 @@ db.exec(`
 
   PRAGMA user_version = ${SCHEMA_VERSION};
 `);
+
+// Alerts used to be kept per library game. Moved over so sales already announced aren't announced again
+if (db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'sale_state'").get()) {
+  db.exec('BEGIN');
+  try {
+    db.exec(`
+      INSERT OR IGNORE INTO sale_alerts (guild_id, appid, discount)
+      SELECT g.guild_id, g.steam_appid, s.discount FROM sale_state s JOIN games g ON g.id = s.game_id
+      WHERE g.steam_appid IS NOT NULL AND s.discount > 0;
+      DROP TABLE sale_state;
+    `);
+    db.exec('COMMIT');
+  } catch (err) {
+    db.exec('ROLLBACK');
+    throw err;
+  }
+}
 
 // Added after schema 3 came out, so a database from then won't have it yet
 if (!db.prepare("SELECT 1 FROM pragma_table_info('game_nights') WHERE name = 'series_id'").get()) {

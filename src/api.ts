@@ -8,6 +8,7 @@ import { config } from './config.ts';
 import * as discordBoard from './discordSounds.ts';
 import { cancelNight, gameNames, planNight, readWhen, stopSeries, upcomingNights } from './features/gamenight.ts';
 import { reviewGiveaways } from './features/freegames.ts';
+import { onSale, saleName, saleReasons, storeUrl } from './features/sales.ts';
 import { activity, checkpoint, PERIODS, stats } from './features/gamestats.ts';
 import { gameName, gameSpellings, mergeGames, separateGame } from './gameNames.ts';
 import { voiceTotals } from './features/sessions.ts';
@@ -310,6 +311,20 @@ function statsFor(guild: Guild, url: URL) {
 }
 
 /** Every game with time on record, longest first, and what else it's been called */
+async function saleList(guild: Guild) {
+  const games = await onSale(guild);
+  return {
+    games: games.map((g) => ({
+      name: saleName(g),
+      url: storeUrl(g.appid),
+      discount: g.discount,
+      was: g.was,
+      price: g.price,
+      why: saleReasons(g, (id) => nameOf(guild, id)),
+    })),
+  };
+}
+
 function gameNameList(guild: Guild) {
   const spellings = gameSpellings(guild.id);
   return { games: stats(guild.id, 0, 'none', 'game').map((g) => ({ name: g.key, ms: g.ms, spellings: (spellings.get(g.key) ?? []).filter((raw) => raw !== g.key) })) };
@@ -553,6 +568,7 @@ async function handle(client: Client<true>, req: IncomingMessage, res: ServerRes
     });
     return { games: games.map(({ title, url: link, worth, platforms, show, reason }) => ({ title, url: link, worth, platforms, show, reason })) };
   }
+  if (section === 'sales' && !rest.length && req.method === 'GET') return saleList(guild);
   if (section === 'game-names' && !rest.length && req.method === 'GET') return gameNameList(guild);
   if (section === 'game-names' && rest.length === 1 && (rest[0] === 'merge' || rest[0] === 'separate') && req.method === 'POST') return changeGameNames(guild, req, rest[0]);
   if (section === 'join-sounds' && !rest.length && req.method === 'GET') return joinSoundList(guild);

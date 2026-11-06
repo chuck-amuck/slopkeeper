@@ -62,7 +62,7 @@ export async function eachGuild(client: Client<true>, job: string, run: (guild: 
 export async function announceChannel(
   client: Client<true>,
   guildId: string,
-  key: Extract<IdSettingKey, 'announceChannel' | 'freeGamesChannel'> = 'announceChannel',
+  key: Exclude<IdSettingKey, 'hopOnRole'> = 'announceChannel',
 ): Promise<SendableChannels | null> {
   const id = idSetting(guildId, key);
   if (!id) return null;

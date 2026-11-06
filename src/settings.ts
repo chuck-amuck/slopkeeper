@@ -28,6 +28,11 @@ export const DEFAULTS = {
   freeGamesTaste: process.env.FREE_GAMES_TASTE !== 'false',
   freeGamesMultiplayer: process.env.FREE_GAMES_MULTIPLAYER === 'true',
   freeGamesUnlisted: process.env.FREE_GAMES_UNLISTED === 'true',
+  // Steam is always running a small sale on something, so an alert waits for one worth mentioning
+  saleMinDiscount: num('SALE_MIN_DISCOUNT', 25),
+  saleSteamWishlists: process.env.SALE_STEAM_WISHLISTS !== 'false',
+  // Unset posts sales in the announce channel
+  saleChannel: null as string | null,
   gameNightReminderMin: num('GAMENIGHT_REMINDER_MIN', 15),
   monthlyRecap: process.env.MONTHLY_RECAP !== 'false',
   evenVolume: process.env.EVEN_VOLUME !== 'false',
@@ -51,6 +56,8 @@ export const DEFAULT_ENV: Partial<Record<SettingKey, string>> = {
   freeGamesTaste: 'FREE_GAMES_TASTE',
   freeGamesMultiplayer: 'FREE_GAMES_MULTIPLAYER',
   freeGamesUnlisted: 'FREE_GAMES_UNLISTED',
+  saleMinDiscount: 'SALE_MIN_DISCOUNT',
+  saleSteamWishlists: 'SALE_STEAM_WISHLISTS',
   gameNightReminderMin: 'GAMENIGHT_REMINDER_MIN',
   monthlyRecap: 'MONTHLY_RECAP',
   evenVolume: 'EVEN_VOLUME',
@@ -88,7 +95,7 @@ export function setSetting(guildId: string, key: SettingKey, value: string | num
   }
 }
 
-export type IdSettingKey = 'announceChannel' | 'hopOnRole' | 'freeGamesChannel';
+export type IdSettingKey = 'announceChannel' | 'hopOnRole' | 'freeGamesChannel' | 'saleChannel';
 
 /** Channel and role settings store '' for "deliberately none", which reads back as null */
 export const idSetting = (guildId: string, key: IdSettingKey) => setting(guildId, key) || null;
