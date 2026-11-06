@@ -40,6 +40,10 @@ import {
   uploadProblem,
   voiceVolume,
   volumeProblem,
+  playDiscordSound,
+  saveFromDiscord,
+  swapOnDiscord,
+  takeOffDiscord,
   type Sound,
 } from './features/soundboard.ts';
 import { DEFAULTS, idSetting, isAllowed, setSetting, setting, type SettingKey } from './settings.ts';
@@ -121,6 +125,7 @@ async function durationOf(file: string, mtimeMs: number): Promise<number | null>
 
 async function soundList(guild: Guild) {
   const sounds = [];
+  const onDiscord = await discordBoard.board(guild).catch(() => null);
   const starred = favourites(guild.id);
   const plays = playCounts(guild.id);
   const levels = soundLevels(guild.id);
@@ -146,7 +151,8 @@ async function soundList(guild: Guild) {
   return {
     sounds,
     evenVolume: setting(guild.id, 'evenVolume'),
-    slots: await discordBoard.slots(guild).catch(() => null),
+    slots: onDiscord && { used: onDiscord.used, total: onDiscord.total },
+    discordSounds: onDiscord?.sounds.map(({ url: _, ...sound }) => sound) ?? [],
     emojis: guild.emojis.cache.map((e) => ({ id: e.id, name: e.name, animated: e.animated, code: e.toString() })),
     clipSeconds: discordBoard.CLIP_SECONDS,
   };
@@ -333,6 +339,54 @@ const refuse = (guild: Guild, problem: string | null) => {
   if (problem) throw new Refused(400, plain(guild, problem));
 };
 
+/** Turns a failed Discord step into a message for the page */
+const cantDo = (err: Error): never => {
+  throw new Refused(400, err.message);
+};
+
+function voiceChannelFor(guild: Guild, id: unknown) {
+  const channel = guild.channels.cache.get(String(id));
+  if (!channel?.isVoiceBased()) throw new Refused(400, 'Pick a voice channel.');
+  // With nobody there, the bot would leave as soon as it joined
+  if (!humansIn(channel).length) throw new Refused(400, `Nobody’s in ${channel.name} any more.`);
+  return channel;
+}
+
+/** The sound with this id on this server's soundboard, so no other address can be asked for */
+async function discordSoundOf(guild: Guild, id: unknown) {
+  const sound = (await discordBoard.board(guild)).sounds.find((s) => s.id === id);
+  if (!sound) throw new Refused(404, 'That sound isn’t on Discord’s soundboard any more.');
+  return sound;
+}
+
+async function handleDiscordSound(client: Client<true>, guild: Guild, req: IncomingMessage, res: ServerResponse, id: string, part?: string) {
+  const sound = await discordSoundOf(guild, id);
+  const key = `${req.method} ${part ?? ''}`;
+  if (key === 'GET audio') {
+    const { data, ext } = await discordBoard.download(sound);
+    res.writeHead(200, { 'content-type': AUDIO_TYPES[ext], 'content-length': data.length, 'cache-control': 'no-store' });
+    res.end(data);
+    return null;
+  }
+  if (key === 'POST play') {
+    refuse(guild, await playDiscordSound(voiceChannelFor(guild, (await readJson(req)).channelId), sound));
+    return {};
+  }
+  if (key === 'POST save') {
+    const name = await saveFromDiscord(guild, sound).catch(cantDo);
+    if (!sound.library) logActivity(guild.id, FROM_WEB, `Saved **${sound.name}** from Discord’s soundboard as **${name}**`);
+    await refreshPanels(client, guild.id);
+    return { name };
+  }
+  if (key === 'DELETE ') {
+    await takeOffDiscord(guild, sound).catch(cantDo);
+    logActivity(guild.id, FROM_WEB, `Took **${sound.name}** off Discord’s soundboard`);
+    await refreshPanels(client, guild.id);
+    return {};
+  }
+  throw new Refused(404, 'Not found.');
+}
+
 async function handleSounds(client: Client<true>, guild: Guild, req: IncomingMessage, res: ServerResponse, url: URL, name?: string, part?: string) {
   const method = req.method!;
   // Everything but reading changes what the posted panels show
@@ -357,11 +411,7 @@ async function handleSounds(client: Client<true>, guild: Guild, req: IncomingMes
 
   if (part === 'play' && method === 'POST') {
     const sound = soundOf(guild, name);
-    const channel = guild.channels.cache.get(String((await readJson(req)).channelId));
-    if (!channel?.isVoiceBased()) throw new Refused(400, 'Pick a voice channel.');
-    // With nobody there, the bot would leave as soon as it joined
-    if (!humansIn(channel).length) throw new Refused(400, `Nobody’s in ${channel.name} any more.`);
-    refuse(guild, await playFromWeb(channel, sound));
+    refuse(guild, await playFromWeb(voiceChannelFor(guild, (await readJson(req)).channelId), sound));
     return {};
   }
 
@@ -385,10 +435,16 @@ async function handleSounds(client: Client<true>, guild: Guild, req: IncomingMes
   if (part === 'discord') {
     const sound = soundOf(guild, name);
     if (method === 'PUT') {
-      const { start } = await readJson(req);
+      const { start, replacing } = await readJson(req);
       if (start !== undefined && (typeof start !== 'number' || !(start >= 0))) throw new Refused(400, 'Start has to be a number of seconds.');
-      refuse(guild, await addToDiscord(guild, sound, start));
-      note(`Added **${sound.name}** to Discord’s soundboard`);
+      if (replacing !== undefined) {
+        const outgoing = await discordSoundOf(guild, replacing);
+        refuse(guild, await swapOnDiscord(guild, outgoing, sound, start).catch(cantDo));
+        note(`Swapped **${outgoing.name}** for **${sound.name}** on Discord’s soundboard`);
+      } else {
+        refuse(guild, await addToDiscord(guild, sound, start));
+        note(`Added **${sound.name}** to Discord’s soundboard`);
+      }
     } else if (method === 'DELETE') {
       await discordBoard.remove(guild, sound.name);
       note(`Took **${sound.name}** off Discord’s soundboard`);
@@ -485,6 +541,7 @@ async function handle(client: Client<true>, req: IncomingMessage, res: ServerRes
   if (!guild || !isAllowed(guild.id)) throw new Refused(404, 'The bot isn’t in that server.');
 
   if (section === 'sounds' && rest.length <= 2) return handleSounds(client, guild, req, res, url, rest[0], rest[1]);
+  if (section === 'discord-sounds' && (rest.length === 1 || rest.length === 2)) return handleDiscordSound(client, guild, req, res, rest[0], rest[1]);
   if (section === 'settings' && rest.length <= 1) return handleSettings(guild, req, rest[0]);
   if (section === 'voice' && !rest.length && req.method === 'GET') return voiceList(guild);
   if (section === 'stats' && !rest.length && req.method === 'GET') return statsFor(guild, url);

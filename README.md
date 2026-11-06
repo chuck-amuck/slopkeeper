@@ -305,6 +305,8 @@ Examples:
 /sound remove name:old-meme
 ```
 
+The web UI's Library page also shows everything on Discord's soundboard, including sounds people added there themselves. You can play or preview any of them, save them to the library, and swap one for a library sound. Nothing is lost: a sound that comes off and isn't in the library is saved there first.
+
 ### Even volume
 
 Every sound is measured when it's added, so a whisper and an air horn play about as loud as each other. Your file isn't changed: the bot stores how much to turn each sound up or down and applies that as it plays, so turning it off with `/setup sounds` puts everything back. A quiet sound with one loud spike only comes up until the spike would clip, and no sound is boosted by more than 12 dB, so very quiet sounds can still need `/sound volume`.
@@ -456,9 +458,13 @@ It applies the same rules as `/sound` and `/setup`, and every request needs an `
 | `POST /guilds/:id/game-names/separate` | Puts a spelling back as its own game: `{ "name": "B" }` |
 | `POST /guilds/:id/sounds/:name/trim` | Keeps only part of it, in seconds: `{ "start": 1.5, "end": 4 }` |
 | `POST /guilds/:id/sounds/:name/restore` | Puts a trimmed sound back as it was |
-| `PUT /guilds/:id/sounds/:name/discord` | Copies it to Discord's soundboard: `{ "start": 12.5 }` picks a part of a long sound |
+| `PUT /guilds/:id/sounds/:name/discord` | Copies it to Discord's soundboard: `{ "start": 12.5 }` picks a part of a long sound, `{ "replacing": "<sound id>" }` swaps out a sound there |
 | `DELETE /guilds/:id/sounds/:name/discord` | Takes it off Discord's soundboard |
 | `POST /guilds/:id/discord-sync` | Copies every sound that fits to Discord's soundboard |
+| `GET /guilds/:id/discord-sounds/:soundId/audio` | Downloads the audio of a sound on Discord's soundboard |
+| `POST /guilds/:id/discord-sounds/:soundId/play` | Plays it in a voice channel: `{ "channelId": "..." }` |
+| `POST /guilds/:id/discord-sounds/:soundId/save` | Saves it to the library and links the two |
+| `DELETE /guilds/:id/discord-sounds/:soundId` | Takes it off Discord's soundboard, saving it to the library first |
 | `GET /guilds/:id/voice` | Lists voice channels with people in them, busiest first |
 | `POST /guilds/:id/stop` | Stops whatever is playing |
 | `GET /guilds/:id/game-nights` | Lists upcoming game nights and repeating series, and what a new night can be set to |
@@ -499,9 +505,9 @@ For whoever runs the bot.
    docker compose logs -f slopkeeper
    ```
    The log lists each server it registered commands in, then `Logged in as Slopkeeper#1234 in N servers`.
-5. **Send the invite link** to each server admin. Either use **OAuth2 → URL Generator** with scopes `bot` + `applications.commands` and the permissions View Channels, Send Messages, Embed Links, Connect, Speak, Manage Roles, Create Expressions and Create Events, or fill your application ID (from **General Information**) into this link:
+5. **Send the invite link** to each server admin. Either use **OAuth2 → URL Generator** with scopes `bot` + `applications.commands` and the permissions View Channels, Send Messages, Embed Links, Connect, Speak, Manage Roles, Create Expressions, Manage Expressions and Create Events, or fill your application ID (from **General Information**) into this link:
    ```
-   https://discord.com/oauth2/authorize?client_id=YOUR_APPLICATION_ID&scope=bot+applications.commands&permissions=26388550667264
+   https://discord.com/oauth2/authorize?client_id=YOUR_APPLICATION_ID&scope=bot+applications.commands&permissions=26389624409088
    ```
 
 Local dev (Node 24+): `npm install && npm run dev`. `npm run typecheck` runs tsc, and `npm test` runs the tests (the audio ones need ffmpeg and are skipped without it). GitHub Actions runs both on every push, and the image is only built if they pass.
@@ -517,9 +523,10 @@ For the server admin. You need the **Manage Server** permission in the server.
 1. **Add the bot.** Open the invite link from the host, pick your server, leave every permission ticked and click **Authorize**. If the bot is running, it posts a short hello in your server's system channel.
    - **Manage Roles** lets `/notify` hand out the hop-on role, and `/gamerole` make and hand out game roles.
    - **Create Expressions** lets the bot copy sounds into the server's soundboard.
+   - **Manage Expressions** lets it swap out or take off sounds other people added there. Everything else works without it.
    - **Create Events** lets game nights show up in the server's Events list.
 
-   If the bot was added with an older invite link, its role is missing **Create Events**. Either open the new link again (it updates the permissions without removing the bot), or tick **Create Events** on the bot's role in **Server Settings → Roles**.
+   If the bot was added with an older invite link, its role may be missing **Create Events** or **Manage Expressions**. Either open the new link again (it updates the permissions without removing the bot), or tick them on the bot's role in **Server Settings → Roles**.
 2. **Pick the announce channel:** `/setup announce-channel channel:#somewhere`. This is where hop-on pings, session recaps, the weekly leaderboard and sale alerts are posted. If the bot can't post there, it tells you which permission to give its role.
 3. **Make the hop-on role** (optional, for `/notify`).
    - In **Server Settings → Roles**, create a role such as `hop-on`, and drag the bot's role (**Slopkeeper**) **above** it. Discord only lets a bot hand out roles below its own.

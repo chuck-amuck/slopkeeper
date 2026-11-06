@@ -1,4 +1,4 @@
-import { DiscordAPIError, RESTJSONErrorCodes, type Guild } from 'discord.js';
+import { DiscordAPIError, PermissionFlagsBits, RESTJSONErrorCodes, type Guild } from 'discord.js';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { db } from './db.ts';
@@ -7,6 +7,7 @@ import { db } from './db.ts';
 const MAX_SECONDS = 5.2;
 export const CLIP_SECONDS = 5;
 const MAX_BYTES = 512 * 1024;
+const DOWNLOAD_TIMEOUT_MS = 15_000;
 const SLOTS_BY_TIER = [8, 24, 36, 48];
 const CUSTOM_EMOJI = /^<a?:\w+:(\d+)>$/;
 
@@ -39,9 +40,48 @@ export async function hasAudio(file: string): Promise<boolean> {
   }
 }
 
-export async function slots(guild: Guild): Promise<{ used: number; total: number }> {
-  const sounds = await guild.soundboardSounds.fetch();
-  return { used: sounds.size, total: SLOTS_BY_TIER[guild.premiumTier] ?? SLOTS_BY_TIER[0] };
+/** A sound on the server's Discord soundboard, whoever added it */
+export interface DiscordSound {
+  id: string;
+  name: string;
+  emoji: string | null;
+  volume: number;
+  url: string;
+  /** Saved in the library under this name, if it is */
+  library: string | null;
+  removable: boolean;
+}
+
+/** What's on the server's Discord soundboard and how many slots it has */
+export async function board(guild: Guild): Promise<{ used: number; total: number; sounds: DiscordSound[] }> {
+  const live = await guild.soundboardSounds.fetch();
+  const saved = new Map([...synced(guild.id)].map(([name, id]) => [id, name]));
+  const canManage = guild.members.me?.permissions.has(PermissionFlagsBits.ManageGuildExpressions) ?? false;
+  const sounds = [...live].map(([id, s]) => ({
+    id,
+    name: s.name ?? id,
+    // Custom emoji can only be shown if they're this server's
+    emoji: s.emoji?.id ? (guild.emojis.cache.get(s.emoji.id)?.toString() ?? null) : (s.emoji?.name ?? null),
+    volume: s.volume ?? 1,
+    url: s.url,
+    library: saved.get(id) ?? null,
+    // Discord doesn't always say who added a sound, so one with nobody named is worth trying
+    removable: canManage || !s.user || s.user.id === guild.client.user.id,
+  }));
+  return { used: live.size, total: SLOTS_BY_TIER[guild.premiumTier] ?? SLOTS_BY_TIER[0], sounds };
+}
+
+/** Downloads a sound's audio from Discord, with the extension to save it under */
+export async function download(sound: DiscordSound): Promise<{ data: Buffer; ext: string }> {
+  const res = await fetch(sound.url, { signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS) });
+  if (!res.ok) throw new Error(`Discord wouldn’t hand over ${sound.name}`);
+  const type = res.headers.get('content-type') ?? '';
+  return { data: Buffer.from(await res.arrayBuffer()), ext: type.includes('ogg') ? '.ogg' : '.mp3' };
+}
+
+/** Ties a library sound to a copy already on Discord */
+export function link(guildId: string, name: string, soundId: string) {
+  db.prepare('INSERT OR REPLACE INTO discord_sounds (guild_id, name, sound_id) VALUES (?, ?, ?)').run(guildId, name, soundId);
 }
 
 function emojiFields(emoji: string | undefined | null) {
@@ -52,11 +92,18 @@ function emojiFields(emoji: string | undefined | null) {
 
 export const FULL = 'Discord’s soundboard is full';
 export const NO_PERMISSION = 'the bot’s role needs the Create Expressions permission';
+export const NO_MANAGE = 'the bot’s role needs the Manage Expressions permission to change sounds it didn’t add';
 
 export const fits = (seconds: number) => seconds <= MAX_SECONDS;
 
 /** The way to add a long sound from Discord, which the web UI swaps for its own */
 export const PICK_A_PART = `use \`/sound discord-add\` with \`start:\` to pick a part`;
+
+/** The same, for changing or removing a sound that's already there, which may be someone else's */
+const explainChange = (err: unknown) => {
+  const why = explain(err);
+  return why === NO_PERMISSION ? NO_MANAGE : why;
+};
 
 function explain(err: unknown): string {
   if (err instanceof DiscordAPIError) {
@@ -72,19 +119,28 @@ function explain(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-/**
- * Copies a sound into the server's Discord soundboard, replacing any earlier copy.
- * Returns null on success or the reason it couldn't be added.
- */
-export async function upload(guild: Guild, sound: SyncSound, volume: number, start?: number): Promise<string | null> {
+/** Why a sound can't go on Discord's soundboard as asked, or null if it can */
+export async function uploadProblem(sound: SyncSound, start?: number): Promise<string | null> {
   if (sound.name.length < 2) return 'Discord needs names of at least 2 characters';
   try {
     const length = await durationOf(sound.file);
     if (start === undefined && !fits(length)) {
       return `it’s ${length.toFixed(1)} s long and Discord allows ${CLIP_SECONDS} s; ${PICK_A_PART}`;
     }
-    if (start !== undefined && start >= length) return `it’s only ${length.toFixed(1)} s long`;
+    return start !== undefined && start >= length ? `it’s only ${length.toFixed(1)} s long` : null;
+  } catch (err) {
+    return explain(err);
+  }
+}
 
+/**
+ * Copies a sound into the server's Discord soundboard, replacing any earlier copy.
+ * Returns null on success or the reason it couldn't be added.
+ */
+export async function upload(guild: Guild, sound: SyncSound, volume: number, start?: number): Promise<string | null> {
+  const problem = await uploadProblem(sound, start);
+  if (problem) return problem;
+  try {
     const args = ['-hide_banner', '-loglevel', 'error', '-ss', String(start ?? 0), '-t', String(CLIP_SECONDS), '-i', sound.file];
     const { stdout: clip } = await exec('ffmpeg', [...args, '-vn', '-ac', '2', '-ar', '48000', '-c:a', 'libmp3lame', '-b:a', '128k', '-f', 'mp3', 'pipe:1'], {
       encoding: 'buffer',
@@ -117,7 +173,7 @@ export async function remove(guild: Guild, name: string) {
     await guild.soundboardSounds.delete(id);
   } catch (err) {
     // Someone may have deleted it in Discord already
-    if (!(err instanceof DiscordAPIError && err.status === 404)) throw new Error(explain(err));
+    if (!(err instanceof DiscordAPIError && err.status === 404)) throw new Error(explainChange(err));
   }
   forget(id);
 }
@@ -135,7 +191,7 @@ export async function rename(guild: Guild, name: string, newName: string): Promi
       forget(id);
       return null;
     }
-    return explain(err);
+    return explainChange(err);
   }
   db.prepare('UPDATE OR REPLACE discord_sounds SET name = ? WHERE sound_id = ?').run(newName, id);
   return null;

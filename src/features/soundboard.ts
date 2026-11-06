@@ -29,6 +29,7 @@ import {
   type VoiceState,
 } from 'discord.js';
 import { copyFileSync, existsSync, mkdirSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { logActivity } from '../activity.ts';
 import { config } from '../config.ts';
@@ -39,6 +40,7 @@ import { Mixer } from '../mixer.ts';
 import { isAllowed, setting } from '../settings.ts';
 import { cutAudio } from '../trim.ts';
 import type { Feature } from '../types.ts';
+import type { DiscordSound } from '../discordSounds.ts';
 import { humansIn, requestTimeout, servedGuilds } from '../util.ts';
 
 const EXTENSIONS = ['.mp3', '.ogg', '.wav', '.m4a', '.opus', '.webm', '.flac'];
@@ -249,6 +251,8 @@ export async function removeSound(guild: Guild, sound: Sound): Promise<string | 
     () => null,
     (err: Error) => err.message,
   );
+  // Whatever's still on Discord is no longer this sound
+  if (problem) discordBoard.forget(discordBoard.synced(guild.id).get(sound.name)!);
   rmSync(sound.file);
   dropOriginal(guild.id, sound.name);
   setEmoji(guild.id, sound.name, null);
@@ -344,6 +348,53 @@ export async function restoreSound(guild: Guild, sound: Sound): Promise<boolean>
 }
 
 export const addToDiscord = (guild: Guild, sound: Sound, start?: number) => discordBoard.upload(guild, sound, discordVolume(guild.id, sound.name), start);
+
+/** A library name for a Discord sound, which can be called anything, that no sound is using */
+function freeName(guildId: string, sound: DiscordSound) {
+  const cleaned = sound.name.normalize('NFKD').replace(/\p{M}/gu, '').toLowerCase().replace(/[^a-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 32);
+  const base = cleaned.length >= 2 ? cleaned : `sound-${sound.id.slice(-6)}`;
+  const taken = new Set(listSounds(guildId).map((s) => s.name));
+  let name = base;
+  for (let n = 2; taken.has(name); n++) name = `${base.slice(0, 32 - String(n).length - 1)}-${n}`;
+  return name;
+}
+
+/** Copies a Discord sound into the library and links the two. Returns the name it's under. Throws if it couldn't, changing nothing */
+export async function saveFromDiscord(guild: Guild, sound: DiscordSound): Promise<string> {
+  if (sound.library) return sound.library;
+  const name = freeName(guild.id, sound);
+  const { data, ext } = await discordBoard.download(sound);
+  if (!(await addSound(guild, name, ext, data, sound.emoji ?? undefined, false))) throw new Error(`Discord’s copy of ${sound.name} couldn’t be read`);
+  discordBoard.link(guild.id, name, sound.id);
+  return name;
+}
+
+/** Frees a sound's slot, saving it to the library first so it can't be lost */
+export async function takeOffDiscord(guild: Guild, sound: DiscordSound) {
+  await discordBoard.remove(guild, await saveFromDiscord(guild, sound));
+}
+
+/** Puts a library sound in another's slot. Returns why it couldn't, with the old sound back in place */
+export async function swapOnDiscord(guild: Guild, outgoing: DiscordSound, sound: Sound, start?: number): Promise<string | null> {
+  if (sound.onDiscord) return `${sound.name} is already on Discord’s soundboard.`;
+  const problem = await discordBoard.uploadProblem(sound, start);
+  if (problem) return problem;
+  const name = await saveFromDiscord(guild, outgoing);
+  await discordBoard.remove(guild, name);
+  const failed = await addToDiscord(guild, sound, start);
+  if (!failed) return null;
+  const stuck = await addToDiscord(guild, findSound(guild.id, name)!);
+  return stuck ? `${failed}, and ${name} couldn’t go back on, but it’s safe in the library` : failed;
+}
+
+/** Plays a Discord sound in voice. One that isn't in the library plays from a temporary copy, as loud as it is on Discord */
+export async function playDiscordSound(channel: VoiceBasedChannel, sound: DiscordSound): Promise<string | null> {
+  const saved = sound.library ? findSound(channel.guild.id, sound.library) : undefined;
+  if (saved) return playFromWeb(channel, saved);
+  const file = path.join(tmpdir(), `slopkeeper-discord-${sound.id}`);
+  if (!existsSync(file)) writeFileSync(file, (await discordBoard.download(sound)).data);
+  return play(channel, file, sound.volume / VOLUME);
+}
 
 /** Copies every sound that fits into Discord's soundboard, until it's full */
 export async function syncToDiscord(guild: Guild) {
@@ -772,7 +823,7 @@ export const soundboard: Feature = {
           const problem = await addToDiscord(i.guild, sound, i.options.getNumber('start') ?? undefined);
           if (problem) return i.editReply(`Couldn’t add **${sound.name}** to Discord’s soundboard: ${problem}.`);
           logActivity(i.guildId, i.user.id, `Added **${sound.name}** to Discord’s soundboard`);
-          const { used, total } = await discordBoard.slots(i.guild);
+          const { used, total } = await discordBoard.board(i.guild);
           await i.editReply(`🟦 **${sound.name}** is on Discord’s soundboard (${used}/${total} slots used).`);
           return refreshPanels(i.client, i.guildId);
         }
@@ -784,7 +835,7 @@ export const soundboard: Feature = {
           await i.deferReply();
           await discordBoard.remove(i.guild, sound.name);
           logActivity(i.guildId, i.user.id, `Took **${sound.name}** off Discord’s soundboard`);
-          const { used, total } = await discordBoard.slots(i.guild);
+          const { used, total } = await discordBoard.board(i.guild);
           await i.editReply(`Took **${sound.name}** off Discord’s soundboard; it’s still on the bot’s (${used}/${total} slots used).`);
           return refreshPanels(i.client, i.guildId);
         }
@@ -793,7 +844,7 @@ export const soundboard: Feature = {
           await i.deferReply();
           const { added, tooLong, failed, waiting, blocker } = await syncToDiscord(i.guild);
           if (added.length) logActivity(i.guildId, i.user.id, `Copied ${added.length} sound${added.length === 1 ? '' : 's'} to Discord’s soundboard`);
-          const { used, total } = await discordBoard.slots(i.guild);
+          const { used, total } = await discordBoard.board(i.guild);
           const lines = [
             added.length ? `🟦 Added to Discord’s soundboard: ${added.join(', ')}` : 'Nothing new to add to Discord’s soundboard.',
             blocker && `Stopped because ${blocker}. Still bot-only: ${waiting.join(', ')}`,
