@@ -5,10 +5,11 @@ import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
-import { mock, test } from 'node:test';
+import { mock, test, type TestContext } from 'node:test';
 import { db } from '../src/db.ts';
 import { recentActivity } from '../src/activity.ts';
 import { cantJoin, dropMissingEmoji, joinSounds, leaveIfAlone, play, playJoinSound, saveUpload, setJoinSound, soundboard, soundGain } from '../src/features/soundboard.ts';
+import { Mixer } from '../src/mixer.ts';
 import { setSetting } from '../src/settings.ts';
 
 /** A voice channel that never answers, like one the bot gets no reply from */
@@ -286,54 +287,85 @@ test('it plays if the bot is already in that channel', async (t) => {
   assert.equal(await headsFor(null, 'voice'), null, 'the first one counted towards the cooldown');
 });
 
-test('a delayed join sound starts once the delay is up', async (t) => {
-  const { state } = await joiner(t, 'join-delay');
-  setSetting('join-delay', 'joinSoundDelayMs', 30);
-  const playing = playJoinSound(state(null), state('voice')).catch(() => {});
+/** Starts a join with a delay, once `person` is in voice, and returns how to finish connecting and what's been played */
+async function delayedJoin(t: TestContext, guildId: string, ms: number) {
+  const { state, here, headsFor } = await joiner(t, guildId);
+  const added = t.mock.method(Mixer.prototype, 'add', () => {});
+  setSetting(guildId, 'joinSoundDelayMs', ms);
+  const finished = playJoinSound(state(null), state('voice'));
   await new Promise((resolve) => setImmediate(resolve));
-  assert.equal(getVoiceConnection('join-delay'), undefined, 'not yet');
-  await new Promise((resolve) => setTimeout(resolve, 60));
-  assert.equal(getVoiceConnection('join-delay')?.joinConfig.channelId, 'voice');
-  void playing;
+  const connected = () => {
+    const connection = getVoiceConnection(guildId)!;
+    connection.state = { ...connection.state, status: VoiceConnectionStatus.Ready } as never;
+  };
+  return { finished, connected, played: () => added.mock.callCount(), here, headsFor, state };
+}
+
+const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+test('the bot connects straight away, and the delay starts once it has', async (t) => {
+  const { finished, connected, played } = await delayedJoin(t, 'join-delay', 30);
+  assert.equal(getVoiceConnection('join-delay')?.joinConfig.channelId, 'voice', 'it joined without waiting');
+  await pause(60);
+  assert.equal(played(), 0, 'still connecting, so the delay hasn’t begun');
+  connected();
+  await pause(5);
+  assert.equal(played(), 0, 'connected, and waiting');
+  await finished;
+  assert.equal(played(), 1);
 });
 
-test('leaving before the delay is up plays nothing, and doesn’t use up the cooldown', async (t) => {
-  const { state, here, headsFor } = await joiner(t, 'join-left');
-  setSetting('join-left', 'joinSoundDelayMs', 10);
-  const leaving = playJoinSound(state(null), state('voice'));
+test('a sound plays right after connecting when there’s no delay', async (t) => {
+  const { finished, connected, played } = await delayedJoin(t, 'join-now', 0);
+  assert.equal(played(), 0);
+  connected();
+  await finished;
+  assert.equal(played(), 1);
+});
+
+test('leaving during the delay plays nothing, and doesn’t use up the cooldown', async (t) => {
+  const { finished, connected, played, here, state } = await delayedJoin(t, 'join-left', 10);
+  connected();
   here.delete('person');
-  await leaving;
-  assert.equal(getVoiceConnection('join-left'), undefined);
+  await finished;
+  assert.equal(played(), 0);
   setSetting('join-left', 'joinSoundDelayMs', 0);
   here.set('person', { channelId: 'voice' });
-  assert.equal(await headsFor(null, 'voice'), 'voice');
+  await playJoinSound(state(null), state('voice'));
+  assert.equal(played(), 1);
 });
 
 test('moving to another channel during the delay plays nothing', async (t) => {
-  const { state, here } = await joiner(t, 'join-moved');
-  setSetting('join-moved', 'joinSoundDelayMs', 10);
-  const moving = playJoinSound(state(null), state('voice'));
+  const { finished, connected, played, here } = await delayedJoin(t, 'join-moved', 10);
+  connected();
   here.set('person', { channelId: 'other' });
-  await moving;
-  assert.equal(getVoiceConnection('join-moved'), undefined);
+  await finished;
+  assert.equal(played(), 0);
 });
 
-test('a bot that gets busy during the delay isn’t pulled away', async (t) => {
-  const { state } = await joiner(t, 'join-taken');
-  setSetting('join-taken', 'joinSoundDelayMs', 10);
-  const waiting = playJoinSound(state(null), state('voice'));
-  joinVoiceChannel({ channelId: 'elsewhere', guildId: 'join-taken', adapterCreator: () => ({ sendPayload: () => true, destroy() {} }) });
-  await waiting;
-  assert.equal(getVoiceConnection('join-taken')?.joinConfig.channelId, 'elsewhere');
+test('a bot sent elsewhere during the delay doesn’t play there', async (t) => {
+  const { finished, connected, played } = await delayedJoin(t, 'join-taken', 10);
+  connected();
+  getVoiceConnection('join-taken')!.joinConfig.channelId = 'elsewhere';
+  await finished;
+  assert.equal(played(), 0);
 });
 
-test('joining twice during the delay plays once', async (t) => {
-  const { state } = await joiner(t, 'join-twice');
-  setSetting('join-twice', 'joinSoundDelayMs', 10);
-  const first = playJoinSound(state(null), state('voice')).catch(() => {});
+test('joining twice before it plays plays once', async (t) => {
+  const { finished, connected, played, state } = await delayedJoin(t, 'join-twice', 10);
   await playJoinSound(state(null), state('voice'));
-  void first;
-  assert.equal(getVoiceConnection('join-twice'), undefined, 'the second one returned straight away, without playing');
+  connected();
+  await finished;
+  assert.equal(played(), 1);
+});
+
+test('the bot doesn’t stay forever after a sound it never played', async (t) => {
+  const { finished, connected, here } = await delayedJoin(t, 'join-idle', 10);
+  const timers = t.mock.method(globalThis, 'setTimeout');
+  connected();
+  here.delete('person');
+  await finished;
+  assert.ok(timers.mock.calls.some((c) => c.arguments[1] === 5 * 60_000), 'the idle timer is running');
 });
 
 /** Runs a /sound subcommand and returns what it replied */
