@@ -1,6 +1,7 @@
 import './helpers.ts';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { ChannelType } from 'discord.js';
 import { recentActivity } from '../src/activity.ts';
 import { checkSetting, setup } from '../src/features/setup.ts';
 import { setting } from '../src/settings.ts';
@@ -11,7 +12,7 @@ function run(guildId: string, sub: string, values: Record<string, unknown>) {
   return setup.commands![0].run({
     inCachedGuild: () => true,
     guildId,
-    guild: { id: guildId },
+    guild: { id: guildId, members: { me: {} } },
     user: { id: 'admin' },
     options: { getSubcommand: () => sub, getInteger: pick, getBoolean: pick, getString: pick, getRole: pick, getChannel: pick },
     reply: async () => {},
@@ -121,4 +122,27 @@ test('text to speech settings take a known voice, a role and sensible limits', (
   assert.match((checkSetting(guild, 'ttsMaxChars', 501) as { error: string }).error, /20 to 500/);
   assert.deepEqual(checkSetting(guild, 'ttsCooldownSec', 0), { value: 0 });
   assert.match((checkSetting(guild, 'ttsCooldownSec', -1) as { error: string }).error, /0 to 3600/);
+});
+
+test('the channel read aloud has to be one the bot can see', () => {
+  const channel = (see: boolean) => ({ id: 'general', type: ChannelType.GuildText, permissionsFor: () => ({ has: () => see }), toString: () => '#general' });
+  const guild = (see: boolean) => ({ members: { me: {} }, channels: { cache: new Map([['general', channel(see)]]) } }) as never;
+  assert.deepEqual(checkSetting(guild(true), 'ttsChannel', 'general'), { value: 'general' });
+  assert.match((checkSetting(guild(false), 'ttsChannel', 'general') as { error: string }).error, /can’t see #general/);
+  assert.deepEqual(checkSetting(guild(true), 'ttsChannel', 'nope'), { error: 'Pick a text channel.' });
+  assert.deepEqual(checkSetting(guild(true), 'ttsChannelWho', 'voice'), { value: 'voice' });
+  assert.match((checkSetting(guild(true), 'ttsChannelWho', 'cats') as { error: string }).error, /Read everyone/);
+  assert.equal(setting('speech', 'ttsChannel'), null);
+  assert.equal(setting('speech', 'ttsChannelWho'), 'everyone');
+});
+
+test('/setup speech-channel sets, keeps and clears the channel', async () => {
+  const general = { id: 'general', type: ChannelType.GuildText, permissionsFor: () => ({ has: () => true }) };
+  await run('reading', 'speech-channel', { channel: general });
+  assert.equal(setting('reading', 'ttsChannel'), 'general');
+  await run('reading', 'speech-channel', { who: 'voice' });
+  assert.equal(setting('reading', 'ttsChannel'), 'general', 'choosing who alone keeps the channel');
+  assert.equal(setting('reading', 'ttsChannelWho'), 'voice');
+  await run('reading', 'speech-channel', {});
+  assert.equal(setting('reading', 'ttsChannel'), '');
 });

@@ -392,6 +392,10 @@ The web UI's Library page also shows everything on Discord's soundboard, includi
 
 It needs the [voice container](#the-voice-container).
 
+**Reading a channel aloud:** `/setup speech-channel` or Settings picks a text channel, and the bot reads out what people type there, starting with who said it. It plays in the writer's voice channel, or else the one the bot is in, or else the busiest one, and reads nothing if nobody's in voice. `who` limits it to people in voice.
+
+It skips bots, images, links with no words and anything over the longest line, and leaves out spoilers and code blocks. There's no wait between messages, but if 5 lines are already waiting, new ones are skipped so it can't fall behind. The role limit applies, and these lines aren't logged in Activity.
+
 ### Who can change sounds
 
 Everyone can, until a role is set with `/setup sound-managers`. Then only people with that role or **Manage Server** can use `/sound add`, `emoji`, `remove`, `restore`, `volume`, `discord-add`, `discord-remove` and `discord-sync`, or the changes under a panel's **⚙️ Settings**. Everyone else can still play and test sounds, stop playback, post a panel and set their own join sound. If the role is deleted, only people with **Manage Server** can change sounds until a new one is set.
@@ -519,6 +523,8 @@ So the host can change a default for every server at once, and each server can s
 | Longest spoken line, in characters | `speech` | `TTS_MAX_CHARS` | 200 |
 | Seconds between one person's spoken lines | `speech` | `TTS_COOLDOWN_SEC` | 5 |
 | Who can use `/say` | `speech-role` | | everyone |
+| Channel read aloud | `speech-channel` | | off |
+| Whose messages are read | `speech-channel` | `TTS_CHANNEL_WHO` (`everyone` or `voice`) | everyone |
 
 ## Multiple servers
 
@@ -704,7 +710,7 @@ For whoever runs the bot.
 
 1. **Create the application.** Go to https://discord.com/developers/applications → **New Application**. Then, on the **Bot** tab:
    - **Reset Token** and copy it into `.env` as `DISCORD_TOKEN`. Keep it secret: anyone with the token can control the bot.
-   - Enable **Presence Intent** and **Server Members Intent**. The bot crashes on startup with `Used disallowed intents` without them.
+   - Enable **Presence Intent**, **Server Members Intent** and **Message Content Intent**. The bot crashes on startup with `Used disallowed intents` without them.
    - If someone else is adding the bot to their server, turn **Public Bot** on. Otherwise only you can add it. Leave **Requires OAuth2 Code Grant** off.
 2. **Get a Steam Web API key** at https://steamcommunity.com/dev/apikey (any domain name works) and set `STEAM_API_KEY`.
 3. **Fill in `.env`** (`cp .env.example .env`). If **Public Bot** is on, set `ALLOWED_GUILD_IDS` to the servers you expect. Server admins can send you their server ID (right-click the server icon → **Copy Server ID**, with Developer Mode on).

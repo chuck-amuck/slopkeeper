@@ -6,12 +6,12 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { after, afterEach, beforeEach, test, type TestContext } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { getVoiceConnection, VoiceConnectionStatus } from '@discordjs/voice';
+import { getVoiceConnection, joinVoiceChannel, VoiceConnectionStatus } from '@discordjs/voice';
 import { PermissionFlagsBits } from 'discord.js';
 import { recentActivity } from '../src/activity.ts';
 import { config } from '../src/config.ts';
 import { Mixer } from '../src/mixer.ts';
-import { lengthFor, say, speak, speechFor } from '../src/features/say.ts';
+import { lengthFor, readMessage, say, speak, speechFor } from '../src/features/say.ts';
 import { soundboard, stopPlayback } from '../src/features/soundboard.ts';
 import { setSetting } from '../src/settings.ts';
 
@@ -71,7 +71,7 @@ function fakeVoice(t: TestContext, answer?: (text: string, signal: AbortSignal) 
 
 const leftovers = () => readdirSync(tmpdir()).filter((f) => f.startsWith('slopkeeper-say-')).flatMap((f) => readdirSync(path.join(tmpdir(), f)));
 
-speak.setup!({} as never);
+speak.setup!({ on() {} } as never);
 beforeEach(() => void (config.voiceUrl = 'http://voice.test'));
 afterEach(() => void (config.voiceUrl = NO_URL));
 after(() => {
@@ -324,4 +324,183 @@ test('with a role set, /say takes that role or Manage Server', { skip: !hasFfmpe
   assert.match(await run(t, voice), /Only <@&talkers> and people with \*\*Manage Server\*\*/);
   assert.equal(await run(t, voice, { roles: ['talkers'] }), 'Said it.');
   assert.equal(await run(t, voice, { manager: true }), 'Said it.');
+});
+
+/** A server with people in voice, and a message in its read-aloud channel */
+function chat(options: { writerIn?: string | null; rooms?: Record<string, string[]>; afk?: string; roles?: string[]; manager?: boolean } = {}) {
+  const voice = channel();
+  const { guild } = voice as never as { guild: { id: string; afkChannelId?: string; channels: { cache: Map<string, unknown> }; voiceAdapterCreator: unknown } };
+  const joined: string[] = [];
+  guild.voiceAdapterCreator = () => ({ sendPayload: (p: { d: { channel_id: string } }) => joined.push(p.d.channel_id) > 0, destroy() {} });
+  setSetting(guild.id, 'ttsChannel', 'general');
+  guild.afkChannelId = options.afk;
+  const rooms = new Map<string, unknown>();
+  for (const [id, people] of Object.entries(options.rooms ?? { lounge: ['someone'] })) {
+    const members = new Map(people.map((p) => [p, { id: p, user: { bot: p.startsWith('bot') } }]));
+    const room = { ...(voice as object), id, members, isVoiceBased: () => true };
+    rooms.set(id, room);
+    guild.channels.cache.set(id, room);
+  }
+  guild.channels.cache.set('general', { isVoiceBased: () => false });
+  const message = (content: string, extra: Record<string, unknown> = {}) =>
+    ({
+      inGuild: () => true,
+      guild,
+      channelId: 'general',
+      content,
+      system: false,
+      webhookId: null,
+      author: { id: 'ana', bot: false, displayName: 'ana' },
+      member: {
+        displayName: 'Ana',
+        voice: { channel: options.writerIn ? rooms.get(options.writerIn) : null },
+        roles: { cache: new Map((options.roles ?? []).map((r) => [r, {}])) },
+        permissions: { has: () => options.manager ?? false },
+      },
+      ...extra,
+    }) as never;
+  return { message, id: guild.id, joined, guild };
+}
+
+/** Which voice channels lines went to, and what was said */
+function heard(t: TestContext) {
+  const asked = fakeVoice(t);
+  t.mock.method(Mixer.prototype, 'add', (_file: string, _gain?: number, onEnd?: () => void) => onEnd?.());
+  return { said: async () => (await sleep(150), asked.map((a) => a.text)) };
+}
+
+test('reads the chosen channel, saying who it is, and nothing else', { skip: !hasFfmpeg }, async (t) => {
+  const { said } = heard(t);
+  const { message } = chat();
+  await readMessage(message('hello everyone'));
+  await readMessage(message('not this one', { channelId: 'elsewhere' }));
+  assert.deepEqual(await said(), ['Ana says, hello everyone']);
+});
+
+test('reads nothing until a channel is picked, or with speech off or unset', { skip: !hasFfmpeg }, async (t) => {
+  const { said } = heard(t);
+  const { message, id } = chat();
+  setSetting(id, 'ttsChannel', '');
+  await readMessage(message('one'));
+  setSetting(id, 'ttsChannel', 'general');
+  setSetting(id, 'tts', false);
+  await readMessage(message('two'));
+  setSetting(id, 'tts', true);
+  config.voiceUrl = null;
+  await readMessage(message('three'));
+  config.voiceUrl = 'http://voice.test';
+  assert.deepEqual(await said(), []);
+});
+
+test('skips what can’t or shouldn’t be read', { skip: !hasFfmpeg }, async (t) => {
+  const { said } = heard(t);
+  const { message, id } = chat();
+  setSetting(id, 'ttsMaxChars', 20);
+  for (const content of ['', 'https://example.test/a', '🎉', '||secret||', '```\nconst a = 1;\n```', 'x'.repeat(21)]) await readMessage(message(content));
+  await readMessage(message('from a bot', { author: { id: 'b', bot: true } }));
+  await readMessage(message('from a webhook', { webhookId: 'w' }));
+  await readMessage(message('joined', { system: true }));
+  await readMessage(message('in a DM', { inGuild: () => false }));
+  assert.deepEqual(await said(), []);
+});
+
+test('leaves out spoilers and code, and says a link in a sentence', { skip: !hasFfmpeg }, async (t) => {
+  const { said } = heard(t);
+  const { message } = chat();
+  await readMessage(message('the killer is ||Ben|| and see https://example.test/a ```x = 1```'));
+  assert.deepEqual(await said(), ['Ana says, the killer is and see link']);
+});
+
+test('only says a name again after a pause, or when someone else talks', { skip: !hasFfmpeg }, async (t) => {
+  const { said } = heard(t);
+  const { message } = chat();
+  const real = Date.now();
+  let now = real;
+  t.mock.method(Date, 'now', () => now);
+  const ben = { author: { id: 'ben', bot: false }, member: { displayName: 'Ben', voice: { channel: null }, roles: { cache: new Map() } } };
+  await readMessage(message('one'));
+  now += 29_000;
+  await readMessage(message('two'));
+  await readMessage(message('three', ben));
+  await readMessage(message('four'));
+  now += 31_000;
+  await readMessage(message('five'));
+  assert.deepEqual(await said(), ['Ana says, one', 'two', 'Ben says, three', 'Ana says, four', 'Ana says, five']);
+});
+
+test('plays where the writer is, then where the bot is, then the busiest channel', { skip: !hasFfmpeg }, async (t) => {
+  heard(t);
+  const played = t.mock.method(Mixer.prototype, 'add', (_file: string, _gain?: number, onEnd?: () => void) => onEnd?.());
+  const rooms = { small: ['a'], big: ['b', 'c', 'bot1', 'bot2'], bigger: ['d', 'e', 'f'], empty: ['bot3'], afk: ['g', 'h', 'i', 'j'] };
+  const where = async (setup: Parameters<typeof chat>[0], bot?: string) => {
+    const { message, id, joined, guild } = chat({ rooms, afk: 'afk', ...setup });
+    if (bot) {
+      joinVoiceChannel({ channelId: bot, guildId: id, adapterCreator: guild.voiceAdapterCreator } as never);
+      await sleep(10);
+    }
+    await readMessage(message('hello'));
+    return joined.at(-1);
+  };
+  assert.equal(await where({ writerIn: 'small' }), 'small');
+  assert.equal(await where({ writerIn: 'afk' }), 'bigger', 'the AFK channel doesn’t count, even with the writer in it');
+  assert.equal(await where({}), 'bigger');
+  assert.equal(await where({}, 'small'), 'small');
+  assert.equal(await where({}, 'empty'), 'bigger', 'the bot sitting alone doesn’t count');
+  assert.ok(played.mock.callCount() >= 4);
+});
+
+test('reads nothing with nobody in voice', { skip: !hasFfmpeg }, async (t) => {
+  const { said } = heard(t);
+  const { message } = chat({ rooms: { empty: ['bot1'] } });
+  await readMessage(message('hello'));
+  assert.deepEqual(await said(), []);
+});
+
+test('can be limited to people in voice', { skip: !hasFfmpeg }, async (t) => {
+  const { said } = heard(t);
+  const { message, id } = chat();
+  setSetting(id, 'ttsChannelWho', 'voice');
+  await readMessage(message('not in voice'));
+  assert.deepEqual(await said(), []);
+  const inVoice = chat({ writerIn: 'lounge' });
+  setSetting(inVoice.id, 'ttsChannelWho', 'voice');
+  await readMessage(inVoice.message('in voice'));
+  assert.deepEqual(await said(), ['Ana says, in voice']);
+});
+
+test('the role limit applies', { skip: !hasFfmpeg }, async (t) => {
+  const { said } = heard(t);
+  for (const [options, text] of [[{}, 'no role'], [{ roles: ['talkers'] }, 'has it'], [{ manager: true }, 'manager']] as [Parameters<typeof chat>[0], string][]) {
+    const { message, id } = chat(options);
+    setSetting(id, 'ttsRole', 'talkers');
+    await readMessage(message(text));
+  }
+  assert.deepEqual(await said(), ['Ana says, has it', 'Ana says, manager']);
+});
+
+test('there’s no wait between messages, but fast chat can’t pile up, and Stop clears it', { skip: !hasFfmpeg }, async (t) => {
+  fakeVoice(t);
+  const added: (() => void)[] = [];
+  t.mock.method(Mixer.prototype, 'add', (_file: string, _gain?: number, onEnd?: () => void) => void added.push(onEnd!));
+  const { message, id } = chat();
+  setSetting(id, 'ttsCooldownSec', 3600);
+  const sent = ['1', '2', '3', '4', '5', '6', '7', '8'].map((text) => readMessage(message(text)));
+  await sleep(100);
+  assert.equal(added.length, 1, 'one playing');
+  stopPlayback(id);
+  for (const end of added) end();
+  await Promise.all(sent);
+  assert.equal(added.length, 1, 'the 5 waiting were cleared, and the rest were never queued');
+  assert.equal(recentActivity(id, 5).length, 0, 'not logged');
+});
+
+test('a problem joining voice is logged, as nobody’s there to tell', { skip: !hasFfmpeg }, async (t) => {
+  fakeVoice(t);
+  const errors = t.mock.method(console, 'error', () => {});
+  const voice = chat({ rooms: { locked: ['a'] } });
+  const locked = (voice.message('x') as { guild: { channels: { cache: Map<string, { permissionsFor: unknown }> } } }).guild.channels.cache.get('locked')!;
+  locked.permissionsFor = () => ({ has: () => false });
+  await readMessage(voice.message('hello'));
+  assert.equal(errors.mock.callCount(), 1);
+  assert.match(String(errors.mock.calls[0].arguments[0]), /Couldn’t read a message out/);
 });
