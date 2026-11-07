@@ -195,6 +195,8 @@ test('a digest waits for its day, then posts everything together once', async (t
   pendingNote('digest', 'c', 'Hades');
   await maybePostPatches(client);
   assert.equal(sent.length, 1, 'one a day');
+  const left = db.prepare(`SELECT gid FROM patch_posts WHERE guild_id = 'digest' AND posted = 0`).all() as { gid: string }[];
+  assert.deepEqual(left.map((p) => p.gid), ['c'], 'what went out isn’t in next week’s');
 });
 
 // Achievements. Steam, with { apps: { appid: schema }, players: { steam id: achievements or an error status } }
