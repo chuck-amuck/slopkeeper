@@ -2417,6 +2417,49 @@ test('refuses a family with someone who isn’t here, a bot, or themselves', asy
   await refused(405, url, { method: 'POST', json: { with: 'u2' } });
 });
 
+test('tells a game night who still needs to add who on Steam', async (t) => {
+  const key = config.steamApiKey;
+  config.steamApiKey = 'key';
+  t.after(() => void (config.steamApiKey = key));
+  const real = fetch;
+  t.mock.method(globalThis, 'fetch', async (url: URL | string, init?: RequestInit) => (String(url).startsWith(base) ? real(url, init) : new Response(JSON.stringify({ friendslist: { friends: [] } }))));
+  const night = addNight();
+  db.prepare(`INSERT INTO game_night_rsvps (night_id, user_id, status) VALUES (?, 'u3', 'in'), (?, 'nobody', 'in')`).run(night, night);
+  db.prepare(`INSERT INTO steam_links (user_id, steam_id) VALUES ('u1', 's1'), ('u3', 's3'), ('u2', 's2')`).run();
+  const friends = await ok(`/guilds/${GUILD}/game-nights/${night}/friends`);
+  assert.deepEqual(friends.strangers, [[{ name: 'Ana', url: 'https://steamcommunity.com/profiles/s1' }, { name: 'Cy', url: 'https://steamcommunity.com/profiles/s3' }]]);
+  assert.equal(friends.unknown.length, 0);
+  assert.equal(friends.unlinked.length, 1);
+  await refused(404, `/guilds/${GUILD}/game-nights/99999/friends`);
+  const elsewhere = addNight({ guild: 'other-guild' });
+  await refused(404, `/guilds/${GUILD}/game-nights/${elsewhere}/friends`);
+});
+
+test('a friends check says when Steam isn’t set up', async () => {
+  const key = config.steamApiKey;
+  config.steamApiKey = null;
+  const refusal = await refused(409, `/guilds/${GUILD}/game-nights/${addNight()}/friends`);
+  config.steamApiKey = key;
+  assert.match(refusal, /STEAM_API_KEY/);
+});
+
+test('lists joinable lobbies by name, and has none without Steam', async (t) => {
+  assert.deepEqual(await ok(`/guilds/${GUILD}/lobbies`), { lobbies: [] });
+  const key = config.steamApiKey;
+  config.steamApiKey = 'key';
+  t.after(() => void (config.steamApiKey = key));
+  db.prepare(`INSERT INTO steam_links (user_id, steam_id) VALUES ('u1', 's1')`).run();
+  const real = fetch;
+  const fake = t.mock.method(globalThis, 'fetch', async (url: URL | string, init?: RequestInit) =>
+    String(url).startsWith(base) ? real(url, init) : new Response(JSON.stringify({ response: { players: [{ steamid: 's1', gameid: '10', gameextrainfo: 'Valheim', lobbysteamid: '999' }] } })),
+  );
+  assert.deepEqual(await ok(`/guilds/${GUILD}/lobbies`), { lobbies: [{ name: 'Ana', game: 'Valheim', join: 'steam://joinlobby/10/999/s1' }] });
+  fake.mock.mockImplementation(async (url: URL | string, init?: RequestInit) => (String(url).startsWith(base) ? real(url, init) : new Response('', { status: 503 })));
+  const quiet = t.mock.method(console, 'error', () => {});
+  assert.match(await refused(502, `/guilds/${GUILD}/lobbies`), /Steam couldn’t be reached/);
+  assert.equal(quiet.mock.callCount(), 1);
+});
+
 test('says how many are playing a game on Steam, and refuses nonsense', async (t) => {
   const real = fetch;
   t.mock.method(globalThis, 'fetch', async (url: string, init?: RequestInit) => (String(url).startsWith(base) ? real(url, init) : new Response(JSON.stringify({ response: { player_count: 42 } }))));

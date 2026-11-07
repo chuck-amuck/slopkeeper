@@ -9,6 +9,20 @@ function when(ms, timeZone) {
 
 const answer = (label, names) => el('div', { className: 'rsvp' }, el('span', { className: 'rsvp-label' }, `${label} (${names.length})`), names.join(', ') || '—');
 
+/** Who still needs to add who on Steam before a night. Friends lists come from Steam, so this fills in after the page */
+function friendsNote(night) {
+  const note = el('div', { hidden: true });
+  const person = (p) => el('a', { href: p.url, target: '_blank', rel: 'noreferrer' }, p.name);
+  void request(api(`/game-nights/${night.id}/friends`))
+    .then(({ strangers, unknown, unlinked }) => {
+      const pairs = (list, text) => list.map(([a, b]) => el('p', { className: 'hint' }, person(a), ' and ', person(b), text));
+      note.replaceChildren(...pairs(strangers, ' aren’t friends on Steam yet.'), ...pairs(unknown, ': can’t tell, as both friends lists are private.'), ...(unlinked.length ? [el('p', { className: 'hint' }, `Not linked to Steam: ${unlinked.join(', ')}.`)] : []));
+      note.hidden = !note.children.length;
+    })
+    .catch(() => {});
+  return note;
+}
+
 const row = (label, control, note) => el('label', { className: 'form-row' }, el('span', {}, label), control, note);
 
 function pickOne(options, chosen, props = {}) {
@@ -138,6 +152,7 @@ export function renderNights(main) {
           answer('In', n.in),
           answer('Maybe', n.maybe),
           answer('Can’t', n.out),
+          n.in.length > 1 && friendsNote(n),
           el(
             'div',
             { className: 'night-actions' },

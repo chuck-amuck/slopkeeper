@@ -1675,6 +1675,14 @@ span.steam-family {
   overflow-wrap: anywhere;
 }
 
+.joinable {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 16px;
+  overflow-wrap: anywhere;
+}
+
 .pick-facts {
   color: var(--muted);
   font-size: 13px;

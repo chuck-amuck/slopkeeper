@@ -4,6 +4,7 @@ import type { Feature } from '../types.ts';
 import { gameName } from '../gameNames.ts';
 import { announceChannel, humansIn, listNames, playingGames } from '../util.ts';
 import { rolesForGames } from './gameroles.ts';
+import { checkSteamStatusOf } from './steam.ts';
 
 /** Server id → when it was last pinged */
 const lastPingAt = new Map<string, number>();
@@ -22,6 +23,7 @@ async function onVoiceState(client: Client<true>, oldState: VoiceState, newState
   if (!out) return;
   lastPingAt.set(guildId, Date.now());
 
+  await checkSteamStatusOf(guildId, humans.map((m) => m.id));
   const games = [...new Set(humans.flatMap(playingGames).map((game) => gameName(guildId, game)))];
   let text = `🎮 ${listNames(humans.map((m) => `**${m.displayName}**`))} are in ${channel}`;
   if (games.length) text += `, playing ${listNames(games.map((g) => `**${g}**`))}`;

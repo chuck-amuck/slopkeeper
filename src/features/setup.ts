@@ -58,6 +58,7 @@ export const LABELS: Record<SettingKey, string> = {
   freeGamesUnlisted: 'Games not on Steam',
   saleMinDiscount: 'Smallest sale worth posting',
   saleSteamWishlists: 'Steam wishlists in sale alerts',
+  steamStatus: 'Games from Steam status',
   saleChannel: 'Sale alerts channel',
   gameNightReminderMin: 'Game night reminder',
   monthlyRecap: 'Monthly recap',
@@ -95,6 +96,7 @@ export function show(key: SettingKey, value: unknown): string {
     case 'freeGamesTaste':
     case 'freeGamesMultiplayer':
     case 'saleSteamWishlists':
+    case 'steamStatus':
     case 'monthlyRecap':
     case 'evenVolume':
     case 'joinSounds':
@@ -317,6 +319,12 @@ export const setup: Feature = {
         )
         .addSubcommand((s) =>
           s
+            .setName('steam-status')
+            .setDescription('Use what linked members in voice are playing on Steam if Discord doesn’t show it (on by default)')
+            .addBooleanOption((o) => o.setName('enabled').setDescription('On or off').setRequired(true)),
+        )
+        .addSubcommand((s) =>
+          s
             .setName('sounds')
             .setDescription('How the soundboard behaves')
             .addBooleanOption((o) => o.setName('even_volume').setDescription('Level sounds so they play about as loud as each other (on by default)'))
@@ -444,6 +452,7 @@ export const setup: Feature = {
         }
         if (sub === 'gamenight-reminder') return apply(i, [['gameNightReminderMin', i.options.getInteger('minutes', true)]]);
         if (sub === 'monthly-recap') return apply(i, [['monthlyRecap', i.options.getBoolean('enabled', true)]]);
+        if (sub === 'steam-status') return apply(i, [['steamStatus', i.options.getBoolean('enabled', true)]]);
         if (sub === 'sounds') {
           const evenVolume = i.options.getBoolean('even_volume');
           await apply(i, [

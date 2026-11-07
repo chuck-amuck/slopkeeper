@@ -74,6 +74,16 @@ test('a family member marked as owning a game by hand is using a copy', async ()
   assert.deepEqual([c!.missing, c!.borrowed], [['c'], []]);
 });
 
+test('more people on a game than copies leaves everyone else short', async () => {
+  own('a');
+  for (const id of ['b', 'c', 'd', 'e']) own(id, 200);
+  family('a', 'b', 'c', 'd', 'e');
+  const { lastInsertRowid } = db.prepare(`INSERT INTO games (guild_id, name, steam_appid, added_by) VALUES ('g', 'Deep Rock', ?, 'a')`).run(GAME);
+  for (const id of ['b', 'c']) db.prepare('INSERT INTO game_owners (game_id, user_id) VALUES (?, ?)').run(lastInsertRowid, id);
+  const found = await candidatesFor(guild, ['b', 'c', 'd', 'e']);
+  assert.equal(found!.candidates.find((c) => c.appid === GAME), undefined, 'two short is too many to list');
+});
+
 test('a game Steam doesn’t let families share doesn’t count', async () => {
   facts(GAME, 0);
   own('a');
@@ -148,6 +158,12 @@ test('comparing two people in a family needs a copy for each', () => {
   own('c');
   family('a', 'c');
   assert.deepEqual(sharedGames('g', 'a', 'b').map((g) => g.name), ['Deep Rock']);
+});
+
+test('comparing two people needs a copy for both, not just one of them', () => {
+  own('c');
+  family('c', 'a', 'b');
+  assert.deepEqual(sharedGames('g', 'a', 'b'), []);
 });
 
 test('comparing doesn’t borrow an unshareable game', () => {

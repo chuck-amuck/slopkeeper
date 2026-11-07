@@ -141,7 +141,19 @@ export function renderPick(main) {
   );
   const lists = el('div', { className: 'stack' });
   const result = el('div');
-  main.append(el('div', { className: 'toolbar' }, who, pickButton, voteButton), people, voteNote, content);
+  const joinable = el('div');
+  main.append(joinable, el('div', { className: 'toolbar' }, who, pickButton, voteButton), people, voteNote, content);
+
+  /** Off the main list, as it asks Steam about everyone linked and a pick shouldn't wait for that */
+  function showLobbies() {
+    void request(api('/lobbies'))
+      .then(({ lobbies }) => {
+        if (!lobbies.length || !main.isConnected) return;
+        const line = (l) => el('div', { className: 'joinable' }, el('span', {}, `${l.name} · ${l.game}`), el('a', { href: l.join }, 'Join'));
+        joinable.replaceChildren(el('section', { className: 'card' }, el('h2', {}, 'Joinable now'), lobbies.map(line)));
+      })
+      .catch(() => {});
+  }
 
   const byHand = () => who.value === BY_HAND;
   const voice = () => options.voice.find((c) => c.id === who.value);
@@ -287,6 +299,7 @@ export function renderPick(main) {
     return attempt(show);
   }
 
+  showLobbies();
   void attempt(async () => {
     try {
       options = await request(api('/pick/options'));

@@ -2,6 +2,7 @@ import { EmbedBuilder, Events, MessageFlags, SlashCommandBuilder, type Client, t
 import { db, MIN_PLAY } from '../db.ts';
 import { gameKey, gameName, noteGame } from '../gameNames.ts';
 import { isAllowed } from '../settings.ts';
+import { onSteamChange } from '../steamStatus.ts';
 import type { Feature } from '../types.ts';
 import { eachGuild, formatDuration, playingGames, servedGuilds, zonedParts, zonedTimeToUtc } from '../util.ts';
 import { candidatesFor, sharedGames } from './games.ts';
@@ -407,6 +408,7 @@ export const gameStats: Feature = {
   ],
   setup(client) {
     syncAll(client);
+    onSteamChange(() => syncAll(client));
     // Only fires for later reconnects: this listener is added after the first one
     client.on(Events.ShardReady, () => void resync(client).catch(console.error));
     client.on(Events.PresenceUpdate, (_old, presence) => {
