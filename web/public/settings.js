@@ -17,6 +17,8 @@ const FIELDS = {
   saleMinDiscount: { kind: 'number', unit: '% off', hint: 'Smaller sales aren’t posted, but still show in /sales.' },
   saleSteamWishlists: { kind: 'boolean', hint: 'Watches games on members’ Steam wishlists, if their profile allows it.' },
   saleChannel: { kind: 'channel', none: 'Same as announce channel', hint: 'Post sales here instead.' },
+  patchNotes: { kind: 'choice', options: [['off', 'Off'], ['each', 'Post each one'], ['digest', 'Weekly digest']], hint: 'For games played here in the last 30 days. Only finds posts the developer tagged as patch notes. The digest goes out with the weekly leaderboard.' },
+  patchNotesChannel: { kind: 'channel', none: 'Same as announce channel', hint: 'Post patch notes here instead.' },
   steamStatus: { kind: 'boolean', hint: 'Uses what linked members in voice are playing on Steam if Discord doesn’t show it, for game time and pings.' },
   freeGames: { kind: 'boolean', hint: 'Posts free-to-keep games on Steam, Epic and GOG.' },
   freeGamesChannel: { kind: 'channel', none: 'Same as announce channel', hint: 'Post free games here instead.' },
@@ -39,6 +41,7 @@ const GROUPS = [
   ['Leaderboard and recap', ['weeklyPostDay', 'weeklyPostHour', 'monthlyRecap']],
   ['Games', ['steamCountry', 'steamStatus', 'gameNightReminderMin']],
   ['Sale alerts', ['saleMinDiscount', 'saleSteamWishlists', 'saleChannel']],
+  ['Patch notes', ['patchNotes', 'patchNotesChannel']],
   ['Free games', ['freeGames', 'freeGamesChannel', 'freeGamesMinRating', 'freeGamesTaste', 'freeGamesMultiplayer', 'freeGamesUnlisted']],
   ['Soundboard', ['evenVolume', 'joinSounds', 'joinSoundDelayMs', 'joinSoundCooldownMin', 'soundManagerRole']],
 ];
@@ -69,6 +72,8 @@ export function renderSettings(main) {
         return select([['', spec.none], ...data.channels.map((c) => [c.id, c.category ? `#${c.name} (${c.category})` : `#${c.name}`])]);
       case 'role':
         return select([['', spec.none], ...data.roles.map((r) => [r.id, `@${r.name}`])]);
+      case 'choice':
+        return select(spec.options);
       case 'day':
         return select(DAYS.map((day, idx) => [idx, day]));
       case 'hour':

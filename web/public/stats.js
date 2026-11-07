@@ -1,3 +1,4 @@
+import { achievementsView } from './achievements.js';
 import { ago, api, attempt, el, openDialog, recall, remember, request, state, toast } from './lib.js';
 
 const PERIODS = [
@@ -118,6 +119,12 @@ function compare(main) {
   const content = el('div', { className: 'stack' });
   main.append(el('div', { className: 'toolbar' }, first, el('span', {}, 'and'), second), content);
 
+  function achievementsCard(data) {
+    const area = el('div');
+    const pick = (e) => area.replaceChildren(...(e.target.value ? [achievementsView(e.target.value, data.people.map((p) => p.id))] : []));
+    return card('Achievements', el('select', { ariaLabel: 'Game for achievements', onchange: pick }, el('option', { value: '' }, 'Pick a game'), data.steamGames.map((g) => el('option', { value: g.appid }, g.name))), area);
+  }
+
   function render(data) {
     const [a, b] = data.people;
     content.replaceChildren(
@@ -134,6 +141,7 @@ function compare(main) {
         `Both own (${data.shared.length})`,
         data.shared.length ? el('p', { className: 'shared-games' }, data.shared.join(', ')) : el('p', { className: 'hint' }, 'Nothing yet. Link Steam or mark games on the Games page.'),
       ),
+      ...(data.steamGames.length ? [achievementsCard(data)] : []),
       el('p', { className: 'hint' }, `Played together means the same game in the same voice channel. They spent up to ${duration(data.voice.ms)} in voice together: only each person’s total is kept, so that’s the most it could be.`),
     );
   }

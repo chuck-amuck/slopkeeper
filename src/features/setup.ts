@@ -22,6 +22,8 @@ const ANNOUNCE_PERMISSIONS = [
 ] as const;
 
 // Discord enforces these on the /setup options; checkSetting does for anything else
+const PATCH_MODES = { off: 'off', each: 'each one posted', digest: 'weekly digest' };
+
 export const LIMITS = {
   weeklyPostDay: [0, 6],
   weeklyPostHour: [0, 23],
@@ -59,6 +61,8 @@ export const LABELS: Record<SettingKey, string> = {
   saleMinDiscount: 'Smallest sale worth posting',
   saleSteamWishlists: 'Steam wishlists in sale alerts',
   steamStatus: 'Games from Steam status',
+  patchNotes: 'Patch notes',
+  patchNotesChannel: 'Patch notes channel',
   saleChannel: 'Sale alerts channel',
   gameNightReminderMin: 'Game night reminder',
   monthlyRecap: 'Monthly recap',
@@ -109,7 +113,10 @@ export function show(key: SettingKey, value: unknown): string {
       return `${value}% off`;
     case 'freeGamesChannel':
     case 'saleChannel':
+    case 'patchNotesChannel':
       return value ? `<#${value}>` : 'the announce channel';
+    case 'patchNotes':
+      return PATCH_MODES[value as keyof typeof PATCH_MODES] ?? String(value);
     case 'gameNightReminderMin':
       return value ? `${value} min before` : 'off';
     default:
@@ -153,7 +160,8 @@ export function checkSetting(guild: Guild, key: SettingKey, value: unknown): Che
   switch (key) {
     case 'announceChannel':
     case 'freeGamesChannel':
-    case 'saleChannel': {
+    case 'saleChannel':
+    case 'patchNotesChannel': {
       const channel = guild.channels.cache.get(String(value));
       if (channel?.type !== ChannelType.GuildText && channel?.type !== ChannelType.GuildAnnouncement) return { error: 'Pick a text channel.' };
       const problem = cantPost(guild, channel);
@@ -173,6 +181,8 @@ export function checkSetting(guild: Guild, key: SettingKey, value: unknown): Che
       const zone = String(value).trim();
       return isTimeZone(zone) ? { value: zone } : { error: `**${zone}** isn’t a time zone I know. Pick one from the list, e.g. America/Chicago.` };
     }
+    case 'patchNotes':
+      return Object.hasOwn(PATCH_MODES, String(value)) ? { value: String(value) } : { error: 'Patch notes are off, each one posted, or a weekly digest.' };
     case 'steamCountry': {
       const country = String(value).toLowerCase();
       return /^[a-z]{2}$/.test(country) ? { value: country } : { error: 'Use a two-letter country code, like us or gb.' };
@@ -319,6 +329,23 @@ export const setup: Feature = {
         )
         .addSubcommand((s) =>
           s
+            .setName('patch-notes')
+            .setDescription('Post patch notes for games played here lately (off by default)')
+            .addStringOption((o) =>
+              o
+                .setName('mode')
+                .setDescription('How to post them')
+                .addChoices(...Object.entries(PATCH_MODES).map(([value, name]) => ({ name, value }))),
+            )
+            .addChannelOption((o) =>
+              o
+                .setName('channel')
+                .setDescription('Post them here instead of the announce channel')
+                .addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement),
+            ),
+        )
+        .addSubcommand((s) =>
+          s
             .setName('steam-status')
             .setDescription('Use what linked members in voice are playing on Steam if Discord doesn’t show it (on by default)')
             .addBooleanOption((o) => o.setName('enabled').setDescription('On or off').setRequired(true)),
@@ -452,6 +479,15 @@ export const setup: Feature = {
         }
         if (sub === 'gamenight-reminder') return apply(i, [['gameNightReminderMin', i.options.getInteger('minutes', true)]]);
         if (sub === 'monthly-recap') return apply(i, [['monthlyRecap', i.options.getBoolean('enabled', true)]]);
+        if (sub === 'patch-notes') {
+          const channel = i.options.getChannel('channel', false, [ChannelType.GuildText, ChannelType.GuildAnnouncement]);
+          const problem = channel && cantPost(i.guild, channel);
+          if (problem) return i.reply({ content: problem, flags: MessageFlags.Ephemeral });
+          return apply(i, [
+            ['patchNotes', i.options.getString('mode')],
+            ['patchNotesChannel', channel?.id ?? null],
+          ]);
+        }
         if (sub === 'steam-status') return apply(i, [['steamStatus', i.options.getBoolean('enabled', true)]]);
         if (sub === 'sounds') {
           const evenVolume = i.options.getBoolean('even_volume');
@@ -486,7 +522,7 @@ export const setup: Feature = {
           .setDescription(
             (Object.keys(DEFAULTS) as SettingKey[])
               .map((key) => {
-                const value = key === 'announceChannel' || key === 'hopOnRole' || key === 'freeGamesChannel' || key === 'saleChannel' || key === 'soundManagerRole' ? setting(i.guildId, key) || null : setting(i.guildId, key);
+                const value = key === 'announceChannel' || key === 'hopOnRole' || key === 'freeGamesChannel' || key === 'saleChannel' || key === 'patchNotesChannel' || key === 'soundManagerRole' ? setting(i.guildId, key) || null : setting(i.guildId, key);
                 return `**${LABELS[key]}:** ${show(key, value)} · *${source(i.guildId, key)}*`;
               })
               .join('\n'),

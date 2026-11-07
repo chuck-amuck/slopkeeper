@@ -20,6 +20,9 @@ const STATUS_EVERY_MS = 60_000;
 /** How long a game stays showing when Steam can't be asked, so an outage doesn't add hours of game time */
 const STATUS_LASTS_MS = 5 * 60_000;
 const FRIENDS_LAST_MS = 6 * 3_600_000;
+const HOUR_MS = 3_600_000;
+const DAY_MS = 86_400_000;
+const PATCH_NOTES_LAST_MS = 20 * 60_000;
 export const FAMILY_SIZE = 6;
 /** Steam's own values for a game on the Steam Deck */
 export const DECK_PLAYABLE = 2;
@@ -64,6 +67,72 @@ function apiKey(): string {
   if (!config.steamApiKey) throw new Error('STEAM_API_KEY is not set');
   return config.steamApiKey;
 }
+
+/** Keeps answers that change slowly, so pages and commands don't ask Steam every time. A failure isn't kept */
+function cached<K, V>(lastsMs: number, read: (key: K) => Promise<V>) {
+  const known = new Map<K, { value: V; at: number }>();
+  return async (key: K) => {
+    const hit = known.get(key);
+    if (hit && Date.now() - hit.at < lastsMs) return hit.value;
+    const value = await read(key);
+    known.set(key, { value, at: Date.now() });
+    return value;
+  };
+}
+
+/** Steam's own list of a game's achievements */
+export const achievementList = cached(DAY_MS, async (appid: number) => {
+  try {
+    const body = await steamGet<{ game?: { availableGameStats?: { achievements?: { name: string; displayName: string; description?: string; hidden: number }[] } } }>('/ISteamUserStats/GetSchemaForGame/v2/', {
+      key: apiKey(),
+      appid: String(appid),
+    });
+    return body.game?.availableGameStats?.achievements ?? [];
+  } catch (err) {
+    // What Steam says for a game with no achievements
+    if (err instanceof SteamError && err.status === 400) return [];
+    throw err;
+  }
+});
+
+/** How many players worldwide have each achievement, in percent. Only used for ordering, so it's fine without */
+export const achievementRarity = cached(DAY_MS, async (appid: number) => {
+  const body = await steamGet<{ achievementpercentages?: { achievements?: { name: string; percent: string | number }[] } }>('/ISteamUserStats/GetGlobalAchievementPercentagesForApp/v2/', { gameid: String(appid) }).catch(
+    (err) => (console.error(err), null),
+  );
+  return new Map((body?.achievementpercentages?.achievements ?? []).map((a) => [a.name, Math.round(Number(a.percent))]));
+});
+
+const playerAchievements = cached(HOUR_MS, async (key: string) => {
+  const [steamid, appid] = key.split(':');
+  try {
+    const body = await steamGet<{ playerstats?: { success?: boolean; achievements?: { apiname: string; achieved: number }[] } }>('/ISteamUserStats/GetPlayerAchievements/v1/', { key: apiKey(), steamid, appid });
+    if (body.playerstats?.success === false) return null;
+    return new Set((body.playerstats?.achievements ?? []).filter((a) => a.achieved === 1).map((a) => a.apiname));
+  } catch (err) {
+    // Hidden details, or a game they don't have
+    if (isHidden(err) || (err instanceof SteamError && err.status === 400)) return null;
+    throw err;
+  }
+});
+
+/** The achievements someone has in a game, or null if Steam won't show them */
+export const unlockedBy = (steamId: string, appid: number) => playerAchievements(`${steamId}:${appid}`);
+
+/** A game's latest posts its developers tagged as patch notes, newest first */
+export const patchNotes = cached(PATCH_NOTES_LAST_MS, async (appid: number) => {
+  const body = await steamGet<{ appnews?: { newsitems?: { gid: string; title: string; url: string; date: number; contents?: string }[] } }>('/ISteamNews/GetNewsForApp/v2/', {
+    appid: String(appid),
+    count: '5',
+    maxlength: '300',
+    tags: 'patchnotes',
+    format: 'json',
+  });
+  return (body.appnews?.newsitems ?? []).map((n) => ({ gid: n.gid, title: n.title, url: n.url, date: n.date * 1000, text: plainNews(n.contents ?? '') }));
+});
+
+/** Steam news is written in BBCode, with its own image placeholders */
+const plainNews = (text: string) => text.replace(/\[[^\]]*\]/g, ' ').replace(/\{STEAM_CLAN_IMAGE\}\S*/g, ' ').replace(/\s+/g, ' ').trim();
 
 /** Accepts a profile URL (/profiles/<id> or /id/<vanity>), a 17-digit SteamID64, or a bare vanity name */
 async function resolveSteamId(input: string): Promise<string | null> {

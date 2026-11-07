@@ -144,6 +144,20 @@ Every minute, the bot checks what linked members in voice are playing on Steam. 
 
 Steam doesn't tell the bot who's in a Steam family, so you say. A family holds up to 6 people, and applies in every server, as links do. Someone in a family counts as owning a game if a family member owns it on Steam and Steam tags it for Family Sharing, even if that member isn't in the server. Each person playing at once needs their own copy, so two people in a family with one copy show as one short. The bot can't see whether an owner outside the group is using their copy. Games only marked by hand don't count, as there's no way to know if they're shareable.
 
+### Patch notes
+
+`/setup patch-notes` posts patch notes for games with a Steam ID that were played in the server in the last 30 days. **Each one** posts them as they're found, and **weekly digest** posts them together with the weekly leaderboard. They go to the announce channel, or the channel you pick, and never ping anyone. It's off by default.
+
+It starts from the latest notes, so turning it on doesn't post a backlog. Steam only marks a post as patch notes if the developer tags it, so some games will be missed.
+
+### Achievements
+
+| Command | What it does |
+| --- | --- |
+| `/achievements game [with]` | Shows Steam achievement progress for you and `with`, or else everyone in your voice channel, plus goals: what nobody there has yet, the most common first. |
+
+Hidden achievements count towards the total, but aren't named as goals in case they're spoilers. Anyone with private game details, no Steam link or no copy of the game is left out, and it says so.
+
 ### What do we play?
 
 | Command | What it does |
@@ -479,6 +493,8 @@ So the host can change a default for every server at once, and each server can s
 | Steam wishlists in sale alerts | `sale-alerts` | `SALE_STEAM_WISHLISTS` (`false` to turn off) | on |
 | Sale alerts channel | `sale-alerts` | | announce channel |
 | Games from Steam status | `steam-status` | `STEAM_STATUS` (`false` to turn off) | on |
+| Patch notes | `patch-notes` | `PATCH_NOTES` (`off`, `each` or `digest`) | off |
+| Patch notes channel | `patch-notes` | | announce channel |
 | Game night reminder (minutes before) | `gamenight-reminder` | `GAMENIGHT_REMINDER_MIN` | 15 |
 | Monthly recap | `monthly-recap` | `MONTHLY_RECAP` (`false` to turn off) | on |
 | Even volume | `sounds` | `EVEN_VOLUME` (`false` to turn off) | on |
@@ -508,8 +524,8 @@ A page for your home network, in [`web/`](web), that runs as a second container 
 - **Library:** upload files or whole folders, preview, rename and delete sounds, set a sound's volume, trim it with a way back to the original, and choose what's on Discord's soundboard, with a waveform for picking part of a long sound. **Recently deleted** restores a sound or erases it for good.
 - **Game nights:** plan a night, see what's coming up and who still needs to add each other on Steam, cancel one or stop a repeating one.
 - **Games:** the game library, with who has each game, who needs it, who wants it and any sale. Add games from a searchable list of what members own on Steam, or by name or store link. **Steam accounts** links, changes and unlinks anyone's Steam account, says who shares a Steam family, and refreshes libraries. Remove games, set player limits and Steam links, tick who owns or wants what, and hide a game from `/whatdoweplay` or let it back in. Ownership from a Steam library is locked.
-- **Pick a game:** choose a voice channel, or tick people to plan before anyone's in voice, and see the games everyone owns and those one purchase away, using the same rules as `/whatdoweplay`. Each game shows time played here, Steam hours, its last two weeks on Steam and when it was last played, in total and per person, plus who'd play on a family copy. Opening one shows how many are playing it on Steam right now. Sort them, with **Hot right now** for the last two weeks, search them, or filter to co-op, PvP or Steam Deck. **Pick for us** chooses one at random, and **Start a vote** posts the usual `/gamevote` card in a channel. Anyone in a joinable Steam lobby shows at the top with a link to join.
-- **Stats:** **Overview** has game and voice time, overall or for one person or game, with sessions, rank and when it was last played. **Compare** is `/compare` with every game two people both own, and **Monthly recap** is `/recap`.
+- **Pick a game:** choose a voice channel, or tick people to plan before anyone's in voice, and see the games everyone owns and those one purchase away, using the same rules as `/whatdoweplay`. Each game shows time played here, Steam hours, its last two weeks on Steam and when it was last played, in total and per person, plus who'd play on a family copy. Opening one shows how many are playing it on Steam right now and its latest patch, and **Achievements** compares everyone's progress with goals nobody has yet. Sort them, with **Hot right now** for the last two weeks, search them, or filter to co-op, PvP or Steam Deck. **Pick for us** chooses one at random, and **Start a vote** posts the usual `/gamevote` card in a channel. Anyone in a joinable Steam lobby shows at the top with a link to join.
+- **Stats:** **Overview** has game and voice time, overall or for one person or game, with sessions, rank and when it was last played. **Compare** is `/compare` with every game two people both own and their achievements in any of them, and **Monthly recap** is `/recap`.
 - **Discord's soundboard:** on Library, see what fills the slots, play or save any sound, and swap sounds between Discord and the library.
 - **Merging games:** on Stats, Merge games puts different spellings of a game together, and Separate on a clicked game takes one back out.
 - **Activity:** a history of changes to sounds, games, settings and game nights.
@@ -617,7 +633,8 @@ It applies the same rules as `/sound` and `/setup`, and every request needs an `
 | `DELETE /guilds/:id/hidden-games/:appid` | Lets a hidden game be suggested again |
 | `GET /guilds/:id/pick?channel=<id>` or `?users=<id>,<id>` | Games those people could play, as `/whatdoweplay` works out, with time played, Steam hours and game facts for each |
 | `GET /guilds/:id/lobbies` | Who's in a joinable Steam lobby now, with a `steam://` link |
-| `GET /guilds/:id/steam-apps/:appid` | How many are playing a game on Steam now, kept for 10 minutes. `players` is null if Steam won't say |
+| `GET /guilds/:id/steam-apps/:appid` | How many are playing a game on Steam now, kept for 10 minutes, and its latest `patch`. `players` is null if Steam won't say |
+| `GET /guilds/:id/achievements?appid=<id>&users=<id>,<id>` | Achievement progress for those people, with `goals` nobody has yet and who was `skipped` |
 | `GET /guilds/:id/pick/options` | Lists the members, voice channels and text channels to choose from |
 | `POST /guilds/:id/votes` | Starts a vote: `{ "voiceChannelId", "channelId", "minutes" }`, with 1 to 10 minutes |
 | `GET /guilds/:id/compare?a=<id>&b=<id>` | Compares two people, as `/compare` does |

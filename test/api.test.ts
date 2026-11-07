@@ -2417,6 +2417,34 @@ test('refuses a family with someone who isn’t here, a bot, or themselves', asy
   await refused(405, url, { method: 'POST', json: { with: 'u2' } });
 });
 
+test('says how each person is getting on with a game’s achievements', async (t) => {
+  const key = config.steamApiKey;
+  config.steamApiKey = 'key';
+  t.after(() => void (config.steamApiKey = key));
+  const real = fetch;
+  t.mock.method(globalThis, 'fetch', async (url: URL | string, init?: RequestInit) => {
+    if (String(url).startsWith(base)) return real(url, init);
+    const path = new URL(url).pathname;
+    if (path.includes('GetSchemaForGame')) return new Response(JSON.stringify({ game: { availableGameStats: { achievements: [{ name: 'A', displayName: 'First', hidden: 0 }, { name: 'B', displayName: 'Second', hidden: 0 }] } } }));
+    if (path.includes('GetGlobal')) return new Response(JSON.stringify({ achievementpercentages: { achievements: [] } }));
+    return new Response(JSON.stringify({ playerstats: { achievements: [{ apiname: 'A', achieved: 1 }, { apiname: 'B', achieved: 0 }] } }));
+  });
+  db.prepare(`INSERT INTO steam_links (user_id, steam_id) VALUES ('u1', 's1')`).run();
+  const data = await ok(`/guilds/${GUILD}/achievements?appid=620&users=u1,u2`);
+  assert.deepEqual(data, { total: 2, goals: [{ name: 'Second', description: null, percent: null }], people: [{ name: 'Ana', done: 1 }], skipped: ['Ben'] });
+  await refused(400, `/guilds/${GUILD}/achievements?appid=abc&users=u1`);
+  await refused(400, `/guilds/${GUILD}/achievements?appid=620`);
+  await refused(404, `/guilds/${GUILD}/achievements?appid=620&users=nobody`);
+  await refused(404, `/guilds/${GUILD}/achievements?appid=620&users=b1`);
+});
+
+test('a comparison lists the Steam games two people share', async (t) => {
+  await ownedGames(t);
+  const { steamGames, shared } = await ok(`/guilds/${GUILD}/compare?a=u1&b=u2`);
+  assert.deepEqual(steamGames, [{ name: 'Valheim', appid: 892970 }]);
+  assert.deepEqual(shared.toSorted(), ['Halo', 'Valheim']);
+});
+
 test('tells a game night who still needs to add who on Steam', async (t) => {
   const key = config.steamApiKey;
   config.steamApiKey = 'key';
@@ -2463,7 +2491,7 @@ test('lists joinable lobbies by name, and has none without Steam', async (t) => 
 test('says how many are playing a game on Steam, and refuses nonsense', async (t) => {
   const real = fetch;
   t.mock.method(globalThis, 'fetch', async (url: string, init?: RequestInit) => (String(url).startsWith(base) ? real(url, init) : new Response(JSON.stringify({ response: { player_count: 42 } }))));
-  assert.deepEqual(await ok(`/guilds/${GUILD}/steam-apps/620`), { players: 42 });
+  assert.deepEqual(await ok(`/guilds/${GUILD}/steam-apps/620`), { players: 42, patch: null });
   await refused(404, `/guilds/${GUILD}/steam-apps/abc`);
 });
 

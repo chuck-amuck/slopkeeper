@@ -1675,6 +1675,30 @@ span.steam-family {
   overflow-wrap: anywhere;
 }
 
+.achievements {
+  display: grid;
+  gap: 6px;
+}
+
+.achiever {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.achievements h3 {
+  margin: 8px 0 0;
+  font-size: 14px;
+}
+
+.goal {
+  margin: 0;
+}
+
+.goal .hint {
+  display: block;
+}
+
 .joinable {
   display: flex;
   justify-content: space-between;

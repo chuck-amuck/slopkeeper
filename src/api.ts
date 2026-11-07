@@ -8,10 +8,11 @@ import { config } from './config.ts';
 import * as discordBoard from './discordSounds.ts';
 import { cancelNight, gameNames, planNight, readWhen, stopSeries, upcomingNights } from './features/gamenight.ts';
 import { reviewGiveaways } from './features/freegames.ts';
+import { achievementProgress } from './features/achievements.ts';
 import { addGameRole, canHandOut, gameRoles, pingableGames, pingChoices, pingMenu, removeGameRole } from './features/gameroles.ts';
 import { addGame, addMemberGame, allGames, familyPlayersOf, gameById, groupMembers, hiddenGames, hideGame, memberGames, NOBODY_COUNTED, ownersOf, parseSteamAppId, removeGame, setGameDetails, setOwned, setWanted, steamOwnersOf, unhideGame, wantedBy, type GameRow } from './features/games.ts';
 import { onSale, saleName, salePrices, saleReasons, storeUrl } from './features/sales.ts';
-import { currentPlayers, familyOf, friendsCheck, joinFamily, leaveFamily, linkSteam, lobbiesIn, profileUrl, refreshAll, steamLinks, unlinkSteam } from './features/steam.ts';
+import { currentPlayers, familyOf, patchNotes, friendsCheck, joinFamily, leaveFamily, linkSteam, lobbiesIn, profileUrl, refreshAll, steamLinks, unlinkSteam } from './features/steam.ts';
 import { activity, checkpoint, comparison, PERIODS, pickFor, sessionCount, stats } from './features/gamestats.ts';
 import { postVote } from './features/gamevote.ts';
 import { recapFor } from './features/recap.ts';
@@ -837,7 +838,19 @@ function compareFromWeb(guild: Guild, url: URL) {
     games: games.slice(0, MAX_RANKED).map((g) => ({ name: g.game, ms: g.ms })),
     voice: { sessions: voice.n, ms: voice.seconds * 1000 },
     shared: shared.map((g) => g.name),
+    steamGames: shared.flatMap((g) => (g.appid === null ? [] : [{ name: g.name, appid: g.appid }])),
   };
+}
+
+async function achievementsFromWeb(guild: Guild, url: URL) {
+  const appid = Number(url.searchParams.get('appid'));
+  if (!Number.isInteger(appid) || appid < 1) throw new Refused(400, 'Pick a game.');
+  const users = [...new Set((url.searchParams.get('users') ?? '').split(',').filter(Boolean))];
+  if (!users.length) throw new Refused(400, 'Pick at least one person.');
+  for (const id of users) memberIn(guild, id);
+  needSteam();
+  const { total, people, skipped, goals } = await achievementProgress(appid, users).catch(steamDown);
+  return { total, goals, people: people.map((p) => ({ name: nameOf(guild, p.id), done: p.done })), skipped: skipped.map((id) => nameOf(guild, id)) };
 }
 
 function recapFromWeb(guild: Guild, url: URL) {
@@ -957,6 +970,7 @@ async function handle(client: Client<true>, req: IncomingMessage, res: ServerRes
   if (section === 'pick' && rest.length === 1 && rest[0] === 'options' && req.method === 'GET') return pickOptions(guild);
   if (section === 'votes' && !rest.length && req.method === 'POST') return voteFromWeb(guild, req);
   if (section === 'compare' && !rest.length && req.method === 'GET') return compareFromWeb(guild, url);
+  if (section === 'achievements' && !rest.length && req.method === 'GET') return achievementsFromWeb(guild, url);
   if (section === 'recap' && !rest.length && req.method === 'GET') return recapFromWeb(guild, url);
   if (section === 'members' && rest.length === 2 && rest[1] === 'pings') return handlePings(guild, req, rest[0]);
   if (section === 'sound-panels' && !rest.length && req.method === 'POST') {
@@ -982,7 +996,9 @@ async function handle(client: Client<true>, req: IncomingMessage, res: ServerRes
   if (section === 'steam-apps' && rest.length === 1 && req.method === 'GET') {
     const appid = /^\d+$/.test(rest[0]) ? Number(rest[0]) : undefined;
     if (appid === undefined) throw new Refused(404, 'No such game.');
-    return { players: await currentPlayers(appid) };
+    const [players, notes] = await Promise.all([currentPlayers(appid), patchNotes(appid).catch((err) => (console.error(err), []))]);
+    const latest = notes.at(0);
+    return { players, patch: latest ? { title: latest.title, url: latest.url, date: latest.date } : null };
   }
   if (section === 'steam-refresh' && !rest.length && req.method === 'POST') {
     needSteam();
