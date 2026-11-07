@@ -388,7 +388,7 @@ The web UI's Library page also shows everything on Discord's soundboard, includi
 - Lines wait their turn, while sounds still layer on top. **Stop** ends the line and clears anything waiting.
 - Mentions are read as names, custom emoji as their name, and links as "link".
 - Every line goes in the Activity tab with who said it.
-- `/setup speech` sets whether it's on, the default voice, the longest line and how long each person waits between lines. `/setup speech-role` limits it to a role, plus people with **Manage Server**. The web UI isn't limited by the role, and counts as one person for the wait.
+- `/setup speech` sets whether it's on, the default voice, how fast it talks, the longest line and how long each person waits between lines. `/setup speech-role` limits it to a role, plus people with **Manage Server**. The web UI isn't limited by the role, and counts as one person for the wait.
 
 It needs the [voice container](#the-voice-container).
 
@@ -514,6 +514,7 @@ So the host can change a default for every server at once, and each server can s
 | Milliseconds the bot waits after connecting before a join sound | `sounds` | `JOIN_SOUND_DELAY_MS` | 500 |
 | Text to speech | `speech` | `TTS` (`false` to turn off) | on |
 | Default voice | `speech` | `TTS_VOICE` (`1`, `2`, `5` or `9`) | 5 |
+| Speech speed, as a percentage of the voice's natural speed | `speech` | `TTS_SPEED` | 85 |
 | Longest spoken line, in characters | `speech` | `TTS_MAX_CHARS` | 200 |
 | Seconds between one person's spoken lines | `speech` | `TTS_COOLDOWN_SEC` | 5 |
 | Who can use `/say` | `speech-role` | | everyone |

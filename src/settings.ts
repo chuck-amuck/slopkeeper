@@ -51,6 +51,8 @@ export const DEFAULTS = {
   ttsMaxChars: num('TTS_MAX_CHARS', 200),
   ttsCooldownSec: num('TTS_COOLDOWN_SEC', 5),
   ttsVoice: process.env.TTS_VOICE || '5',
+  // The voices run a little fast at their natural speed
+  ttsSpeed: num('TTS_SPEED', 85),
 };
 
 /** Env var that sets each setting's default, for /setup show */
@@ -82,6 +84,7 @@ export const DEFAULT_ENV: Partial<Record<SettingKey, string>> = {
   ttsMaxChars: 'TTS_MAX_CHARS',
   ttsCooldownSec: 'TTS_COOLDOWN_SEC',
   ttsVoice: 'TTS_VOICE',
+  ttsSpeed: 'TTS_SPEED',
 };
 
 export type SettingKey = keyof typeof DEFAULTS;

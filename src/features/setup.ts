@@ -39,6 +39,7 @@ export const LIMITS = {
   saleMinDiscount: [1, 100],
   ttsMaxChars: [20, 500],
   ttsCooldownSec: [0, 3600],
+  ttsSpeed: [50, 150],
 } as const;
 
 const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -79,6 +80,7 @@ export const LABELS: Record<SettingKey, string> = {
   ttsMaxChars: 'Longest spoken line',
   ttsCooldownSec: 'Wait between spoken lines',
   ttsVoice: 'Default voice',
+  ttsSpeed: 'Speech speed',
 };
 
 export function show(key: SettingKey, value: unknown): string {
@@ -118,6 +120,8 @@ export function show(key: SettingKey, value: unknown): string {
       return value ? 'on' : 'off';
     case 'ttsMaxChars':
       return `${value} characters`;
+    case 'ttsSpeed':
+      return `${value}%`;
     case 'ttsCooldownSec':
       return `${value} seconds`;
     case 'ttsVoice':
@@ -400,6 +404,7 @@ export const setup: Feature = {
                 .setDescription('Default voice')
                 .addChoices(...VOICES.map((v) => ({ name: v.name, value: v.id }))),
             )
+            .addIntegerOption((o) => o.setName('speed').setDescription('How fast it talks, as a percentage of the voice’s natural speed').setMinValue(LIMITS.ttsSpeed[0]).setMaxValue(LIMITS.ttsSpeed[1]))
             .addIntegerOption((o) => o.setName('max_characters').setDescription('Longest line').setMinValue(LIMITS.ttsMaxChars[0]).setMaxValue(LIMITS.ttsMaxChars[1]))
             .addIntegerOption((o) => o.setName('wait_seconds').setDescription('Wait between one person’s lines').setMinValue(LIMITS.ttsCooldownSec[0]).setMaxValue(LIMITS.ttsCooldownSec[1])),
         )
@@ -547,6 +552,7 @@ export const setup: Feature = {
           return apply(i, [
             ['tts', i.options.getBoolean('enabled')],
             ['ttsVoice', i.options.getString('voice')],
+            ['ttsSpeed', i.options.getInteger('speed')],
             ['ttsMaxChars', i.options.getInteger('max_characters')],
             ['ttsCooldownSec', i.options.getInteger('wait_seconds')],
           ]);
