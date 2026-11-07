@@ -17,7 +17,7 @@ import { activity, checkpoint, comparison, PERIODS, pickFor, sessionCount, stats
 import { postVote } from './features/gamevote.ts';
 import { recapFor } from './features/recap.ts';
 import { gameName, gameSpellings, mergeGames, separateGame } from './gameNames.ts';
-import { say, VOICES } from './features/say.ts';
+import { phrases, removePhrase, savePhrase, say, VOICES } from './features/say.ts';
 import { voiceTotals } from './features/sessions.ts';
 import { checkSetting, LABELS, LIMITS, show, source } from './features/setup.ts';
 import {
@@ -1050,13 +1050,29 @@ async function handle(client: Client<true>, req: IncomingMessage, res: ServerRes
     return {};
   }
   if (section === 'say' && !rest.length && req.method === 'GET') {
-    return { on: Boolean(config.voiceUrl) && setting(guild.id, 'tts'), voices: VOICES.map(({ id, name }) => ({ id, name })), voice: setting(guild.id, 'ttsVoice'), longest: setting(guild.id, 'ttsMaxChars') };
+    return { on: Boolean(config.voiceUrl) && setting(guild.id, 'tts'), voices: VOICES.map(({ id, name }) => ({ id, name })), voice: setting(guild.id, 'ttsVoice'), longest: setting(guild.id, 'ttsMaxChars'), phrases: phrases(guild.id) };
   }
   if (section === 'say' && !rest.length && req.method === 'POST') {
     const { channelId, text, voice } = await readJson(req);
     if (typeof text !== 'string') throw new Refused(400, 'Type something to say.');
     refuse(guild, await say(voiceChannelFor(guild, channelId), text, typeof voice === 'string' ? voice : undefined, FROM_WEB));
     return {};
+  }
+  if (section === 'phrases' && !rest.length && req.method === 'POST') {
+    const { text, voice } = await readJson(req);
+    if (typeof text !== 'string') throw new Refused(400, 'Type something to save.');
+    const known = phrases(guild.id).length;
+    refuse(guild, savePhrase(guild, text, String(voice)));
+    const saved = phrases(guild.id);
+    if (saved.length > known) logActivity(guild.id, FROM_WEB, `Saved the line “${saved.at(-1)!.text}”`);
+    return { phrases: saved };
+  }
+  if (section === 'phrases' && rest.length === 1 && req.method === 'DELETE') {
+    const phrase = phrases(guild.id).find((p) => p.id === Number(rest[0]));
+    if (!phrase) throw new Refused(404, 'That saved line is gone.');
+    removePhrase(guild.id, phrase.id);
+    logActivity(guild.id, FROM_WEB, `Removed the saved line “${phrase.text}”`);
+    return { phrases: phrases(guild.id) };
   }
   if (section === 'stop' && !rest.length && req.method === 'POST') {
     stopPlayback(guild.id);

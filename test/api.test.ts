@@ -13,7 +13,7 @@ import { createApi, webApi } from '../src/api.ts';
 import { candidatesFor } from '../src/features/games.ts';
 import { config } from '../src/config.ts';
 import { db } from '../src/db.ts';
-import { logActivity } from '../src/activity.ts';
+import { logActivity, recentActivity } from '../src/activity.ts';
 import { Mixer } from '../src/mixer.ts';
 import { noteGame } from '../src/gameNames.ts';
 import { activity, stats } from '../src/features/gamestats.ts';
@@ -2464,6 +2464,20 @@ test('the page’s lines go through the voice container and show as coming from 
   t.mock.method(console, 'error', () => {});
   await refused(400, `/guilds/${GUILD}/say`, { method: 'POST', json: { channelId: '702', text: 'hello <@123>', voice: '2' } });
   assert.deepEqual(asked, { text: 'hello someone', speaker_id: 100, length_scale: lengthFor(85) });
+});
+
+test('the page saves lines and removes them', async () => {
+  const start = (await ok(`/guilds/${GUILD}/say`)).phrases as unknown[];
+  assert.deepEqual(start, []);
+  const { phrases } = (await ok(`/guilds/${GUILD}/phrases`, { method: 'POST', json: { text: 'good game', voice: '2' } })) as { phrases: { id: number; text: string; voice: string }[] };
+  assert.deepEqual(phrases.map(({ text, voice }) => [text, voice]), [['good game', '2']]);
+  assert.deepEqual((await ok(`/guilds/${GUILD}/say`)).phrases, phrases);
+  assert.equal(await refused(400, `/guilds/${GUILD}/phrases`, { method: 'POST', json: { text: 5 } }), 'Type something to save.');
+  assert.equal(await refused(400, `/guilds/${GUILD}/phrases`, { method: 'POST', json: { text: 'hi', voice: 'nope' } }), 'Pick a voice from the list.');
+  assert.deepEqual(((await ok(`/guilds/${GUILD}/phrases/${phrases[0].id}`, { method: 'DELETE' })) as { phrases: unknown[] }).phrases, []);
+  assert.equal(await refused(404, `/guilds/${GUILD}/phrases/${phrases[0].id}`, { method: 'DELETE' }), 'That saved line is gone.');
+  const log = recentActivity(GUILD, 5).map((r) => r.action);
+  assert.ok(log.includes('Saved the line “good game”') && log.includes('Removed the saved line “good game”'));
 });
 
 test('says how each person is getting on with a game’s achievements', async (t) => {

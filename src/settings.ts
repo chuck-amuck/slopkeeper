@@ -58,6 +58,10 @@ export const DEFAULTS = {
   // Unset reads nothing out
   ttsChannel: null as string | null,
   ttsChannelWho: process.env.TTS_CHANNEL_WHO || 'everyone',
+  ttsGreet: process.env.TTS_GREET === 'true',
+  ttsGreeting: process.env.TTS_GREETING || '{name} joined',
+  ttsNightReminders: process.env.TTS_NIGHT_REMINDERS === 'true',
+  ttsHopOn: process.env.TTS_HOP_ON === 'true',
 };
 
 /** Env var that sets each setting's default, for /setup show */
@@ -92,6 +96,10 @@ export const DEFAULT_ENV: Partial<Record<SettingKey, string>> = {
   ttsSpeed: 'TTS_SPEED',
   ttsVolume: 'TTS_VOLUME',
   ttsChannelWho: 'TTS_CHANNEL_WHO',
+  ttsGreet: 'TTS_GREET',
+  ttsGreeting: 'TTS_GREETING',
+  ttsNightReminders: 'TTS_NIGHT_REMINDERS',
+  ttsHopOn: 'TTS_HOP_ON',
 };
 
 export type SettingKey = keyof typeof DEFAULTS;

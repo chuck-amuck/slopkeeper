@@ -136,6 +136,17 @@ test('the channel read aloud has to be one the bot can see', () => {
   assert.equal(setting('speech', 'ttsChannelWho'), 'everyone');
 });
 
+test('the greeting has to have words, and stay short', async () => {
+  const guild = {} as never;
+  assert.deepEqual(checkSetting(guild, 'ttsGreeting', '  Hi {name} '), { value: 'Hi {name}' });
+  assert.match((checkSetting(guild, 'ttsGreeting', '   ') as { error: string }).error, /Type what it should say/);
+  assert.match((checkSetting(guild, 'ttsGreeting', 'x'.repeat(101)) as { error: string }).error, /100 characters/);
+  await run('greeting', 'speech', { greeting: '🎉' });
+  assert.equal(setting('greeting', 'ttsGreeting'), '{name} joined');
+  await run('greeting', 'speech', { greet: true, greeting: ' Hi {name} ', night_reminders: true, hop_on: true });
+  assert.deepEqual([setting('greeting', 'ttsGreet'), setting('greeting', 'ttsGreeting'), setting('greeting', 'ttsNightReminders'), setting('greeting', 'ttsHopOn')], [true, 'Hi {name}', true, true]);
+});
+
 test('/setup speech-channel sets, keeps and clears the channel', async () => {
   const general = { id: 'general', type: ChannelType.GuildText, permissionsFor: () => ({ has: () => true }) };
   await run('reading', 'speech-channel', { channel: general });

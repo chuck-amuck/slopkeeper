@@ -2,8 +2,10 @@ import { fakeClient } from './helpers.ts';
 import assert from 'node:assert/strict';
 import { mock, test } from 'node:test';
 import { recentActivity } from '../src/activity.ts';
+import { config } from '../src/config.ts';
 import { db } from '../src/db.ts';
 import { gameNights, nextOccurrence, parseWhen, tick } from '../src/features/gamenight.ts';
+import { setSetting } from '../src/settings.ts';
 
 const zone = 'America/Chicago';
 const thursday3pm = Date.UTC(2026, 9, 29, 20, 0);
@@ -64,6 +66,37 @@ test('a reminder is a plain message, so it doesn’t need Read Message History',
   assert.equal(sent[0].reply, undefined);
   assert.match(String(sent[0].content), /<@host>/);
   assert.match(String(sent[0].content), /channels\/plain\/channel-plain\/card/);
+});
+
+test('a reminder is said in the night’s voice channel when that’s turned on', async (t) => {
+  const asked: string[] = [];
+  t.mock.method(globalThis, 'fetch', async (_url: string, init: RequestInit) => {
+    asked.push((JSON.parse(init.body as string) as { text: string }).text);
+    return new Response('', { status: 500 });
+  });
+  t.mock.method(console, 'error', () => {});
+  const url = config.voiceUrl;
+  config.voiceUrl = 'http://voice.test';
+  t.after(() => void (config.voiceUrl = url));
+
+  const server = (id: string, works = true) => {
+    const guild = { id, name: id, channels: { cache: new Map() } };
+    guild.channels.cache.set('room', { id: 'room', guild, isVoiceBased: () => true, members: new Map([['a', { user: { bot: false } }]]) });
+    setSetting(id, 'ttsNightReminders', true);
+    const nightId = night(id, 600_000);
+    db.prepare(`UPDATE game_nights SET voice_channel_id = 'room' WHERE id = ?`).run(nightId);
+    return tick(
+      fakeClient([guild as never], async () => {
+        if (!works) throw new Error('Missing Permissions');
+      }),
+    );
+  };
+  await server('spoken');
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(asked, ['Valheim night starts in 10 minutes']);
+  await server('unsent', false);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(asked.length, 1, 'nothing said if the reminder didn’t go out');
 });
 
 test('a reminder that fails doesn’t hold up other servers, and is tried again', async () => {

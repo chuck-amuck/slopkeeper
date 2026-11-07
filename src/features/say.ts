@@ -3,15 +3,16 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { getVoiceConnection } from '@discordjs/voice';
-import { Events, MessageFlags, PermissionFlagsBits, SlashCommandBuilder, type ChatInputCommandInteraction, type Guild, type Message, type VoiceBasedChannel } from 'discord.js';
+import { Events, MessageFlags, PermissionFlagsBits, SlashCommandBuilder, type ChatInputCommandInteraction, type Guild, type GuildMember, type Message, type VoiceBasedChannel } from 'discord.js';
 import { logActivity } from '../activity.ts';
 import { config } from '../config.ts';
+import { db } from '../db.ts';
 import { levelSpeech } from '../loudness.ts';
 import { idSetting, setting } from '../settings.ts';
 import type { Feature } from '../types.ts';
 import { humansIn } from '../util.ts';
 import { plural } from './gamestats.ts';
-import { onPlaybackStop, play } from './soundboard.ts';
+import { onPlaybackStop, play, setGreeter } from './soundboard.ts';
 
 /** Speakers in the voice container's model, numbered as they were when they were picked */
 export const VOICES = [
@@ -44,6 +45,7 @@ const STRETCHES = [
 const SPEAK_TIMEOUT_MS = 15_000;
 /** Lines waiting behind the one being said */
 const MOST_WAITING = 5;
+const MOST_PHRASES = 25;
 /** After this, the next message from the same person gets their name read again */
 const SAME_SPEAKER_MS = 30_000;
 const LINK = /https?:\/\/\S+/g;
@@ -187,6 +189,59 @@ export async function say(channel: VoiceBasedChannel, typed: string, voiceId: st
   return failed;
 }
 
+/** Says a line nobody typed, in the server's voice. Returns null once it's started, or why it couldn't */
+export function sayOut(channel: VoiceBasedChannel, line: string): Promise<string | null> {
+  const { guild } = channel;
+  const text = speechFor(guild, line);
+  const voice = VOICES.find((v) => v.id === setting(guild.id, 'ttsVoice'));
+  if (!config.voiceUrl || !setting(guild.id, 'tts') || !voice || !hasWords(text)) return Promise.resolve('Nothing to say.');
+  if (queueFor(guild.id).lines.length >= MOST_WAITING) return Promise.resolve('Too many lines waiting.');
+  return queueLine(channel, text, voice.speaker);
+}
+
+/** Says an announcement to the people in a channel, unless that means leaving people in another */
+export async function announceAloud(channel: VoiceBasedChannel, line: string, key: 'ttsNightReminders' | 'ttsHopOn') {
+  const { guild } = channel;
+  if (!setting(guild.id, key) || !humansIn(channel).length) return;
+  const botChannel = getVoiceConnection(guild.id)?.joinConfig.channelId;
+  if (botChannel && botChannel !== channel.id) return;
+  const problem = await sayOut(channel, line);
+  if (problem && problem !== STOPPED) console.error(`Couldn’t say an announcement in server ${guild.id}: ${problem}`);
+}
+
+/** What to say when someone joins voice, or null for nothing */
+function greetingFor(member: GuildMember): string | null {
+  const { guild } = member;
+  if (!config.voiceUrl || !setting(guild.id, 'tts') || !setting(guild.id, 'ttsGreet')) return null;
+  const name = [member.displayName, member.user.username].find((n) => hasWords(speechFor(guild, n)));
+  return name ? setting(guild.id, 'ttsGreeting').replaceAll('{name}', () => name) : null;
+}
+
+export interface Phrase {
+  id: number;
+  text: string;
+  voice: string;
+}
+
+export const phrases = (guildId: string) => db.prepare('SELECT id, text, voice FROM saved_phrases WHERE guild_id = ? ORDER BY id').all(guildId) as unknown as Phrase[];
+
+/** Keeps a line to say again. Returns null on success or the reason it couldn't */
+export function savePhrase(guild: Guild, typed: string, voiceId: string): string | null {
+  const text = typed.trim().replace(/\s+/g, ' ');
+  const spoken = speechFor(guild, text);
+  if (!hasWords(spoken)) return 'There’s nothing in that to read out.';
+  const longest = setting(guild.id, 'ttsMaxChars');
+  if (spoken.length > longest) return `That’s ${spoken.length} characters, and the limit here is ${longest}.`;
+  if (!VOICES.some((v) => v.id === voiceId)) return 'Pick a voice from the list.';
+  const saved = phrases(guild.id);
+  if (saved.some((p) => p.text === text)) return null;
+  if (saved.length >= MOST_PHRASES) return `You can keep ${MOST_PHRASES} lines. Remove one first.`;
+  db.prepare('INSERT INTO saved_phrases (guild_id, text, voice) VALUES (?, ?, ?)').run(guild.id, text, voiceId);
+  return null;
+}
+
+export const removePhrase = (guildId: string, id: number) => db.prepare('DELETE FROM saved_phrases WHERE guild_id = ? AND id = ?').run(guildId, id).changes > 0;
+
 function queueLine(channel: VoiceBasedChannel, text: string, speaker: number) {
   const queue = queueFor(channel.guild.id);
   const { promise, resolve } = Promise.withResolvers<string | null>();
@@ -244,13 +299,14 @@ export const speak: Feature = {
       data: new SlashCommandBuilder()
         .setName('say')
         .setDescription('Have the bot say something in your voice channel')
-        .addStringOption((o) => o.setName('text').setDescription('What to say').setRequired(true).setMaxLength(LONGEST_TYPED))
+        .addStringOption((o) => o.setName('text').setDescription('What to say').setMaxLength(LONGEST_TYPED))
         .addStringOption((o) =>
           o
             .setName('voice')
             .setDescription('Which voice (default: this server’s)')
             .addChoices(...VOICES.map((v) => ({ name: v.name, value: v.id }))),
-        ),
+        )
+        .addStringOption((o) => o.setName('saved').setDescription('A saved line, instead of typing one').setAutocomplete(true)),
       async run(i) {
         if (!i.inCachedGuild()) return i.reply({ content: 'Use this in a server.', flags: MessageFlags.Ephemeral });
         if (!canSay(i)) {
@@ -258,14 +314,25 @@ export const speak: Feature = {
         }
         const channel = i.member.voice.channel;
         if (!channel) return i.reply({ content: 'Join a voice channel first.', flags: MessageFlags.Ephemeral });
+        const typed = i.options.getString('text');
+        const saved = i.options.getString('saved');
+        const phrase = phrases(i.guildId).find((p) => String(p.id) === saved);
+        const text = typed ?? phrase?.text;
+        if (!text) return i.reply({ content: saved ? 'Pick a saved line from the list.' : 'Type something to say, or pick a saved line.', flags: MessageFlags.Ephemeral });
         await i.deferReply({ flags: MessageFlags.Ephemeral });
-        const problem = await say(channel, i.options.getString('text', true), i.options.getString('voice') ?? undefined, i.user.id);
+        const problem = await say(channel, text, i.options.getString('voice') ?? (typed ? undefined : phrase?.voice), i.user.id);
         return i.editReply(problem ?? 'Said it.');
+      },
+      async autocomplete(i) {
+        const search = i.options.getFocused().toLowerCase();
+        const matches = i.guildId ? phrases(i.guildId).filter((p) => p.text.toLowerCase().includes(search)) : [];
+        return i.respond(matches.map((p) => ({ name: p.text.slice(0, 100), value: String(p.id) })));
       },
     },
   ],
   setup(client) {
     onPlaybackStop(stopLines);
+    setGreeter(greetingFor, sayOut);
     client.on(Events.MessageCreate, (message) => void readMessage(message).catch(console.error));
   },
 };

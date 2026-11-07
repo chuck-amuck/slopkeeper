@@ -383,7 +383,7 @@ The web UI's Library page also shows everything on Discord's soundboard, includi
 
 ### Text to speech
 
-`/say text [voice]` has the bot read something out in your voice channel, joining it first if it has to. There's a **Say something** box on the web UI's Soundboard tab too.
+`/say text [voice]` has the bot read something out in your voice channel, joining it first if it has to. There's a **Say something** box on the web UI's Soundboard tab too. **Save** there keeps a line and its voice as a one-click button, up to 25 per server, and `/say saved:` picks one in Discord. Saved lines follow the same rules as typed ones.
 
 - Lines wait their turn, while sounds still layer on top. **Stop** ends the line and clears anything waiting.
 - Mentions are read as names, custom emoji as their name, and links as "link".
@@ -391,6 +391,10 @@ The web UI's Library page also shows everything on Discord's soundboard, includi
 - `/setup speech` sets whether it's on, the default voice, how fast and how loud it talks, the longest line and how long each person waits between lines. `/setup speech-role` limits it to a role, plus people with **Manage Server**. The web UI isn't limited by the role, and counts as one person for the wait.
 
 It needs the [voice container](#the-voice-container).
+
+**Greetings:** with `greet` on in `/setup speech`, the bot says who joined voice, using the **Greeting** setting with `{name}` for the person. Someone with a join sound hears that instead. Greetings follow the join sound rules: the same cooldown and delay, nothing for moving channels, bots or the AFK channel, and the bot won't leave another channel for one.
+
+**Announcements:** `night_reminders` says game night reminders in the night's voice channel when they're posted, and `hop_on` says hop-on pings in the channel they're about. Both only play where people are, and won't pull the bot away from another channel. What gets posted doesn't change.
 
 **Reading a channel aloud:** `/setup speech-channel` or Settings picks a text channel, and the bot reads out what people type there, starting with who said it. It plays in the writer's voice channel, or else the one the bot is in, or else the busiest one, and reads nothing if nobody's in voice. `who` limits it to people in voice.
 
@@ -523,6 +527,10 @@ So the host can change a default for every server at once, and each server can s
 | Longest spoken line, in characters | `speech` | `TTS_MAX_CHARS` | 200 |
 | Seconds between one person's spoken lines | `speech` | `TTS_COOLDOWN_SEC` | 5 |
 | Who can use `/say` | `speech-role` | | everyone |
+| Say who joined voice | `speech` | `TTS_GREET` | off |
+| Greeting | `speech` | `TTS_GREETING` | `{name} joined` |
+| Say game night reminders | `speech` | `TTS_NIGHT_REMINDERS` | off |
+| Say hop-on pings | `speech` | `TTS_HOP_ON` | off |
 | Channel read aloud | `speech-channel` | | off |
 | Whose messages are read | `speech-channel` | `TTS_CHANNEL_WHO` (`everyone` or `voice`) | everyone |
 
@@ -641,8 +649,10 @@ It applies the same rules as `/sound` and `/setup`, and every request needs an `
 | `GET /guilds/:id/free-games` | Lists what's free right now, with whether each game is posted and why |
 | `GET /guilds/:id/voice` | Lists voice channels with people in them, busiest first |
 | `POST /guilds/:id/stop` | Stops whatever is playing, and any spoken lines waiting |
-| `GET /guilds/:id/say` | Whether text to speech is `on`, the `voices`, the default `voice` and the `longest` line |
+| `GET /guilds/:id/say` | Whether text to speech is `on`, the `voices`, the default `voice`, the `longest` line and the saved `phrases` |
 | `POST /guilds/:id/say` | Reads out `text` in `channelId`, with an optional `voice`. Answers once the line starts |
+| `POST /guilds/:id/phrases` | Saves `text` with its `voice`, and answers with the `phrases` |
+| `DELETE /guilds/:id/phrases/:id` | Removes a saved line, and answers with the `phrases` |
 | `GET /guilds/:id/game-nights` | Lists upcoming game nights and repeating series, and what a new night can be set to |
 | `POST /guilds/:id/game-nights` | Plans a night as `/gamenight plan` does: `{ "game", "when", "channelId", "hostId", "voiceChannelId", "details", "repeat" }`, where `repeat` is 7, 14 or null |
 | `GET /guilds/:id/game-nights/:night/friends` | Who's going but isn't Steam friends yet, with profile links: `strangers`, `unknown` where both lists are private, and `unlinked` |
