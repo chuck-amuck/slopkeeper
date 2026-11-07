@@ -3,6 +3,49 @@ import { voiceBar } from './voice.js';
 
 const byUse = (a, b) => b.plays - a.plays || a.name.localeCompare(b.name);
 
+/** Has the bot read out what's typed. Stays hidden if there's no voice to read it */
+function sayBox(voice) {
+  const guildId = state.guildId;
+  const text = el('input', { ariaLabel: 'What to say', placeholder: 'Say something', autocomplete: 'off' });
+  const picker = el('select', { ariaLabel: 'Voice' });
+  const send = el('button', {}, 'Say');
+  const paint = () => {
+    send.disabled = !voice.channel() || send.classList.contains('busy');
+    send.title = voice.channel() ? `Say in ${voice.channel().name}` : 'Nobody’s in voice';
+  };
+  const node = el(
+    'form',
+    {
+      className: 'toolbar say',
+      hidden: true,
+      onsubmit: async (e) => {
+        e.preventDefault();
+        if (send.disabled || !text.value.trim()) return;
+        send.classList.add('busy');
+        paint();
+        const sent = await attempt(async () => {
+          await voice.say(text.value, picker.value);
+          return true;
+        });
+        if (sent) text.value = '';
+        send.classList.remove('busy');
+        paint();
+      },
+    },
+    text,
+    picker,
+    send,
+  );
+  void attempt(async () => {
+    const { on, voices, voice: chosen, longest } = await request(api('/say'));
+    if (guildId !== state.guildId) return;
+    text.maxLength = longest;
+    picker.replaceChildren(...voices.map((v) => el('option', { value: v.id, selected: v.id === chosen }, v.name)));
+    node.hidden = !on;
+  });
+  return { node, paint };
+}
+
 /** Big buttons for playing sounds during a game: favourites first, then whatever gets played most */
 export function renderBoard(main) {
   const guildId = state.guildId;
@@ -26,11 +69,13 @@ export function renderBoard(main) {
       await request(api('/sound-panels'), { method: 'POST', json: { channelId } });
       toast(`Panel posted in ${channel}.`);
     });
-  main.append(voice.node, el('div', { className: 'toolbar' }, search, el('button', { onclick: postPanel }, 'Post panel')), board);
+  const say = sayBox(voice);
+  main.append(voice.node, say.node, el('div', { className: 'toolbar' }, search, el('button', { onclick: postPanel }, 'Post panel')), board);
   board.append(el('div', { className: 'empty' }, 'Loading sounds…'));
 
   function paint() {
     const channel = voice.channel();
+    say.paint();
     for (const tile of tiles) {
       tile.disabled = !channel;
       tile.title = channel ? `Play in ${channel.name}` : 'Nobody’s in voice';

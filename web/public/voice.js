@@ -50,6 +50,7 @@ export function voiceBar(main, onChange) {
     ),
     channel: () => channels?.find((c) => c.id === chosen),
     play: (name) => request(soundPath(name, '/play'), { method: 'POST', json: { channelId: chosen } }),
+    say: (text, voice) => request(api('/say'), { method: 'POST', json: { channelId: chosen, text, voice } }),
     playDiscord: (id) => request(api(`/discord-sounds/${id}/play`), { method: 'POST', json: { channelId: chosen } }),
   };
 }

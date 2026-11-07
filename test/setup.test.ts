@@ -100,3 +100,17 @@ test('patch notes start off, take a mode and a channel, and refuse anything else
   assert.match((checkSetting(guild, 'patchNotes', 'constructor') as { error: string }).error, /Patch notes are/);
   assert.deepEqual(checkSetting(guild, 'patchNotesChannel', 'nope'), { error: 'Pick a text channel.' });
 });
+
+test('text to speech settings take a known voice, a role and sensible limits', () => {
+  const guild = { channels: { cache: new Map() }, roles: { cache: new Map([['talkers', { id: 'talkers' }]]) } } as never;
+  assert.equal(setting('speech', 'tts'), true);
+  assert.equal(setting('speech', 'ttsVoice'), '5');
+  assert.deepEqual(checkSetting(guild, 'ttsVoice', '9'), { value: '9' });
+  assert.deepEqual(checkSetting(guild, 'ttsVoice', '3'), { error: 'Pick a voice from the list.' });
+  assert.deepEqual(checkSetting(guild, 'ttsRole', 'talkers'), { value: 'talkers' });
+  assert.deepEqual(checkSetting(guild, 'ttsRole', 'nope'), { error: 'Pick a role.' });
+  assert.deepEqual(checkSetting(guild, 'ttsMaxChars', 500), { value: 500 });
+  assert.match((checkSetting(guild, 'ttsMaxChars', 501) as { error: string }).error, /20 to 500/);
+  assert.deepEqual(checkSetting(guild, 'ttsCooldownSec', 0), { value: 0 });
+  assert.match((checkSetting(guild, 'ttsCooldownSec', -1) as { error: string }).error, /0 to 3600/);
+});

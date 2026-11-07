@@ -1629,7 +1629,7 @@ test('plays a Discord sound in voice as loud as it is there, or as the library h
   t.after(() => rmSync(file));
   assert.ok(readFileSync(file).equals(wav()));
   assert.equal(asked.length, 1, 'the second play uses the same copy');
-  assert.deepEqual(added.mock.calls[0].arguments, [file, 0.8 / 0.5]);
+  assert.deepEqual(added.mock.calls[0].arguments.slice(0, 2), [file, 0.8 / 0.5]);
   assert.deepEqual(plays(), [], 'not a library sound, so nothing to count');
 
   await save(id);
@@ -2415,6 +2415,54 @@ test('refuses a family with someone who isn’t here, a bot, or themselves', asy
   await refused(404, `/guilds/${GUILD}/steam-links/nobody/family`, { method: 'PUT', json: { with: 'u1' } });
   assert.equal(await refused(400, url, { method: 'PUT', json: { with: 'u1' } }), 'Pick two different people.');
   await refused(405, url, { method: 'POST', json: { with: 'u2' } });
+});
+
+test('tells the page what text to speech offers', async () => {
+  const url = config.voiceUrl;
+  assert.equal((await ok(`/guilds/${GUILD}/say`)).on, false, 'no voice container set up');
+  config.voiceUrl = 'http://voice.test';
+  try {
+    const data = await ok(`/guilds/${GUILD}/say`);
+    assert.deepEqual(data.voices.map((v: { name: string }) => v.name), ['Voice 1', 'Voice 2', 'Voice 5', 'Voice 9']);
+    assert.deepEqual(Object.keys(data.voices[0]), ['id', 'name']);
+    assert.deepEqual([data.on, data.voice, data.longest], [true, '5', 200]);
+    setSetting(GUILD, 'tts', false);
+    assert.equal((await ok(`/guilds/${GUILD}/say`)).on, false);
+  } finally {
+    config.voiceUrl = url;
+    setSetting(GUILD, 'tts', undefined);
+  }
+});
+
+test('the page’s limits on text to speech', async () => {
+  const url = config.voiceUrl;
+  config.voiceUrl = 'http://voice.test';
+  const post = (json: unknown) => refused(400, `/guilds/${GUILD}/say`, { method: 'POST', json });
+  try {
+    assert.equal(await post({ channelId: '702', text: 5 }), 'Type something to say.');
+    assert.equal(await post({ channelId: 'v1', text: 'hello' }), 'Nobody’s in voice any more.');
+    assert.equal(await post({ channelId: '702', text: 'x'.repeat(201) }), 'That’s 201 characters, and the limit here is 200.');
+    assert.equal(await post({ channelId: '702', text: '🎉' }), 'There’s nothing in that to read out.');
+    assert.equal(await post({ channelId: '702', text: 'hello', voice: 'nope' }), 'Pick a voice from the list.');
+  } finally {
+    config.voiceUrl = url;
+  }
+});
+
+test('the page’s lines go through the voice container and show as coming from the web', async (t) => {
+  const url = config.voiceUrl;
+  config.voiceUrl = 'http://voice.test';
+  t.after(() => void (config.voiceUrl = url));
+  const real = fetch;
+  let asked: unknown;
+  t.mock.method(globalThis, 'fetch', async (target: URL | string, init?: RequestInit) => {
+    if (String(target).startsWith(base)) return real(target, init);
+    asked = JSON.parse(init!.body as string);
+    return new Response('not audio', { status: 500 });
+  });
+  t.mock.method(console, 'error', () => {});
+  await refused(400, `/guilds/${GUILD}/say`, { method: 'POST', json: { channelId: '702', text: 'hello <@123>', voice: '2' } });
+  assert.deepEqual(asked, { text: 'hello someone', speaker_id: 100 });
 });
 
 test('says how each person is getting on with a game’s achievements', async (t) => {

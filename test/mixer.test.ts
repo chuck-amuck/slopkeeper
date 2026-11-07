@@ -96,3 +96,20 @@ test('stopping ends playback', { skip: !hasFfmpeg }, async () => {
   await done;
   assert.ok(peaks.length < 40);
 });
+
+test('says when a sound is over, however it ended', { skip: !hasFfmpeg }, async () => {
+  const mixer = new Mixer(0.5, 2);
+  const { done } = record(mixer);
+  const ended: string[] = [];
+  mixer.add(tone('e1.wav', 440, 0.2), 1, () => ended.push('played out'));
+  mixer.add(tone('e2.wav', 550, 5), 1, () => ended.push('dropped'));
+  await sleep(50);
+  mixer.add(tone('e3.wav', 660, 0.2), 1, () => ended.push('never'));
+  mixer.add(tone('e4.wav', 770, 5), 1, () => ended.push('stopped'));
+  await sleep(100);
+  mixer.stopAll();
+  await done;
+  assert.equal(new Set(ended).size, ended.length, 'each one only says so once');
+  assert.ok(ended.includes('stopped'));
+  assert.ok(ended.includes('dropped'));
+});

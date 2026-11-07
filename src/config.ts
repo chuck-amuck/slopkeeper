@@ -22,4 +22,6 @@ export const config = {
   // Turns on the management API that the web UI uses. Only for other containers: never publish its port
   apiToken: process.env.API_TOKEN || null,
   apiPort: Number(process.env.API_PORT || 8787),
+  // The voice container, for text to speech. Unset turns it off
+  voiceUrl: process.env.VOICE_URL || null,
 };

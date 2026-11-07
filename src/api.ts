@@ -17,6 +17,7 @@ import { activity, checkpoint, comparison, PERIODS, pickFor, sessionCount, stats
 import { postVote } from './features/gamevote.ts';
 import { recapFor } from './features/recap.ts';
 import { gameName, gameSpellings, mergeGames, separateGame } from './gameNames.ts';
+import { say, VOICES } from './features/say.ts';
 import { voiceTotals } from './features/sessions.ts';
 import { checkSetting, LABELS, LIMITS, show, source } from './features/setup.ts';
 import {
@@ -1046,6 +1047,15 @@ async function handle(client: Client<true>, req: IncomingMessage, res: ServerRes
     const game = await stopSeries(client, guild, Number(rest[0]));
     if (!game) throw new Refused(404, 'No such repeating night.');
     logActivity(guild.id, FROM_WEB, `Stopped **${game}** night repeating`);
+    return {};
+  }
+  if (section === 'say' && !rest.length && req.method === 'GET') {
+    return { on: Boolean(config.voiceUrl) && setting(guild.id, 'tts'), voices: VOICES.map(({ id, name }) => ({ id, name })), voice: setting(guild.id, 'ttsVoice'), longest: setting(guild.id, 'ttsMaxChars') };
+  }
+  if (section === 'say' && !rest.length && req.method === 'POST') {
+    const { channelId, text, voice } = await readJson(req);
+    if (typeof text !== 'string') throw new Refused(400, 'Type something to say.');
+    refuse(guild, await say(voiceChannelFor(guild, channelId), text, typeof voice === 'string' ? voice : undefined, FROM_WEB));
     return {};
   }
   if (section === 'stop' && !rest.length && req.method === 'POST') {
