@@ -19,6 +19,7 @@ import { noteGame } from '../src/gameNames.ts';
 import { activity, stats } from '../src/features/gamestats.ts';
 import { steam } from '../src/features/steam.ts';
 import { BIN_DAYS, clearBin, levelLibrary, setJoinSound, soundboard, soundGain } from '../src/features/soundboard.ts';
+import { lengthFor } from '../src/features/say.ts';
 import { setting, setSetting } from '../src/settings.ts';
 
 const TOKEN = 'secret';
@@ -2462,7 +2463,7 @@ test('the page’s lines go through the voice container and show as coming from 
   });
   t.mock.method(console, 'error', () => {});
   await refused(400, `/guilds/${GUILD}/say`, { method: 'POST', json: { channelId: '702', text: 'hello <@123>', voice: '2' } });
-  assert.deepEqual(asked, { text: 'hello someone', speaker_id: 100, length_scale: 1.18 });
+  assert.deepEqual(asked, { text: 'hello someone', speaker_id: 100, length_scale: lengthFor(85) });
 });
 
 test('says how each person is getting on with a game’s achievements', async (t) => {
