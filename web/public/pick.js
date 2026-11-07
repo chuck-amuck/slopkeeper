@@ -1,4 +1,5 @@
 import { ago, api, attempt, el, openDialog, request, RequestError, state, toast } from './lib.js';
+import { achievementsView } from './achievements.js';
 import { duration } from './stats.js';
 
 const SHOWN = 100;
@@ -164,9 +165,11 @@ export function renderPick(main) {
   function playingNow(game) {
     const note = el('p', { className: 'hint' });
     if (!game.appid) return null;
-    if (!playing.has(game.appid)) playing.set(game.appid, request(api(`/steam-apps/${game.appid}`)).then((r) => r.players).catch(() => null));
-    void playing.get(game.appid).then((count) => {
-      if (count !== null) note.textContent = `${count.toLocaleString()} playing on Steam now`;
+    if (!playing.has(game.appid)) playing.set(game.appid, request(api(`/steam-apps/${game.appid}`)).catch(() => ({ players: null, patch: null })));
+    void playing.get(game.appid).then(({ players, patch }) => {
+      const now = players !== null && `${players.toLocaleString()} playing on Steam now`;
+      const latest = patch && el('a', { href: patch.url, target: '_blank', rel: 'noreferrer' }, patch.title);
+      note.replaceChildren(...[now, now && latest && ' · ', latest && `Latest patch ${ago(patch.date)}: `, latest].filter(Boolean));
     });
     return note;
   }
@@ -193,6 +196,8 @@ export function renderPick(main) {
 
   function gameRow(game) {
     const count = el('div');
+    const goals = el('div');
+    const showGoals = el('button', { onclick: () => goals.replaceChildren(achievementsView(game.appid, game.players.map((p) => p.id))) }, 'Achievements');
     const showCount = () => count.replaceChildren(...[playingNow(game)].filter(Boolean));
     if (opened.has(game.name)) showCount();
     return el(
@@ -230,8 +235,10 @@ export function renderPick(main) {
             'div',
             { className: 'pick-actions' },
             game.url && el('a', { href: game.url, target: '_blank', rel: 'noreferrer' }, 'Store page'),
+            game.appid && showGoals,
             game.appid && el('button', { ariaLabel: `Never suggest ${game.name}`, onclick: () => hide(game) }, 'Never suggest this'),
           ),
+        goals,
       ),
     );
   }

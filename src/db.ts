@@ -108,6 +108,18 @@ db.exec(`
     recent INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (steam_id, appid)
   );
+  CREATE TABLE IF NOT EXISTS patch_posts (
+    guild_id TEXT NOT NULL,
+    gid TEXT NOT NULL,
+    appid INTEGER NOT NULL,
+    game TEXT NOT NULL,
+    title TEXT NOT NULL,
+    url TEXT NOT NULL,
+    date INTEGER NOT NULL,
+    text TEXT NOT NULL,
+    posted INTEGER NOT NULL,
+    PRIMARY KEY (guild_id, gid)
+  );
   CREATE TABLE IF NOT EXISTS steam_family (
     user_id TEXT PRIMARY KEY,
     family INTEGER NOT NULL

@@ -116,16 +116,16 @@ export function sharedGames(guildId: string, a: string, b: string) {
     return !without.length || (info.get(appid)?.shareable === true && borrowers(appid, families, pair, without, libraries).length === without.length);
   };
 
-  const shared: { name: string; minutes: number }[] = [];
+  const shared: { name: string; appid: number | null; minutes: number }[] = [];
   for (const g of library) {
     const owns = (who: number) => marks[who].has(g.id) || (g.steam_appid !== null && steam[who].has(g.steam_appid));
-    if (g.steam_appid === null ? owns(0) && owns(1) : bothPlay(g.steam_appid, owns)) shared.push({ name: g.name, minutes: minutes(g.steam_appid) });
+    if (g.steam_appid === null ? owns(0) && owns(1) : bothPlay(g.steam_appid, owns)) shared.push({ name: g.name, appid: g.steam_appid, minutes: minutes(g.steam_appid) });
   }
   const inLibrary = new Set(library.map((g) => g.steam_appid));
   for (const appid of new Set([...libraries.values()].flatMap((owned) => [...owned.keys()]))) {
     if (inLibrary.has(appid) || !info.get(appid)?.multiplayer || !bothPlay(appid, (who) => steam[who].has(appid))) continue;
     const name = [...libraries.values()].find((owned) => owned.get(appid)?.name)?.get(appid)?.name;
-    shared.push({ name: name ?? info.get(appid)?.name ?? `App ${appid}`, minutes: minutes(appid) });
+    shared.push({ name: name ?? info.get(appid)?.name ?? `App ${appid}`, appid, minutes: minutes(appid) });
   }
   return shared.sort((x, y) => y.minutes - x.minutes);
 }

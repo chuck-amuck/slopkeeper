@@ -2,7 +2,7 @@ import './helpers.ts';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { recentActivity } from '../src/activity.ts';
-import { setup } from '../src/features/setup.ts';
+import { checkSetting, setup } from '../src/features/setup.ts';
 import { setting } from '../src/settings.ts';
 
 /** Runs a /setup subcommand */
@@ -89,4 +89,14 @@ test('sets and clears the sound managers role', async () => {
   assert.equal(setting('setup-managers', 'soundManagerRole'), '');
   assert.equal(log('setup-managers')[0], 'Set Sound managers to everyone can change sounds');
   assert.equal(log('setup-managers')[1], 'Set Sound managers to <@&managers>');
+});
+
+test('patch notes start off, take a mode and a channel, and refuse anything else', () => {
+  const guild = { channels: { cache: new Map() } } as never;
+  assert.equal(setting('patches', 'patchNotes'), 'off');
+  assert.deepEqual(checkSetting(guild, 'patchNotes', 'digest'), { value: 'digest' });
+  assert.deepEqual(checkSetting(guild, 'patchNotes', 'each'), { value: 'each' });
+  assert.match((checkSetting(guild, 'patchNotes', 'often') as { error: string }).error, /Patch notes are/);
+  assert.match((checkSetting(guild, 'patchNotes', 'constructor') as { error: string }).error, /Patch notes are/);
+  assert.deepEqual(checkSetting(guild, 'patchNotesChannel', 'nope'), { error: 'Pick a text channel.' });
 });

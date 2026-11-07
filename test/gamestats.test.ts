@@ -227,9 +227,9 @@ test('shared games are library games plus multiplayer Steam games both own', () 
   own.run('sa', 40, 'Only Mine', 5);
   db.prepare('INSERT INTO app_info (appid, name, multiplayer) VALUES (20, ?, 1), (30, ?, 0), (40, ?, 1)').run('Helldivers', 'Solo Game', 'Only Mine');
   assert.deepEqual(sharedGames('c', 'a', 'b'), [
-    { name: 'Helldivers', minutes: 400 },
-    { name: 'Deep Rock', minutes: 60 },
-    { name: 'Jackbox', minutes: 0 },
+    { name: 'Helldivers', appid: 20, minutes: 400 },
+    { name: 'Deep Rock', appid: 10, minutes: 60 },
+    { name: 'Jackbox', appid: null, minutes: 0 },
   ]);
 });
 

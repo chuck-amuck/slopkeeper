@@ -32,6 +32,8 @@ export const DEFAULTS = {
   saleMinDiscount: num('SALE_MIN_DISCOUNT', 25),
   saleSteamWishlists: process.env.SALE_STEAM_WISHLISTS !== 'false',
   steamStatus: process.env.STEAM_STATUS !== 'false',
+  patchNotes: process.env.PATCH_NOTES || 'off',
+  patchNotesChannel: null as string | null,
   // Unset posts sales in the announce channel
   saleChannel: null as string | null,
   gameNightReminderMin: num('GAMENIGHT_REMINDER_MIN', 15),
@@ -63,6 +65,7 @@ export const DEFAULT_ENV: Partial<Record<SettingKey, string>> = {
   saleMinDiscount: 'SALE_MIN_DISCOUNT',
   saleSteamWishlists: 'SALE_STEAM_WISHLISTS',
   steamStatus: 'STEAM_STATUS',
+  patchNotes: 'PATCH_NOTES',
   gameNightReminderMin: 'GAMENIGHT_REMINDER_MIN',
   monthlyRecap: 'MONTHLY_RECAP',
   evenVolume: 'EVEN_VOLUME',
@@ -101,7 +104,7 @@ export function setSetting(guildId: string, key: SettingKey, value: string | num
   }
 }
 
-export type IdSettingKey = 'announceChannel' | 'hopOnRole' | 'freeGamesChannel' | 'saleChannel' | 'soundManagerRole';
+export type IdSettingKey = 'announceChannel' | 'hopOnRole' | 'freeGamesChannel' | 'saleChannel' | 'patchNotesChannel' | 'soundManagerRole';
 
 /** Channel and role settings store '' for "deliberately none", which reads back as null */
 export const idSetting = (guildId: string, key: IdSettingKey) => setting(guildId, key) || null;

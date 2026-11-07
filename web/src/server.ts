@@ -16,7 +16,7 @@ const CONTENT_TYPES = { html: 'text/html; charset=utf-8', js: 'text/javascript; 
 const asset = (file: string, type: keyof typeof CONTENT_TYPES) => ({ body: readFileSync(new URL(`../public/${file}`, import.meta.url)), type: CONTENT_TYPES[type] });
 const ASSETS: Record<string, ReturnType<typeof asset>> = {
   '/': asset('index.html', 'html'),
-  ...Object.fromEntries(['activity', 'app', 'board', 'clip', 'emoji', 'emojipicker', 'games', 'lib', 'pick', 'library', 'nights', 'settings', 'stats', 'trim', 'voice'].map((name) => [`/${name}.js`, asset(`${name}.js`, 'js')])),
+  ...Object.fromEntries(['achievements', 'activity', 'app', 'board', 'clip', 'emoji', 'emojipicker', 'games', 'lib', 'pick', 'library', 'nights', 'settings', 'stats', 'trim', 'voice'].map((name) => [`/${name}.js`, asset(`${name}.js`, 'js')])),
   '/style.css': asset('style.css', 'css'),
   '/icon.svg': asset('icon.svg', 'svg'),
 };
