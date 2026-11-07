@@ -1,5 +1,6 @@
 import { ActivityType, PermissionFlagsBits, type Client, type Guild, type GuildMember, type Role, type SendableChannels, type VoiceBasedChannel } from 'discord.js';
-import { idSetting, isAllowed, type IdSettingKey } from './settings.ts';
+import { idSetting, isAllowed, setting, type IdSettingKey } from './settings.ts';
+import { steamGame } from './steamStatus.ts';
 
 /** For outside services, so a stalled one can't hold a command or a scheduled job for minutes */
 export const requestTimeout = () => AbortSignal.timeout(30_000);
@@ -9,7 +10,10 @@ export function humansIn(channel: VoiceBasedChannel): GuildMember[] {
 }
 
 export function playingGames(member: GuildMember): string[] {
-  return (member.presence?.activities ?? []).filter((a) => a.type === ActivityType.Playing).map((a) => a.name);
+  const games = (member.presence?.activities ?? []).filter((a) => a.type === ActivityType.Playing).map((a) => a.name);
+  // Only when Discord shows nothing, so a game can't count twice under two names
+  const steam = games.length ? undefined : steamGame(member.id);
+  return steam && setting(member.guild.id, 'steamStatus') ? [steam.name] : games;
 }
 
 export function formatDuration(ms: number): string {

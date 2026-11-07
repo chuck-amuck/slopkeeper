@@ -2,6 +2,7 @@ import { EmbedBuilder, Events, MessageFlags, SlashCommandBuilder, type Client, t
 import { db, getKv, setKv } from '../db.ts';
 import { gameName } from '../gameNames.ts';
 import { isAllowed, setting } from '../settings.ts';
+import { onSteamChange } from '../steamStatus.ts';
 import type { Feature } from '../types.ts';
 import { announceChannel, eachGuild, formatDuration, humansIn, playingGames, servedGuilds, zonedDate, zonedParts } from '../util.ts';
 import { checkpoint, short, stats } from './gamestats.ts';
@@ -98,6 +99,14 @@ function pickUp(client: Client<true>, now: number) {
     for (const channel of guild.channels.cache.values()) {
       if (channel.isVoiceBased()) for (const member of humansIn(channel)) join(channel, member, now);
     }
+  }
+}
+
+/** Adds what people in tracked sessions are playing, for Steam games that come with no Discord event */
+export function noteGames(client: Client<true>) {
+  for (const [channelId, s] of live) {
+    const channel = client.channels.cache.get(channelId);
+    if (channel?.isVoiceBased()) for (const member of humansIn(channel)) for (const game of playingGames(member)) s.games.add(game);
   }
 }
 
@@ -198,6 +207,7 @@ export const sessions: Feature = {
   setup(client) {
     // Pick up anyone already in voice when the bot starts
     pickUp(client, Date.now());
+    onSteamChange(() => noteGames(client));
     // Only fires for later reconnects: this listener is added after the first one
     client.on(Events.ShardReady, () => resync(client));
 

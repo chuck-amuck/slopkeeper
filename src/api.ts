@@ -11,7 +11,7 @@ import { reviewGiveaways } from './features/freegames.ts';
 import { addGameRole, canHandOut, gameRoles, pingableGames, pingChoices, pingMenu, removeGameRole } from './features/gameroles.ts';
 import { addGame, addMemberGame, allGames, familyPlayersOf, gameById, groupMembers, hiddenGames, hideGame, memberGames, NOBODY_COUNTED, ownersOf, parseSteamAppId, removeGame, setGameDetails, setOwned, setWanted, steamOwnersOf, unhideGame, wantedBy, type GameRow } from './features/games.ts';
 import { onSale, saleName, salePrices, saleReasons, storeUrl } from './features/sales.ts';
-import { currentPlayers, familyOf, joinFamily, leaveFamily, linkSteam, profileUrl, refreshAll, steamLinks, unlinkSteam } from './features/steam.ts';
+import { currentPlayers, familyOf, friendsCheck, joinFamily, leaveFamily, linkSteam, lobbiesIn, profileUrl, refreshAll, steamLinks, unlinkSteam } from './features/steam.ts';
 import { activity, checkpoint, comparison, PERIODS, pickFor, sessionCount, stats } from './features/gamestats.ts';
 import { postVote } from './features/gamevote.ts';
 import { recapFor } from './features/recap.ts';
@@ -734,6 +734,24 @@ async function handleGame(guild: Guild, req: IncomingMessage, id: string, member
   throw new Refused(405, 'Not here.');
 }
 
+/** Pairs going to a game night who aren't Steam friends, with their profiles to fix it from */
+async function nightFriends(guild: Guild, nightId: number) {
+  const night = upcomingNights(guild.id, Date.now()).nights.find((n) => n.id === nightId);
+  if (!night) throw new Refused(404, 'No such game night.');
+  needSteam();
+  const links = new Map(steamLinks().map((l) => [l.user_id, l.steam_id]));
+  const person = (id: string) => ({ name: nameOf(guild, id), url: profileUrl(links.get(id)!) });
+  const pair = ([a, b]: [string, string]) => [person(a), person(b)];
+  const { strangers, unknown, unlinked } = await friendsCheck(night.people.in);
+  return { strangers: strangers.map(pair), unknown: unknown.map(pair), unlinked: unlinked.map((id) => nameOf(guild, id)) };
+}
+
+async function lobbyList(guild: Guild) {
+  if (!config.steamApiKey) return { lobbies: [] };
+  const lobbies = await lobbiesIn(guild).catch(steamDown);
+  return { lobbies: lobbies.map((l) => ({ name: nameOf(guild, l.userId), game: l.game, join: l.join })) };
+}
+
 function steamAccountList(guild: Guild) {
   const links = new Map(steamLinks().map((l) => [l.user_id, l]));
   const account = (id: string) => {
@@ -1000,6 +1018,8 @@ async function handle(client: Client<true>, req: IncomingMessage, res: ServerRes
   if (section === 'game-nights' && rest.length === 1 && rest[0] === 'when' && req.method === 'GET') {
     return { time: readWhen(guild.id, (url.searchParams.get('text') ?? '').slice(0, 100)) };
   }
+  if (section === 'game-nights' && rest.length === 2 && rest[1] === 'friends' && req.method === 'GET') return nightFriends(guild, Number(rest[0]));
+  if (section === 'lobbies' && !rest.length && req.method === 'GET') return lobbyList(guild);
   if (section === 'game-nights' && rest.length === 2 && rest[1] === 'cancel' && req.method === 'POST') {
     const game = await cancelNight(client, guild, Number(rest[0]));
     if (!game) throw new Refused(404, 'No such game night.');

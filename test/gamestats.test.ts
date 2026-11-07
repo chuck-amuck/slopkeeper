@@ -1,4 +1,6 @@
 import './helpers.ts';
+import { setSetting } from '../src/settings.ts';
+import { setSteamGames } from '../src/steamStatus.ts';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { mock, test, type TestContext } from 'node:test';
@@ -315,6 +317,38 @@ function voiceServer(t: TestContext, id: string, afkChannelId: string | null = n
     },
   };
 }
+
+test('a game on Steam counts in voice when Discord shows nothing', (t) => {
+  const { member, moveTo, plays } = voiceServer(t, 'steam');
+  const sam = member('sam');
+  moveTo(sam, 'v1');
+  setSteamGames(new Map([['sam', { appid: 1, name: 'Valheim', lobby: null }]]));
+  t.mock.timers.tick(5 * MINUTE);
+  setSteamGames(new Map());
+  t.mock.timers.tick(5 * MINUTE);
+  assert.deepEqual(plays(), [['sam', 'Valheim', 'v1', 5]]);
+});
+
+test('a game showing on Discord and Steam counts once', (t) => {
+  const { member, moveTo, play, plays } = voiceServer(t, 'steam-both');
+  const sam = member('sam');
+  moveTo(sam, 'v1');
+  play(sam, 'Valheim');
+  setSteamGames(new Map([['sam', { appid: 1, name: 'VALHEIM: Viking Edition', lobby: null }]]));
+  t.mock.timers.tick(5 * MINUTE);
+  setSteamGames(new Map());
+  assert.deepEqual(plays(), [['sam', 'Valheim', 'v1', 5]]);
+});
+
+test('a game on Steam doesn’t count with Steam status off', (t) => {
+  setSetting('steam-off', 'steamStatus', false);
+  const { member, moveTo, plays } = voiceServer(t, 'steam-off');
+  moveTo(member('sam'), 'v1');
+  setSteamGames(new Map([['sam', { appid: 1, name: 'Valheim', lobby: null }]]));
+  t.mock.timers.tick(5 * MINUTE);
+  setSteamGames(new Map());
+  assert.deepEqual(plays(), []);
+});
 
 test('a game counts in voice, even alone', (t) => {
   const { member, moveTo, play, plays } = voiceServer(t, 'alone');

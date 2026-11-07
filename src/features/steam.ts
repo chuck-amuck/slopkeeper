@@ -1,9 +1,10 @@
-import { EmbedBuilder, MessageFlags, SlashCommandBuilder } from 'discord.js';
+import { EmbedBuilder, MessageFlags, SlashCommandBuilder, type Client, type Guild } from 'discord.js';
 import { config } from '../config.ts';
 import { db } from '../db.ts';
-import { DEFAULTS } from '../settings.ts';
+import { DEFAULTS, setting } from '../settings.ts';
+import { setSteamGames, type SteamGame } from '../steamStatus.ts';
 import type { Feature } from '../types.ts';
-import { listNames, requestTimeout } from '../util.ts';
+import { humansIn, listNames, requestTimeout, servedGuilds } from '../util.ts';
 
 // Steam category ids: 1 Multi-player, 36 Online PvP, 38 Online Co-op
 const MULTIPLAYER_CATEGORIES = new Set([1, 36, 38]);
@@ -15,6 +16,10 @@ const FAMILY_SHARING_CATEGORY = 62;
 const REFRESH_EVERY_MS = 6 * 3_600_000;
 const FACTS_LAST_MS = 30 * 86_400_000;
 const PLAYER_COUNT_LASTS_MS = 10 * 60_000;
+const STATUS_EVERY_MS = 60_000;
+/** How long a game stays showing when Steam can't be asked, so an outage doesn't add hours of game time */
+const STATUS_LASTS_MS = 5 * 60_000;
+const FRIENDS_LAST_MS = 6 * 3_600_000;
 export const FAMILY_SIZE = 6;
 /** Steam's own values for a game on the Steam Deck */
 export const DECK_PLAYABLE = 2;
@@ -35,13 +40,25 @@ export interface OwnedGame {
   recent: number;
 }
 
+class SteamError extends Error {
+  status: number;
+
+  constructor(message: string, status: number) {
+    super(message);
+    this.status = status;
+  }
+}
+
 async function steamGet<T>(endpoint: string, params: Record<string, string>): Promise<T> {
   const url = new URL(endpoint, 'https://api.steampowered.com');
   for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
   const res = await fetch(url, { signal: requestTimeout() });
-  if (!res.ok) throw new Error(`Steam ${endpoint}: HTTP ${res.status}`);
+  if (!res.ok) throw new SteamError(`Steam ${endpoint}: HTTP ${res.status}`, res.status);
   return (await res.json()) as T;
 }
+
+/** Steam's answer for something a profile's privacy settings hide */
+const isHidden = (err: unknown) => err instanceof SteamError && (err.status === 401 || err.status === 403);
 
 function apiKey(): string {
   if (!config.steamApiKey) throw new Error('STEAM_API_KEY is not set');
@@ -299,6 +316,109 @@ export function appInfo(): Map<number, { name: string | null; multiplayer: boole
   return new Map(rows.map((r) => [r.appid, { name: r.name, multiplayer: r.multiplayer === 1, coop: r.coop === 1, pvp: r.pvp === 1, deck: r.deck, shareable: r.shareable === 1 }]));
 }
 
+/** What these people are playing on Steam right now, for those whose profile shows it */
+async function readStatus(userIds: string[]) {
+  const links = userIds.flatMap((id) => {
+    const link = linkFor(id);
+    return link ? [[id, link.steam_id]] : [];
+  });
+  const players = new Map<string, { gameid?: string; gameextrainfo?: string; lobbysteamid?: string }>();
+  for (let idx = 0; idx < links.length; idx += 100) {
+    const steamids = links.slice(idx, idx + 100).map(([, steamId]) => steamId).join(',');
+    const body = await steamGet<{ response: { players?: { steamid: string; gameid?: string; gameextrainfo?: string; lobbysteamid?: string }[] } }>('/ISteamUser/GetPlayerSummaries/v2/', {
+      key: apiKey(),
+      steamids,
+    });
+    for (const player of body.response.players ?? []) players.set(player.steamid, player);
+  }
+  const games = new Map<string, SteamGame>();
+  for (const [userId, steamId] of links) {
+    const player = players.get(steamId);
+    if (player?.gameid && player.gameextrainfo) games.set(userId, { appid: Number(player.gameid), name: player.gameextrainfo, lobby: player.lobbysteamid ?? null });
+  }
+  return games;
+}
+
+function peopleInVoice(client: Client<true>) {
+  const people = new Set<string>();
+  for (const guild of servedGuilds(client)) {
+    if (!setting(guild.id, 'steamStatus')) continue;
+    for (const channel of guild.channels.cache.values()) {
+      if (channel.isVoiceBased() && channel.id !== guild.afkChannelId) for (const member of humansIn(channel)) people.add(member.id);
+    }
+  }
+  return [...people];
+}
+
+let lastStatus = Date.now();
+
+/** Everything that uses this only cares about voice, so nobody else is looked up */
+export async function checkSteamStatus(client: Client<true>) {
+  try {
+    setSteamGames(await readStatus(peopleInVoice(client)));
+    lastStatus = Date.now();
+  } catch (err) {
+    console.error(err);
+    if (Date.now() - lastStatus > STATUS_LASTS_MS) setSteamGames(new Map());
+  }
+}
+
+/** For when waiting for the next check would be too late. Carries on without it if Steam can't say */
+export async function checkSteamStatusOf(guildId: string, userIds: string[]) {
+  if (!config.steamApiKey || !setting(guildId, 'steamStatus')) return;
+  setSteamGames(await readStatus(userIds).catch((err) => (console.error(err), new Map())), userIds);
+}
+
+/** Linked members in a joinable Steam lobby right now */
+export async function lobbiesIn(guild: Guild) {
+  const links = steamLinks().filter((l) => guild.members.cache.has(l.user_id));
+  const games = await readStatus(links.map((l) => l.user_id));
+  return links.flatMap((l) => {
+    const game = games.get(l.user_id);
+    if (!game?.lobby) return [];
+    return [{ userId: l.user_id, game: game.name, profile: profileUrl(l.steam_id), join: `steam://joinlobby/${game.appid}/${game.lobby}/${l.steam_id}` }];
+  });
+}
+
+const friendLists = new Map<string, { friends: Set<string> | null; at: number }>();
+
+/** Someone's friends, or null if that's hidden or Steam can't say */
+async function friendsOf(steamId: string) {
+  const known = friendLists.get(steamId);
+  if (known && Date.now() - known.at < FRIENDS_LAST_MS) return known.friends;
+  try {
+    const body = await steamGet<{ friendslist?: { friends?: { steamid: string }[] } }>('/ISteamUser/GetFriendList/v1/', { key: apiKey(), steamid: steamId, relationship: 'friend' });
+    const friends = new Set((body.friendslist?.friends ?? []).map((f) => f.steamid));
+    friendLists.set(steamId, { friends, at: Date.now() });
+    return friends;
+  } catch (err) {
+    if (!isHidden(err)) {
+      console.error(err);
+      return null;
+    }
+    friendLists.set(steamId, { friends: null, at: Date.now() });
+    return null;
+  }
+}
+
+/** Which pairs in a group aren't Steam friends. Being friends goes both ways, so one visible list settles it */
+export async function friendsCheck(userIds: string[]) {
+  const linked = userIds.filter((id) => linkFor(id));
+  const lists = new Map(await Promise.all(linked.map(async (id) => [id, await friendsOf(linkFor(id)!.steam_id)] as const)));
+  const strangers: [string, string][] = [];
+  const unknown: [string, string][] = [];
+  linked.forEach((a, idx) => {
+    for (const b of linked.slice(idx + 1)) {
+      const [steamA, steamB] = [linkFor(a)!.steam_id, linkFor(b)!.steam_id];
+      const [listA, listB] = [lists.get(a), lists.get(b)];
+      if (steamA === steamB) continue;
+      if (!listA && !listB) unknown.push([a, b]);
+      else if (!listA?.has(steamB) && !listB?.has(steamA)) strangers.push([a, b]);
+    }
+  });
+  return { strangers, unknown, unlinked: userIds.filter((id) => !linkFor(id)) };
+}
+
 const playerCounts = new Map<number, { count: number | null; at: number }>();
 
 /** How many people are playing a game on Steam right now, or null if Steam won't say */
@@ -348,6 +468,8 @@ export const steam: Feature = {
             .setDescription('Take someone out of their Steam family')
             .addUserOption((o) => o.setName('user').setDescription('Who to take out (default: you)')),
         )
+        .addSubcommand((s) => s.setName('friends').setDescription('Check that everyone in your voice channel is friends on Steam'))
+        .addSubcommand((s) => s.setName('lobbies').setDescription('Show who’s in a joinable Steam lobby right now'))
         .addSubcommand((s) => s.setName('list').setDescription('Show linked accounts'))
         .addSubcommand((s) => s.setName('refresh').setDescription('Re-sync everyone\'s Steam libraries now')),
       async run(i) {
@@ -383,6 +505,29 @@ export const steam: Feature = {
           return i.reply({ content: `Took ${user} out of their Steam family.`, allowedMentions: { parse: [] } });
         }
 
+        if (sub === 'friends') {
+          const voice = i.inCachedGuild() ? i.member.voice.channel : null;
+          if (!voice) return i.reply({ content: 'Join a voice channel first, then I can check who’s friends with who.', flags: MessageFlags.Ephemeral });
+          await i.deferReply();
+          const { strangers, unknown, unlinked } = await friendsCheck(humansIn(voice).map((m) => m.id));
+          const pair = ([a, b]: [string, string]) => `<@${a}> and <@${b}>`;
+          const lines = [
+            ...strangers.map((p) => `${pair(p)} aren’t friends on Steam yet.`),
+            ...unknown.map((p) => `Can’t tell for ${pair(p)}: both friends lists are private.`),
+            ...(unlinked.length ? [`Not linked: ${listNames(unlinked.map((id) => `<@${id}>`))}`] : []),
+          ];
+          return i.editReply({ content: lines.join('\n').slice(0, 2000) || '✅ Everyone here is friends on Steam.', allowedMentions: { parse: [] } });
+        }
+
+        if (sub === 'lobbies') {
+          if (!i.inCachedGuild()) return i.reply({ content: 'Use this in a server.', flags: MessageFlags.Ephemeral });
+          await i.deferReply();
+          const lobbies = await lobbiesIn(i.guild);
+          // Discord won't open steam:// links, but friends can join from a profile
+          const lines = lobbies.map((l) => `<@${l.userId}> · ${l.game} · [open their profile to join](${l.profile})`);
+          return i.editReply({ content: lines.join('\n').slice(0, 2000) || 'Nobody’s in a joinable Steam lobby right now. Only games that use Steam lobbies show up, and only with public game details.', allowedMentions: { parse: [] } });
+        }
+
         if (sub === 'refresh') {
           await i.deferReply();
           await refreshAll();
@@ -401,10 +546,11 @@ export const steam: Feature = {
       },
     },
   ],
-  setup() {
+  setup(client) {
     if (!config.steamApiKey) return;
     const run = () => void refreshAll().catch(console.error);
     run();
     setInterval(run, REFRESH_EVERY_MS);
+    setInterval(() => void checkSteamStatus(client), STATUS_EVERY_MS);
   },
 };

@@ -31,6 +31,7 @@ export const DEFAULTS = {
   // Steam is always running a small sale on something, so an alert waits for one worth mentioning
   saleMinDiscount: num('SALE_MIN_DISCOUNT', 25),
   saleSteamWishlists: process.env.SALE_STEAM_WISHLISTS !== 'false',
+  steamStatus: process.env.STEAM_STATUS !== 'false',
   // Unset posts sales in the announce channel
   saleChannel: null as string | null,
   gameNightReminderMin: num('GAMENIGHT_REMINDER_MIN', 15),
@@ -61,6 +62,7 @@ export const DEFAULT_ENV: Partial<Record<SettingKey, string>> = {
   freeGamesUnlisted: 'FREE_GAMES_UNLISTED',
   saleMinDiscount: 'SALE_MIN_DISCOUNT',
   saleSteamWishlists: 'SALE_STEAM_WISHLISTS',
+  steamStatus: 'STEAM_STATUS',
   gameNightReminderMin: 'GAMENIGHT_REMINDER_MIN',
   monthlyRecap: 'MONTHLY_RECAP',
   evenVolume: 'EVEN_VOLUME',
