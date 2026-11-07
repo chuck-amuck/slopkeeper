@@ -367,4 +367,9 @@ test('Never suggest this keeps the filters too', async () => {
   for (const user of ['a', 'c']) own(user, 1);
   facts(1, 0, { coop: 1 });
   assert.equal((await pickCard(null, 'coop')).ids.at(-1), 'wdp:hide:1:coop:0');
+  for (const user of ['a', 'c']) own(user, 2);
+  facts(2, 0, { pvp: 1 });
+  const pressed = await pickCard('wdp:hide:1:coop:0');
+  assert.equal(pressed.ids[0], 'wdp:reroll:coop:0');
+  assert.equal(pressed.title, '🤷 Nothing fits', 'the PvP game left doesn’t fit');
 });
