@@ -494,6 +494,20 @@ test('there’s no wait between messages, but fast chat can’t pile up, and Sto
   assert.equal(recentActivity(id, 5).length, 0, 'not logged');
 });
 
+test('fast chat stops at 5 lines waiting, and the ones before that all get read', { skip: !hasFfmpeg }, async (t) => {
+  const asked = fakeVoice(t);
+  const added: (() => void)[] = [];
+  t.mock.method(Mixer.prototype, 'add', (_file: string, _gain?: number, onEnd?: () => void) => void added.push(onEnd!));
+  const { message } = chat();
+  const sent = ['1', '2', '3', '4', '5', '6', '7', '8'].map((text) => readMessage(message(text)));
+  for (let played = 0; played < 8; played++) {
+    await sleep(120);
+    added.shift()?.();
+  }
+  await Promise.all(sent);
+  assert.deepEqual(asked.map((a) => a.text), ['Ana says, 1', '2', '3', '4', '5', '6']);
+});
+
 test('a problem joining voice is logged, as nobody’s there to tell', { skip: !hasFfmpeg }, async (t) => {
   fakeVoice(t);
   const errors = t.mock.method(console, 'error', () => {});
