@@ -13,6 +13,7 @@ import { logActivity } from '../activity.ts';
 import { DEFAULT_ENV, DEFAULTS, setSetting, setting, storedSetting, type SettingKey } from '../settings.ts';
 import type { Feature } from '../types.ts';
 import { isTimeZone, pingWarning } from '../util.ts';
+import { VOICES } from './say.ts';
 import { applyLevels } from './soundboard.ts';
 
 const ANNOUNCE_PERMISSIONS = [
@@ -36,6 +37,8 @@ export const LIMITS = {
   joinSoundDelayMs: [0, 10_000],
   freeGamesMinRating: [0, 100],
   saleMinDiscount: [1, 100],
+  ttsMaxChars: [20, 500],
+  ttsCooldownSec: [0, 3600],
 } as const;
 
 const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -71,6 +74,11 @@ export const LABELS: Record<SettingKey, string> = {
   joinSoundCooldownMin: 'Join sound cooldown',
   joinSoundDelayMs: 'Join sound delay',
   soundManagerRole: 'Sound managers',
+  tts: 'Text to speech',
+  ttsRole: 'Who can use text to speech',
+  ttsMaxChars: 'Longest spoken line',
+  ttsCooldownSec: 'Wait between spoken lines',
+  ttsVoice: 'Default voice',
 };
 
 export function show(key: SettingKey, value: unknown): string {
@@ -81,6 +89,8 @@ export function show(key: SettingKey, value: unknown): string {
       return value ? `<@&${value}>` : 'none, hop-on pings don’t ping anyone';
     case 'soundManagerRole':
       return value ? `<@&${value}>` : 'everyone can change sounds';
+    case 'ttsRole':
+      return value ? `<@&${value}>` : 'everyone';
     case 'weeklyPostDay':
       return DAYS[value as number];
     case 'weeklyPostHour':
@@ -104,7 +114,14 @@ export function show(key: SettingKey, value: unknown): string {
     case 'monthlyRecap':
     case 'evenVolume':
     case 'joinSounds':
+    case 'tts':
       return value ? 'on' : 'off';
+    case 'ttsMaxChars':
+      return `${value} characters`;
+    case 'ttsCooldownSec':
+      return `${value} seconds`;
+    case 'ttsVoice':
+      return VOICES.find((v) => v.id === value)?.name ?? String(value);
     case 'freeGamesUnlisted':
       return value ? 'shown' : 'hidden';
     case 'freeGamesMinRating':
@@ -173,7 +190,8 @@ export function checkSetting(guild: Guild, key: SettingKey, value: unknown): Che
       const problem = cantHandOut(guild, role);
       return problem ? { error: problem } : { value: role.id, warning: roleWarning(guild, role).trim() || undefined };
     }
-    case 'soundManagerRole': {
+    case 'soundManagerRole':
+    case 'ttsRole': {
       const role = guild.roles.cache.get(String(value));
       return role ? { value: role.id } : { error: 'Pick a role.' };
     }
@@ -183,6 +201,8 @@ export function checkSetting(guild: Guild, key: SettingKey, value: unknown): Che
     }
     case 'patchNotes':
       return Object.hasOwn(PATCH_MODES, String(value)) ? { value: String(value) } : { error: 'Patch notes are off, each one posted, or a weekly digest.' };
+    case 'ttsVoice':
+      return VOICES.some((v) => v.id === value) ? { value: String(value) } : { error: 'Pick a voice from the list.' };
     case 'steamCountry': {
       const country = String(value).toLowerCase();
       return /^[a-z]{2}$/.test(country) ? { value: country } : { error: 'Use a two-letter country code, like us or gb.' };
@@ -371,6 +391,26 @@ export const setup: Feature = {
         )
         .addSubcommand((s) =>
           s
+            .setName('speech')
+            .setDescription('Text to speech: on or off, the default voice, and the limits on /say')
+            .addBooleanOption((o) => o.setName('enabled').setDescription('Whether /say works here'))
+            .addStringOption((o) =>
+              o
+                .setName('voice')
+                .setDescription('Default voice')
+                .addChoices(...VOICES.map((v) => ({ name: v.name, value: v.id }))),
+            )
+            .addIntegerOption((o) => o.setName('max_characters').setDescription('Longest line').setMinValue(LIMITS.ttsMaxChars[0]).setMaxValue(LIMITS.ttsMaxChars[1]))
+            .addIntegerOption((o) => o.setName('wait_seconds').setDescription('Wait between one person’s lines').setMinValue(LIMITS.ttsCooldownSec[0]).setMaxValue(LIMITS.ttsCooldownSec[1])),
+        )
+        .addSubcommand((s) =>
+          s
+            .setName('speech-role')
+            .setDescription('Limit /say to a role, plus people with Manage Server')
+            .addRoleOption((o) => o.setName('role').setDescription('Leave empty to let everyone use it')),
+        )
+        .addSubcommand((s) =>
+          s
             .setName('reset')
             .setDescription('Put a setting back to its default')
             .addStringOption((o) =>
@@ -502,6 +542,15 @@ export const setup: Feature = {
         }
 
         if (sub === 'sound-managers') return apply(i, [['soundManagerRole', i.options.getRole('role')?.id ?? '']]);
+        if (sub === 'speech-role') return apply(i, [['ttsRole', i.options.getRole('role')?.id ?? '']]);
+        if (sub === 'speech') {
+          return apply(i, [
+            ['tts', i.options.getBoolean('enabled')],
+            ['ttsVoice', i.options.getString('voice')],
+            ['ttsMaxChars', i.options.getInteger('max_characters')],
+            ['ttsCooldownSec', i.options.getInteger('wait_seconds')],
+          ]);
+        }
 
         if (sub === 'reset') {
           const key = i.options.getString('setting', true) as SettingKey;

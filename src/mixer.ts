@@ -22,10 +22,12 @@ class Voice {
   /** Earlier copies of the same sound, cut off once this one has audio */
   replaces: Voice[] = [];
   private stopped = false;
+  private onEnd: (() => void) | undefined;
 
-  constructor(file: string, gain: number) {
+  constructor(file: string, gain: number, onEnd?: () => void) {
     this.file = file;
     this.gain = gain;
+    this.onEnd = onEnd;
     this.proc = spawn('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-i', file, '-f', 's16le', '-ar', '48000', '-ac', '2', 'pipe:1'], {
       stdio: ['ignore', 'pipe', 'pipe'],
     });
@@ -33,7 +35,7 @@ class Voice {
     // Without a 'readable' listener, Node resumes stdout when ffmpeg exits and the unread PCM is discarded
     this.pcm.on('readable', () => {});
     // 'close' only follows 'end' once every buffered byte has been read, so nothing is cut off
-    this.pcm.once('close', () => (this.ended = true));
+    this.pcm.once('close', () => this.finish());
 
     // Only surface ffmpeg's errors for sounds that failed by themselves; a stopped one always complains about the closed pipe
     let stderr = '';
@@ -43,8 +45,14 @@ class Voice {
     });
     this.proc.once('error', (err) => {
       console.error('ffmpeg error:', err.message);
-      this.ended = true;
+      this.finish();
     });
+  }
+
+  private finish() {
+    this.ended = true;
+    this.onEnd?.();
+    this.onEnd = undefined;
   }
 
   /**
@@ -61,7 +69,7 @@ class Voice {
   }
 
   stop() {
-    this.ended = true;
+    this.finish();
     this.stopped = true;
     // ffmpeg ignores SIGTERM while it's blocked writing to a full pipe, so close the pipe and SIGKILL it
     this.pcm.destroy();
@@ -92,8 +100,9 @@ export class Mixer extends Readable {
     return this.done || this.destroyed;
   }
 
-  add(file: string, gain = 1) {
-    const voice = new Voice(file, gain);
+  /** `onEnd` runs once the sound is over, however that came about */
+  add(file: string, gain = 1, onEnd?: () => void) {
+    const voice = new Voice(file, gain, onEnd);
     // A restart keeps the playing copy going until the new one has audio, so spamming leaves no gap while ffmpeg starts.
     // A copy from an earlier click that hasn't started yet is dropped, since this one supersedes it
     for (const old of this.voices) {

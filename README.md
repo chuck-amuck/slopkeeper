@@ -8,7 +8,7 @@ Keeper of the slop. A Discord bot for friends servers that helps people get toge
 - **Picking a game:** knows everyone's Steam library and picks a multiplayer game that the people in voice all own.
 - **Getting games:** posts when a game the group wants goes on sale, pinging whoever still needs it, and when a game is free to keep on Steam, Epic or GOG.
 - **Remembering the night:** recaps each voice session, keeps a weekly leaderboard, tracks what everyone plays, per person and for the whole server, and posts a recap of each month.
-- **Messing around:** a soundboard that layers different sounds like Discord's own and restarts a spammed one without a gap, with short clips mirrored into Discord's soundboard.
+- **Messing around:** a soundboard that layers different sounds like Discord's own and restarts a spammed one without a gap, with short clips mirrored into Discord's soundboard, and text to speech.
 
 Everything happens through slash commands (type `/` in any channel, or run `/help`) and through automatic posts in each server's announce channel.
 
@@ -19,7 +19,7 @@ Everything happens through slash commands (type `/` in any channel, or run `/hel
 - [Getting together](#getting-together): [hop-on pings](#hop-on-pings) · [game pings](#game-pings) · [game nights](#game-nights)
 - [Playing games](#playing-games): [Steam accounts](#steam-accounts) · [What do we play?](#what-do-we-play) · [Game library](#game-library) · [Sale alerts](#sale-alerts) · [Free games](#free-games)
 - [Stats](#stats): [session recaps](#session-recaps) · [voice leaderboards](#voice-leaderboards) · [game stats](#game-stats) · [comparing two people](#comparing-two-people) · [monthly recap](#monthly-recap)
-- [Soundboard](#soundboard): [playing sounds](#playing-sounds) · [managing sounds](#managing-sounds) · [even volume](#even-volume) · [Discord's soundboard](#discords-soundboard)
+- [Soundboard](#soundboard): [playing sounds](#playing-sounds) · [managing sounds](#managing-sounds) · [text to speech](#text-to-speech) · [even volume](#even-volume) · [Discord's soundboard](#discords-soundboard)
 - [Server settings](#server-settings): [settings and defaults](#settings-and-defaults)
 - [Multiple servers](#multiple-servers)
 - [Web UI](#web-ui)
@@ -381,6 +381,17 @@ Examples:
 
 The web UI's Library page also shows everything on Discord's soundboard, including sounds people added there themselves. You can play or preview any of them, save them to the library, and swap one for a library sound. Nothing is lost: a sound that comes off and isn't in the library is saved there first.
 
+### Text to speech
+
+`/say text [voice]` has the bot read something out in your voice channel, joining it first if it has to. There's a **Say something** box on the web UI's Soundboard tab too.
+
+- Lines wait their turn, while sounds still layer on top. **Stop** ends the line and clears anything waiting.
+- Mentions are read as names, custom emoji as their name, and links as "link".
+- Every line goes in the Activity tab with who said it.
+- `/setup speech` sets whether it's on, the default voice, the longest line and how long each person waits between lines. `/setup speech-role` limits it to a role, plus people with **Manage Server**. The web UI isn't limited by the role, and counts as one person for the wait.
+
+It needs the [voice container](#the-voice-container).
+
 ### Who can change sounds
 
 Everyone can, until a role is set with `/setup sound-managers`. Then only people with that role or **Manage Server** can use `/sound add`, `emoji`, `remove`, `restore`, `volume`, `discord-add`, `discord-remove` and `discord-sync`, or the changes under a panel's **⚙️ Settings**. Everyone else can still play and test sounds, stop playback, post a panel and set their own join sound. If the role is deleted, only people with **Manage Server** can change sounds until a new one is set.
@@ -501,6 +512,11 @@ So the host can change a default for every server at once, and each server can s
 | Join sounds | `sounds` | `JOIN_SOUNDS` (`false` to turn off) | on |
 | Minutes between one person's join sounds | `sounds` | `JOIN_SOUND_COOLDOWN_MIN` | 10 |
 | Milliseconds the bot waits after connecting before a join sound | `sounds` | `JOIN_SOUND_DELAY_MS` | 500 |
+| Text to speech | `speech` | `TTS` (`false` to turn off) | on |
+| Default voice | `speech` | `TTS_VOICE` (`1`, `2`, `5` or `9`) | 5 |
+| Longest spoken line, in characters | `speech` | `TTS_MAX_CHARS` | 200 |
+| Seconds between one person's spoken lines | `speech` | `TTS_COOLDOWN_SEC` | 5 |
+| Who can use `/say` | `speech-role` | | everyone |
 
 ## Multiple servers
 
@@ -520,7 +536,7 @@ One running bot can serve several servers. Each server gets its own:
 
 A page for your home network, in [`web/`](web), that runs as a second container next to the bot:
 
-- **Soundboard:** big buttons that play in voice, with favourites first and then whatever gets played most.
+- **Soundboard:** big buttons that play in voice, with favourites first and then whatever gets played most, and a box for having the bot say something.
 - **Library:** upload files or whole folders, preview, rename and delete sounds, set a sound's volume, trim it with a way back to the original, and choose what's on Discord's soundboard, with a waveform for picking part of a long sound. **Recently deleted** restores a sound or erases it for good.
 - **Game nights:** plan a night, see what's coming up and who still needs to add each other on Steam, cancel one or stop a repeating one.
 - **Games:** the game library, with who has each game, who needs it, who wants it and any sale. Add games from a searchable list of what members own on Steam, or by name or store link. **Steam accounts** links, changes and unlinks anyone's Steam account, says who shares a Steam family, and refreshes libraries. Remove games, set player limits and Steam links, tick who owns or wants what, and hide a game from `/whatdoweplay` or let it back in. Ownership from a Steam library is locked.
@@ -567,6 +583,7 @@ Set in `.env` (see `.env.example`).
 | `TZ` | UTC | The container's time zone, and every server's default time zone |
 | `API_TOKEN` | off | Turns on the [management API](#management-api) and is the token that unlocks it |
 | `API_PORT` | 8787 | Port for the management API |
+| `VOICE_URL` | off | Where the [voice container](#the-voice-container) is. Unset turns `/say` off |
 
 Everything else is a per-server setting. Servers set their own with `/setup`; the variables in [Settings and defaults](#settings-and-defaults) change the default for servers that haven't. For example, `HOPON_MIN_PEOPLE=3` makes every server wait for 3 people unless it ran `/setup hopon`.
 
@@ -615,7 +632,9 @@ It applies the same rules as `/sound` and `/setup`, and every request needs an `
 | `DELETE /guilds/:id/steam-links/:user/family` | Takes someone out of their Steam family |
 | `GET /guilds/:id/free-games` | Lists what's free right now, with whether each game is posted and why |
 | `GET /guilds/:id/voice` | Lists voice channels with people in them, busiest first |
-| `POST /guilds/:id/stop` | Stops whatever is playing |
+| `POST /guilds/:id/stop` | Stops whatever is playing, and any spoken lines waiting |
+| `GET /guilds/:id/say` | Whether text to speech is `on`, the `voices`, the default `voice` and the `longest` line |
+| `POST /guilds/:id/say` | Reads out `text` in `channelId`, with an optional `voice`. Answers once the line starts |
 | `GET /guilds/:id/game-nights` | Lists upcoming game nights and repeating series, and what a new night can be set to |
 | `POST /guilds/:id/game-nights` | Plans a night as `/gamenight plan` does: `{ "game", "when", "channelId", "hostId", "voiceChannelId", "details", "repeat" }`, where `repeat` is 7, 14 or null |
 | `GET /guilds/:id/game-nights/:night/friends` | Who's going but isn't Steam friends yet, with profile links: `strangers`, `unknown` where both lists are private, and `unlinked` |
@@ -657,6 +676,25 @@ Setting up involves two people, who can be the same person:
 - **The server admin** adds the bot to their server and runs `/setup` there.
 
 The two parts can happen in either order. The bot sets up any server it's added to, whether it's already running or not.
+
+### The voice container
+
+Text to speech runs [Piper](https://github.com/OHF-Voice/piper1-gpl) in a third container, built from [`voice/`](voice). It stays on the host, so nothing typed leaves your network.
+
+```yaml
+voice:
+  image: ghcr.io/chuck-amuck/slopkeeper-voice:latest
+  restart: unless-stopped
+  init: true
+  deploy:
+    resources:
+      limits:
+        memory: 512M
+  volumes:
+    - slopkeeper-voice:/voices
+```
+
+Set `VOICE_URL=http://voice:5000` on the bot, and don't publish the port. On first start it downloads one 79 MB model (`en_US-libritts_r-medium`, CC BY 4.0) into its volume, and after that it needs no internet. That one model holds all 904 voices, and `VOICES` in `src/features/say.ts` lists the ones offered. It uses about 230 to 370 MB, and makes a short line in about a second on two CPU cores.
 
 ### Hosting the bot
 

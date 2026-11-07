@@ -32,6 +32,11 @@ const FIELDS = {
   joinSoundCooldownMin: { kind: 'number', unit: 'min', hint: 'Shortest time between one person’s join sounds.' },
   joinSoundDelayMs: { kind: 'number', unit: 'ms', hint: 'How long the bot waits after connecting before it plays a join sound, so it clears Discord’s joining noises. 500 is half a second.' },
   soundManagerRole: { kind: 'role', none: 'Everyone', hint: 'Who can change sounds in Discord, along with people with Manage Server. Anyone can still play them. This page isn’t limited by it: it only asks for the password.' },
+  tts: { kind: 'boolean', hint: 'Lets people have the bot read out what they type, with /say or on the Soundboard tab.' },
+  ttsVoice: { kind: 'choice', options: [['1', 'Voice 1'], ['2', 'Voice 2'], ['5', 'Voice 5'], ['9', 'Voice 9']], hint: 'Used when nobody picks one.' },
+  ttsRole: { kind: 'role', none: 'Everyone', hint: 'Who can use /say, along with people with Manage Server. This page isn’t limited by it.' },
+  ttsMaxChars: { kind: 'number', unit: 'characters', hint: '200 is about 15 seconds of speech.' },
+  ttsCooldownSec: { kind: 'number', unit: 'seconds', hint: 'Shortest time between one person’s lines. The page counts as one person.' },
 };
 
 const GROUPS = [
@@ -44,6 +49,7 @@ const GROUPS = [
   ['Patch notes', ['patchNotes', 'patchNotesChannel']],
   ['Free games', ['freeGames', 'freeGamesChannel', 'freeGamesMinRating', 'freeGamesTaste', 'freeGamesMultiplayer', 'freeGamesUnlisted']],
   ['Soundboard', ['evenVolume', 'joinSounds', 'joinSoundDelayMs', 'joinSoundCooldownMin', 'soundManagerRole']],
+  ['Text to speech', ['tts', 'ttsVoice', 'ttsRole', 'ttsMaxChars', 'ttsCooldownSec']],
 ];
 
 export function renderSettings(main) {

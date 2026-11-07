@@ -613,23 +613,23 @@ async function connect(channel: VoiceBasedChannel): Promise<string | null> {
   return null;
 }
 
-function mixIn(guildId: string, file: string, gain: number) {
+function mixIn(guildId: string, file: string, gain: number, onEnd?: () => void) {
   const a = audioFor(guildId);
   clearTimeout(a.idleTimer);
   // Layer onto whatever is already playing (or restart this sound if it's one of them); a fresh mixer is only needed once the last one has gone quiet
   if (a.mixer && !a.mixer.finished) {
-    a.mixer.add(file, gain);
+    a.mixer.add(file, gain, onEnd);
     return;
   }
   a.mixer = new Mixer(VOLUME, MAX_VOICES);
-  a.mixer.add(file, gain);
+  a.mixer.add(file, gain, onEnd);
   a.player.play(createAudioResource(a.mixer, { inputType: StreamType.Raw }));
 }
 
-/** Plays a sound in a channel. Returns null on success or the reason it couldn't, for the user */
-export async function play(channel: VoiceBasedChannel, file: string, gain = 1): Promise<string | null> {
+/** Plays a sound in a channel. Returns null on success or the reason it couldn't, for the user. `onEnd` runs once it's over, if it played */
+export async function play(channel: VoiceBasedChannel, file: string, gain = 1, onEnd?: () => void): Promise<string | null> {
   const problem = await connect(channel);
-  if (!problem) mixIn(channel.guild.id, file, gain);
+  if (!problem) mixIn(channel.guild.id, file, gain, onEnd);
   return problem;
 }
 
@@ -694,7 +694,13 @@ export async function playJoinSound(oldState: VoiceState, newState: VoiceState) 
   mixIn(guild.id, sound.file, soundGain(guild.id, sound.name));
 }
 
+const stopListeners: ((guildId: string) => void)[] = [];
+
+/** For whatever else is waiting to play, so that Stop stops that too */
+export const onPlaybackStop = (listener: (guildId: string) => void) => void stopListeners.push(listener);
+
 export function stopPlayback(guildId: string) {
+  for (const listener of stopListeners) listener(guildId);
   const a = audio.get(guildId);
   a?.mixer?.stopAll();
   a?.player.stop(true);

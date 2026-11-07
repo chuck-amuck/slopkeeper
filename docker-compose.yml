@@ -12,5 +12,17 @@ services:
         limits:
           memory: 256M
 
+  voice:
+    image: ghcr.io/chuck-amuck/slopkeeper-voice:latest # text to speech, optional. Needs VOICE_URL=http://voice:5000 in .env
+    restart: unless-stopped
+    init: true
+    volumes:
+      - slopkeeper-voice:/voices
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+
 volumes:
   slopkeeper-data:
+  slopkeeper-voice:

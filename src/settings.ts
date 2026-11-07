@@ -45,6 +45,12 @@ export const DEFAULTS = {
   joinSoundDelayMs: num('JOIN_SOUND_DELAY_MS', 500),
   // Unset lets everyone change sounds
   soundManagerRole: null as string | null,
+  tts: process.env.TTS !== 'false',
+  // Unset lets everyone use it
+  ttsRole: null as string | null,
+  ttsMaxChars: num('TTS_MAX_CHARS', 200),
+  ttsCooldownSec: num('TTS_COOLDOWN_SEC', 5),
+  ttsVoice: process.env.TTS_VOICE || '5',
 };
 
 /** Env var that sets each setting's default, for /setup show */
@@ -72,6 +78,10 @@ export const DEFAULT_ENV: Partial<Record<SettingKey, string>> = {
   joinSounds: 'JOIN_SOUNDS',
   joinSoundCooldownMin: 'JOIN_SOUND_COOLDOWN_MIN',
   joinSoundDelayMs: 'JOIN_SOUND_DELAY_MS',
+  tts: 'TTS',
+  ttsMaxChars: 'TTS_MAX_CHARS',
+  ttsCooldownSec: 'TTS_COOLDOWN_SEC',
+  ttsVoice: 'TTS_VOICE',
 };
 
 export type SettingKey = keyof typeof DEFAULTS;
@@ -104,7 +114,7 @@ export function setSetting(guildId: string, key: SettingKey, value: string | num
   }
 }
 
-export type IdSettingKey = 'announceChannel' | 'hopOnRole' | 'freeGamesChannel' | 'saleChannel' | 'patchNotesChannel' | 'soundManagerRole';
+export type IdSettingKey = 'announceChannel' | 'hopOnRole' | 'freeGamesChannel' | 'saleChannel' | 'patchNotesChannel' | 'soundManagerRole' | 'ttsRole';
 
 /** Channel and role settings store '' for "deliberately none", which reads back as null */
 export const idSetting = (guildId: string, key: IdSettingKey) => setting(guildId, key) || null;
