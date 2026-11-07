@@ -638,8 +638,8 @@ test('announcements are said in a channel with people, once they’re turned on'
   setSetting(id, 'ttsHopOn', true);
   await announceAloud(room('lounge'), 'wrong setting', 'ttsNightReminders');
   await announceAloud(room('empty'), 'nobody there', 'ttsHopOn');
-  await announceAloud(room('lounge'), 'hop on <@1>', 'ttsHopOn');
-  assert.equal((await said()).length, 1);
+  await announceAloud(room('lounge'), 'hop on', 'ttsHopOn');
+  assert.deepEqual(await said(), ['hop on']);
 });
 
 test('an announcement won’t pull the bot from another channel, but plays in the one it’s in', { skip: !hasFfmpeg }, async (t) => {
