@@ -10,6 +10,7 @@ import { getVoiceConnection, VoiceConnectionStatus } from '@discordjs/voice';
 import { PermissionFlagsBits } from 'discord.js';
 import { recentActivity } from '../src/activity.ts';
 import { config } from '../src/config.ts';
+import { Mixer } from '../src/mixer.ts';
 import { say, speak, speechFor } from '../src/features/say.ts';
 import { soundboard, stopPlayback } from '../src/features/soundboard.ts';
 import { setSetting } from '../src/settings.ts';
@@ -101,6 +102,24 @@ test('a server’s speed setting changes how long speech takes', { skip: !hasFfm
   assert.deepEqual(asked.map((a) => a.length), [1, 2, 0.67]);
 });
 
+test('a server’s volume setting changes how loud a line plays', { skip: !hasFfmpeg }, async (t) => {
+  fakeVoice(t);
+  const added = t.mock.method(Mixer.prototype, 'add', (_file: string, _gain?: number, onEnd?: () => void) => onEnd?.());
+  const voice = channel();
+  assert.equal(await say(voice, 'hello', undefined, 'a'), null);
+  setSetting(voice.guild.id, 'ttsVolume', 150);
+  assert.equal(await say(voice, 'hello', undefined, 'b'), null);
+  assert.deepEqual(added.mock.calls.map((c) => c.arguments[1]), [1, 1.5]);
+});
+
+test('audio that can’t be read counts as the voice being unavailable, and leaves nothing behind', { skip: !hasFfmpeg }, async (t) => {
+  t.mock.method(console, 'error', () => {});
+  const before = leftovers();
+  fakeVoice(t, async () => new Response('not audio'));
+  assert.equal(await say(channel(), 'hello', undefined, 'x'), UNAVAILABLE);
+  assert.deepEqual(leftovers().filter((f) => !before.includes(f)), []);
+});
+
 test('lines wait their turn', { skip: !hasFfmpeg }, async (t) => {
   const order: string[] = [];
   fakeVoice(t, async (text) => {
@@ -115,13 +134,15 @@ test('lines wait their turn', { skip: !hasFfmpeg }, async (t) => {
 test('Stop ends the line being said and everything waiting', { skip: !hasFfmpeg }, async (t) => {
   const asked = fakeVoice(t);
   const voice = channel();
+  // Lines from the tests before this one may still be playing
+  const before = leftovers();
   const lines = ['one', 'two', 'three'].map((text) => say(voice, text, undefined, text));
   assert.equal(await lines[0], null);
   stopPlayback(voice.guild.id);
   assert.deepEqual(await Promise.all(lines.slice(1)), [STOPPED, STOPPED]);
   assert.deepEqual(asked.map((a) => a.text), ['one']);
   await sleep(50);
-  assert.deepEqual(leftovers(), []);
+  assert.deepEqual(leftovers().filter((f) => !before.includes(f)), []);
   assert.equal(recentActivity(voice.guild.id, 5).length, 1, 'only what was said is logged');
   assert.equal(await say(voice, 'after', undefined, 'x'), null, 'the queue still works');
 });

@@ -5,7 +5,7 @@ import path from 'node:path';
 import { MessageFlags, PermissionFlagsBits, SlashCommandBuilder, type ChatInputCommandInteraction, type Guild, type VoiceBasedChannel } from 'discord.js';
 import { logActivity } from '../activity.ts';
 import { config } from '../config.ts';
-import { measureGain } from '../loudness.ts';
+import { levelSpeech } from '../loudness.ts';
 import { idSetting, setting } from '../settings.ts';
 import type { Feature } from '../types.ts';
 import { plural } from './gamestats.ts';
@@ -85,10 +85,12 @@ async function sayLine(queue: Queue, { channel, text, speaker, started }: Line) 
   folder ??= mkdtempSync(path.join(tmpdir(), 'slopkeeper-say-'));
   // Each line has its own file, as the mixer takes a file it's already playing to be a restart
   const file = path.join(folder, `${randomUUID()}.wav`);
+  const unlevelled = `${file}.raw.wav`;
   try {
-    writeFileSync(file, await speech(text, speaker, setting(guildId, 'ttsSpeed'), cancel.signal));
-    const gain = setting(guildId, 'evenVolume') ? 10 ** ((await measureGain(file).catch(() => 0)) / 20) : 1;
+    writeFileSync(unlevelled, await speech(text, speaker, setting(guildId, 'ttsSpeed'), cancel.signal));
+    await levelSpeech(unlevelled, file);
     cancel.signal.throwIfAborted();
+    const gain = setting(guildId, 'ttsVolume') / 100;
     await new Promise<void>((finished, failed) => {
       play(channel, file, gain, finished)
         .then((problem) => {
@@ -102,6 +104,7 @@ async function sayLine(queue: Queue, { channel, text, speaker, started }: Line) 
     started(cancel.signal.aborted ? STOPPED : UNAVAILABLE);
   } finally {
     rmSync(file, { force: true });
+    rmSync(unlevelled, { force: true });
   }
 }
 

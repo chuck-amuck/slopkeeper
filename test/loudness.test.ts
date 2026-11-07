@@ -5,7 +5,7 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
-import { levelGain, measureGain } from '../src/loudness.ts';
+import { levelGain, levelSpeech, measureGain } from '../src/loudness.ts';
 
 const hasFfmpeg = spawnSync('ffmpeg', ['-version']).status === 0;
 const dir = mkdtempSync(path.join(tmpdir(), 'slopkeeper-loudness-'));
@@ -52,4 +52,18 @@ test('a silent file gets no gain', { skip: !hasFfmpeg }, async () => {
   const file = path.join(dir, 'silent.wav');
   execFileSync('ffmpeg', ['-loglevel', 'error', '-y', '-f', 'lavfi', '-i', 'anullsrc=r=48000:d=1', '-t', '1', file]);
   assert.equal(await measureGain(file), 0);
+});
+
+test('speech comes up to the level of sounds without clipping', { skip: !hasFfmpeg }, async () => {
+  // Quiet, with sharp peaks at full scale, which is how speech looks to a level meter
+  const input = path.join(dir, 'speech.wav');
+  const output = path.join(dir, 'levelled.wav');
+  execFileSync('ffmpeg', ['-loglevel', 'error', '-y', '-f', 'lavfi', '-i', "aevalsrc='0.17*sin(2*PI*220*t)+if(lt(mod(t,0.5),0.002),0.8,0)':d=4:s=22050", input]);
+  assert.ok((await measureGain(input)) <= 0, 'levelling alone can’t raise it');
+  await levelSpeech(input, output);
+  const { stderr } = spawnSync('ffmpeg', ['-hide_banner', '-nostats', '-i', output, '-af', 'ebur128=peak=true:framelog=verbose', '-f', 'null', '-'], { encoding: 'utf8' });
+  const before = spawnSync('ffmpeg', ['-hide_banner', '-nostats', '-i', input, '-af', 'ebur128=peak=true:framelog=verbose', '-f', 'null', '-'], { encoding: 'utf8' }).stderr;
+  const read = (log: string, name: string) => Number(new RegExp(`\\b${name}:\\s+(\\S+) (?:LUFS|dBFS)`).exec(log.slice(log.lastIndexOf('Summary')))![1]);
+  assert.ok(read(stderr, 'I') > read(before, 'I') + 3, 'louder');
+  assert.ok(read(stderr, 'Peak') < 0.5, 'not clipped');
 });
