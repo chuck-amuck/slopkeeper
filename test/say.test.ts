@@ -127,6 +127,21 @@ test('Stop cancels a line that’s still being made, without calling that a fail
   assert.equal(errors.mock.callCount(), 0);
 });
 
+test('Stop just after a line is made means it’s never played', { skip: !hasFfmpeg }, async (t) => {
+  let made!: () => void;
+  const ready = new Promise<void>((resolve) => (made = resolve));
+  fakeVoice(t, async () => {
+    made();
+    return new Response(readFileSync(speechFile));
+  });
+  const voice = channel();
+  const line = say(voice, 'hello', undefined, 'x');
+  await ready;
+  stopPlayback(voice.guild.id);
+  assert.equal(await line, STOPPED);
+  assert.equal(getVoiceConnection(voice.guild.id), undefined, 'it never joined');
+});
+
 test('a voice container that’s down or broken is reported, and the next line still gets its turn', { skip: !hasFfmpeg }, async (t) => {
   const errors = t.mock.method(console, 'error', () => {});
   fakeVoice(t, async (text) => {
