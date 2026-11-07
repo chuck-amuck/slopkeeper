@@ -53,6 +53,8 @@ export const DEFAULTS = {
   ttsVoice: process.env.TTS_VOICE || '5',
   // The voices run a little fast at their natural speed
   ttsSpeed: num('TTS_SPEED', 85),
+  // 100 is about as loud as a sound with Even volume on
+  ttsVolume: num('TTS_VOLUME', 100),
 };
 
 /** Env var that sets each setting's default, for /setup show */
@@ -85,6 +87,7 @@ export const DEFAULT_ENV: Partial<Record<SettingKey, string>> = {
   ttsCooldownSec: 'TTS_COOLDOWN_SEC',
   ttsVoice: 'TTS_VOICE',
   ttsSpeed: 'TTS_SPEED',
+  ttsVolume: 'TTS_VOLUME',
 };
 
 export type SettingKey = keyof typeof DEFAULTS;
