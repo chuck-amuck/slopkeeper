@@ -67,11 +67,12 @@ export function speechFor(guild: Guild, typed: string) {
     .trim();
 }
 
-async function speech(text: string, speaker: number, signal: AbortSignal) {
+async function speech(text: string, speaker: number, speed: number, signal: AbortSignal) {
   const res = await fetch(`${config.voiceUrl}/synthesize`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ text, speaker_id: speaker }),
+    // Piper's setting is how long speech takes, so the slower it is the higher this goes
+    body: JSON.stringify({ text, speaker_id: speaker, length_scale: Math.round(10_000 / speed) / 100 }),
     signal: AbortSignal.any([signal, AbortSignal.timeout(SPEAK_TIMEOUT_MS)]),
   });
   if (!res.ok) throw new Error(`Voice container said HTTP ${res.status}`);
@@ -85,7 +86,7 @@ async function sayLine(queue: Queue, { channel, text, speaker, started }: Line) 
   // Each line has its own file, as the mixer takes a file it's already playing to be a restart
   const file = path.join(folder, `${randomUUID()}.wav`);
   try {
-    writeFileSync(file, await speech(text, speaker, cancel.signal));
+    writeFileSync(file, await speech(text, speaker, setting(guildId, 'ttsSpeed'), cancel.signal));
     const gain = setting(guildId, 'evenVolume') ? 10 ** ((await measureGain(file).catch(() => 0)) / 20) : 1;
     cancel.signal.throwIfAborted();
     await new Promise<void>((finished, failed) => {

@@ -58,11 +58,11 @@ function channel(options: { missing?: bigint[] } = {}) {
 
 /** A voice container, which keeps what it was asked for */
 function fakeVoice(t: TestContext, answer?: (text: string, signal: AbortSignal) => Promise<Response>) {
-  const asked: { text: string; speaker: number }[] = [];
+  const asked: { text: string; speaker: number; length: number }[] = [];
   t.mock.method(globalThis, 'fetch', async (url: string, init: RequestInit) => {
     assert.equal(url, 'http://voice.test/synthesize');
-    const body = JSON.parse(init.body as string) as { text: string; speaker_id: number };
-    asked.push({ text: body.text, speaker: body.speaker_id });
+    const body = JSON.parse(init.body as string) as { text: string; speaker_id: number; length_scale: number };
+    asked.push({ text: body.text, speaker: body.speaker_id, length: body.length_scale });
     return answer ? answer(body.text, init.signal!) : new Response(readFileSync(speechFile));
   });
   return asked;
@@ -85,10 +85,20 @@ test('reads out a line in the server’s voice, or the one asked for, and logs w
   await sleep(300);
   assert.equal(await say(voice, 'and again', '1', 'ben'), null);
   await sleep(300);
-  assert.deepEqual(asked, [{ text: 'hello there', speaker: 400 }, { text: 'and again', speaker: 0 }]);
+  assert.deepEqual(asked, [{ text: 'hello there', speaker: 400, length: 1.18 }, { text: 'and again', speaker: 0, length: 1.18 }]);
   const lines = recentActivity(voice.guild.id, 5).map((r) => `${r.actor}: ${r.action}`).toReversed();
   assert.deepEqual(lines, ['ana: Said “hello there” in <#voice>', 'ben: Said “and again” in <#voice>']);
   assert.deepEqual(leftovers(), []);
+});
+
+test('a server’s speed setting changes how long speech takes', { skip: !hasFfmpeg }, async (t) => {
+  const asked = fakeVoice(t);
+  const voice = channel();
+  for (const speed of [100, 50, 150]) {
+    setSetting(voice.guild.id, 'ttsSpeed', speed);
+    assert.equal(await say(voice, 'hello', undefined, String(speed)), null);
+  }
+  assert.deepEqual(asked.map((a) => a.length), [1, 2, 0.67]);
 });
 
 test('lines wait their turn', { skip: !hasFfmpeg }, async (t) => {
