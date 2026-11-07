@@ -33,6 +33,7 @@ import {
   type Client,
   type Guild,
   type GuildTextBasedChannel,
+  type GuildMember,
   type VoiceBasedChannel,
   type VoiceState,
 } from 'discord.js';
@@ -660,13 +661,15 @@ const lastJoinSound = new Map<string, number>();
 
 /** Plays someone's join sound as they connect to voice. These aren't clicks, so they stay out of the recap's top sounds */
 export async function playJoinSound(oldState: VoiceState, newState: VoiceState) {
-  const { channel, guild } = newState;
+  const { channel, guild, member } = newState;
   // Coming from another channel, or muting, is not joining
-  if (!channel || oldState.channelId || newState.member?.user.bot || channel.id === guild.afkChannelId) return;
-  if (!setting(guild.id, 'joinSounds')) return;
-  const name = joinSounds(guild.id).find((r) => r.user_id === newState.id)?.name;
+  if (!channel || oldState.channelId || member?.user.bot || channel.id === guild.afkChannelId) return;
+  const name = setting(guild.id, 'joinSounds') ? joinSounds(guild.id).find((r) => r.user_id === newState.id)?.name : undefined;
   const sound = name && findSound(guild.id, name);
-  if (!sound) return;
+  // A join sound already says who it is
+  const greeting = !sound && member ? greeter?.line(member) : null;
+  if (!sound && !greeting) return;
+  const what = sound ? `Join sound ${sound.name}` : 'Greeting';
   // One person arriving shouldn't pull the bot away from people using it in another channel
   const busyElsewhere = () => {
     const botChannel = getVoiceConnection(guild.id)?.joinConfig.channelId;
@@ -679,19 +682,33 @@ export async function playJoinSound(oldState: VoiceState, newState: VoiceState) 
   lastJoinSound.set(key, now);
   // The bot joins straight away, and the delay comes after that, so the sound clears Discord's joining noises
   const problem = await connect(channel);
-  if (problem) return console.log(`Join sound ${sound.name} in ${guild.name} didn’t play: ${problem}`);
+  if (problem) return console.log(`${what} in ${guild.name} didn’t play: ${problem}`);
+  // Connecting cancelled this, and with nothing playing to finish nothing would set it again
+  const leaveIfIdle = () => {
+    const a = audioFor(guild.id);
+    if (a.player.state.status === AudioPlayerStatus.Idle) leaveWhenIdle(guild.id, a);
+  };
   const delay = setting(guild.id, 'joinSoundDelayMs');
   if (delay) {
     await sleep(delay);
     if (guild.voiceStates.cache.get(newState.id)?.channelId !== channel.id || busyElsewhere()) {
       lastJoinSound.delete(key);
-      // Connecting cancelled this, and with no sound to finish nothing would set it again
-      const a = audioFor(guild.id);
-      if (a.player.state.status === AudioPlayerStatus.Idle) leaveWhenIdle(guild.id, a);
-      return;
+      return leaveIfIdle();
     }
   }
-  mixIn(guild.id, sound.file, soundGain(guild.id, sound.name));
+  if (sound) return mixIn(guild.id, sound.file, soundGain(guild.id, sound.name));
+  const failed = await greeter!.say(channel, greeting!);
+  if (failed) {
+    console.log(`${what} in ${guild.name} didn’t play: ${failed}`);
+    leaveIfIdle();
+  }
+}
+
+let greeter: { line(member: GuildMember): string | null; say(channel: VoiceBasedChannel, line: string): Promise<string | null> } | undefined;
+
+/** How text to speech greets people, kept here by being handed over since it already depends on this file */
+export function setGreeter(line: (member: GuildMember) => string | null, say: (channel: VoiceBasedChannel, line: string) => Promise<string | null>) {
+  greeter = { line, say };
 }
 
 const stopListeners: ((guildId: string) => void)[] = [];

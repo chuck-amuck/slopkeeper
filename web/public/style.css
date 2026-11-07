@@ -284,6 +284,50 @@ main {
   min-width: 0;
 }
 
+.say-box {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.say-box[hidden] {
+  display: none;
+}
+
+.phrases {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+}
+
+.phrases:empty {
+  display: none;
+}
+
+.phrase {
+  display: inline-flex;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.phrase-say {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.phrase-remove {
+  flex: none;
+  margin-left: 1px;
+  padding-inline: 10px;
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+}
+
 .voice-label {
   color: var(--muted);
   font-size: 13px;

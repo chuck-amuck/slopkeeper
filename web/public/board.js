@@ -9,15 +9,59 @@ function sayBox(voice) {
   const text = el('input', { ariaLabel: 'What to say', placeholder: 'Say something', autocomplete: 'off' });
   const picker = el('select', { ariaLabel: 'Voice' });
   const send = el('button', {}, 'Say');
+  const row = el('div', { className: 'phrases' });
+  let phrases = [];
   const paint = () => {
+    const title = voice.channel() ? `Say in ${voice.channel().name}` : 'Nobody’s in voice';
     send.disabled = !voice.channel() || send.classList.contains('busy');
-    send.title = voice.channel() ? `Say in ${voice.channel().name}` : 'Nobody’s in voice';
+    send.title = title;
+    for (const button of row.querySelectorAll('.phrase-say')) {
+      button.disabled = !voice.channel();
+      button.title = voice.channel() ? `${button.textContent}\n${title}` : title;
+    }
   };
-  const node = el(
+  const remember = (saved) => {
+    phrases = saved;
+    row.replaceChildren(
+      ...phrases.map((phrase) =>
+        el(
+          'span',
+          { className: 'phrase' },
+          el('button', { className: 'phrase-say', onclick: () => void attempt(() => voice.say(phrase.text, phrase.voice)) }, phrase.text),
+          el(
+            'button',
+            {
+              className: 'phrase-remove',
+              ariaLabel: `Remove “${phrase.text}”`,
+              title: 'Remove',
+              onclick: () => void attempt(async () => remember((await request(api(`/phrases/${phrase.id}`), { method: 'DELETE' })).phrases)),
+            },
+            '×',
+          ),
+        ),
+      ),
+    );
+    paint();
+  };
+  const save = el(
+    'button',
+    {
+      type: 'button',
+      onclick: () => {
+        if (!text.value.trim()) return;
+        void attempt(async () => {
+          remember((await request(api('/phrases'), { method: 'POST', json: { text: text.value, voice: picker.value } })).phrases);
+          text.value = '';
+          toast('Saved.');
+        });
+      },
+    },
+    'Save',
+  );
+  const form = el(
     'form',
     {
       className: 'toolbar say',
-      hidden: true,
       onsubmit: async (e) => {
         e.preventDefault();
         if (send.disabled || !text.value.trim()) return;
@@ -35,13 +79,16 @@ function sayBox(voice) {
     text,
     picker,
     send,
+    save,
   );
+  const node = el('div', { className: 'say-box', hidden: true }, form, row);
   void attempt(async () => {
-    const { on, voices, voice: chosen, longest } = await request(api('/say'));
+    const { on, voices, voice: chosen, longest, phrases: saved } = await request(api('/say'));
     if (guildId !== state.guildId) return;
     text.maxLength = longest;
     picker.replaceChildren(...voices.map((v) => el('option', { value: v.id, selected: v.id === chosen }, v.name)));
     node.hidden = !on;
+    remember(saved);
   });
   return { node, paint };
 }

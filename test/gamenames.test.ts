@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { mock, test, type TestContext } from 'node:test';
 import { Events } from 'discord.js';
+import { config } from '../src/config.ts';
 import { db } from '../src/db.ts';
 
 const HOUR = 3_600_000;
@@ -280,6 +281,33 @@ test('a hop-on post names a game once, whatever it’s called', async (t) => {
   assert.equal((sent[0].content!.match(/Deep Rock Galactic/g) ?? []).length, 1);
   assert.doesNotMatch(sent[0].content!, /deeprockgalactic/);
   assert.match(sent[0].content!, /<@&drg>/);
+});
+
+test('a hop-on ping is said in voice when that’s turned on, and the post is the same', async (t) => {
+  const asked: string[] = [];
+  t.mock.method(globalThis, 'fetch', async (_url: string, init: RequestInit) => {
+    asked.push((JSON.parse(init.body as string) as { text: string }).text);
+    throw new Error('no voice here');
+  });
+  t.mock.method(console, 'error', () => {});
+  const url = config.voiceUrl;
+  config.voiceUrl = 'http://voice.test';
+  t.after(() => void (config.voiceUrl = url));
+  const hopOnWith = async (id: string, ...games: string[]) => {
+    setSetting(id, 'ttsHopOn', true);
+    setSetting(id, 'hopOnMinPeople', 2);
+    const { client, sent, join } = server(t, id);
+    hopOn.setup!(client as never);
+    join('Sam', ...games);
+    join('Alex', ...games);
+    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setImmediate(resolve));
+    t.mock.timers.reset();
+    return sent;
+  };
+  assert.equal((await hopOnWith('hop-spoken', 'Valheim')).length, 1, 'still posted when the voice is down');
+  await hopOnWith('hop-quiet');
+  assert.deepEqual(asked, ['Sam and Alex are playing Valheim, hop on', 'Sam and Alex are in voice, hop on']);
 });
 
 test('a session recap lists a game once, under the name it goes by', async (t) => {

@@ -25,6 +25,7 @@ const ANNOUNCE_PERMISSIONS = [
 // Discord enforces these on the /setup options; checkSetting does for anything else
 const PATCH_MODES = { off: 'off', each: 'each one posted', digest: 'weekly digest' };
 const READ_WHO = { everyone: 'everyone', voice: 'only people in voice' };
+const LONGEST_GREETING = 100;
 
 export const LIMITS = {
   weeklyPostDay: [0, 6],
@@ -86,6 +87,10 @@ export const LABELS: Record<SettingKey, string> = {
   ttsVolume: 'Speech volume',
   ttsChannel: 'Read chat aloud',
   ttsChannelWho: 'Whose messages are read',
+  ttsGreet: 'Say who joined',
+  ttsGreeting: 'Greeting',
+  ttsNightReminders: 'Say game night reminders',
+  ttsHopOn: 'Say hop-on pings',
 };
 
 export function show(key: SettingKey, value: unknown): string {
@@ -162,6 +167,11 @@ function cantPost(guild: Guild, channel: GuildBasedChannel): string | null {
   return missing.length ? `I can’t post in ${channel} yet. Give my role **${missing.join('**, **')}** there, then run this again.` : null;
 }
 
+function greetingProblem(greeting: string) {
+  if (!/[\p{L}\p{N}]/u.test(greeting)) return 'Type what it should say, with {name} for the person.';
+  return greeting.trim().length > LONGEST_GREETING ? `Keep the greeting to ${LONGEST_GREETING} characters.` : null;
+}
+
 /** Reading a channel only takes seeing it */
 function cantSee(guild: Guild, channel: GuildBasedChannel): { error: string } | null {
   return channel.permissionsFor(guild.members.me!)?.has(PermissionFlagsBits.ViewChannel) ? null : { error: `I can’t see ${channel} yet. Give my role **View Channel** there, then try again.` };
@@ -229,6 +239,8 @@ export function checkSetting(guild: Guild, key: SettingKey, value: unknown): Che
       return VOICES.some((v) => v.id === value) ? { value: String(value) } : { error: 'Pick a voice from the list.' };
     case 'ttsChannelWho':
       return Object.hasOwn(READ_WHO, String(value)) ? { value: String(value) } : { error: 'Read everyone, or only people in voice.' };
+    case 'ttsGreeting':
+      return greetingProblem(String(value)) ? { error: greetingProblem(String(value))! } : { value: String(value).trim() };
     case 'steamCountry': {
       const country = String(value).toLowerCase();
       return /^[a-z]{2}$/.test(country) ? { value: country } : { error: 'Use a two-letter country code, like us or gb.' };
@@ -429,7 +441,11 @@ export const setup: Feature = {
             .addIntegerOption((o) => o.setName('speed').setDescription('How fast it talks, as a percentage of the voice’s natural speed').setMinValue(LIMITS.ttsSpeed[0]).setMaxValue(LIMITS.ttsSpeed[1]))
             .addIntegerOption((o) => o.setName('volume').setDescription('How loud it talks. 100 is about as loud as a sound').setMinValue(LIMITS.ttsVolume[0]).setMaxValue(LIMITS.ttsVolume[1]))
             .addIntegerOption((o) => o.setName('max_characters').setDescription('Longest line').setMinValue(LIMITS.ttsMaxChars[0]).setMaxValue(LIMITS.ttsMaxChars[1]))
-            .addIntegerOption((o) => o.setName('wait_seconds').setDescription('Wait between one person’s lines').setMinValue(LIMITS.ttsCooldownSec[0]).setMaxValue(LIMITS.ttsCooldownSec[1])),
+            .addIntegerOption((o) => o.setName('wait_seconds').setDescription('Wait between one person’s lines').setMinValue(LIMITS.ttsCooldownSec[0]).setMaxValue(LIMITS.ttsCooldownSec[1]))
+            .addBooleanOption((o) => o.setName('greet').setDescription('Say who joined voice, for people with no join sound'))
+            .addStringOption((o) => o.setName('greeting').setDescription('What to say, with {name} for the person').setMaxLength(LONGEST_GREETING))
+            .addBooleanOption((o) => o.setName('night_reminders').setDescription('Say game night reminders in the night’s voice channel'))
+            .addBooleanOption((o) => o.setName('hop_on').setDescription('Say hop-on pings in voice')),
         )
         .addSubcommand((s) =>
           s
@@ -595,7 +611,14 @@ export const setup: Feature = {
           ]);
         }
         if (sub === 'speech') {
+          const greeting = i.options.getString('greeting');
+          const problem = greeting && greetingProblem(greeting);
+          if (problem) return i.reply({ content: problem, flags: MessageFlags.Ephemeral });
           return apply(i, [
+            ['ttsGreet', i.options.getBoolean('greet')],
+            ['ttsGreeting', greeting && greeting.trim()],
+            ['ttsNightReminders', i.options.getBoolean('night_reminders')],
+            ['ttsHopOn', i.options.getBoolean('hop_on')],
             ['tts', i.options.getBoolean('enabled')],
             ['ttsVoice', i.options.getString('voice')],
             ['ttsSpeed', i.options.getInteger('speed')],

@@ -152,6 +152,13 @@ db.exec(`
     sound_id TEXT NOT NULL UNIQUE,
     PRIMARY KEY (guild_id, name)
   );
+  CREATE TABLE IF NOT EXISTS saved_phrases (
+    id INTEGER PRIMARY KEY,
+    guild_id TEXT NOT NULL,
+    text TEXT NOT NULL,
+    voice TEXT NOT NULL,
+    UNIQUE (guild_id, text)
+  );
   CREATE TABLE IF NOT EXISTS sound_panels (
     message_id TEXT PRIMARY KEY,
     guild_id TEXT NOT NULL,

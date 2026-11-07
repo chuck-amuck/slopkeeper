@@ -11,8 +11,8 @@ import { PermissionFlagsBits } from 'discord.js';
 import { recentActivity } from '../src/activity.ts';
 import { config } from '../src/config.ts';
 import { Mixer } from '../src/mixer.ts';
-import { lengthFor, readMessage, say, speak, speechFor } from '../src/features/say.ts';
-import { soundboard, stopPlayback } from '../src/features/soundboard.ts';
+import { announceAloud, lengthFor, phrases, readMessage, removePhrase, savePhrase, say, sayOut, speak, speechFor } from '../src/features/say.ts';
+import { playJoinSound, saveUpload, setJoinSound, soundboard, stopPlayback } from '../src/features/soundboard.ts';
 import { setSetting } from '../src/settings.ts';
 
 const hasFfmpeg = spawnSync('ffmpeg', ['-version']).status === 0;
@@ -285,7 +285,7 @@ test('reads mentions, emoji and links as words', () => {
   assert.equal(speechFor(guild, '  two\n\n lines  '), 'two lines');
 });
 
-function run(t: TestContext, voice: unknown, options: { text?: string; pick?: string; role?: string; roles?: string[]; manager?: boolean } = {}) {
+function run(t: TestContext, voice: unknown, options: { text?: string | null; pick?: string; saved?: string; role?: string; roles?: string[]; manager?: boolean } = {}) {
   const guild = (voice as { guild?: { id: string } } | null)?.guild ?? { id: 'say-role' };
   const replies: { content: string }[] = [];
   return speak.commands![0]
@@ -296,7 +296,7 @@ function run(t: TestContext, voice: unknown, options: { text?: string; pick?: st
       user: { id: 'me' },
       memberPermissions: { has: () => options.manager ?? false },
       member: { voice: { channel: voice }, roles: { cache: new Map((options.roles ?? []).map((r) => [r, {}])) } },
-      options: { getString: (name: string) => (name === 'text' ? (options.text ?? 'hello') : (options.pick ?? null)) },
+      options: { getString: (name: string) => (name === 'saved' ? (options.saved ?? null) : name === 'text' ? (options.text === undefined ? 'hello' : options.text) : (options.pick ?? null)) },
       reply: async (r: { content: string }) => replies.push(r),
       deferReply: async () => {},
       editReply: async (r: string) => replies.push({ content: r }),
@@ -517,4 +517,218 @@ test('a problem joining voice is logged, as nobody’s there to tell', { skip: !
   await readMessage(voice.message('hello'));
   assert.equal(errors.mock.callCount(), 1);
   assert.match(String(errors.mock.calls[0].arguments[0]), /Couldn’t read a message out/);
+});
+
+/** Someone joining voice in a server where the bot can greet them */
+function joining(options: { greet?: boolean; rooms?: Record<string, string[]>; afk?: string } = {}) {
+  const { guild, id, joined } = chat({ rooms: options.rooms ?? { lounge: ['someone'], other: ['someone else'] }, afk: options.afk });
+  const server = guild as never as { voiceStates: { cache: Map<string, { channelId: string }> }; channels: { cache: Map<string, unknown> } };
+  server.voiceStates = { cache: new Map([['ana', { channelId: 'lounge' }]]) };
+  setSetting(id, 'joinSoundDelayMs', 0);
+  if (options.greet !== false) setSetting(id, 'ttsGreet', true);
+  const member = (name = 'Ana', username = 'ana', bot = false) => ({ id: 'ana', displayName: name, user: { bot, username }, guild });
+  const state = (channelId: string | null, who: unknown) => ({ id: 'ana', channelId, channel: channelId ? server.channels.cache.get(channelId) : null, guild, member: who });
+  const join = (from: string | null = null, to: string | null = 'lounge', who: unknown = member()) => playJoinSound(state(from, who) as never, state(to, who) as never);
+  return { id, joined, guild, member, join, here: server.voiceStates.cache };
+}
+
+test('says who joined, only once it’s turned on', { skip: !hasFfmpeg }, async (t) => {
+  const { said } = heard(t);
+  const { join, id } = joining({ greet: false });
+  await join();
+  assert.deepEqual(await said(), []);
+  setSetting(id, 'ttsGreet', true);
+  await join();
+  assert.deepEqual(await said(), ['Ana joined']);
+});
+
+test('the greeting can be reworded, and copes with odd names', { skip: !hasFfmpeg }, async (t) => {
+  const { said } = heard(t);
+  const lines = [
+    ['Welcome back {name}, {name}!', 'Ana', 'ana', 'Welcome back Ana, Ana!'],
+    ['{name} joined', '$& Bo', 'bo', '$& Bo joined'],
+    ['{name} joined', '🎉✨', 'cat_lover', 'cat lover joined'],
+  ];
+  for (const [greeting, name, username] of lines) {
+    const { join, id, member } = joining();
+    setSetting(id, 'ttsGreeting', greeting);
+    await join(null, 'lounge', member(name, username));
+  }
+  const nameless = joining();
+  await nameless.join(null, 'lounge', nameless.member('🎉', '🎉'));
+  assert.deepEqual(await said(), lines.map((line) => line[3]));
+});
+
+for (const [what, from, to, bot] of [
+  ['switching channels', 'lounge', 'other', false],
+  ['muting', 'lounge', 'lounge', false],
+  ['leaving', 'lounge', null, false],
+  ['the AFK channel', null, 'other', false],
+  ['a bot joining', null, 'lounge', true],
+] as const) {
+  test(`${what} isn’t greeted`, { skip: !hasFfmpeg }, async (t) => {
+    const { said } = heard(t);
+    const { join, member } = joining({ afk: 'other' });
+    await join(from, to, member('Ana', 'ana', bot));
+    assert.deepEqual(await said(), []);
+  });
+}
+
+test('someone with a join sound hears that instead, unless join sounds are off', { skip: !hasFfmpeg }, async (t) => {
+  const { said } = heard(t);
+  const { join, id } = joining();
+  await saveUpload(id, 'horn', '.wav', readFileSync(speechFile));
+  setJoinSound(id, 'ana', 'horn');
+  await join();
+  assert.deepEqual(await said(), []);
+  setSetting(id, 'joinSounds', false);
+  setSetting(id, 'joinSoundCooldownMin', 0);
+  await join();
+  assert.deepEqual(await said(), ['Ana joined']);
+});
+
+test('greetings use the join sound cooldown', { skip: !hasFfmpeg }, async (t) => {
+  const { said } = heard(t);
+  const { join, id } = joining();
+  await join();
+  await join();
+  assert.deepEqual(await said(), ['Ana joined'], 'not twice in the cooldown');
+  setSetting(id, 'joinSoundCooldownMin', 0);
+  await join();
+  assert.deepEqual(await said(), ['Ana joined', 'Ana joined']);
+});
+
+test('a greeting won’t pull the bot from another channel', { skip: !hasFfmpeg }, async (t) => {
+  const { said } = heard(t);
+  const { join, id, guild } = joining();
+  joinVoiceChannel({ channelId: 'other', guildId: id, adapterCreator: guild.voiceAdapterCreator } as never);
+  await join();
+  assert.deepEqual(await said(), []);
+});
+
+test('leaving during the delay drops the greeting, and they can be greeted next time', { skip: !hasFfmpeg }, async (t) => {
+  const { said } = heard(t);
+  const { join, id, here } = joining();
+  setSetting(id, 'joinSoundDelayMs', 30);
+  const joined = join();
+  here.delete('ana');
+  await joined;
+  assert.deepEqual(await said(), []);
+  here.set('ana', { channelId: 'lounge' });
+  await join();
+  assert.deepEqual(await said(), ['Ana joined']);
+});
+
+test('the bot doesn’t stay behind when a greeting fails', { skip: !hasFfmpeg }, async (t) => {
+  fakeVoice(t, async () => new Response('', { status: 500 }));
+  t.mock.method(console, 'error', () => {});
+  const logged = t.mock.method(console, 'log', () => {});
+  const timers = t.mock.method(globalThis, 'setTimeout');
+  const { join } = joining();
+  await join();
+  assert.match(String(logged.mock.calls.at(-1)!.arguments[0]), /^Greeting in .* didn’t play: The voice isn’t available/);
+  assert.ok(timers.mock.calls.some((c) => c.arguments[1] === 300_000), 'set to leave when idle');
+});
+
+test('announcements are said in a channel with people, once they’re turned on', { skip: !hasFfmpeg }, async (t) => {
+  const { said } = heard(t);
+  const { guild, id } = chat({ rooms: { lounge: ['someone'], empty: ['bot1'] } });
+  const room = (name: string) => (guild as never as { channels: { cache: Map<string, never> } }).channels.cache.get(name)!;
+  await announceAloud(room('lounge'), 'off for now', 'ttsHopOn');
+  setSetting(id, 'ttsHopOn', true);
+  await announceAloud(room('lounge'), 'wrong setting', 'ttsNightReminders');
+  await announceAloud(room('empty'), 'nobody there', 'ttsHopOn');
+  await announceAloud(room('lounge'), 'hop on <@1>', 'ttsHopOn');
+  assert.equal((await said()).length, 1);
+});
+
+test('an announcement won’t pull the bot from another channel, but plays in the one it’s in', { skip: !hasFfmpeg }, async (t) => {
+  const { said } = heard(t);
+  const { guild, id } = chat({ rooms: { lounge: ['someone'], other: ['someone else'] } });
+  setSetting(id, 'ttsHopOn', true);
+  joinVoiceChannel({ channelId: 'other', guildId: id, adapterCreator: guild.voiceAdapterCreator } as never);
+  const room = (name: string) => (guild as never as { channels: { cache: Map<string, never> } }).channels.cache.get(name)!;
+  await announceAloud(room('lounge'), 'elsewhere', 'ttsHopOn');
+  await announceAloud(room('other'), 'here', 'ttsHopOn');
+  assert.deepEqual(await said(), ['here']);
+});
+
+test('a line nobody typed still needs the voice to be on, and can’t pile up', { skip: !hasFfmpeg }, async (t) => {
+  const asked = fakeVoice(t);
+  const added: (() => void)[] = [];
+  t.mock.method(Mixer.prototype, 'add', (_file: string, _gain?: number, onEnd?: () => void) => void added.push(onEnd!));
+  const voice = channel();
+  setSetting(voice.guild.id, 'tts', false);
+  assert.ok(await sayOut(voice, 'off'));
+  setSetting(voice.guild.id, 'tts', true);
+  assert.ok(await sayOut(voice, '🎉'));
+  config.voiceUrl = null;
+  assert.ok(await sayOut(voice, 'no voice'));
+  config.voiceUrl = 'http://voice.test';
+  const lines = ['1', '2', '3', '4', '5', '6'].map((line) => sayOut(voice, line));
+  assert.ok(await sayOut(voice, 'too many'));
+  for (let played = 0; played < 6; played++) {
+    await sleep(120);
+    added.shift()?.();
+  }
+  assert.deepEqual(await Promise.all(lines), [null, null, null, null, null, null]);
+  assert.deepEqual(asked.map((a) => a.text), ['1', '2', '3', '4', '5', '6']);
+});
+
+test('lines can be saved, with limits, separately for each server', () => {
+  const { guild } = channel();
+  const other = channel().guild;
+  assert.equal(savePhrase(guild, '  good   game  ', '2'), null);
+  assert.deepEqual(phrases(guild.id).map(({ text, voice }) => [text, voice]), [['good game', '2']]);
+  assert.equal(savePhrase(guild, 'good game', '9'), null);
+  assert.equal(phrases(guild.id).length, 1, 'saving it twice does nothing');
+  assert.equal(phrases(other.id).length, 0);
+  assert.match(savePhrase(guild, '🎉', '2')!, /nothing in that/);
+  assert.match(savePhrase(guild, 'x'.repeat(201), '2')!, /201 characters/);
+  assert.match(savePhrase(guild, 'hello', 'nope')!, /Pick a voice/);
+  for (let n = 1; n < 25; n++) assert.equal(savePhrase(guild, `line ${n}`, '2'), null);
+  assert.match(savePhrase(guild, 'one too many', '2')!, /keep 25 lines/);
+  assert.equal(savePhrase(guild, 'good game', '2'), null, 'one already saved isn’t refused for being over');
+  const [first] = phrases(guild.id);
+  assert.equal(removePhrase(other.id, first.id), false, 'not from another server');
+  assert.equal(removePhrase(guild.id, first.id), true);
+  assert.equal(removePhrase(guild.id, first.id), false);
+  assert.equal(phrases(guild.id).length, 24);
+  assert.equal(savePhrase(guild, 'room again', '2'), null);
+});
+
+test('/say picks a saved line, with its own voice, under the usual rules', { skip: !hasFfmpeg }, async (t) => {
+  const asked = fakeVoice(t);
+  t.mock.method(Mixer.prototype, 'add', (_file: string, _gain?: number, onEnd?: () => void) => onEnd?.());
+  const voice = channel();
+  savePhrase(voice.guild, 'good game', '2');
+  const saved = String(phrases(voice.guild.id)[0].id);
+  assert.equal(await run(t, voice, { text: null }), 'Type something to say, or pick a saved line.');
+  assert.equal(await run(t, voice, { text: null, saved: 'something typed' }), 'Pick a saved line from the list.');
+  assert.equal(await run(t, voice, { text: null, saved }), 'Said it.');
+  assert.equal(await run(t, voice, { text: null, saved, pick: '9' }), 'Said it.');
+  assert.equal(await run(t, voice, { text: 'typed wins', saved }), 'Said it.');
+  await sleep(200);
+  assert.deepEqual(asked.map((a) => [a.text, a.speaker]), [['good game', 100], ['good game', 800], ['typed wins', 400]]);
+  setSetting(voice.guild.id, 'ttsCooldownSec', 3600);
+  await run(t, voice, { text: null, saved });
+  assert.match(await run(t, voice, { text: null, saved }), /^Wait /);
+  assert.ok(recentActivity(voice.guild.id, 5).some((r) => r.action.includes('Said “good game”')));
+});
+
+test('/say suggests saved lines as you type', async () => {
+  const voice = channel();
+  savePhrase(voice.guild, 'Good game', '2');
+  savePhrase(voice.guild, 'gotta go', '2');
+  savePhrase(voice.guild, 'y'.repeat(150), '2');
+  const suggest = async (typed: string, guildId: string | null = voice.guild.id) => {
+    let answer: { name: string; value: string }[] = [];
+    await speak.commands![0].autocomplete!({ guildId, options: { getFocused: () => typed }, respond: async (a: typeof answer) => (answer = a) } as never);
+    return answer;
+  };
+  assert.deepEqual((await suggest('GOOD')).map((a) => a.name), ['Good game']);
+  assert.equal((await suggest('')).length, 3);
+  assert.equal((await suggest('yyy'))[0].name.length, 100);
+  assert.equal((await suggest('gotta'))[0].value, String(phrases(voice.guild.id)[1].id));
+  assert.deepEqual(await suggest('good', null), []);
 });

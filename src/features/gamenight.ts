@@ -20,6 +20,8 @@ import type { Feature } from '../types.ts';
 import { humansIn, servedGuilds, zonedParts, zonedTimeToUtc } from '../util.ts';
 import { allGames } from './games.ts';
 import { rolesForGames } from './gameroles.ts';
+import { plural } from './gamestats.ts';
+import { announceAloud } from './say.ts';
 
 const HOUR = 3_600_000;
 const DAY = 24 * HOUR;
@@ -324,6 +326,11 @@ async function advance(client: Client<true>, guild: Guild, night: Night, now: nu
           db.prepare('UPDATE game_nights SET reminded = 0 WHERE id = ?').run(night.id);
           throw err;
         });
+      const room = night.voice_channel_id ? guild.channels.cache.get(night.voice_channel_id) : undefined;
+      if (room?.isVoiceBased()) {
+        const minutes = Math.max(1, Math.round((night.starts_at - now) / 60_000));
+        void announceAloud(room, `${night.game} night starts in ${plural(minutes, 'minute')}`, 'ttsNightReminders').catch(console.error);
+      }
     }
   }
 

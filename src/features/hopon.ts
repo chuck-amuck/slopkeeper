@@ -4,6 +4,7 @@ import type { Feature } from '../types.ts';
 import { gameName } from '../gameNames.ts';
 import { announceChannel, humansIn, listNames, playingGames } from '../util.ts';
 import { rolesForGames } from './gameroles.ts';
+import { announceAloud } from './say.ts';
 import { checkSteamStatusOf } from './steam.ts';
 
 /** Server id → when it was last pinged */
@@ -33,6 +34,8 @@ async function onVoiceState(client: Client<true>, oldState: VoiceState, newState
   const roles = [...new Set([...(hopOnRole ? [hopOnRole] : []), ...rolesForGames(guildId, games)])];
   if (roles.length) text = `${roles.map((id) => `<@&${id}>`).join(' ')} ${text}`;
   await out.send({ content: text, allowedMentions: { roles } });
+  const doing = games.length ? `playing ${listNames(games)}` : 'in voice';
+  void announceAloud(channel, `${listNames(humans.map((m) => m.displayName))} ${humans.length === 1 ? 'is' : 'are'} ${doing}, hop on`, 'ttsHopOn').catch(console.error);
 }
 
 export const hopOn: Feature = {
