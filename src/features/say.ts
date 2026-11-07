@@ -2,12 +2,14 @@ import { randomUUID } from 'node:crypto';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { MessageFlags, PermissionFlagsBits, SlashCommandBuilder, type ChatInputCommandInteraction, type Guild, type VoiceBasedChannel } from 'discord.js';
+import { getVoiceConnection } from '@discordjs/voice';
+import { Events, MessageFlags, PermissionFlagsBits, SlashCommandBuilder, type ChatInputCommandInteraction, type Guild, type Message, type VoiceBasedChannel } from 'discord.js';
 import { logActivity } from '../activity.ts';
 import { config } from '../config.ts';
 import { levelSpeech } from '../loudness.ts';
 import { idSetting, setting } from '../settings.ts';
 import type { Feature } from '../types.ts';
+import { humansIn } from '../util.ts';
 import { plural } from './gamestats.ts';
 import { onPlaybackStop, play } from './soundboard.ts';
 
@@ -42,6 +44,9 @@ const STRETCHES = [
 const SPEAK_TIMEOUT_MS = 15_000;
 /** Lines waiting behind the one being said */
 const MOST_WAITING = 5;
+/** After this, the next message from the same person gets their name read again */
+const SAME_SPEAKER_MS = 30_000;
+const LINK = /https?:\/\/\S+/g;
 /** Discord's own limit on the option. The server's limit is applied to what gets read out, so a mention doesn't count as its id */
 const LONGEST_TYPED = 1000;
 const UNAVAILABLE = 'The voice isn’t available right now. Try again in a moment.';
@@ -64,6 +69,7 @@ interface Queue {
 
 const queues = new Map<string, Queue>();
 const lastLine = new Map<string, number>();
+const lastReader = new Map<string, { id: string; at: number }>();
 let folder: string | undefined;
 
 function queueFor(guildId: string) {
@@ -79,7 +85,7 @@ export function speechFor(guild: Guild, typed: string) {
     .replace(/<@&(\d+)>/g, (_, id: string) => guild.roles.cache.get(id)?.name ?? 'a role')
     .replace(/<#(\d+)>/g, (_, id: string) => guild.channels.cache.get(id)?.name ?? 'a channel')
     .replace(/<a?:(\w+):\d+>/g, ' $1 ')
-    .replace(/https?:\/\/\S+/g, 'link')
+    .replace(LINK, 'link')
     .replace(/[\p{Extended_Pictographic}\p{Emoji_Modifier}‍️]/gu, ' ')
     .replace(/[*~`|]/g, '')
     .replace(/_/g, ' ')
@@ -152,11 +158,13 @@ function stopLines(guildId: string) {
   queue.cancel?.abort();
 }
 
+const hasWords = (text: string) => /[\p{L}\p{N}]/u.test(text);
+
 /** Why this can't be said right now, or null if it can */
 function sayProblem(guild: Guild, text: string, who: string): string | null {
   if (!config.voiceUrl) return 'Text to speech isn’t set up on this bot. It needs VOICE_URL.';
   if (!setting(guild.id, 'tts')) return 'Text to speech is off in this server.';
-  if (!/[\p{L}\p{N}]/u.test(text)) return 'There’s nothing in that to read out.';
+  if (!hasWords(text)) return 'There’s nothing in that to read out.';
   const longest = setting(guild.id, 'ttsMaxChars');
   if (text.length > longest) return `That’s ${text.length} characters, and the limit here is ${longest}.`;
   const left = (lastLine.get(`${guild.id}:${who}`) ?? -Infinity) + setting(guild.id, 'ttsCooldownSec') * 1000 - Date.now();
@@ -174,13 +182,53 @@ export async function say(channel: VoiceBasedChannel, typed: string, voiceId: st
   if (problem) return problem;
   lastLine.set(`${guild.id}:${who}`, Date.now());
 
-  const queue = queueFor(guild.id);
-  const { promise, resolve } = Promise.withResolvers<string | null>();
-  queue.lines.push({ channel, text, speaker: voice.speaker, started: resolve });
-  void run(queue);
-  const failed = await promise;
+  const failed = await queueLine(channel, text, voice.speaker);
   if (!failed) logActivity(guild.id, who, `Said “${text}” in <#${channel.id}>`);
   return failed;
+}
+
+function queueLine(channel: VoiceBasedChannel, text: string, speaker: number) {
+  const queue = queueFor(channel.guild.id);
+  const { promise, resolve } = Promise.withResolvers<string | null>();
+  queue.lines.push({ channel, text, speaker, started: resolve });
+  void run(queue);
+  return promise;
+}
+
+/** Where to read out someone's message: wherever they are, or wherever people are listening */
+function listeningChannel(message: Message<true>): VoiceBasedChannel | null {
+  const { guild } = message;
+  const open = (channel: VoiceBasedChannel | null | undefined) => (channel && channel.id !== guild.afkChannelId && humansIn(channel).length > 0 ? channel : null);
+  const own = open(message.member?.voice.channel);
+  if (own || setting(guild.id, 'ttsChannelWho') === 'voice') return own;
+  const joined = guild.channels.cache.get(getVoiceConnection(guild.id)?.joinConfig.channelId ?? '');
+  const current = open(joined?.isVoiceBased() ? joined : null);
+  if (current) return current;
+  const busy = [...guild.channels.cache.values()].flatMap((c) => (c.isVoiceBased() && open(c) ? [c] : []));
+  return busy.sort((a, b) => humansIn(b).length - humansIn(a).length)[0] ?? null;
+}
+
+/** Reads out a message from the server's chosen channel, if it's something that can be said */
+export async function readMessage(message: Message) {
+  if (!message.inGuild() || message.author.bot || message.webhookId || message.system) return;
+  const { guild, member, author } = message;
+  if (!config.voiceUrl || !setting(guild.id, 'tts') || message.channelId !== idSetting(guild.id, 'ttsChannel')) return;
+  const role = idSetting(guild.id, 'ttsRole');
+  if (role && !member?.roles.cache.has(role) && !member?.permissions.has(PermissionFlagsBits.ManageGuild)) return;
+
+  // Saying a spoiler would ruin it, and nobody wants to hear code
+  const shown = message.content.replace(/\|\|[\s\S]*?\|\|/g, ' ').replace(/```[\s\S]*?```/g, ' ');
+  const text = speechFor(guild, shown);
+  if (!hasWords(speechFor(guild, shown.replace(LINK, ' '))) || text.length > setting(guild.id, 'ttsMaxChars')) return;
+  const channel = listeningChannel(message);
+  const voice = VOICES.find((v) => v.id === setting(guild.id, 'ttsVoice'));
+  if (!channel || !voice || queueFor(guild.id).lines.length >= MOST_WAITING) return;
+
+  const last = lastReader.get(guild.id);
+  const sameSpeaker = last?.id === author.id && Date.now() - last.at < SAME_SPEAKER_MS;
+  lastReader.set(guild.id, { id: author.id, at: Date.now() });
+  const problem = await queueLine(channel, sameSpeaker ? text : `${speechFor(guild, member?.displayName ?? author.displayName)} says, ${text}`, voice.speaker);
+  if (problem && problem !== STOPPED) console.error(`Couldn’t read a message out in server ${guild.id}: ${problem}`);
 }
 
 /** With a role set, using this takes that role or Manage Server */
@@ -216,7 +264,8 @@ export const speak: Feature = {
       },
     },
   ],
-  setup() {
+  setup(client) {
     onPlaybackStop(stopLines);
+    client.on(Events.MessageCreate, (message) => void readMessage(message).catch(console.error));
   },
 };

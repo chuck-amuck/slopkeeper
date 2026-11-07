@@ -24,6 +24,7 @@ const ANNOUNCE_PERMISSIONS = [
 
 // Discord enforces these on the /setup options; checkSetting does for anything else
 const PATCH_MODES = { off: 'off', each: 'each one posted', digest: 'weekly digest' };
+const READ_WHO = { everyone: 'everyone', voice: 'only people in voice' };
 
 export const LIMITS = {
   weeklyPostDay: [0, 6],
@@ -83,6 +84,8 @@ export const LABELS: Record<SettingKey, string> = {
   ttsVoice: 'Default voice',
   ttsSpeed: 'Speech speed',
   ttsVolume: 'Speech volume',
+  ttsChannel: 'Read chat aloud',
+  ttsChannelWho: 'Whose messages are read',
 };
 
 export function show(key: SettingKey, value: unknown): string {
@@ -95,6 +98,10 @@ export function show(key: SettingKey, value: unknown): string {
       return value ? `<@&${value}>` : 'everyone can change sounds';
     case 'ttsRole':
       return value ? `<@&${value}>` : 'everyone';
+    case 'ttsChannel':
+      return value ? `<#${value}>` : 'off';
+    case 'ttsChannelWho':
+      return READ_WHO[value as keyof typeof READ_WHO] ?? String(value);
     case 'weeklyPostDay':
       return DAYS[value as number];
     case 'weeklyPostHour':
@@ -155,6 +162,11 @@ function cantPost(guild: Guild, channel: GuildBasedChannel): string | null {
   return missing.length ? `I can’t post in ${channel} yet. Give my role **${missing.join('**, **')}** there, then run this again.` : null;
 }
 
+/** Reading a channel only takes seeing it */
+function cantSee(guild: Guild, channel: GuildBasedChannel): { error: string } | null {
+  return channel.permissionsFor(guild.members.me!)?.has(PermissionFlagsBits.ViewChannel) ? null : { error: `I can’t see ${channel} yet. Give my role **View Channel** there, then try again.` };
+}
+
 /** Why a role can't be the hop-on role, or null if it can */
 function cantHandOut(guild: Guild, role: Role): string | null {
   return role.id === guild.id || role.managed ? `${role} can’t be handed out. Make a normal role for hop-on pings.` : null;
@@ -191,6 +203,11 @@ export function checkSetting(guild: Guild, key: SettingKey, value: unknown): Che
       const problem = cantPost(guild, channel);
       return problem ? { error: problem } : { value: channel.id };
     }
+    case 'ttsChannel': {
+      const channel = guild.channels.cache.get(String(value));
+      if (channel?.type !== ChannelType.GuildText && channel?.type !== ChannelType.GuildAnnouncement) return { error: 'Pick a text channel.' };
+      return cantSee(guild, channel) ?? { value: channel.id };
+    }
     case 'hopOnRole': {
       const role = guild.roles.cache.get(String(value));
       if (!role) return { error: 'Pick a role.' };
@@ -210,6 +227,8 @@ export function checkSetting(guild: Guild, key: SettingKey, value: unknown): Che
       return Object.hasOwn(PATCH_MODES, String(value)) ? { value: String(value) } : { error: 'Patch notes are off, each one posted, or a weekly digest.' };
     case 'ttsVoice':
       return VOICES.some((v) => v.id === value) ? { value: String(value) } : { error: 'Pick a voice from the list.' };
+    case 'ttsChannelWho':
+      return Object.hasOwn(READ_WHO, String(value)) ? { value: String(value) } : { error: 'Read everyone, or only people in voice.' };
     case 'steamCountry': {
       const country = String(value).toLowerCase();
       return /^[a-z]{2}$/.test(country) ? { value: country } : { error: 'Use a two-letter country code, like us or gb.' };
@@ -414,6 +433,18 @@ export const setup: Feature = {
         )
         .addSubcommand((s) =>
           s
+            .setName('speech-channel')
+            .setDescription('Have the bot read out what people type in a channel')
+            .addChannelOption((o) => o.setName('channel').setDescription('Leave empty to stop').addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement))
+            .addStringOption((o) =>
+              o
+                .setName('who')
+                .setDescription('Whose messages to read')
+                .addChoices(...Object.entries(READ_WHO).map(([value, name]) => ({ name, value }))),
+            ),
+        )
+        .addSubcommand((s) =>
+          s
             .setName('speech-role')
             .setDescription('Limit /say to a role, plus people with Manage Server')
             .addRoleOption((o) => o.setName('role').setDescription('Leave empty to let everyone use it')),
@@ -552,6 +583,17 @@ export const setup: Feature = {
 
         if (sub === 'sound-managers') return apply(i, [['soundManagerRole', i.options.getRole('role')?.id ?? '']]);
         if (sub === 'speech-role') return apply(i, [['ttsRole', i.options.getRole('role')?.id ?? '']]);
+        if (sub === 'speech-channel') {
+          const channel = i.options.getChannel('channel', false, [ChannelType.GuildText, ChannelType.GuildAnnouncement]);
+          const problem = channel && cantSee(i.guild, channel);
+          if (problem) return i.reply({ content: problem.error, flags: MessageFlags.Ephemeral });
+          const who = i.options.getString('who');
+          // Choosing who alone leaves the channel as it is
+          return apply(i, [
+            ['ttsChannel', channel?.id ?? (who ? null : '')],
+            ['ttsChannelWho', who],
+          ]);
+        }
         if (sub === 'speech') {
           return apply(i, [
             ['tts', i.options.getBoolean('enabled')],

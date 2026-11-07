@@ -55,6 +55,9 @@ export const DEFAULTS = {
   ttsSpeed: num('TTS_SPEED', 85),
   // 100 is about as loud as a sound with Even volume on
   ttsVolume: num('TTS_VOLUME', 100),
+  // Unset reads nothing out
+  ttsChannel: null as string | null,
+  ttsChannelWho: process.env.TTS_CHANNEL_WHO || 'everyone',
 };
 
 /** Env var that sets each setting's default, for /setup show */
@@ -88,6 +91,7 @@ export const DEFAULT_ENV: Partial<Record<SettingKey, string>> = {
   ttsVoice: 'TTS_VOICE',
   ttsSpeed: 'TTS_SPEED',
   ttsVolume: 'TTS_VOLUME',
+  ttsChannelWho: 'TTS_CHANNEL_WHO',
 };
 
 export type SettingKey = keyof typeof DEFAULTS;
@@ -120,7 +124,7 @@ export function setSetting(guildId: string, key: SettingKey, value: string | num
   }
 }
 
-export type IdSettingKey = 'announceChannel' | 'hopOnRole' | 'freeGamesChannel' | 'saleChannel' | 'patchNotesChannel' | 'soundManagerRole' | 'ttsRole';
+export type IdSettingKey = 'announceChannel' | 'hopOnRole' | 'freeGamesChannel' | 'saleChannel' | 'patchNotesChannel' | 'soundManagerRole' | 'ttsRole' | 'ttsChannel';
 
 /** Channel and role settings store '' for "deliberately none", which reads back as null */
 export const idSetting = (guildId: string, key: IdSettingKey) => setting(guildId, key) || null;

@@ -36,6 +36,8 @@ const FIELDS = {
   ttsVoice: { kind: 'choice', options: [['1', 'Voice 1'], ['2', 'Voice 2'], ['5', 'Voice 5'], ['9', 'Voice 9']], hint: 'Used when nobody picks one.' },
   ttsSpeed: { kind: 'number', unit: '%', hint: 'How fast it talks. 100 is the voice’s natural speed, and lower is slower.' },
   ttsVolume: { kind: 'number', unit: '%', hint: 'How loud it talks. 100 is about as loud as a sound with even volume on.' },
+  ttsChannel: { kind: 'channel', none: 'Off', hint: 'The bot reads out what people type here, in the voice channel they’re in, or else where the bot is or where most people are.' },
+  ttsChannelWho: { kind: 'choice', options: [['everyone', 'Everyone'], ['voice', 'Only people in voice']], hint: 'Whose messages get read out.' },
   ttsRole: { kind: 'role', none: 'Everyone', hint: 'Who can use /say, along with people with Manage Server. This page isn’t limited by it.' },
   ttsMaxChars: { kind: 'number', unit: 'characters', hint: '200 is about 15 seconds of speech.' },
   ttsCooldownSec: { kind: 'number', unit: 'seconds', hint: 'Shortest time between one person’s lines. The page counts as one person.' },
@@ -51,7 +53,7 @@ const GROUPS = [
   ['Patch notes', ['patchNotes', 'patchNotesChannel']],
   ['Free games', ['freeGames', 'freeGamesChannel', 'freeGamesMinRating', 'freeGamesTaste', 'freeGamesMultiplayer', 'freeGamesUnlisted']],
   ['Soundboard', ['evenVolume', 'joinSounds', 'joinSoundDelayMs', 'joinSoundCooldownMin', 'soundManagerRole']],
-  ['Text to speech', ['tts', 'ttsVoice', 'ttsSpeed', 'ttsVolume', 'ttsRole', 'ttsMaxChars', 'ttsCooldownSec']],
+  ['Text to speech', ['tts', 'ttsVoice', 'ttsSpeed', 'ttsVolume', 'ttsChannel', 'ttsChannelWho', 'ttsRole', 'ttsMaxChars', 'ttsCooldownSec']],
 ];
 
 export function renderSettings(main) {
