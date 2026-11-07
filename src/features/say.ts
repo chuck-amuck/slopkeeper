@@ -19,6 +19,26 @@ export const VOICES = [
   { id: '9', name: 'Voice 9', speaker: 800 },
 ];
 
+/**
+ * How much longer speech takes at each of Piper's length_scale values, measured across VOICES. It's far from proportional,
+ * as each sound's length gets rounded: asking for 18% longer only gives about 5%
+ */
+const STRETCHES = [
+  [0.68, 0.5],
+  [0.78, 0.7],
+  [0.9, 0.8],
+  [1, 1],
+  [1.07, 1.2],
+  [1.13, 1.3],
+  [1.21, 1.4],
+  [1.27, 1.5],
+  [1.38, 1.6],
+  [1.5, 1.8],
+  [1.62, 2],
+  [1.73, 2.2],
+  [2, 2.5],
+] as const;
+
 const SPEAK_TIMEOUT_MS = 15_000;
 /** Lines waiting behind the one being said */
 const MOST_WAITING = 5;
@@ -67,12 +87,21 @@ export function speechFor(guild: Guild, typed: string) {
     .trim();
 }
 
+/** The length_scale that gives a speed, as a percentage of the voice's natural speed */
+export function lengthFor(speed: number) {
+  const stretch = 100 / speed;
+  const next = STRETCHES.findIndex(([longer]) => longer >= stretch);
+  if (next === -1) return STRETCHES.at(-1)![1];
+  if (next === 0) return STRETCHES[0][1];
+  const [[fromStretch, fromLength], [toStretch, toLength]] = [STRETCHES[next - 1], STRETCHES[next]];
+  return Math.round((fromLength + ((toLength - fromLength) * (stretch - fromStretch)) / (toStretch - fromStretch)) * 100) / 100;
+}
+
 async function speech(text: string, speaker: number, speed: number, signal: AbortSignal) {
   const res = await fetch(`${config.voiceUrl}/synthesize`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    // Piper's setting is how long speech takes, so the slower it is the higher this goes
-    body: JSON.stringify({ text, speaker_id: speaker, length_scale: Math.round(10_000 / speed) / 100 }),
+    body: JSON.stringify({ text, speaker_id: speaker, length_scale: lengthFor(speed) }),
     signal: AbortSignal.any([signal, AbortSignal.timeout(SPEAK_TIMEOUT_MS)]),
   });
   if (!res.ok) throw new Error(`Voice container said HTTP ${res.status}`);

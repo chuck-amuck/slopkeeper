@@ -11,7 +11,7 @@ import { PermissionFlagsBits } from 'discord.js';
 import { recentActivity } from '../src/activity.ts';
 import { config } from '../src/config.ts';
 import { Mixer } from '../src/mixer.ts';
-import { say, speak, speechFor } from '../src/features/say.ts';
+import { lengthFor, say, speak, speechFor } from '../src/features/say.ts';
 import { soundboard, stopPlayback } from '../src/features/soundboard.ts';
 import { setSetting } from '../src/settings.ts';
 
@@ -86,7 +86,7 @@ test('reads out a line in the server’s voice, or the one asked for, and logs w
   await sleep(300);
   assert.equal(await say(voice, 'and again', '1', 'ben'), null);
   await sleep(300);
-  assert.deepEqual(asked, [{ text: 'hello there', speaker: 400, length: 1.18 }, { text: 'and again', speaker: 0, length: 1.18 }]);
+  assert.deepEqual(asked, [{ text: 'hello there', speaker: 400, length: lengthFor(85) }, { text: 'and again', speaker: 0, length: lengthFor(85) }]);
   const lines = recentActivity(voice.guild.id, 5).map((r) => `${r.actor}: ${r.action}`).toReversed();
   assert.deepEqual(lines, ['ana: Said “hello there” in <#voice>', 'ben: Said “and again” in <#voice>']);
   assert.deepEqual(leftovers(), []);
@@ -99,7 +99,17 @@ test('a server’s speed setting changes how long speech takes', { skip: !hasFfm
     setSetting(voice.guild.id, 'ttsSpeed', speed);
     assert.equal(await say(voice, 'hello', undefined, String(speed)), null);
   }
-  assert.deepEqual(asked.map((a) => a.length), [1, 2, 0.67]);
+  assert.deepEqual(asked.map((a) => a.length), [1, 2.5, 0.5]);
+});
+
+test('a speed means what it says, despite Piper not being proportional', () => {
+  assert.equal(lengthFor(100), 1);
+  // Measured: 1.3 takes 13% longer, and 1.4 takes 21% longer
+  assert.ok(lengthFor(85) > 1.3 && lengthFor(85) < 1.4, String(lengthFor(85)));
+  assert.equal(lengthFor(50), 2.5);
+  assert.equal(lengthFor(150), 0.5);
+  const lengths = Array.from({ length: 101 }, (_, n) => lengthFor(50 + n));
+  assert.ok(lengths.every((length, n) => n === 0 || length <= lengths[n - 1]), 'faster never takes longer');
 });
 
 test('a server’s volume setting changes how loud a line plays', { skip: !hasFfmpeg }, async (t) => {
