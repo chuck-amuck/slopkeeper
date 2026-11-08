@@ -14,6 +14,7 @@ import { achievements } from './features/achievements.ts';
 import { gameVotes } from './features/gamevote.ts';
 import { help } from './features/help.ts';
 import { hopOn } from './features/hopon.ts';
+import { music } from './features/music.ts';
 import { patchNotes } from './features/patchnotes.ts';
 import { recap } from './features/recap.ts';
 import { sales } from './features/sales.ts';
@@ -27,7 +28,7 @@ import type { Feature } from './types.ts';
 import { servedGuilds } from './util.ts';
 
 // In /help order
-const features: Feature[] = [hopOn, gamePings, gameNights, sessions, gameStats, recap, games, gameVotes, steam, achievements, patchNotes, freeGames, sales, soundboard, setup, backups, webApi, speak];
+const features: Feature[] = [hopOn, gamePings, gameNights, sessions, gameStats, recap, games, gameVotes, steam, achievements, patchNotes, freeGames, sales, soundboard, music, setup, backups, webApi, speak];
 features.unshift(help(features));
 const commands = new Map(features.flatMap((f) => f.commands ?? []).map((c) => [c.data.name, c]));
 

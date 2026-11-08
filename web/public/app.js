@@ -3,6 +3,7 @@ import { renderBoard } from './board.js';
 import { renderGames } from './games.js';
 import { api, attempt, el, openDialog, player, recall, remember, request, RequestError, session, state, toast } from './lib.js';
 import { renderLibrary } from './library.js';
+import { renderMusic } from './music.js';
 import { renderNights } from './nights.js';
 import { renderPick } from './pick.js';
 import { renderSettings } from './settings.js';
@@ -11,6 +12,7 @@ import { renderStats } from './stats.js';
 const app = document.getElementById('app');
 const TABS = [
   ['board', 'Soundboard', renderBoard],
+  ['music', 'Music', renderMusic],
   ['library', 'Library', renderLibrary],
   ['nights', 'Game nights', renderNights],
   ['games', 'Games', renderGames],

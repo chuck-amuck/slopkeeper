@@ -16,14 +16,14 @@ const CONTENT_TYPES = { html: 'text/html; charset=utf-8', js: 'text/javascript; 
 const asset = (file: string, type: keyof typeof CONTENT_TYPES) => ({ body: readFileSync(new URL(`../public/${file}`, import.meta.url)), type: CONTENT_TYPES[type] });
 const ASSETS: Record<string, ReturnType<typeof asset>> = {
   '/': asset('index.html', 'html'),
-  ...Object.fromEntries(['achievements', 'activity', 'app', 'board', 'clip', 'emoji', 'emojipicker', 'games', 'lib', 'pick', 'library', 'nights', 'settings', 'stats', 'trim', 'voice'].map((name) => [`/${name}.js`, asset(`${name}.js`, 'js')])),
+  ...Object.fromEntries(['achievements', 'activity', 'app', 'board', 'clip', 'emoji', 'emojipicker', 'games', 'lib', 'music', 'pick', 'library', 'nights', 'settings', 'stats', 'trim', 'voice'].map((name) => [`/${name}.js`, asset(`${name}.js`, 'js')])),
   '/style.css': asset('style.css', 'css'),
   '/icon.svg': asset('icon.svg', 'svg'),
 };
 
 const HEADERS = {
-  // Server icons and custom emoji come from Discord's CDN; nothing else is loaded from anywhere
-  'content-security-policy': "default-src 'self'; img-src 'self' https://cdn.discordapp.com; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
+  // Server icons and custom emoji come from Discord's CDN, and album covers from Spotify's; nothing else is loaded from anywhere
+  'content-security-policy': "default-src 'self'; img-src 'self' https://cdn.discordapp.com https://i.scdn.co; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
   'x-content-type-options': 'nosniff',
   'referrer-policy': 'no-referrer',
 };

@@ -42,6 +42,7 @@ import { randomUUID } from 'node:crypto';
 import { copyFileSync, existsSync, mkdirSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import type { Readable } from 'node:stream';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { promisify } from 'node:util';
 import { logActivity } from '../activity.ts';
@@ -629,19 +630,46 @@ async function connect(channel: VoiceBasedChannel): Promise<string | null> {
   return null;
 }
 
-function mixIn(guildId: string, file: string, gain: number, onEnd?: () => void, options: VoiceOptions = {}) {
+/** Layers onto whatever is already playing; a fresh mixer is only needed once the last one has gone quiet */
+function mixInto(guildId: string, add: (mixer: Mixer) => void) {
   const a = audioFor(guildId);
   clearTimeout(a.idleTimer);
-  // Layer onto whatever is already playing (or restart this sound if it's one of them); a fresh mixer is only needed once the last one has gone quiet
-  if (a.mixer && !a.mixer.finished) {
-    a.mixer.add(file, gain, onEnd, options);
-    return;
-  }
+  if (a.mixer && !a.mixer.finished) return add(a.mixer);
   a.mixer = new Mixer(VOLUME, MAX_VOICES);
   a.mixer.setGroupGain('sound', setting(guildId, 'soundVolume') / 100);
-  a.mixer.add(file, gain, onEnd, options);
+  a.mixer.setGroupGain('music', setting(guildId, 'musicVolume') / 100);
+  // Before playing, or the mixer would find nothing to mix and end straight away
+  add(a.mixer);
   a.player.play(createAudioResource(a.mixer, { inputType: StreamType.Raw }));
 }
+
+/** Plays a sound, or restarts it if it's already playing */
+function mixIn(guildId: string, file: string, gain: number, onEnd?: () => void, options: VoiceOptions = {}) {
+  mixInto(guildId, (mixer) => mixer.add(file, gain, onEnd, options));
+}
+
+/**
+ * Mixes live audio, like music, into a channel until it's stopped or ends, which runs `onEnd`.
+ * Returns a way to stop it, or the reason it couldn't play, for the user
+ */
+export async function playStream(channel: VoiceBasedChannel, pcm: Readable, onEnd: () => void): Promise<(() => void) | string> {
+  const problem = await connect(channel);
+  if (problem) {
+    pcm.destroy();
+    return problem;
+  }
+  let stop!: () => void;
+  mixInto(channel.guild.id, (mixer) => (stop = mixer.addStream(pcm, 1, onEnd, { group: 'music' })));
+  return stop;
+}
+
+/** Applies the music volume to music already playing */
+export function applyMusicVolume(guildId: string) {
+  audio.get(guildId)?.mixer?.setGroupGain('music', setting(guildId, 'musicVolume') / 100);
+}
+
+/** The voice channel the bot is in, if any */
+export const botChannelId = (guildId: string) => getVoiceConnection(guildId)?.joinConfig.channelId ?? null;
 
 /** Plays a sound in a channel. Returns null on success or the reason it couldn't, for the user. `onEnd` runs once it's over, if it played */
 export async function play(channel: VoiceBasedChannel, file: string, gain = 1, onEnd?: () => void, options: VoiceOptions = {}): Promise<string | null> {

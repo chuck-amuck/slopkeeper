@@ -185,3 +185,19 @@ test('/setup loop-room sets, keeps and clears the room', async () => {
   await run('loop-setup', 'loop-room', {});
   assert.equal(setting('loop-setup', 'loopRoom'), '');
 });
+
+test('/setup music sets the volume and who can control it, and keeps what isn’t given', async () => {
+  assert.equal(setting('setup-music', 'musicVolume'), 40);
+  await run('setup-music', 'music', { volume: 70, dj_role: { id: 'djs', toString: () => '<@&djs>' } });
+  assert.equal(setting('setup-music', 'musicVolume'), 70);
+  assert.equal(setting('setup-music', 'musicDjRole'), 'djs');
+  await run('setup-music', 'music', { volume: 50 });
+  assert.equal(setting('setup-music', 'musicDjRole'), 'djs', 'not giving a role keeps it');
+  await run('setup-music', 'music', { everyone: true });
+  assert.equal(setting('setup-music', 'musicDjRole'), '');
+  assert.equal(setting('setup-music', 'musicVolume'), 50);
+  const guild = { id: 'setup-music', roles: { cache: new Map([['djs', { id: 'djs' }]]) } } as never;
+  assert.deepEqual(checkSetting(guild, 'musicVolume', 500), { error: 'Music volume has to be a whole number from 0 to 200.' });
+  assert.deepEqual(checkSetting(guild, 'musicDjRole', 'djs'), { value: 'djs' });
+  assert.deepEqual(checkSetting(guild, 'musicDjRole', 'nope'), { error: 'Pick a role.' });
+});

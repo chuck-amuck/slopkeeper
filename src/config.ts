@@ -24,4 +24,12 @@ export const config = {
   apiPort: Number(process.env.API_PORT || 8787),
   // The voice container, for text to speech. Unset turns it off
   voiceUrl: process.env.VOICE_URL || null,
+  // The music container, which plays Spotify, and the password it shares with the bot. Unset turns music off
+  musicUrl: process.env.MUSIC_URL || null,
+  musicToken: process.env.MUSIC_TOKEN || null,
+  // A Spotify app's credentials, for search. They only read the catalogue, so nobody signs in
+  spotifyClientId: process.env.SPOTIFY_CLIENT_ID || null,
+  spotifyClientSecret: process.env.SPOTIFY_CLIENT_SECRET || null,
+  // Which country's catalogue search uses, since what can be played differs between them
+  spotifyMarket: (process.env.SPOTIFY_MARKET || 'US').toUpperCase(),
 };

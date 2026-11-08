@@ -23,6 +23,23 @@ services:
         limits:
           memory: 512M
 
+  music:
+    image: ghcr.io/chuck-amuck/slopkeeper-music:latest # Spotify, optional. See the README's music container section
+    restart: unless-stopped
+    init: true
+    environment:
+      MUSIC_TOKEN: ${MUSIC_TOKEN}
+      SOLOIST_API_KEY: ${SOLOIST_API_KEY}
+      SOLOIST_ACCEPT_TERMS: ${SOLOIST_ACCEPT_TERMS}
+      SOLOIST_SESSION: ${SOLOIST_SESSION}
+    volumes:
+      - slopkeeper-music:/data
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+
 volumes:
   slopkeeper-data:
   slopkeeper-voice:
+  slopkeeper-music:

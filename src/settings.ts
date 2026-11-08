@@ -67,6 +67,9 @@ export const DEFAULTS = {
   ttsGreeting: process.env.TTS_GREETING || '{name} joined',
   ttsNightReminders: process.env.TTS_NIGHT_REMINDERS === 'true',
   ttsHopOn: process.env.TTS_HOP_ON === 'true',
+  musicVolume: num('MUSIC_VOLUME', 40),
+  // Unset lets everyone control music
+  musicDjRole: null as string | null,
 };
 
 /** Env var that sets each setting's default, for /setup show */
@@ -107,6 +110,7 @@ export const DEFAULT_ENV: Partial<Record<SettingKey, string>> = {
   ttsGreeting: 'TTS_GREETING',
   ttsNightReminders: 'TTS_NIGHT_REMINDERS',
   ttsHopOn: 'TTS_HOP_ON',
+  musicVolume: 'MUSIC_VOLUME',
 };
 
 export type SettingKey = keyof typeof DEFAULTS;
@@ -139,7 +143,7 @@ export function setSetting(guildId: string, key: SettingKey, value: string | num
   }
 }
 
-export type IdSettingKey = 'announceChannel' | 'hopOnRole' | 'freeGamesChannel' | 'saleChannel' | 'patchNotesChannel' | 'soundManagerRole' | 'ttsRole' | 'ttsChannel' | 'loopRoom';
+export type IdSettingKey = 'announceChannel' | 'hopOnRole' | 'freeGamesChannel' | 'saleChannel' | 'patchNotesChannel' | 'soundManagerRole' | 'ttsRole' | 'ttsChannel' | 'loopRoom' | 'musicDjRole';
 
 /** Channel and role settings store '' for "deliberately none", which reads back as null */
 export const idSetting = (guildId: string, key: IdSettingKey) => setting(guildId, key) || null;

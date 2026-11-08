@@ -8,28 +8,51 @@ const FRAME_BYTES = (48_000 * 2 * 2 * FRAME_MS) / 1000;
 const MAX_LEAD_MS = 60;
 // Audio a new sound buffers before it's mixed in, enough to cover the lead
 const START_BYTES = FRAME_BYTES * 4;
+// A stream arrives over the network, so it keeps a little more in hand, and skips ahead rather than fall further behind
+const STREAM_START_BYTES = FRAME_BYTES * 5;
+const STREAM_MAX_BYTES = FRAME_BYTES * 25;
+// Music drops to this while someone's line is spoken, easing down and back up over a few frames
+const DUCKED = 0.3;
+const DUCK_STEP = 0.05;
 
 export interface VoiceOptions {
   /** Plays over and over, without a gap, until stopped */
   loop?: boolean;
-  /** Sounds and speech each have a volume that can change while they play */
-  group?: 'sound' | 'speech';
+  /** Sounds, speech and music each have a volume that can change while they play */
+  group?: 'sound' | 'speech' | 'music';
 }
 
-/** One playing sound, decoded to raw PCM by its own ffmpeg process */
-class Voice {
-  readonly proc: ChildProcess;
-  readonly pcm: Readable;
+interface Source {
   readonly file: string;
   /** Multiplies its samples, to even out loudness between sounds */
   readonly gain: number;
   readonly loop: boolean;
+  /** Kept until it's stopped: never dropped for a newer sound, nor restarted by one */
+  readonly lasting: boolean;
+  readonly group: string;
+  ended: boolean;
+  /** Whether any of its audio has been mixed in yet */
+  heard: boolean;
+  /** Earlier copies of the same sound, cut off once this one has audio */
+  replaces: Source[];
+  ready(): boolean;
+  /** Next frame, a shorter final chunk, or null if nothing has arrived yet */
+  read(): Buffer | null;
+  stop(): void;
+}
+
+/** One playing sound, decoded to raw PCM by its own ffmpeg process */
+class Voice implements Source {
+  readonly proc: ChildProcess;
+  readonly pcm: Readable;
+  readonly file: string;
+  readonly gain: number;
+  readonly loop: boolean;
+  readonly lasting: boolean;
   readonly group: string;
   ended = false;
-  /** Whether any of its audio has been mixed in yet */
   heard = false;
-  /** Earlier copies of the same sound, cut off once this one has audio */
-  replaces: Voice[] = [];
+  replaces: Source[] = [];
   private stopped = false;
   private onEnd: (() => void) | undefined;
 
@@ -38,6 +61,7 @@ class Voice {
     this.gain = gain;
     this.onEnd = onEnd;
     this.loop = options.loop ?? false;
+    this.lasting = this.loop;
     this.group = options.group ?? 'sound';
     const loop = this.loop ? ['-stream_loop', '-1'] : [];
     this.proc = spawn('ffmpeg', ['-hide_banner', '-loglevel', 'error', ...loop, '-i', file, '-f', 's16le', '-ar', '48000', '-ac', '2', 'pipe:1'], {
@@ -75,7 +99,6 @@ class Voice {
     return this.pcm.readableLength >= START_BYTES || this.proc.exitCode !== null;
   }
 
-  /** Next frame, a shorter final chunk, or null if ffmpeg hasn't caught up yet */
   read(): Buffer | null {
     return this.pcm.read(FRAME_BYTES) as Buffer | null;
   }
@@ -89,6 +112,61 @@ class Voice {
   }
 }
 
+/** Raw PCM that's already playing somewhere else, like music, mixed in as it arrives */
+class StreamVoice implements Source {
+  private static count = 0;
+  readonly file = `stream:${++StreamVoice.count}`;
+  readonly gain: number;
+  readonly loop = false;
+  readonly lasting = true;
+  readonly group: string;
+  readonly pcm: Readable;
+  ended = false;
+  heard = false;
+  replaces: Source[] = [];
+  /** Waiting to have enough in hand again, after running dry */
+  private buffering = true;
+  private onEnd: (() => void) | undefined;
+
+  constructor(pcm: Readable, gain: number, onEnd?: () => void, options: VoiceOptions = {}) {
+    this.pcm = pcm;
+    this.gain = gain;
+    this.onEnd = onEnd;
+    this.group = options.group ?? 'sound';
+    this.pcm.on('readable', () => {});
+    this.pcm.once('close', () => this.finish());
+    this.pcm.once('error', (err) => {
+      console.error('Audio stream error:', err.message);
+      this.finish();
+    });
+  }
+
+  private finish() {
+    this.ended = true;
+    this.onEnd?.();
+    this.onEnd = undefined;
+  }
+
+  ready(): boolean {
+    return this.pcm.readableLength >= STREAM_START_BYTES;
+  }
+
+  read(): Buffer | null {
+    if (this.pcm.readableLength > STREAM_MAX_BYTES) this.pcm.read(this.pcm.readableLength - STREAM_START_BYTES);
+    if (this.buffering && this.pcm.readableLength < STREAM_START_BYTES) return null;
+    this.buffering = false;
+    const frame = this.pcm.read(FRAME_BYTES) as Buffer | null;
+    // A gap mid-stream is silence while it catches up, rather than a stutter of every frame as it trickles in
+    if (!frame) this.buffering = true;
+    return frame;
+  }
+
+  stop() {
+    this.finish();
+    this.pcm.destroy();
+  }
+}
+
 /**
  * Raw PCM stream that sums every sound added to it, so different sounds layer like Discord's soundboard.
  * Adding a sound that's already playing restarts it instead. Ends once all of its sounds have finished.
@@ -96,12 +174,14 @@ class Voice {
 export class Mixer extends Readable {
   private readonly volume: number;
   private readonly maxVoices: number;
-  private voices: Voice[] = [];
+  private voices: Source[] = [];
   private nextFrameAt = performance.now();
   private timer: NodeJS.Timeout | undefined;
   private started = false;
   private done = false;
   private readonly groupGains = new Map<string, number>();
+  /** How far music is turned down under speech right now */
+  private duck = 1;
 
   constructor(volume: number, maxVoices: number) {
     super();
@@ -119,17 +199,31 @@ export class Mixer extends Readable {
     // A restart keeps the playing copy going until the new one has audio, so spamming leaves no gap while ffmpeg starts.
     // A copy from an earlier click that hasn't started yet is dropped, since this one supersedes it. A loop is never restarted by a click
     for (const old of this.voices) {
-      if (old.file !== file || old.ended || old.loop || voice.loop) continue;
+      if (old.file !== file || old.ended || old.lasting || voice.lasting) continue;
       if (old.heard) voice.replaces.push(old);
       else {
         voice.replaces.push(...old.replaces);
         old.stop();
       }
     }
+    this.include(voice);
+  }
+
+  /** Mixes in raw 48 kHz stereo PCM as it arrives, until the stream ends or it's stopped. Returns a way to stop it */
+  addStream(pcm: Readable, gain = 1, onEnd?: () => void, options: VoiceOptions = {}): () => void {
+    const voice = new StreamVoice(pcm, gain, onEnd, options);
+    this.include(voice);
+    return () => {
+      voice.stop();
+      this.voices = this.voices.filter((v) => v !== voice);
+    };
+  }
+
+  private include(voice: Source) {
     this.voices = this.voices.filter((v) => !v.ended);
-    // Past the cap, the oldest sound is dropped rather than piling up ffmpeg processes, but not a loop
+    // Past the cap, the oldest sound is dropped rather than piling up ffmpeg processes, but not a loop or music
     if (this.voices.length >= this.maxVoices) {
-      const oldest = Math.max(0, this.voices.findIndex((v) => !v.loop));
+      const oldest = Math.max(0, this.voices.findIndex((v) => !v.lasting));
       this.voices.splice(oldest, 1)[0].stop();
     }
     this.voices.push(voice);
@@ -177,14 +271,16 @@ export class Mixer extends Readable {
 
     const sum = new Int32Array(FRAME_BYTES / 2);
     let heard = false;
-    const mix = (chunk: Buffer, voice: Voice, fadeOut = false) => {
+    const speaking = this.voices.some((v) => v.group === 'speech' && v.heard);
+    this.duck = speaking ? Math.max(DUCKED, this.duck - DUCK_STEP) : Math.min(1, this.duck + DUCK_STEP);
+    const mix = (chunk: Buffer, voice: Source, fadeOut = false) => {
       heard = true;
-      const gain = voice.gain * (this.groupGains.get(voice.group) ?? 1);
+      const gain = voice.gain * (this.groupGains.get(voice.group) ?? 1) * (voice.group === 'music' ? this.duck : 1);
       const samples = chunk.length >> 1;
       for (let s = 0; s < samples; s++) sum[s] += chunk.readInt16LE(s * 2) * gain * (fadeOut ? 1 - s / samples : 1);
     };
     // New sounds first: once a restarted copy has audio, the old one fades out over this frame instead of clicking off
-    const starting = new Set<Voice>();
+    const starting = new Set<Source>();
     for (const voice of this.voices) {
       if (voice.heard || voice.ended || !voice.ready()) continue;
       const chunk = voice.read();

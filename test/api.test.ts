@@ -2891,3 +2891,37 @@ test('hides a Steam game outside the library, by the name it’s given', async (
   await refused(404, `${hiddenUrl}/730`, { method: 'PUT', json: { name: 5 } });
   await refused(404, `${hiddenUrl}/abc`, { method: 'PUT', json: { name: 'Portal 2' } });
 });
+
+test('the music queue can be filled, reordered and emptied from the page', async () => {
+  const track = (n: number) => ({ uri: `spotify:track:${String(n).padStart(22, 'a')}`, title: `Song ${n}`, artist: 'Band', album: 'Album', cover: 'https://evil.example/x.png', durationMs: 180_000 });
+  let music = await ok(`/guilds/${GUILD}/music`);
+  assert.deepEqual(music.queue, []);
+  assert.equal(music.phase, 'stopped');
+  assert.match(music.problem, /MUSIC_URL/);
+  assert.equal(music.volume, 40);
+  for (const n of [1, 2, 3]) music = await ok(`/guilds/${GUILD}/music/queue`, { method: 'POST', json: { track: track(n) } });
+  music = await ok(`/guilds/${GUILD}/music/queue`, { method: 'POST', json: { track: track(4), next: true } });
+  assert.deepEqual(music.queue.map((r: any) => r.title), ['Song 4', 'Song 1', 'Song 2', 'Song 3']);
+  assert.equal(music.queue[0].addedBy, 'Web UI');
+  assert.equal(music.queue[0].cover, null, 'only Spotify’s covers are kept');
+  assert.equal(recentActivity(GUILD, 1)[0].action, 'Added **Song 4** to the music queue to play next');
+
+  music = await ok(`/guilds/${GUILD}/music/queue/${music.queue[3].id}/move`, { method: 'POST', json: { to: 0 } });
+  assert.deepEqual(music.queue.map((r: any) => r.title), ['Song 3', 'Song 4', 'Song 1', 'Song 2']);
+  music = await ok(`/guilds/${GUILD}/music/queue/${music.queue[1].id}`, { method: 'DELETE' });
+  assert.deepEqual(music.queue.map((r: any) => r.title), ['Song 3', 'Song 1', 'Song 2']);
+  assert.equal((await call(`/guilds/${GUILD}/music/queue/99999`, { method: 'DELETE' })).status, 404);
+  assert.equal((await call(`/guilds/${GUILD}/music/queue/${music.queue[0].id}/move`, { method: 'POST', json: { to: 'top' } })).status, 400);
+
+  const bad = await call(`/guilds/${GUILD}/music/queue`, { method: 'POST', json: { track: { ...track(5), uri: 'spotify:album:aaaaaaaaaaaaaaaaaaaaaa' } } });
+  assert.equal(bad.status, 400);
+  const search = await call(`/guilds/${GUILD}/music/search?q=hello`);
+  assert.equal(search.status, 502);
+  assert.match(((await search.json()) as any).error, /SPOTIFY_CLIENT_ID/);
+  const play = await call(`/guilds/${GUILD}/music/play`, { method: 'POST', json: { channelId: 'v1' } });
+  assert.equal(play.status, 400);
+
+  music = await ok(`/guilds/${GUILD}/music/queue`, { method: 'DELETE' });
+  assert.deepEqual(music.queue, []);
+  assert.equal(recentActivity(GUILD, 1)[0].action, 'Cleared the music queue');
+});

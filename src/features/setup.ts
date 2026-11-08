@@ -14,7 +14,7 @@ import { DEFAULT_ENV, DEFAULTS, setSetting, setting, storedSetting, type Setting
 import type { Feature } from '../types.ts';
 import { isTimeZone, pingWarning } from '../util.ts';
 import { VOICES } from './say.ts';
-import { applyLevels, applySoundVolume, cantJoin, findSound, listSounds, refreshLoopRoom } from './soundboard.ts';
+import { applyLevels, applyMusicVolume, applySoundVolume, cantJoin, findSound, listSounds, refreshLoopRoom } from './soundboard.ts';
 
 const ANNOUNCE_PERMISSIONS = [
   [PermissionFlagsBits.ViewChannel, 'View Channel'],
@@ -45,6 +45,7 @@ export const LIMITS = {
   ttsVolume: [25, 200],
   soundVolume: [0, 200],
   loopVolume: [5, 200],
+  musicVolume: [0, 200],
 } as const;
 
 const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -97,6 +98,8 @@ export const LABELS: Record<SettingKey, string> = {
   ttsGreeting: 'Greeting',
   ttsNightReminders: 'Say game night reminders',
   ttsHopOn: 'Say hop-on pings',
+  musicVolume: 'Music volume',
+  musicDjRole: 'Who can control music',
 };
 
 export function show(key: SettingKey, value: unknown): string {
@@ -108,6 +111,7 @@ export function show(key: SettingKey, value: unknown): string {
     case 'soundManagerRole':
       return value ? `<@&${value}>` : 'everyone can change sounds';
     case 'ttsRole':
+    case 'musicDjRole':
       return value ? `<@&${value}>` : 'everyone';
     case 'ttsChannel':
       return value ? `<#${value}>` : 'off';
@@ -144,6 +148,7 @@ export function show(key: SettingKey, value: unknown): string {
     case 'ttsVolume':
     case 'soundVolume':
     case 'loopVolume':
+    case 'musicVolume':
       return `${value}%`;
     case 'loopRoom':
       return value ? `<#${value}>` : 'off';
@@ -245,7 +250,8 @@ export function checkSetting(guild: Guild, key: SettingKey, value: unknown): Che
       return problem ? { error: problem } : { value: role.id, warning: roleWarning(guild, role).trim() || undefined };
     }
     case 'soundManagerRole':
-    case 'ttsRole': {
+    case 'ttsRole':
+    case 'musicDjRole': {
       const role = guild.roles.cache.get(String(value));
       return role ? { value: role.id } : { error: 'Pick a role.' };
     }
@@ -449,6 +455,14 @@ export const setup: Feature = {
             .addChannelOption((o) => o.setName('channel').setDescription('The voice channel').addChannelTypes(ChannelType.GuildVoice))
             .addStringOption((o) => o.setName('sound').setDescription('The sound to loop').setAutocomplete(true))
             .addIntegerOption((o) => o.setName('volume').setDescription('How loud, as a percentage (50 by default)').setMinValue(LIMITS.loopVolume[0]).setMaxValue(LIMITS.loopVolume[1])),
+        )
+        .addSubcommand((s) =>
+          s
+            .setName('music')
+            .setDescription('Spotify in voice: how loud it plays, and who can control it')
+            .addIntegerOption((o) => o.setName('volume').setDescription('How loud music plays, as a percentage (40 by default)').setMinValue(LIMITS.musicVolume[0]).setMaxValue(LIMITS.musicVolume[1]))
+            .addRoleOption((o) => o.setName('dj_role').setDescription('Only this role, plus people with Manage Server, can control music'))
+            .addBooleanOption((o) => o.setName('everyone').setDescription('Let everyone control music again')),
         )
         .addSubcommand((s) =>
           s
@@ -656,6 +670,14 @@ export const setup: Feature = {
           return;
         }
 
+        if (sub === 'music') {
+          await apply(i, [
+            ['musicVolume', i.options.getInteger('volume')],
+            ['musicDjRole', i.options.getRole('dj_role')?.id ?? (i.options.getBoolean('everyone') ? '' : null)],
+          ]);
+          applyMusicVolume(i.guildId);
+          return;
+        }
         if (sub === 'sound-managers') return apply(i, [['soundManagerRole', i.options.getRole('role')?.id ?? '']]);
         if (sub === 'speech-role') return apply(i, [['ttsRole', i.options.getRole('role')?.id ?? '']]);
         if (sub === 'speech-channel') {
@@ -694,6 +716,7 @@ export const setup: Feature = {
           logActivity(i.guildId, i.user.id, `Put ${LABELS[key]} back to the default`);
           if (key === 'evenVolume') await applyLevels(i.guild);
           if (key === 'soundVolume') applySoundVolume(i.guildId);
+          if (key === 'musicVolume') applyMusicVolume(i.guildId);
           if (key.startsWith('loop')) await refreshLoopRoom(i.guild);
           return i.reply({
             content: `↩️ ${LABELS[key]} is back to the default: ${show(key, setting(i.guildId, key))}.`,
@@ -708,7 +731,7 @@ export const setup: Feature = {
           .setDescription(
             (Object.keys(DEFAULTS) as SettingKey[])
               .map((key) => {
-                const value = key === 'announceChannel' || key === 'hopOnRole' || key === 'freeGamesChannel' || key === 'saleChannel' || key === 'patchNotesChannel' || key === 'soundManagerRole' ? setting(i.guildId, key) || null : setting(i.guildId, key);
+                const value = key === 'announceChannel' || key === 'hopOnRole' || key === 'freeGamesChannel' || key === 'saleChannel' || key === 'patchNotesChannel' || key === 'soundManagerRole' || key === 'musicDjRole' ? setting(i.guildId, key) || null : setting(i.guildId, key);
                 return `**${LABELS[key]}:** ${show(key, value)} · *${source(i.guildId, key)}*`;
               })
               .join('\n'),

@@ -4,6 +4,7 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { PassThrough } from 'node:stream';
 import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { Mixer } from '../src/mixer.ts';
@@ -177,4 +178,84 @@ test('a group’s volume changes what’s already playing, and only that group',
   speech.add(tone('group-speech.wav', 440, 0.3), 1, undefined, { group: 'speech' });
   await spoken.done;
   assert.ok(Math.max(...spoken.peaks) > 1000, 'speech isn’t changed by the soundboard volume');
+});
+
+const FRAME = 3840;
+
+/** Raw PCM at one level, as the music container sends it */
+function pcm(frames: number, level = 1000) {
+  const chunk = Buffer.alloc(FRAME * frames);
+  for (let s = 0; s < chunk.length; s += 2) chunk.writeInt16LE(level, s);
+  return chunk;
+}
+
+test('a stream plays at its group’s volume, goes quiet while it runs dry, and carries on', async () => {
+  const mixer = new Mixer(1, 12);
+  mixer.setGroupGain('music', 0.4);
+  const { peaks, done } = record(mixer);
+  const music = new PassThrough();
+  let ended = 0;
+  const stop = mixer.addStream(music, 1, () => ended++, { group: 'music' });
+  music.write(pcm(10));
+  await sleep(150);
+  assert.ok(peaks.some((p) => p === 400), `played at 40%, got ${[...new Set(peaks)]}`);
+  // Nothing arriving, as while Spotify is paused: silence, but the mixer keeps going
+  await sleep(300);
+  assert.equal(peaks.at(-1), 0);
+  assert.equal(ended, 0);
+  music.write(pcm(10));
+  await sleep(150);
+  assert.ok(peaks.slice(-8).includes(400), 'picked up again once it had enough in hand');
+  stop();
+  await done;
+  assert.equal(ended, 1, 'stopping says it ended, once');
+});
+
+test('a stream that falls behind skips ahead rather than lagging', async () => {
+  const mixer = new Mixer(1, 12);
+  const { done } = record(mixer);
+  const music = new PassThrough({ highWaterMark: FRAME * 200 });
+  const stop = mixer.addStream(music, 1, undefined, { group: 'music' });
+  music.write(pcm(100));
+  await sleep(100);
+  assert.ok(music.readableLength <= FRAME * 25, `kept at most half a second, had ${music.readableLength / FRAME} frames`);
+  stop();
+  await done;
+});
+
+test('a stream ending by itself is over, and the cap never drops it', { skip: !hasFfmpeg }, async () => {
+  const mixer = new Mixer(1, 2);
+  const { done } = record(mixer);
+  const music = new PassThrough();
+  let ended = false;
+  mixer.addStream(music, 1, () => (ended = true), { group: 'music' });
+  music.write(pcm(10));
+  mixer.add(tone('cap-a.wav', 440, 0.3));
+  mixer.add(tone('cap-b.wav', 660, 0.3));
+  await sleep(100);
+  assert.equal(ended, false);
+  music.destroy();
+  await done;
+  assert.equal(ended, true);
+});
+
+test('music drops under speech and comes back up after', { skip: !hasFfmpeg }, async () => {
+  const mixer = new Mixer(1, 12);
+  const { peaks, done } = record(mixer);
+  const music = new PassThrough({ highWaterMark: FRAME * 200 });
+  const stop = mixer.addStream(music, 1, undefined, { group: 'music' });
+  // Topped up as it plays, so it never runs dry
+  const feed = setInterval(() => music.write(pcm(5)), 80);
+  music.write(pcm(10));
+  await sleep(200);
+  assert.equal(peaks.at(-1), 1000);
+  mixer.setGroupGain('speech', 0);
+  mixer.add(tone('duck-line.wav', 440, 0.6), 1, undefined, { group: 'speech' });
+  await sleep(500);
+  assert.equal(peaks.at(-1), 300, 'down to 30% while the line is spoken');
+  await sleep(700);
+  assert.equal(peaks.at(-1), 1000, 'back up once it’s said');
+  clearInterval(feed);
+  stop();
+  await done;
 });

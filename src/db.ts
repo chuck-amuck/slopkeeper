@@ -159,6 +159,21 @@ db.exec(`
     voice TEXT NOT NULL,
     UNIQUE (guild_id, text)
   );
+  -- The music queue. The first row is the song playing, while music is on
+  CREATE TABLE IF NOT EXISTS music_queue (
+    id INTEGER PRIMARY KEY,
+    guild_id TEXT NOT NULL,
+    pos REAL NOT NULL,
+    uri TEXT NOT NULL,
+    title TEXT NOT NULL,
+    artist TEXT NOT NULL,
+    album TEXT NOT NULL,
+    cover TEXT,
+    duration_ms INTEGER NOT NULL,
+    added_by TEXT NOT NULL,
+    added_at INTEGER NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS music_queue_order ON music_queue (guild_id, pos);
   CREATE TABLE IF NOT EXISTS sound_panels (
     message_id TEXT PRIMARY KEY,
     guild_id TEXT NOT NULL,

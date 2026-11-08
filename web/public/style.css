@@ -1061,6 +1061,213 @@ textarea {
   padding-bottom: 14px;
 }
 
+/* Music */
+
+/* Long song titles are cut short rather than widening the page */
+.card.music {
+  min-width: 0;
+}
+
+.music-problem {
+  padding: 10px 14px;
+  border-radius: var(--radius);
+  background: var(--warn-bg);
+  color: var(--warn);
+}
+
+.now-main {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 12px 16px;
+  align-items: center;
+  padding: 16px;
+}
+
+.now-cover .cover {
+  width: 96px;
+  height: 96px;
+}
+
+.now-title {
+  font-size: 18px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.now-artist {
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.now-note {
+  margin-top: 6px;
+  color: var(--warn);
+  font-size: 13px;
+}
+
+.now-progress {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.now-track {
+  flex: 1;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--raised);
+  overflow: hidden;
+}
+
+.now-bar {
+  height: 100%;
+  background: var(--accent);
+}
+
+.now-time {
+  color: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.now-controls {
+  padding: 12px 16px;
+  border-top: 1px solid var(--line);
+}
+
+.now-controls select {
+  flex: 1 1 200px;
+  min-width: 0;
+}
+
+.music-account {
+  padding-bottom: 12px;
+}
+
+.music-search {
+  display: grid;
+  gap: 10px;
+}
+
+.music-search .card-note {
+  padding: 0;
+}
+
+.music-search input[type='search'] {
+  flex: 1 1 220px;
+  min-width: 0;
+}
+
+.music-results {
+  display: grid;
+}
+
+.cover {
+  display: block;
+  flex: none;
+  border-radius: 6px;
+  object-fit: cover;
+  background: var(--raised);
+}
+
+.music-queue {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.song {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 0;
+  min-width: 0;
+}
+
+.music-results .song + .song {
+  border-top: 1px solid var(--line);
+}
+
+.music-queue .song {
+  padding: 8px 12px 8px 8px;
+  border-top: 1px solid var(--line);
+}
+
+.music-queue .song:first-child {
+  border-top: 0;
+}
+
+.music-queue .song.dragging {
+  opacity: 0.4;
+}
+
+.music-queue .song.drop-before {
+  box-shadow: inset 0 2px 0 var(--accent);
+}
+
+.music-queue .song.drop-after {
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+
+.music-queue .empty-note {
+  padding: 14px 16px;
+  color: var(--muted);
+}
+
+.grip {
+  flex: none;
+  width: 14px;
+  color: var(--muted);
+  cursor: grab;
+  letter-spacing: -3px;
+  user-select: none;
+}
+
+.song-number {
+  flex: none;
+  min-width: 20px;
+  color: var(--muted);
+  font-size: 13px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.song-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.song-title,
+.song-sub {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.song-sub {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.song-time {
+  flex: none;
+  color: var(--muted);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.song-actions {
+  display: flex;
+  flex: none;
+  gap: 6px;
+}
+
+.song-actions button.icon {
+  width: 34px;
+  min-height: 34px;
+}
+
 /* Activity */
 
 .page-note {
@@ -1298,6 +1505,26 @@ textarea {
 }
 
 @media (max-width: 640px) {
+  .grip,
+  .song-time,
+  .song-number {
+    display: none;
+  }
+
+  .music-results .song {
+    flex-wrap: wrap;
+  }
+
+  .music-results .song-actions {
+    width: 100%;
+    justify-content: flex-end;
+  }
+
+  .now-cover .cover {
+    width: 64px;
+    height: 64px;
+  }
+
   .field {
     grid-template-columns: minmax(0, 1fr);
   }

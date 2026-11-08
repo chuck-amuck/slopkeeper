@@ -456,6 +456,25 @@ Examples:
 
 ---
 
+## Music
+
+The bot plays Spotify in voice, from a queue everyone shares. It needs a Spotify Premium account and the [music container](#the-music-container).
+
+- `/music play [song] [next]` adds a song, album or playlist by search or Spotify link, and starts the music in your voice channel. `next` puts it after the song playing instead of at the end. With no song, it carries on where it paused.
+- `/music pause`, `/music skip` and `/music stop` are said in the channel, so everyone can see who did it. **Stop** clears the queue too.
+- `/music queue` shows what's playing and the next 10 songs.
+- The web UI's **Music** tab has the same, plus search results to pick from, a progress bar and a volume slider. Drag songs to reorder them, or use the arrows on a phone.
+
+How it plays:
+
+- **Queue:** the bot keeps its own queue for each server, kept across restarts, up to 500 songs. An album or playlist link adds up to its first 100. When the queue runs out the music stops, with no suggested songs.
+- **One server at a time:** Spotify plays one thing per account, so music playing in one server can't start in another until it's paused there.
+- **Sounds and speech** play on top. Music drops to under a third while the bot talks.
+- **Stop on the soundboard**, or everyone leaving, pauses the music and keeps the queue. Music counts as the bot being busy, so it doesn't leave for being idle and the looping room waits.
+- **The Spotify account:** while the bot plays, that account's music stops on its phones and speakers, and the other way round. The bot shows up as a speaker called Slopkeeper in its Spotify app. Picking something else there pauses the bot, and the Music tab says why.
+- **Who can control it:** everyone, until `/setup music dj_role:` sets a role. Then only that role and people with **Manage Server** can add, pause, skip and stop. Anyone can see the queue. The web UI isn't limited by the role.
+- **Activity** shows what was added, removed and skipped, and by whom.
+
 ## Server settings
 
 Server admins (anyone with **Manage Server**) set the bot up for their server from Discord with `/setup`. Nobody else sees it. To let other roles use it, go to **Server Settings → Integrations → Slopkeeper**.
@@ -479,6 +498,7 @@ Every setting has a sensible default, so only the announce channel needs setting
 | `/setup monthly-recap enabled` | Turns the post on the 1st of each month on or off. |
 | `/setup sounds [even_volume] [join_sounds] [join_cooldown_minutes] [join_delay_ms] [volume]` | Turns [even volume](#even-volume) and join sounds on or off, and sets how often one person's join sound can play and how long the bot waits after connecting before it plays. `volume` sets how loud every sound plays. |
 | `/setup loop-room [channel] [sound] [volume]` | Plays a sound nonstop while anyone's in a voice channel. Giving nothing turns it off. See [looping sound room](#looping-sound-room). |
+| `/setup music [volume] [dj_role] [everyone]` | How loud music plays, and who can control it. `everyone:True` takes the role limit off. See [Music](#music). |
 | `/setup sound-managers [role]` | Limits changing sounds to a role, plus people with **Manage Server**. Leave `role` empty to let everyone change them, which is the default. See [who can change sounds](#who-can-change-sounds). |
 | `/setup reset setting` | Puts one setting back to its default. |
 
@@ -538,6 +558,8 @@ So the host can change a default for every server at once, and each server can s
 | Looping sound room | `loop-room` | | off |
 | Looping sound | `loop-room` | | not set |
 | Loop volume, as a percentage | `loop-room` | `LOOP_VOLUME` | 50 |
+| Music volume, as a percentage | `music` | `MUSIC_VOLUME` | 40 |
+| Who can control music | `music` | | everyone |
 | Text to speech | `speech` | `TTS` (`false` to turn off) | on |
 | Default voice | `speech` | `TTS_VOICE` (`1`, `2`, `5` or `9`) | 5 |
 | Speech speed, as a percentage of the voice's natural speed | `speech` | `TTS_SPEED` | 85 |
@@ -571,6 +593,7 @@ One running bot can serve several servers. Each server gets its own:
 A page in [`web/`](web) that runs as a second container next to the bot, for your home network or behind a sign-in proxy like [Pangolin](#signing-in-through-pangolin):
 
 - **Soundboard:** big buttons that play in voice, with favourites first and then whatever gets played most, and a box for having the bot say something.
+- **Music:** what's playing, Spotify search, and the queue to add to, reorder and clear. See [Music](#music).
 - **Library:** upload files or whole folders, preview, rename and delete sounds, set a sound's volume, trim it with a way back to the original, and choose what's on Discord's soundboard, with a waveform for picking part of a long sound. **Recently deleted** restores a sound or erases it for good.
 - **Game nights:** plan a night, see what's coming up and who still needs to add each other on Steam, cancel one or stop a repeating one.
 - **Games:** the game library, with who has each game, who needs it, who wants it and any sale. Add games from a searchable list of what members own on Steam, or by name or store link. **Steam accounts** links, changes and unlinks anyone's Steam account, says who shares a Steam family, and refreshes libraries. Remove games, set player limits and Steam links, tick who owns or wants what, and hide a game from `/whatdoweplay` or let it back in. Ownership from a Steam library is locked.
@@ -629,6 +652,10 @@ Set in `.env` (see `.env.example`).
 | `API_TOKEN` | off | Turns on the [management API](#management-api) and is the token that unlocks it |
 | `API_PORT` | 8787 | Port for the management API |
 | `VOICE_URL` | off | Where the [voice container](#the-voice-container) is. Unset turns `/say` off |
+| `MUSIC_URL` | off | Where the [music container](#the-music-container) is. Unset turns music off |
+| `MUSIC_TOKEN` | none | Same value as the music container's `MUSIC_TOKEN` |
+| `SPOTIFY_CLIENT_ID`, `SPOTIFY_CLIENT_SECRET` | none | A Spotify app's, for search and links. See [the music container](#the-music-container) |
+| `SPOTIFY_MARKET` | `US` | The country whose Spotify catalogue search uses |
 
 Everything else is a per-server setting. Servers set their own with `/setup`; the variables in [Settings and defaults](#settings-and-defaults) change the default for servers that haven't. For example, `HOPON_MIN_PEOPLE=3` makes every server wait for 3 people unless it ran `/setup hopon`.
 
@@ -682,6 +709,14 @@ It applies the same rules as `/sound` and `/setup`, and every request needs an `
 | `POST /guilds/:id/say` | Reads out `text` in `channelId`, with an optional `voice`. Answers once the line starts |
 | `POST /guilds/:id/phrases` | Saves `text` with its `voice`, and answers with the `phrases` |
 | `DELETE /guilds/:id/phrases/:id` | Removes a saved line, and answers with the `phrases` |
+| `GET /guilds/:id/music` | What's playing, how far in, the queue, the music volume and why music can't play, if it can't |
+| `GET /guilds/:id/music/search?q=<words>` | Up to 10 songs from Spotify |
+| `POST /guilds/:id/music/queue` | Adds a search result `{ "track": {...} }` or what's typed `{ "query": "<words or link>" }`, at the end or `"next": true` |
+| `POST /guilds/:id/music/queue/:song/move` | Moves a song: `{ "to": 2 }`, counting from 0. The song playing stays first |
+| `DELETE /guilds/:id/music/queue/:song` | Takes a song out, skipping it if it's playing |
+| `DELETE /guilds/:id/music/queue` | Empties the queue, apart from the song playing |
+| `POST /guilds/:id/music/play` | Starts or carries on in a voice channel: `{ "channelId": "..." }` |
+| `POST /guilds/:id/music/pause`, `skip` and `stop` | As `/music` does. Stop clears the queue |
 | `GET /guilds/:id/game-nights` | Lists upcoming game nights and repeating series, and what a new night can be set to |
 | `POST /guilds/:id/game-nights` | Plans a night as `/gamenight plan` does: `{ "game", "when", "channelId", "hostId", "voiceChannelId", "details", "repeat" }`, where `repeat` is 7, 14 or null |
 | `GET /guilds/:id/game-nights/:night/friends` | Who's going but isn't Steam friends yet, with profile links: `strangers`, `unknown` where both lists are private, and `unlinked` |
@@ -745,6 +780,41 @@ voice:
 ```
 
 Set `VOICE_URL=http://voice:5000` on the bot, and don't publish the port. On first start it downloads one 79 MB model (`en_US-libritts_r-medium`, CC BY 4.0) into its volume, and after that it needs no internet. That one model holds all 904 voices, and `VOICES` in `src/features/say.ts` lists the ones offered. It uses about 230 to 370 MB, and makes a short line in about a second on two CPU cores.
+
+### The music container
+
+Music runs **Spotify Soloist**, Spotify's own player for devices with no screen, in a container built from [`music/`](music). It's the same player Music Assistant uses.
+
+**Read this first.** Spotify's developer terms say an app can't play "from a single source to several simultaneous listeners", and playing into a Discord channel arguably is that. Spotify could revoke the key or act on the account. A spare or family-plan Premium account is safer than your own. Soloist's terms don't allow sharing the key or the player, so the image doesn't include the player: the container downloads it from Spotify each time it needs one, once you've accepted the terms.
+
+1. **Soloist key:** sign in to [developer.spotify.com/dashboard](https://developer.spotify.com/dashboard) with the Premium account, open Soloist, accept its terms and create a key.
+2. **Search app:** on the same dashboard, create an app (any name, redirect URI `http://127.0.0.1`) and copy its Client ID and Client Secret. It only reads the catalogue, and signs nobody in.
+3. **Pair it.** On a computer on the same network as your phone, run this, then pick **Slopkeeper** as the speaker in Spotify:
+   ```sh
+   docker run --rm --network host -e SOLOIST_API_KEY=<key> -e SOLOIST_ACCEPT_TERMS=true ghcr.io/chuck-amuck/slopkeeper-music:latest node bridge.mjs pair
+   ```
+   It prints `SOLOIST_SESSION=...`, which goes in `.env`. A firewall that blocks incoming mDNS (port 5353) hides the speaker. The pairing only carries the sign-in, so the bot's host can be on another network.
+4. **Add the container,** and don't publish its port:
+   ```yaml
+   music:
+     image: ghcr.io/chuck-amuck/slopkeeper-music:latest
+     restart: unless-stopped
+     init: true
+     environment:
+       MUSIC_TOKEN: ${MUSIC_TOKEN}
+       SOLOIST_API_KEY: ${SOLOIST_API_KEY}
+       SOLOIST_ACCEPT_TERMS: ${SOLOIST_ACCEPT_TERMS}
+       SOLOIST_SESSION: ${SOLOIST_SESSION}
+     volumes:
+       - slopkeeper-music:/data
+     deploy:
+       resources:
+         limits:
+           memory: 256M
+   ```
+5. **Set on the bot:** `MUSIC_URL=http://music:7700`, `MUSIC_TOKEN` (any long random value, the same on both), `SPOTIFY_CLIENT_ID` and `SPOTIFY_CLIENT_SECRET`.
+
+The container runs a private PulseAudio whose only output is a pipe, and passes Soloist's audio to the bot as raw 48 kHz audio, ready to mix. Soloist's builds stop working after 90 days, so the container checks for a new one daily and swaps it in once nothing's playing. It uses about 60 MB, and keeps up to 200 MB of Spotify's cache in its volume. `SOLOIST_SESSION` is only used if the volume has never been paired, so pairing again means removing the volume. Settings and the Music tab say if the key, the terms or the pairing are missing.
 
 ### Hosting the bot
 
