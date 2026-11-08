@@ -14,6 +14,8 @@ const STREAM_MAX_BYTES = FRAME_BYTES * 25;
 // Music drops to this while someone's line is spoken, easing down and back up over a few frames
 const DUCKED = 0.3;
 const DUCK_STEP = 0.05;
+/** How loud everything plays in voice, where 1 is the file as it is. The loop bot uses it too, so the room sounds the same from either */
+export const MIX_VOLUME = 0.5;
 // A layered loop plays at most this many copies at once, so a long sound repeated often doesn't pile up ffmpegs
 const MOST_LAYERS = 8;
 // Each copy of a layered loop starts this many frames early, so it's decoded and ready on the beat

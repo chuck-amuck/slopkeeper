@@ -39,7 +39,7 @@ import {
 } from 'discord.js';
 import { execFile } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
-import { copyFileSync, existsSync, mkdirSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type { Readable } from 'node:stream';
@@ -50,8 +50,9 @@ import { config } from '../config.ts';
 import { db } from '../db.ts';
 import * as discordBoard from '../discordSounds.ts';
 import { measureGain } from '../loudness.ts';
-import { Mixer, type VoiceOptions } from '../mixer.ts';
+import { MIX_VOLUME, Mixer, type VoiceOptions } from '../mixer.ts';
 import { idSetting, isAllowed, setSetting, setting, storedSetting } from '../settings.ts';
+import type { LoopProgram } from '../loopBot.ts';
 import { cutAudio } from '../trim.ts';
 import type { Feature } from '../types.ts';
 import type { DiscordSound } from '../discordSounds.ts';
@@ -59,11 +60,13 @@ import { humansIn, requestTimeout, servedGuilds } from '../util.ts';
 
 export const EXTENSIONS = ['.mp3', '.ogg', '.wav', '.m4a', '.opus', '.webm', '.flac'];
 const MAX_BYTES = 5 * 1024 * 1024;
-const VOLUME = 0.5;
+const VOLUME = MIX_VOLUME;
 const MAX_VOICES = 12;
 const IDLE_LEAVE_MS = 5 * 60_000;
 const CONNECT_TIMEOUT_MS = 15_000;
 const RECONNECT_TIMEOUT_MS = 5_000;
+const LOOP_BOT_TIMEOUT_MS = 20_000;
+const LOOP_BOT_RESYNC_MS = 60_000;
 const NAME_PATTERN = /^[a-z0-9_-]{1,32}$/;
 export const VOLUME_PERCENT = [25, 200] as const;
 export const BIN_DAYS = 30;
@@ -717,6 +720,7 @@ let botClient: Client | undefined;
  * Starting from nothing plays the intro first, unless `intro` is false
  */
 export async function checkLoopRoom(guild: Guild, { intro = true } = {}) {
+  if (config.loopBotUrl) return syncLoopBot(guild);
   const roomId = idSetting(guild.id, 'loopRoom');
   const sound = findSound(guild.id, setting(guild.id, 'loopSound') ?? '');
   const wanted: LoopPart[] = [];
@@ -783,7 +787,7 @@ async function startLoop(guild: Guild, room: VoiceBasedChannel, part: LoopPart, 
   const current = () => runOf(guild.id) === run;
   let file: string;
   try {
-    file = part === 'sound' ? await loopable(sound!.file) : await loopSpeechFile(guild);
+    file = part === 'sound' ? await loopable(guild.id, sound!.file) : await loopSpeechFile(guild);
   } catch (err) {
     if (current()) looping.delete(key);
     return console.error(`Looping ${part} in ${guild.name} couldn’t be prepared:`, (err as Error).message);
@@ -804,8 +808,6 @@ async function startLoop(guild: Guild, room: VoiceBasedChannel, part: LoopPart, 
     gain,
     () => {
       if (current()) looping.delete(key);
-      // A copy made to loop cleanly, but not the library's file or the speech, which is kept to reuse
-      if (part === 'sound' && file !== sound!.file) rmSync(file, { force: true });
     },
     { loop: true, ...(everyMs > 0 && { everyMs }) },
   );
@@ -847,19 +849,36 @@ export async function loopSpeechProblem(guild: Guild): Promise<string | null> {
   }
 }
 
-/** A WAV copy to loop, as some formats (m4a, for one) leave a moment of silence the first time ffmpeg goes round */
-async function loopable(file: string): Promise<string> {
+const loopCacheDir = () => path.join(config.dataDir, 'loop-cache');
+
+/**
+ * A WAV copy to loop, as some formats (m4a, for one) leave a moment of silence the first time ffmpeg goes round.
+ * It's kept on the data volume, where the loop bot can read it too, and reused until the sound changes
+ */
+async function loopable(guildId: string, file: string): Promise<string> {
   if (path.extname(file) === '.wav') return file;
-  const copy = path.join(tmpdir(), `slopkeeper-loop-${randomUUID()}.wav`);
-  await promisify(execFile)('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-i', file, '-ar', '48000', '-ac', '2', copy]);
+  const made = createHash('sha256').update(JSON.stringify([file, statSync(file).mtimeMs])).digest('hex').slice(0, 16);
+  const copy = path.join(loopCacheDir(), `${guildId}-${made}.wav`);
+  if (existsSync(copy)) return copy;
+  mkdirSync(loopCacheDir(), { recursive: true });
+  const making = `${copy}.${randomUUID()}.new.wav`;
+  try {
+    await promisify(execFile)('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-i', file, '-ar', '48000', '-ac', '2', making]);
+    renameSync(making, copy);
+  } finally {
+    rmSync(making, { force: true });
+  }
+  for (const old of readdirSync(loopCacheDir())) if (old.startsWith(`${guildId}-`) && old !== path.basename(copy) && !old.includes('.new.')) rmSync(path.join(loopCacheDir(), old), { force: true });
   return copy;
 }
 
 /** Whether a setting changes what the looping room plays: its own, or the speech voice and speed its speech can follow */
-export const affectsLoopRoom = (key: string) => key.startsWith('loop') || key === 'ttsVoice' || key === 'ttsSpeed';
+export const affectsLoopRoom = (key: string) => key.startsWith('loop') || key === 'ttsVoice' || key === 'ttsSpeed' || (!!config.loopBotUrl && key === 'soundVolume');
 
 /** After the looping settings change: stops the loop as it was, then starts it again if it should be playing */
 export function refreshLoopRoom(guild: Guild) {
+  // The loop bot takes up a change itself, as the run stays the same
+  if (config.loopBotUrl) return syncLoopBot(guild);
   audio.get(guild.id)?.mixer?.stopLoops();
   silenced.delete(guild.id);
   // Turning a setting shouldn't replay the intro each time. One that's playing carries on, and the loop after it has the new settings
@@ -874,7 +893,105 @@ export function noteLoopRoom(oldState: VoiceState, newState: VoiceState) {
   const room = guild.channels.cache.get(roomId);
   const arrived = newState.channelId === roomId && oldState.channelId !== roomId && !newState.member?.user.bot;
   if (arrived || (room?.isVoiceBased() && !humansIn(room).length)) silenced.delete(guild.id);
-  if (arrived && isLooping(guild.id) && findSound(guild.id, setting(guild.id, 'loopIntro') ?? '')) restartLoop(guild.id);
+  if (!arrived || !findSound(guild.id, setting(guild.id, 'loopIntro') ?? '')) return;
+  // The loop bot starts over when the run changes. Here, what's playing stops and the next check plays it all again
+  if (config.loopBotUrl) loopRuns.set(guild.id, runOf(guild.id) + 1);
+  else if (isLooping(guild.id)) restartLoop(guild.id);
+}
+
+/** Each server's last word to the loop bot, sent one after another so they arrive in order */
+const loopBotQueue = new Map<string, Promise<void>>();
+/** Servers the loop bot was last told to leave, so it isn't told again on every voice change */
+const loopBotLeft = new Set<string>();
+let loopBotTimer: NodeJS.Timeout | undefined;
+
+function loopBotFetch(pathname: string, init: RequestInit = {}) {
+  return fetch(config.loopBotUrl + pathname, {
+    ...init,
+    headers: { authorization: `Bearer ${config.loopToken}`, 'content-type': 'application/json' },
+    signal: AbortSignal.timeout(LOOP_BOT_TIMEOUT_MS),
+  });
+}
+
+/**
+ * Tells the loop bot what the room should play, or to leave. It takes the same program again as nothing new,
+ * so this runs on every voice change, and every minute in case the loop bot restarted
+ */
+export function syncLoopBot(guild: Guild): Promise<void> {
+  const next = (loopBotQueue.get(guild.id) ?? Promise.resolve())
+    .then(async () => {
+      const program = await loopProgram(guild);
+      if (!program && loopBotLeft.has(guild.id)) return;
+      const res = await loopBotFetch(`/guilds/${guild.id}/loop`, program ? { method: 'PUT', body: JSON.stringify(program) } : { method: 'DELETE' });
+      if (res.ok) {
+        if (program) loopBotLeft.delete(guild.id);
+        else loopBotLeft.add(guild.id);
+        return;
+      }
+      const { error } = (await res.json().catch(() => ({}))) as { error?: string };
+      console.log(`Looping room in ${guild.name} didn’t play: ${error ?? `the loop bot answered ${res.status}`}`);
+    })
+    .catch((err: Error) => console.error(`The loop bot couldn’t be reached for ${guild.name}:`, err.message));
+  loopBotQueue.set(guild.id, next);
+  return next;
+}
+
+/** What the loop bot should play in the room, or null if nobody's there or there's nothing to play */
+async function loopProgram(guild: Guild): Promise<LoopProgram | null> {
+  const roomId = idSetting(guild.id, 'loopRoom');
+  const room = roomId ? guild.channels.cache.get(roomId) : undefined;
+  if (!room?.isVoiceBased() || !humansIn(room).length) return null;
+  // Here, loops are in the soundboard's volume group. The loop bot has no groups, so it's in the gain
+  const soundVolume = setting(guild.id, 'soundVolume') / 100;
+  const parts: LoopProgram['parts'] = [];
+  const sound = findSound(guild.id, setting(guild.id, 'loopSound') ?? '');
+  if (sound) {
+    try {
+      parts.push({
+        file: path.resolve(await loopable(guild.id, sound.file)),
+        gain: soundGain(guild.id, sound.name) * (setting(guild.id, 'loopVolume') / 100) * soundVolume,
+        everyMs: Math.round(setting(guild.id, 'loopEvery') * 1000),
+        delayMs: setting(guild.id, 'loopSoundDelayMs'),
+      });
+    } catch (err) {
+      console.error(`Looping sound in ${guild.name} couldn’t be prepared:`, (err as Error).message);
+    }
+  }
+  if (setting(guild.id, 'loopText') && loopSpeaker) {
+    try {
+      parts.push({
+        file: path.resolve(await loopSpeechFile(guild)),
+        gain: (setting(guild.id, 'loopTextVolume') / 100) * soundVolume,
+        everyMs: Math.round(setting(guild.id, 'loopTextEvery') * 1000),
+        delayMs: setting(guild.id, 'loopTextDelayMs'),
+      });
+    } catch (err) {
+      console.error(`Looping speech in ${guild.name} couldn’t be prepared:`, (err as Error).message);
+    }
+  }
+  if (!parts.length) return null;
+  const intro = findSound(guild.id, setting(guild.id, 'loopIntro') ?? '');
+  return {
+    run: runOf(guild.id),
+    channelId: room.id,
+    intro: intro ? { file: path.resolve(intro.file), gain: soundGain(guild.id, intro.name) * soundVolume, delayMs: setting(guild.id, 'loopIntroDelayMs') } : null,
+    parts,
+  };
+}
+
+/** What Settings says about the loop bot, or null without one */
+export async function loopBotStatus(guildId: string): Promise<{ ok: boolean; note: string } | null> {
+  if (!config.loopBotUrl) return null;
+  try {
+    const res = await loopBotFetch('/status');
+    if (!res.ok) throw new Error(String(res.status));
+    const status = (await res.json()) as { ready: boolean; name: string | null; guilds: string[] };
+    if (!status.ready) return { ok: false, note: 'The loop bot is starting, or can’t log in to Discord. Its log says which.' };
+    if (!status.guilds.includes(guildId)) return { ok: false, note: `The loop bot, ${status.name}, isn’t in this server yet. Invite it with View Channels, Connect and Speak.` };
+    return { ok: true, note: `${status.name} plays this room, so Slopkeeper stays free for everything else. Stop on the soundboard doesn’t stop it.` };
+  } catch {
+    return { ok: false, note: 'The loop bot isn’t answering, so the room is quiet.' };
+  }
 }
 
 /** For the monthly recap */
@@ -1487,6 +1604,12 @@ export const soundboard: Feature = {
   async setup(client) {
     botClient = client;
     for (const guild of servedGuilds(client)) void checkLoopRoom(guild).catch(console.error);
+    if (config.loopBotUrl) {
+      console.log(`The looping room plays through the loop bot at ${config.loopBotUrl}`);
+      loopBotTimer = setInterval(() => {
+        for (const guild of servedGuilds(client)) if (idSetting(guild.id, 'loopRoom')) void syncLoopBot(guild);
+      }, LOOP_BOT_RESYNC_MS).unref();
+    }
     const sweep = () => {
       try {
         clearBin();
@@ -1518,6 +1641,7 @@ export const soundboard: Feature = {
     void levelLibrary(client).catch(console.error);
   },
   shutdown() {
+    clearInterval(loopBotTimer);
     for (const guildId of getVoiceConnections().keys()) leaveVoice(guildId);
   },
   componentPrefix: 'sb',

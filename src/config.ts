@@ -29,6 +29,9 @@ export const config = {
   musicToken: process.env.MUSIC_TOKEN || null,
   // Where the music container's downloaded audio is, read-only, shared with it as a volume
   musicAudioDir: process.env.MUSIC_AUDIO_DIR || '/music/audio',
+  // The loop bot, a second bot that plays the looping room so this one is free elsewhere, and the password they share. Unset plays the room here
+  loopBotUrl: process.env.LOOP_BOT_URL || null,
+  loopToken: process.env.LOOP_TOKEN || null,
   // A Spotify app's credentials, for search. They only read the catalogue, so nobody signs in
   spotifyClientId: process.env.SPOTIFY_CLIENT_ID || null,
   spotifyClientSecret: process.env.SPOTIFY_CLIENT_SECRET || null,

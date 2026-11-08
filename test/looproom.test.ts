@@ -1,16 +1,22 @@
 import './helpers.ts';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, readdirSync } from 'node:fs';
+import { createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
+import path from 'node:path';
 import { after, test, type TestContext } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { getVoiceConnection, joinVoiceChannel, VoiceConnectionStatus } from '@discordjs/voice';
+import { config } from '../src/config.ts';
+import type { LoopProgram } from '../src/loopBot.ts';
 import { Mixer } from '../src/mixer.ts';
 import {
   applySoundVolume,
   checkLoopRoom,
   findSound,
   leaveIfAlone,
+  loopBotStatus,
   noteLoopRoom,
   play,
   refreshLoopRoom,
@@ -21,6 +27,7 @@ import {
   soundboard,
   soundGain,
   stopPlayback,
+  syncLoopBot,
 } from '../src/features/soundboard.ts';
 import { setSetting, setting } from '../src/settings.ts';
 
@@ -210,18 +217,27 @@ test('the soundboard volume reaches sounds already playing, and new ones', { ski
   assert.deepEqual(set.mock.calls.at(-1)!.arguments, ['sound', 1.5]);
 });
 
-test('a sound that isn’t a WAV loops from a copy, which goes once the loop ends', { skip: !hasFfmpeg }, async (t) => {
+test('a sound that isn’t a WAV loops from a WAV copy on the data volume, made once and replaced when the sound changes', { skip: !hasFfmpeg }, async (t) => {
   const { id, guild, therapy, enter, loops } = await server(t);
-  await saveUpload(id, 'hum', '.mp3', execFileSync('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', 'sine=frequency=440:duration=0.2', '-f', 'mp3', 'pipe:1']));
+  const hum = (frequency: number) => execFileSync('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', `sine=frequency=${frequency}:duration=0.2`, '-f', 'mp3', 'pipe:1']);
+  await saveUpload(id, 'hum', '.mp3', hum(440));
   setSetting(id, 'loopRoom', 'therapy');
   setSetting(id, 'loopSound', 'hum');
   enter(therapy, 'ana');
   await checkLoopRoom(guild);
   const copy = loops()[0].file;
-  assert.match(copy, /slopkeeper-loop-.*\.wav$/);
-  assert.ok(existsSync(copy));
+  assert.equal(path.dirname(copy), path.join(config.dataDir, 'loop-cache'));
+  assert.ok(copy.endsWith('.wav') && existsSync(copy));
   loops()[0].end!();
-  assert.ok(!existsSync(copy));
+  await checkLoopRoom(guild);
+  assert.equal(loops()[1].file, copy, 'reused');
+  loops()[1].end!();
+  await saveUpload(id, 'drone', '.mp3', hum(220));
+  setSetting(id, 'loopSound', 'drone');
+  await checkLoopRoom(guild);
+  assert.notEqual(loops()[2].file, copy);
+  assert.ok(!existsSync(copy), 'the old copy goes');
+  assert.deepEqual(readdirSync(path.join(config.dataDir, 'loop-cache')).filter((f) => f.startsWith(`${id}-`)), [path.basename(loops()[2].file)]);
 });
 
 test('a gap set layers fresh copies that often, rather than looping without one', { skip: !hasFfmpeg }, async (t) => {
@@ -484,4 +500,129 @@ test('Stop or someone coming in during a delay means that part doesn’t start l
   finish(intros()[2]);
   await second;
   assert.equal(loops().length, 1);
+});
+
+/** A loop bot that keeps what it's sent, and answers as told */
+async function fakeLoopBot(t: TestContext) {
+  const sent: { method: string; url: string; auth?: string; program?: LoopProgram }[] = [];
+  const answer: { status: number; body: unknown; down: boolean } = { status: 200, body: { ok: true }, down: false };
+  const status = { ready: true, name: 'Slopkeeper Loop', guilds: [] as string[] };
+  const bot = createServer(async (req, res) => {
+    if (answer.down) return void res.destroy();
+    let body = '';
+    for await (const chunk of req) body += chunk;
+    if (req.url === '/status') return void res.writeHead(200).end(JSON.stringify(status));
+    sent.push({ method: req.method!, url: req.url!, auth: req.headers.authorization, ...(body && { program: JSON.parse(body) }) });
+    res.writeHead(answer.status).end(JSON.stringify(answer.body));
+  }).listen(0);
+  await new Promise((resolve) => bot.once('listening', resolve));
+  config.loopBotUrl = `http://127.0.0.1:${(bot.address() as AddressInfo).port}`;
+  config.loopToken = 'shared';
+  t.after(() => {
+    config.loopBotUrl = null;
+    config.loopToken = null;
+    bot.close();
+  });
+  return { sent, answer, status };
+}
+
+test('with a loop bot, the room is sent there, and this bot stays out of it', { skip: !hasFfmpeg }, async (t) => {
+  const { id, guild, therapy, enter, loops, turnOn, joined } = await server(t);
+  const { sent } = await fakeLoopBot(t);
+  turnOn();
+  setSetting(id, 'loopSoundDelayMs', 300);
+  enter(therapy, 'ana');
+  await checkLoopRoom(guild);
+  assert.deepEqual([loops().length, joined.length], [0, 0]);
+  assert.deepEqual(sent.map((r) => [r.method, r.url, r.auth]), [['PUT', `/guilds/${id}/loop`, 'Bearer shared']]);
+  assert.deepEqual(sent[0].program, {
+    run: 0,
+    channelId: 'therapy',
+    intro: null,
+    parts: [{ file: path.resolve(findSound(id, 'rain')!.file), gain: soundGain(id, 'rain') * 0.5, everyMs: 0, delayMs: 300 }],
+  });
+  // Stop on the soundboard leaves it alone
+  stopPlayback(id);
+  await checkLoopRoom(guild);
+  assert.deepEqual(sent.map((r) => r.method), ['PUT', 'PUT'], 'the same program again, which it ignores');
+  // Once the room empties it's told to leave, once
+  therapy.members.clear();
+  await checkLoopRoom(guild);
+  await checkLoopRoom(guild);
+  assert.deepEqual(sent.map((r) => r.method), ['PUT', 'PUT', 'DELETE']);
+});
+
+test('with a loop bot, someone coming in starts a new run when there’s an intro, and a setting change keeps the run', { skip: !hasFfmpeg }, async (t) => {
+  const { id, guild, therapy, enter, turnOn } = await server(t);
+  const { sent } = await fakeLoopBot(t);
+  await saveUpload(id, 'chime', '.wav', execFileSync('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', 'sine=frequency=880:duration=0.2', '-f', 'wav', 'pipe:1']));
+  turnOn();
+  const state = (channelId: string | null, who: string) => ({ channelId, guild, member: { user: { bot: false } }, id: who }) as never;
+  enter(therapy, 'ana');
+  noteLoopRoom(state(null, 'ana'), state('therapy', 'ana'));
+  await checkLoopRoom(guild);
+  assert.equal(sent[0].program!.intro, null);
+  setSetting(id, 'loopIntro', 'chime');
+  setSetting(id, 'loopIntroDelayMs', 400);
+  setSetting(id, 'soundVolume', 50);
+  await refreshLoopRoom(guild);
+  assert.deepEqual(sent[1].program!.intro, { file: path.resolve(findSound(id, 'chime')!.file), gain: soundGain(id, 'chime') * 0.5, delayMs: 400 });
+  assert.equal(sent[1].program!.parts[0].gain, soundGain(id, 'rain') * 0.5 * 0.5, 'the soundboard volume is in the gain');
+  assert.equal(sent[1].program!.run, sent[0].program!.run, 'a change keeps the run, so it’s taken up without the intro');
+  enter(therapy, 'ben');
+  noteLoopRoom(state('lounge', 'ben'), state('therapy', 'ben'));
+  await checkLoopRoom(guild);
+  assert.equal(sent[2].program!.run, sent[0].program!.run + 1);
+  noteLoopRoom(state('therapy', 'ben'), state('therapy', 'ben'));
+  await checkLoopRoom(guild);
+  assert.equal(sent[3].program!.run, sent[2].program!.run, 'muting isn’t coming in');
+});
+
+test('with a loop bot, the speech goes as a part of its own', { skip: !hasFfmpeg }, async (t) => {
+  const { id, guild, therapy, enter } = await server(t);
+  const { sent } = await fakeLoopBot(t);
+  setLoopSpeaker(async (_guild, _text, _voice, file) => {
+    execFileSync('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', 'sine=frequency=300:duration=0.3', file]);
+  });
+  t.after(() => setLoopSpeaker(undefined as never));
+  setSetting(id, 'loopRoom', 'therapy');
+  setSetting(id, 'loopText', 'stay a while');
+  setSetting(id, 'loopTextVolume', 70);
+  setSetting(id, 'loopTextEvery', 2.5);
+  setSetting(id, 'loopTextDelayMs', 900);
+  enter(therapy, 'ana');
+  await checkLoopRoom(guild);
+  const [speech] = sent[0].program!.parts;
+  assert.match(speech.file, /loop-speech/);
+  assert.deepEqual([speech.gain, speech.everyMs, speech.delayMs], [0.7, 2500, 900]);
+});
+
+test('with a loop bot that’s down or refuses, the room stays quiet and the log says why', { skip: !hasFfmpeg }, async (t) => {
+  const { id, guild, therapy, enter, loops, turnOn } = await server(t);
+  const { answer } = await fakeLoopBot(t);
+  const logged = t.mock.method(console, 'log', () => {});
+  const errors = t.mock.method(console, 'error', () => {});
+  turnOn();
+  enter(therapy, 'ana');
+  answer.status = 502;
+  answer.body = { error: 'The loop bot can’t join therapy, it’s full.' };
+  await checkLoopRoom(guild);
+  assert.match(String(logged.mock.calls.at(-1)!.arguments[0]), /didn’t play: The loop bot can’t join therapy/);
+  answer.down = true;
+  await syncLoopBot(guild);
+  assert.match(String(errors.mock.calls.at(-1)!.arguments[0]), /loop bot couldn’t be reached/);
+  assert.equal(loops().length, 0, 'no playing it here instead');
+  void id;
+});
+
+test('Settings says how the loop bot is doing', async (t) => {
+  assert.equal(await loopBotStatus('anywhere'), null, 'nothing without one');
+  const { status, answer } = await fakeLoopBot(t);
+  assert.match((await loopBotStatus('g1'))!.note, /Slopkeeper Loop, isn’t in this server yet/);
+  status.guilds = ['g1'];
+  assert.deepEqual(await loopBotStatus('g1'), { ok: true, note: 'Slopkeeper Loop plays this room, so Slopkeeper stays free for everything else. Stop on the soundboard doesn’t stop it.' });
+  status.ready = false;
+  assert.match((await loopBotStatus('g1'))!.note, /starting, or can’t log in/);
+  answer.down = true;
+  assert.deepEqual(await loopBotStatus('g1'), { ok: false, note: 'The loop bot isn’t answering, so the room is quiet.' });
 });

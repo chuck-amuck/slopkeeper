@@ -326,6 +326,8 @@ test('a session recap lists a game once, under the name it goes by', async (t) =
 
 test('time alone in voice is saved without a recap, and a moment alone isn’t saved at all', async (t) => {
   const { client, sent, join, leave } = server(t, 'alone');
+  // The weekly post runs on the real date, so it's kept days away from today, whatever the time zone
+  setSetting('alone', 'weeklyPostDay', (new Date().getUTCDay() + 3) % 7);
   sessions.setup!(client as never);
   const saved = () => db.prepare(`SELECT m.user_id AS user FROM session_members m JOIN sessions s ON s.id = m.session_id WHERE s.guild_id = 'alone'`).all() as { user: string }[];
   join('sam', 'Lethal Company');

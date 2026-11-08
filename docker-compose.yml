@@ -24,6 +24,22 @@ services:
         limits:
           memory: 512M
 
+  loop:
+    build: . # the loop bot, optional: a second bot that plays the looping room. Needs LOOP_BOT_URL=http://loop:8788 and LOOP_TOKEN in .env
+    command: ["node", "--disable-warning=ExperimentalWarning", "src/loopBotMain.ts"]
+    restart: unless-stopped
+    init: true
+    environment:
+      LOOP_BOT_TOKEN: ${LOOP_BOT_TOKEN}
+      LOOP_TOKEN: ${LOOP_TOKEN}
+      ALLOWED_GUILD_IDS: ${ALLOWED_GUILD_IDS:-}
+    volumes:
+      - slopkeeper-data:/data:ro # the sounds and speech it plays, prepared by the bot
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+
   music:
     image: ghcr.io/chuck-amuck/slopkeeper-music:latest # music from YouTube, optional. See the README's music container section
     restart: unless-stopped

@@ -420,6 +420,8 @@ Sounds from before this existed are measured when the bot starts. Copies on Disc
 
 Pick a voice channel and a sound with `/setup loop-room` or in Settings, and the bot plays that sound over and over, without a gap, while anyone's in the channel. It leaves when the last person does. It's off until the channel and a sound or speech are set.
 
+Discord lets a bot be in one voice channel per server, so the room shares the bot with everything else, and the points about Stop and giving way below are about that. With the [loop bot](#the-loop-bot) set up, a second bot plays the room instead: both play at once, the room never gives way, and the soundboard's **Stop** leaves the room alone. Settings shows the loop bot's state at the top of the room's settings.
+
 - Other sounds, join sounds and speech play on top. Playing the looping sound by hand plays a second copy.
 - **Stop** silences it until someone else joins the room.
 - The room gives way: if the bot is busy in another channel with people in it, the room waits until that channel empties or the bot has been idle for 5 minutes. Playing something in another channel takes the bot there, and the loop comes back the same way.
@@ -668,6 +670,8 @@ Set in `.env` (see `.env.example`).
 | `API_PORT` | 8787 | Port for the management API |
 | `VOICE_URL` | off | Where the [voice container](#the-voice-container) is. Unset turns `/say` off |
 | `MUSIC_URL` | off | Where the [music container](#the-music-container) is. Unset turns music off |
+| `LOOP_BOT_URL` | off | Where the [loop bot](#the-loop-bot) is. Unset plays the looping room on this bot |
+| `LOOP_TOKEN` | none | Same value as the loop bot's `LOOP_TOKEN` |
 | `MUSIC_TOKEN` | none | Same value as the music container's `MUSIC_TOKEN` |
 | `MUSIC_AUDIO_DIR` | `/music/audio` | Where the bot reads the songs the music container downloads, from its volume |
 | `SPOTIFY_CLIENT_ID`, `SPOTIFY_CLIENT_SECRET` | none | A Spotify app's, for search and links. See [the music container](#the-music-container) |
@@ -846,6 +850,30 @@ YouTube changes often and old yt-dlp versions stop working, so the container upd
 3. **Add to the music container's environment:** `SPOTIFY_PLAYBACK: "true"`, `SOLOIST_API_KEY: ${SOLOIST_API_KEY}`, `SOLOIST_ACCEPT_TERMS: ${SOLOIST_ACCEPT_TERMS}` and `SOLOIST_SESSION: ${SOLOIST_SESSION}`.
 
 The container then also runs a private PulseAudio whose only output is a pipe, and passes Soloist's audio to the bot as raw 48 kHz audio, ready to mix. Soloist's builds stop working after 90 days, so the container checks for a new one daily and swaps it in once nothing's playing. It keeps up to 200 MB of Spotify's cache in its volume. `SOLOIST_SESSION` is only used if the volume has never been paired, so pairing again means removing the volume. Settings and the Music tab say if the key, the terms or the pairing are missing.
+
+### The loop bot
+
+A second Discord bot that only plays the [looping sound room](#looping-sound-room), so the main bot is free to play everywhere else. It runs from the same image, with a different command, and reads the sounds and speech the main bot prepares from the data volume, read-only. It has no commands or settings of its own: the main bot sends it what to play over a private connection inside the stack.
+
+1. **Make the bot:** in the [Discord developer portal](https://discord.com/developers/applications), create a new application, say "Slopkeeper Loop", and copy its bot token from the **Bot** page. It needs no privileged intents.
+2. **Invite it:** under **OAuth2 → URL Generator**, tick the `bot` scope and the **View Channels**, **Connect** and **Speak** permissions, then open the URL and pick the server.
+3. **Add the container,** and don't publish its port:
+   ```yaml
+   loop:
+     image: ghcr.io/chuck-amuck/slopkeeper:latest
+     command: ["node", "--disable-warning=ExperimentalWarning", "src/loopBotMain.ts"]
+     restart: unless-stopped
+     init: true
+     environment:
+       LOOP_BOT_TOKEN: ${LOOP_BOT_TOKEN}
+       LOOP_TOKEN: ${LOOP_TOKEN}
+       ALLOWED_GUILD_IDS: ${ALLOWED_GUILD_IDS:-}
+     volumes:
+       - slopkeeper-data:/data:ro
+   ```
+4. **Point the bot at it:** add `LOOP_BOT_URL: http://loop:8788` and `LOOP_TOKEN: ${LOOP_TOKEN}` to the bot's environment. `LOOP_TOKEN` is any long random value, the same for both.
+
+With `LOOP_BOT_URL` set, the main bot never plays the room itself, and if the loop bot is down the room stays quiet until it's back. The main bot sends the room again on every voice change and once a minute, so a restarted loop bot picks it up by itself. The loop bot leaves a room that's been empty for 30 seconds even if it isn't told to, and leaves any server not in `ALLOWED_GUILD_IDS`.
 
 ### Hosting the bot
 

@@ -972,6 +972,15 @@ dialog .actions button:first-child:not(.primary):has(+ button) {
   border-top: 0;
 }
 
+/* The loop bot can't play the room, which is otherwise silent */
+.card-note.warning {
+  margin: 10px 16px 0;
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: var(--warn-bg);
+  color: var(--warn);
+}
+
 .series-name {
   font-weight: 500;
 }

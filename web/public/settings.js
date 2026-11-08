@@ -462,6 +462,7 @@ export function renderSettings(main) {
             'section',
             { className: 'card' },
             el('h2', {}, title),
+            title === 'Looping sound room' && data.loopBot && el('p', { className: `card-note${data.loopBot.ok ? '' : ' warning'}`, id: 'loop-bot-status' }, data.loopBot.note),
             keys.filter((key) => byKey.has(key)).map((key) => field(byKey.get(key), data)),
           );
           if (title === 'Hop-on pings') return [card, gamePingCard(gamePings)];
