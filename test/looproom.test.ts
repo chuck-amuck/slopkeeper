@@ -413,3 +413,75 @@ test('renaming the intro’s sound keeps it, and removing it turns the intro off
   assert.equal(setting(id, 'loopIntro'), '');
   assert.equal(setting(id, 'loopSound'), 'rain');
 });
+
+test('the speech has its own volume, apart from the sound’s', { skip: !hasFfmpeg }, async (t) => {
+  const { id, guild, therapy, enter, loops, turnOn } = await server(t);
+  setLoopSpeaker(async (_guild, _text, _voice, file) => {
+    execFileSync('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', 'sine=frequency=300:duration=0.3', file]);
+  });
+  t.after(() => setLoopSpeaker(undefined as never));
+  turnOn();
+  setSetting(id, 'loopText', 'stay a while');
+  setSetting(id, 'loopVolume', 80);
+  setSetting(id, 'loopTextVolume', 120);
+  enter(therapy, 'ana');
+  await checkLoopRoom(guild);
+  const speech = loops().find((l) => l.file.includes('loop-speech'))!;
+  const sound = loops().find((l) => !l.file.includes('loop-speech'))!;
+  assert.deepEqual([sound.gain, speech.gain], [0.8 * soundGain(id, 'rain'), 1.2]);
+});
+
+test('the sound and the speech each wait their own delay after the intro', { skip: !hasFfmpeg }, async (t) => {
+  const { id, guild, therapy, enter, loops, intros, finish } = await withIntro(t);
+  setLoopSpeaker(async (_guild, _text, _voice, file) => {
+    execFileSync('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', 'sine=frequency=300:duration=0.3', file]);
+  });
+  t.after(() => setLoopSpeaker(undefined as never));
+  setSetting(id, 'loopText', 'stay a while');
+  setSetting(id, 'loopSoundDelayMs', 100);
+  setSetting(id, 'loopTextDelayMs', 400);
+  enter(therapy, 'ana');
+  const started = checkLoopRoom(guild);
+  await sleep(50);
+  finish(intros()[0]);
+  const at = Date.now();
+  const kinds = () => loops().map((l) => (l.file.includes('loop-speech') ? 'speech' : 'sound'));
+  await sleep(250);
+  assert.deepEqual(kinds(), ['sound'], 'the sound comes in first');
+  await started;
+  assert.deepEqual(kinds(), ['sound', 'speech']);
+  assert.ok(Date.now() - at >= 400, 'the speech waited its delay');
+  // Changing a setting takes it up straight away, without the delays
+  for (const l of loops()) l.end!();
+  await refreshLoopRoom(guild);
+  assert.deepEqual(kinds().slice(2).sort(), ['sound', 'speech']);
+});
+
+test('Stop or someone coming in during a delay means that part doesn’t start late', { skip: !hasFfmpeg }, async (t) => {
+  const { id, guild, therapy, enter, loops, intros, finish, state } = await withIntro(t);
+  setSetting(id, 'loopSoundDelayMs', 200);
+  enter(therapy, 'ana');
+  const stopping = checkLoopRoom(guild);
+  await sleep(50);
+  finish(intros()[0]);
+  await sleep(50);
+  stopPlayback(id);
+  await stopping;
+  assert.equal(loops().length, 0, 'Stop during the delay');
+
+  enter(therapy, 'ben');
+  noteLoopRoom(state(null, 'ben'), state('therapy', 'ben'));
+  const first = checkLoopRoom(guild);
+  await sleep(50);
+  finish(intros()[1]);
+  await sleep(50);
+  enter(therapy, 'cy');
+  noteLoopRoom(state(null, 'cy'), state('therapy', 'cy'));
+  const second = checkLoopRoom(guild);
+  await first;
+  assert.equal(loops().length, 0, 'the restarted run’s sound never came in');
+  await sleep(50);
+  finish(intros()[2]);
+  await second;
+  assert.equal(loops().length, 1);
+});

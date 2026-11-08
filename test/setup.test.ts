@@ -250,3 +250,10 @@ test('/setup loop-room sets an intro and its delay, and turns it off', async () 
   await run('loop-intro', 'loop-room', { no_intro: true });
   assert.equal(setting('loop-intro', 'loopIntro'), '');
 });
+
+test('/setup loop-room sets the speech volume and each part’s delay after the intro', async () => {
+  await run('loop-delays', 'loop-room', { speech_volume: 70, sound_delay_ms: 500, speech_delay_ms: 1500 });
+  assert.deepEqual([setting('loop-delays', 'loopTextVolume'), setting('loop-delays', 'loopSoundDelayMs'), setting('loop-delays', 'loopTextDelayMs')], [70, 500, 1500]);
+  assert.ok(log('loop-delays').includes('Set Speech delay after intro to 1500 ms'));
+  assert.ok(log('loop-delays').includes('Set Looping speech volume to 70%'));
+});

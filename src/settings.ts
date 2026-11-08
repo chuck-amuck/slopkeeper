@@ -56,10 +56,15 @@ export const DEFAULTS = {
   loopVoice: null as string | null,
   // Seconds between fresh copies of the speech, layered like the sound's. 0 says it again straight away
   loopTextEvery: num('LOOP_TEXT_EVERY', 0),
+  // The speech's own volume, apart from the sound's loopVolume
+  loopTextVolume: num('LOOP_TEXT_VOLUME', 50),
   // Played once before the loop starts, and again, restarting the loop, whenever someone else comes in. Unset goes straight to the loop
   loopIntro: null as string | null,
   // How long after someone comes in the intro plays
   loopIntroDelayMs: num('LOOP_INTRO_DELAY_MS', 250),
+  // How long the sound and the speech each wait after the intro, or after the loop starts without one
+  loopSoundDelayMs: num('LOOP_SOUND_DELAY_MS', 0),
+  loopTextDelayMs: num('LOOP_TEXT_DELAY_MS', 0),
   // Unset lets everyone change sounds
   soundManagerRole: null as string | null,
   tts: process.env.TTS !== 'false',
@@ -114,6 +119,9 @@ export const DEFAULT_ENV: Partial<Record<SettingKey, string>> = {
   loopEvery: 'LOOP_EVERY',
   loopTextEvery: 'LOOP_TEXT_EVERY',
   loopIntroDelayMs: 'LOOP_INTRO_DELAY_MS',
+  loopTextVolume: 'LOOP_TEXT_VOLUME',
+  loopSoundDelayMs: 'LOOP_SOUND_DELAY_MS',
+  loopTextDelayMs: 'LOOP_TEXT_DELAY_MS',
   tts: 'TTS',
   ttsMaxChars: 'TTS_MAX_CHARS',
   ttsCooldownSec: 'TTS_COOLDOWN_SEC',

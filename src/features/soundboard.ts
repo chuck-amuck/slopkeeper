@@ -739,12 +739,15 @@ export async function checkLoopRoom(guild: Guild, { intro = true } = {}) {
     for (const part of parts) looping.delete(loopKey(guild.id, part));
     return console.log(`Looping room in ${guild.name} didn’t play: ${problem}`);
   }
-  const introSound = intro && parts.length === wanted.length ? findSound(guild.id, setting(guild.id, 'loopIntro') ?? '') : undefined;
+  // Starting from nothing, rather than taking up changed settings, plays the intro and keeps each part's delay
+  const fresh = intro && parts.length === wanted.length;
+  const introSound = fresh ? findSound(guild.id, setting(guild.id, 'loopIntro') ?? '') : undefined;
   if (introSound && !(await playIntro(guild, room, introSound, run))) {
     if (runOf(guild.id) === run) for (const part of parts) looping.delete(loopKey(guild.id, part));
     return;
   }
-  await Promise.all(parts.map((part) => startLoop(guild, part, sound, run)));
+  const delayOf = (part: LoopPart) => (fresh ? setting(guild.id, part === 'sound' ? 'loopSoundDelayMs' : 'loopTextDelayMs') : 0);
+  await Promise.all(parts.map((part) => startLoop(guild, room, part, sound, run, delayOf(part))));
 }
 
 /** Waits the intro delay, then plays the intro like a join sound. Says whether the loop should follow, which it shouldn't once stopped, restarted or left */
@@ -774,8 +777,8 @@ function restartLoop(guildId: string) {
   looping.delete(loopKey(guildId, 'speech'));
 }
 
-/** Plays one part of the room's loop over and over, at the loop volume, layered if it has a gap set */
-async function startLoop(guild: Guild, part: LoopPart, sound: Sound | undefined, run: number) {
+/** Plays one part of the room's loop over and over, at its own volume, layered if it has a gap set, after `delayMs` */
+async function startLoop(guild: Guild, room: VoiceBasedChannel, part: LoopPart, sound: Sound | undefined, run: number, delayMs: number) {
   const key = loopKey(guild.id, part);
   const current = () => runOf(guild.id) === run;
   let file: string;
@@ -785,8 +788,15 @@ async function startLoop(guild: Guild, part: LoopPart, sound: Sound | undefined,
     if (current()) looping.delete(key);
     return console.error(`Looping ${part} in ${guild.name} couldn’t be prepared:`, (err as Error).message);
   }
-  const volume = setting(guild.id, 'loopVolume') / 100;
-  const gain = part === 'sound' ? soundGain(guild.id, sound!.name) * volume : volume;
+  // Made ready first, so the delay is all there is
+  if (delayMs) {
+    await sleep(delayMs);
+    if (!current() || silenced.has(guild.id) || !humansIn(room).length) {
+      if (current()) looping.delete(key);
+      return;
+    }
+  }
+  const gain = part === 'sound' ? soundGain(guild.id, sound!.name) * (setting(guild.id, 'loopVolume') / 100) : setting(guild.id, 'loopTextVolume') / 100;
   const everyMs = Math.round(setting(guild.id, part === 'sound' ? 'loopEvery' : 'loopTextEvery') * 1000);
   mixIn(
     guild.id,

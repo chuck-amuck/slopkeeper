@@ -48,6 +48,9 @@ export const LIMITS = {
   loopEvery: [0, 60],
   loopTextEvery: [0, 60],
   loopIntroDelayMs: [0, 10_000],
+  loopTextVolume: [5, 200],
+  loopSoundDelayMs: [0, 60_000],
+  loopTextDelayMs: [0, 60_000],
   musicVolume: [0, 200],
 } as const;
 
@@ -106,6 +109,9 @@ export const LABELS: Record<SettingKey, string> = {
   loopTextEvery: 'Speech every',
   loopIntro: 'Intro sound',
   loopIntroDelayMs: 'Intro delay',
+  loopTextVolume: 'Looping speech volume',
+  loopSoundDelayMs: 'Sound delay after intro',
+  loopTextDelayMs: 'Speech delay after intro',
   ttsChannel: 'Read chat aloud',
   ttsChannelWho: 'Whose messages are read',
   ttsGreet: 'Say who joined',
@@ -144,6 +150,8 @@ export function show(key: SettingKey, value: unknown): string {
       return `${value} min`;
     case 'joinSoundDelayMs':
     case 'loopIntroDelayMs':
+    case 'loopSoundDelayMs':
+    case 'loopTextDelayMs':
       return `${value} ms`;
     case 'steamCountry':
       return String(value).toUpperCase();
@@ -163,6 +171,7 @@ export function show(key: SettingKey, value: unknown): string {
     case 'ttsVolume':
     case 'soundVolume':
     case 'loopVolume':
+    case 'loopTextVolume':
     case 'musicVolume':
       return `${value}%`;
     case 'loopRoom':
@@ -491,7 +500,7 @@ export const setup: Feature = {
             .setDescription('Play a sound nonstop while anyone’s in a voice channel. Give nothing to turn it off')
             .addChannelOption((o) => o.setName('channel').setDescription('The voice channel').addChannelTypes(ChannelType.GuildVoice))
             .addStringOption((o) => o.setName('sound').setDescription('The sound to loop').setAutocomplete(true))
-            .addIntegerOption((o) => o.setName('volume').setDescription('How loud, as a percentage (50 by default)').setMinValue(LIMITS.loopVolume[0]).setMaxValue(LIMITS.loopVolume[1]))
+            .addIntegerOption((o) => o.setName('volume').setDescription('How loud the sound is, as a percentage (50 by default)').setMinValue(LIMITS.loopVolume[0]).setMaxValue(LIMITS.loopVolume[1]))
             .addNumberOption((o) =>
               o.setName('every').setDescription('Seconds between fresh copies, layered on top of each other, like 0.5. 0 loops it without a gap').setMinValue(LIMITS.loopEvery[0]).setMaxValue(LIMITS.loopEvery[1]),
             )
@@ -505,7 +514,14 @@ export const setup: Feature = {
             .addIntegerOption((o) =>
               o.setName('intro_delay_ms').setDescription('How long after someone comes in the intro plays, 250 is a quarter of a second').setMinValue(LIMITS.loopIntroDelayMs[0]).setMaxValue(LIMITS.loopIntroDelayMs[1]),
             )
-            .addBooleanOption((o) => o.setName('no_intro').setDescription('Go straight to the loop, with no intro')),
+            .addBooleanOption((o) => o.setName('no_intro').setDescription('Go straight to the loop, with no intro'))
+            .addIntegerOption((o) => o.setName('speech_volume').setDescription('How loud the speech is, as a percentage (50 by default)').setMinValue(LIMITS.loopTextVolume[0]).setMaxValue(LIMITS.loopTextVolume[1]))
+            .addIntegerOption((o) =>
+              o.setName('sound_delay_ms').setDescription('How long the sound waits after the intro, 1000 is a second').setMinValue(LIMITS.loopSoundDelayMs[0]).setMaxValue(LIMITS.loopSoundDelayMs[1]),
+            )
+            .addIntegerOption((o) =>
+              o.setName('speech_delay_ms').setDescription('How long the speech waits after the intro, 1000 is a second').setMinValue(LIMITS.loopTextDelayMs[0]).setMaxValue(LIMITS.loopTextDelayMs[1]),
+            ),
         )
         .addSubcommand((s) =>
           s
@@ -711,6 +727,9 @@ export const setup: Feature = {
           const intro = i.options.getString('intro');
           const introDelay = i.options.getInteger('intro_delay_ms');
           const noIntro = i.options.getBoolean('no_intro');
+          const speechVolume = i.options.getInteger('speech_volume');
+          const soundDelay = i.options.getInteger('sound_delay_ms');
+          const speechDelay = i.options.getInteger('speech_delay_ms');
           for (const [key, value] of [['loopRoom', channel?.id], ['loopSound', sound], ['loopIntro', intro]] as const) {
             const checked = value ? checkSetting(i.guild, key, value) : null;
             if (checked && 'error' in checked) return i.reply({ content: checked.error, flags: MessageFlags.Ephemeral });
@@ -727,7 +746,7 @@ export const setup: Feature = {
             checked[key] = result.value as string | number;
           }
           // Changing only how it sounds leaves the room as it is
-          const tweaked = sound || volume !== null || Object.keys(checked).length || noSpeech || intro || introDelay !== null || noIntro;
+          const tweaked = sound || volume !== null || Object.keys(checked).length || noSpeech || intro || introDelay !== null || noIntro || speechVolume !== null || soundDelay !== null || speechDelay !== null;
           await apply(i, [
             ['loopRoom', channel?.id ?? (tweaked ? null : '')],
             ['loopSound', sound],
@@ -738,6 +757,9 @@ export const setup: Feature = {
             ['loopTextEvery', checked.loopTextEvery ?? null],
             ['loopIntro', noIntro ? '' : intro],
             ['loopIntroDelayMs', introDelay],
+            ['loopTextVolume', speechVolume],
+            ['loopSoundDelayMs', soundDelay],
+            ['loopTextDelayMs', speechDelay],
           ]);
           await refreshLoopRoom(i.guild);
           const speechProblem = checked.loopText || checked.loopVoice ? await loopSpeechProblem(i.guild) : null;

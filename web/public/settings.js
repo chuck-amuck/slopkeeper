@@ -43,7 +43,10 @@ const FIELDS = {
   musicDjRole: { kind: 'role', none: 'Everyone', hint: 'Who can add, skip, pause and stop music with /music, along with people with Manage Server. Anyone can see the queue. This page isn’t limited by it.' },
   loopRoom: { kind: 'voice', none: 'Off', hint: 'While anyone’s in this channel, the bot plays the looping sound and speech there nonstop. Join sounds don’t play there.' },
   loopSound: { kind: 'sound', none: 'Not set', hint: 'A sound from the library.' },
-  loopVolume: { kind: 'number', unit: '%', hint: 'On top of the sound’s own level. It never stops, so it starts at half.' },
+  loopVolume: { kind: 'number', unit: '%', hint: 'The looping sound’s, on top of its own level. It never stops, so it starts at half.' },
+  loopTextVolume: { kind: 'number', unit: '%', hint: 'The looping speech’s, apart from the sound’s. It starts at half too.' },
+  loopSoundDelayMs: { kind: 'number', unit: 'ms', hint: 'How long the looping sound waits after the intro ends, or after the loop starts with no intro. 1000 is a second.' },
+  loopTextDelayMs: { kind: 'number', unit: 'ms', hint: 'How long the looping speech waits after the intro ends, or after the loop starts with no intro. 1000 is a second.' },
   loopText: { hint: 'Words said over and over in the room, on top of the sound, up to 500 characters. Leave it empty for none.' },
   loopVoice: { kind: 'choice', options: [['', 'Same as the default voice'], ['1', 'Voice 1'], ['2', 'Voice 2'], ['5', 'Voice 5'], ['9', 'Voice 9']], hint: 'Who says the looping speech.' },
   loopTextEvery: { kind: 'number', unit: 'seconds', hint: 'Starts the speech again this often, layered over the last if it’s still talking. 0 says it again straight away.' },
@@ -70,7 +73,7 @@ const GROUPS = [
   ['Free games', ['freeGames', 'freeGamesChannel', 'freeGamesMinRating', 'freeGamesTaste', 'freeGamesMultiplayer', 'freeGamesUnlisted']],
   ['Soundboard', ['soundVolume', 'evenVolume', 'joinSounds', 'joinSoundDelayMs', 'joinSoundCooldownMin', 'soundManagerRole']],
   ['Music', ['musicVolume', 'musicDjRole']],
-  ['Looping sound room', ['loopRoom', 'loopSound', 'loopVolume', 'loopEvery', 'loopText', 'loopVoice', 'loopTextEvery', 'loopIntro', 'loopIntroDelayMs']],
+  ['Looping sound room', ['loopRoom', 'loopSound', 'loopVolume', 'loopEvery', 'loopText', 'loopVoice', 'loopTextVolume', 'loopTextEvery', 'loopIntro', 'loopIntroDelayMs', 'loopSoundDelayMs', 'loopTextDelayMs']],
   ['Text to speech', ['tts', 'ttsVoice', 'ttsSpeed', 'ttsVolume', 'ttsChannel', 'ttsChannelWho', 'ttsGreet', 'ttsGreeting', 'ttsNightReminders', 'ttsHopOn', 'ttsRole', 'ttsMaxChars', 'ttsCooldownSec']],
 ];
 
