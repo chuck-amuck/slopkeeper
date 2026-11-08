@@ -75,8 +75,9 @@ class Voice implements Source {
     this.pcm = this.proc.stdout!;
     // Without a 'readable' listener, Node resumes stdout when ffmpeg exits and the unread PCM is discarded
     this.pcm.on('readable', () => {});
-    // 'close' only follows 'end' once every buffered byte has been read, so nothing is cut off
-    this.pcm.once('close', () => this.finish(!this.stopped));
+    // 'close' only follows 'end' once every buffered byte has been read, so nothing is cut off.
+    // A stopped sound has already said so, so closing here means it played to the end
+    this.pcm.once('close', () => this.finish(true));
 
     // Only surface ffmpeg's errors for sounds that failed by themselves; a stopped one always complains about the closed pipe
     let stderr = '';

@@ -299,6 +299,9 @@ test('seeking jumps within the song, playing or paused, and not past its ends', 
   assert.deepEqual([lastPlayed().file, lastPlayed().options], [audioFile(1), { group: 'music', lasting: true, startMs: 90_000 }], 'the same song, from there');
   tick(5_000);
   assert.deepEqual([musicState(id).phase, musicState(id).positionMs, titles(id)], ['playing', 95_000, ['Song 1', 'Song 2']]);
+  tick(500_000);
+  assert.equal(musicState(id).positionMs, 200_000, 'never past the end, if the file runs a little long');
+  await seekMusic(id, 90_000);
   await seekMusic(id, 10_000_000);
   assert.equal(lastPlayed().options.startMs, 194_000, 'not right up to the end, which would only skip it');
   await seekMusic(id, -50);
@@ -307,6 +310,8 @@ test('seeking jumps within the song, playing or paused, and not past its ends', 
   const count = played.length;
   assert.equal(await seekMusic(id, 60_000), null);
   assert.deepEqual([played.length, musicState(id).phase, musicState(id).positionMs], [count, 'paused', 60_000], 'paused, it only moves where it’ll resume');
+  tick(30_000);
+  assert.equal(musicState(id).positionMs, 60_000, 'and stays there while paused');
   await startMusic(guild, channel);
   assert.equal(lastPlayed().options.startMs, 60_000);
   stopMusic(id, 'u1');
@@ -367,6 +372,17 @@ test('a song YouTube doesn’t have is skipped and says so, or plays through Spo
   assert.equal(musicState(id).via, 'youtube');
   await onSpotify({ type: 'playback_changed', status: 'paused' });
   assert.equal(musicState(id).phase, 'playing', 'Spotify going quiet doesn’t touch YouTube’s song');
+  stopMusic(id, 'u1');
+});
+
+test('when several songs in a row are missing, the note names the last one skipped', async () => {
+  const { id, guild, channel } = server();
+  youtube.set(song(1).uri, 'missing');
+  youtube.set(song(2).uri, 'missing');
+  addTracks(id, [song(1), song(2), song(3)], 'u1');
+  await startMusic(guild, channel);
+  assert.equal(lastPlayed().file, audioFile(3));
+  assert.equal(musicState(id).note, 'Couldn’t find Song 2 on YouTube or SoundCloud, so it was skipped.');
   stopMusic(id, 'u1');
 });
 

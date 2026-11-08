@@ -270,6 +270,13 @@ test('the least recently played audio goes once the folder is over its cap', asy
   assert.equal(runs(dataDir).filter((r) => r === song(2).uri).length, 2, 'and is fetched again when it’s wanted');
 });
 
+test('a song bigger than the whole cap is still kept, since it’s about to play', async () => {
+  const dataDir = temp();
+  const { base } = await bridge({ dataDir, spotifyPlayback: false, cacheBytes: 1024 });
+  const { file } = await (await fetchSong(base, song(1))).json();
+  assert.ok(fs.existsSync(path.join(dataDir, 'audio', file)));
+});
+
 test('a song with no match, a failing yt-dlp and an odd answer each say so', async () => {
   const dataDir = temp();
   const { base } = await bridge({ dataDir, spotifyPlayback: false });

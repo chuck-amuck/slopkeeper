@@ -75,6 +75,30 @@ test('a clip shorter than the start buffer plays in full', { skip: !hasFfmpeg },
   assert.equal(peaks.filter((p) => p > 0).length, 2);
 });
 
+test('a sound can start partway in, and says whether it ended by itself or was stopped', { skip: !hasFfmpeg }, async () => {
+  const whole = tone('start.wav', 440, 1);
+  const heard = async (startMs?: number) => {
+    const mixer = new Mixer(0.5, 12);
+    const { peaks, done } = record(mixer);
+    let byItself: boolean | undefined;
+    mixer.add(whole, 1, (b) => (byItself = b), { startMs });
+    await done;
+    return { frames: peaks.filter((p) => p > 0).length, byItself };
+  };
+  const full = await heard();
+  const late = await heard(700);
+  assert.deepEqual([full.frames, full.byItself], [50, true]);
+  assert.ok(late.frames >= 13 && late.frames <= 17, `started 0.7 s in, so about 15 frames, got ${late.frames}`);
+  const mixer = new Mixer(0.5, 12);
+  const { done } = record(mixer);
+  let stopped: boolean | undefined;
+  const stop = mixer.add(whole, 1, (b) => (stopped = b));
+  await sleep(100);
+  stop();
+  await done;
+  assert.equal(stopped, false);
+});
+
 test('a sound’s gain scales only that sound', { skip: !hasFfmpeg }, async () => {
   const level = async (gain: number) => {
     const mixer = new Mixer(0.5, 12);
