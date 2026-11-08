@@ -45,8 +45,12 @@ export const LIMITS = {
   ttsVolume: [25, 200],
   soundVolume: [0, 200],
   loopVolume: [5, 200],
+  loopEvery: [0, 60],
   musicVolume: [0, 200],
 } as const;
+
+/** Settings that take fractions, and in what steps. The rest are whole numbers */
+export const STEPS: Partial<Record<keyof typeof LIMITS, number>> = { loopEvery: 0.1 };
 
 const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 const TIME_ZONES = Intl.supportedValuesOf('timeZone');
@@ -92,6 +96,7 @@ export const LABELS: Record<SettingKey, string> = {
   loopRoom: 'Looping sound room',
   loopSound: 'Looping sound',
   loopVolume: 'Loop volume',
+  loopEvery: 'Loop every',
   ttsChannel: 'Read chat aloud',
   ttsChannelWho: 'Whose messages are read',
   ttsGreet: 'Say who joined',
@@ -152,6 +157,8 @@ export function show(key: SettingKey, value: unknown): string {
       return `${value}%`;
     case 'loopRoom':
       return value ? `<#${value}>` : 'off';
+    case 'loopEvery':
+      return value ? `${value} seconds, layered` : 'without a gap';
     case 'loopSound':
       return value ? String(value) : 'not set';
     case 'ttsCooldownSec':
@@ -217,8 +224,14 @@ type Checked = { value: string | number | boolean; warning?: string } | { error:
 export function checkSetting(guild: Guild, key: SettingKey, value: unknown): Checked {
   if (key in LIMITS) {
     const [min, max] = LIMITS[key as keyof typeof LIMITS];
-    if (!Number.isInteger(value) || (value as number) < min || (value as number) > max) return { error: `${LABELS[key]} has to be a whole number from ${min} to ${max}.` };
-    return { value: value as number };
+    const step = STEPS[key as keyof typeof LIMITS] ?? 1;
+    const steps = typeof value === 'number' ? value / step : NaN;
+    // Allowing for 0.1 + 0.2 not quite being 0.3
+    const onStep = Number.isFinite(steps) && Math.abs(steps - Math.round(steps)) < 1e-6;
+    if (!onStep || (value as number) < min || (value as number) > max) {
+      return { error: step === 1 ? `${LABELS[key]} has to be a whole number from ${min} to ${max}.` : `${LABELS[key]} has to be from ${min} to ${max}, in steps of ${step}.` };
+    }
+    return { value: Number((Math.round(steps) * step).toFixed(6)) };
   }
   switch (key) {
     case 'announceChannel':
@@ -454,7 +467,10 @@ export const setup: Feature = {
             .setDescription('Play a sound nonstop while anyone’s in a voice channel. Give nothing to turn it off')
             .addChannelOption((o) => o.setName('channel').setDescription('The voice channel').addChannelTypes(ChannelType.GuildVoice))
             .addStringOption((o) => o.setName('sound').setDescription('The sound to loop').setAutocomplete(true))
-            .addIntegerOption((o) => o.setName('volume').setDescription('How loud, as a percentage (50 by default)').setMinValue(LIMITS.loopVolume[0]).setMaxValue(LIMITS.loopVolume[1])),
+            .addIntegerOption((o) => o.setName('volume').setDescription('How loud, as a percentage (50 by default)').setMinValue(LIMITS.loopVolume[0]).setMaxValue(LIMITS.loopVolume[1]))
+            .addNumberOption((o) =>
+              o.setName('every').setDescription('Seconds between fresh copies, layered on top of each other, like 0.5. 0 loops it without a gap').setMinValue(LIMITS.loopEvery[0]).setMaxValue(LIMITS.loopEvery[1]),
+            ),
         )
         .addSubcommand((s) =>
           s
@@ -656,15 +672,19 @@ export const setup: Feature = {
           const channel = i.options.getChannel('channel', false, [ChannelType.GuildVoice]);
           const sound = i.options.getString('sound');
           const volume = i.options.getInteger('volume');
+          const every = i.options.getNumber('every');
           for (const [key, value] of [['loopRoom', channel?.id], ['loopSound', sound]] as const) {
             const checked = value ? checkSetting(i.guild, key, value) : null;
             if (checked && 'error' in checked) return i.reply({ content: checked.error, flags: MessageFlags.Ephemeral });
           }
-          // Changing only the sound or volume leaves the room as it is
+          const checkedEvery = every === null ? null : checkSetting(i.guild, 'loopEvery', every);
+          if (checkedEvery && 'error' in checkedEvery) return i.reply({ content: checkedEvery.error, flags: MessageFlags.Ephemeral });
+          // Changing only the sound, volume or gap leaves the room as it is
           await apply(i, [
-            ['loopRoom', channel?.id ?? (sound || volume !== null ? null : '')],
+            ['loopRoom', channel?.id ?? (sound || volume !== null || every !== null ? null : '')],
             ['loopSound', sound],
             ['loopVolume', volume],
+            ['loopEvery', checkedEvery ? (checkedEvery.value as number) : null],
           ]);
           await refreshLoopRoom(i.guild);
           return;

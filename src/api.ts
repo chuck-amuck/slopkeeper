@@ -19,10 +19,10 @@ import { activity, checkpoint, comparison, PERIODS, pickFor, sessionCount, stats
 import { postVote } from './features/gamevote.ts';
 import { recapFor } from './features/recap.ts';
 import { gameName, gameSpellings, mergeGames, separateGame } from './gameNames.ts';
-import { addTracks, clearQueue, fileProblem, fileUploadPath, MOST_FILE_BYTES, moveTrack, musicChannelFor, musicState, pauseMusic, playFile, queueFrom, queueOf, removeTrack, seekMusic, skipMusic, startMusic, stopFile, stopMusic } from './features/music.ts';
+import { addTracks, clearQueue, fileProblem, fileUploadPath, MOST_FILE_BYTES, moveTrack, musicChannelFor, musicState, pauseMusic, playFile, queueFrom, queueOf, removeTrack, seekFile, seekMusic, skipMusic, startMusic, stopFile, stopMusic } from './features/music.ts';
 import { phrases, removePhrase, savePhrase, say, VOICES } from './features/say.ts';
 import { voiceTotals } from './features/sessions.ts';
-import { checkSetting, LABELS, LIMITS, show, source } from './features/setup.ts';
+import { checkSetting, LABELS, LIMITS, show, source, STEPS } from './features/setup.ts';
 import { addSound, addToDiscord, applyLevels, applyMusicVolume, applySoundVolume, BIN_DAYS, changeEmoji, deletedSounds, discordVolume, eraseDeleted, expiresAt, favourites, findSound, isTrimmed, joinSounds, listSounds, parseEmoji, playCounts, playDiscordSound, playFromWeb, postPanel, refreshLoopRoom, refreshPanels, removeSound, renameSound, restoreDeleted, restoreSound, saveFromDiscord, setFavourite, setJoinSound, setSoundVolume, type Sound, soundLevels, stopPlayback, swapOnDiscord, syncToDiscord, takeOffDiscord, trimProblem, trimSound, uploadProblem, voiceVolume, volumeProblem } from './features/soundboard.ts';
 import { DEFAULTS, idSetting, isAllowed, setSetting, setting, type SettingKey } from './settings.ts';
 import { myPlaylists, playlistsReady, search, SpotifyError, type Track } from './spotify.ts';
@@ -205,6 +205,7 @@ function settingList(guild: Guild) {
       default: DEFAULTS[key],
       source: source(guild.id, key),
       limits: LIMITS[key as keyof typeof LIMITS] ?? null,
+      step: STEPS[key as keyof typeof LIMITS] ?? 1,
     })),
     channels: textChannels(guild),
     voiceChannels: [...guild.channels.cache.values()]
@@ -1049,6 +1050,14 @@ async function handleMusic(guild: Guild, req: IncomingMessage, url: URL, rest: s
     const file = fileUploadPath(ext);
     await saveBody(req, file, MOST_FILE_BYTES);
     refuse(guild, await playFile(guild, channel, file, path.basename(name, path.extname(name)) || 'a file', by()));
+    return musicList(guild);
+  }
+  if (key === 'POST file/seek') {
+    const { positionMs } = await readJson(req);
+    if (typeof positionMs !== 'number' || !Number.isFinite(positionMs)) throw new Refused(400, 'positionMs must be a number.');
+    const problem = await seekFile(guild.id, positionMs);
+    if (problem === 'No file is playing.') throw new Refused(409, problem);
+    refuse(guild, problem);
     return musicList(guild);
   }
   if (key === 'POST file/stop') {

@@ -424,6 +424,7 @@ Pick a voice channel and a sound with `/setup loop-room` or in Settings, and the
 - **Stop** silences it until someone else joins the room.
 - The room gives way: if the bot is busy in another channel with people in it, the room waits until that channel empties or the bot has been idle for 5 minutes. Playing something in another channel takes the bot there, and the loop comes back the same way.
 - **Loop volume** starts at half, as it never stops. Renaming the sound keeps it, and removing it turns the loop off.
+- **Loop every** layers it instead: a fresh copy starts that many seconds after the last, like 0.5 or 1, on top of the copies still playing. Up to 8 play at once, and the oldest fades out as the next starts. A sound shorter than the gap plays, goes quiet, then plays again. At 0, the default, it loops without a gap.
 
 ### Discord's soundboard
 
@@ -463,7 +464,7 @@ The bot plays music in voice, from a queue everyone shares. Songs are found on S
 - `/music play [song] [next] [shuffle]` adds a song, album or playlist by search or Spotify link, or a song by YouTube or SoundCloud link, and starts the music in your voice channel. `next` puts it after the song playing instead of at the end, and `shuffle` adds 100 of an album's or playlist's songs at random instead of the first 100. With no song, it carries on where it paused. Its suggestions list the Spotify account's matching playlists first.
 - `/music pause`, `/music skip` and `/music stop` are said in the channel, so everyone can see who did it. **Stop** clears the queue too.
 - `/music queue` shows what's playing and the next 10 songs.
-- The web UI's **Music** tab has the same, plus search results to pick from, a progress bar you can click or drag to jump within the song (or move 10 seconds with the arrow keys), and a volume slider. Its **My playlists** switch lists the account's playlists to add, in order or shuffled. **Play a file** plays an audio file once in the chosen channel, up to 50 MB and 20 minutes, pausing the music meanwhile. It isn't kept: it's deleted once it ends or is stopped, and pressing Resume stops it. Drag songs to reorder them, or use the arrows on a phone.
+- The web UI's **Music** tab has the same, plus search results to pick from, a progress bar you can click or drag to jump within the song (or move 10 seconds with the arrow keys), and a volume slider. Its **My playlists** switch lists the account's playlists to add, in order or shuffled. **Play a file** plays an audio file once in the chosen channel, up to 60 MB and 20 minutes, pausing the music meanwhile. Its progress bar jumps within it the same way. It isn't kept: it's deleted once it ends or is stopped, and pressing Resume stops it. Drag songs to reorder them, or use the arrows on a phone.
 
 How it plays:
 
@@ -560,6 +561,7 @@ So the host can change a default for every server at once, and each server can s
 | Looping sound room | `loop-room` | | off |
 | Looping sound | `loop-room` | | not set |
 | Loop volume, as a percentage | `loop-room` | `LOOP_VOLUME` | 50 |
+| Loop every, in seconds (0 loops without a gap) | `loop-room` | `LOOP_EVERY` | 0 |
 | Music volume, as a percentage | `music` | `MUSIC_VOLUME` | 40 |
 | Who can control music | `music` | | everyone |
 | Text to speech | `speech` | `TTS` (`false` to turn off) | on |

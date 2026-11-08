@@ -151,13 +151,13 @@ test('passes a music file through as it arrives, past the usual limit, up to its
   assert.equal(seen[0].headers['content-type'], 'audio/mpeg');
   assert.ok(seen[0].body.equals(data));
 
-  const big = await fetch(`${base}/api/guilds/1/music/file`, { method: 'POST', headers: { cookie, 'x-slopkeeper': '1' }, body: Buffer.alloc(51 * 1024 * 1024) });
+  const big = await fetch(`${base}/api/guilds/1/music/file`, { method: 'POST', headers: { cookie, 'x-slopkeeper': '1' }, body: Buffer.alloc(61 * 1024 * 1024) });
   assert.equal(big.status, 413);
-  assert.deepEqual(await big.json(), { error: 'That file is over 50 MB.' });
+  assert.deepEqual(await big.json(), { error: 'That file is over 60 MB.' });
   assert.equal(seen.length, 1, 'too big to say so up front is never sent on');
   const pieces = new ReadableStream({
     start(c) {
-      for (let i = 0; i < 52; i++) c.enqueue(new Uint8Array(1024 * 1024));
+      for (let i = 0; i < 62; i++) c.enqueue(new Uint8Array(1024 * 1024));
       c.close();
     },
   });

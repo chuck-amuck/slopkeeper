@@ -15,7 +15,7 @@ function run(guildId: string, sub: string, values: Record<string, unknown>) {
     // Channels given as options are in the server too
     guild: { id: guildId, members: { me: {} }, channels: { cache: new Map(Object.values(values).flatMap((v) => (v && typeof v === 'object' && 'type' in v ? [[(v as unknown as { id: string }).id, v]] : []))) } },
     user: { id: 'admin' },
-    options: { getSubcommand: () => sub, getInteger: pick, getBoolean: pick, getString: pick, getRole: pick, getChannel: pick },
+    options: { getSubcommand: () => sub, getInteger: pick, getNumber: pick, getBoolean: pick, getString: pick, getRole: pick, getChannel: pick },
     reply: async () => {},
   } as never);
 }
@@ -184,6 +184,25 @@ test('/setup loop-room sets, keeps and clears the room', async () => {
   assert.equal(setting('loop-setup', 'loopVolume'), 80);
   await run('loop-setup', 'loop-room', {});
   assert.equal(setting('loop-setup', 'loopRoom'), '');
+});
+
+test('the loop gap takes tenths of a second, with /setup or the page', async () => {
+  const guild = { channels: { cache: new Map() } } as never;
+  assert.equal(setting('loop-every', 'loopEvery'), 0, 'loops without a gap until set');
+  assert.deepEqual(checkSetting(guild, 'loopEvery', 0.5), { value: 0.5 });
+  assert.deepEqual(checkSetting(guild, 'loopEvery', 0.1 + 0.2), { value: 0.3 }, 'not thrown by floating point');
+  for (const bad of [0.25, -1, 61, '1', NaN]) assert.match((checkSetting(guild, 'loopEvery', bad) as { error: string }).error, /Loop every has to be from 0 to 60, in steps of 0.1/);
+  assert.match((checkSetting(guild, 'loopVolume', 50.5) as { error: string }).error, /whole number/, 'the rest still take whole numbers');
+  await run('loop-every', 'loop-room', { channel: { id: 'therapy', type: ChannelType.GuildVoice, joinable: true, guild: { members: { me: {} } }, permissionsFor: () => ({ has: () => true }) } });
+  await run('loop-every', 'loop-room', { every: 1.5 });
+  assert.equal(setting('loop-every', 'loopEvery'), 1.5);
+  assert.equal(setting('loop-every', 'loopRoom'), 'therapy', 'changing only the gap keeps the room');
+  assert.equal(log('loop-every')[0], 'Set Loop every to 1.5 seconds, layered');
+  await run('loop-every', 'loop-room', { every: 0.25 });
+  assert.equal(setting('loop-every', 'loopEvery'), 1.5, 'a gap off the steps is turned down');
+  const loopRoom = (setup.commands![0].data.toJSON().options as any[]).find((o) => o.name === 'loop-room');
+  const every = loopRoom.options.find((o: { name: string }) => o.name === 'every');
+  assert.deepEqual([every.type, every.min_value, every.max_value], [10, 0, 60], 'a number, not just whole ones');
 });
 
 test('/setup music sets the volume and who can control it, and keeps what isn’t given', async () => {

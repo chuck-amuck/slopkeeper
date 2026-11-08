@@ -70,8 +70,8 @@ async function server(t: TestContext) {
   const therapy = room('therapy');
   const lounge = room('lounge');
   await saveUpload(id, 'rain', '.wav', execFileSync('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', 'sine=frequency=440:duration=0.2', '-f', 'wav', 'pipe:1']));
-  const adds: { file: string; gain: number; loop: boolean; end?: () => void }[] = [];
-  t.mock.method(Mixer.prototype, 'add', (file: string, gain = 1, onEnd?: () => void, options: { loop?: boolean } = {}) => void adds.push({ file, gain, loop: options.loop ?? false, end: onEnd }));
+  const adds: { file: string; gain: number; loop: boolean; everyMs?: number; end?: () => void }[] = [];
+  t.mock.method(Mixer.prototype, 'add', (file: string, gain = 1, onEnd?: () => void, options: { loop?: boolean; everyMs?: number } = {}) => void adds.push({ file, gain, loop: options.loop ?? false, everyMs: options.everyMs, end: onEnd }));
   t.after(() => getVoiceConnection(id)?.destroy());
   const enter = (channel: typeof therapy, who: string, bot = false) => channel.members.set(who, { user: { bot } });
   const turnOn = () => {
@@ -220,4 +220,17 @@ test('a sound that isn’t a WAV loops from a copy, which goes once the loop end
   assert.ok(existsSync(copy));
   loops()[0].end!();
   assert.ok(!existsSync(copy));
+});
+
+test('a gap set layers fresh copies that often, rather than looping without one', { skip: !hasFfmpeg }, async (t) => {
+  const { id, guild, therapy, enter, loops, turnOn } = await server(t);
+  turnOn();
+  setSetting(id, 'loopEvery', '0.5');
+  enter(therapy, 'ana');
+  await checkLoopRoom(guild);
+  assert.deepEqual([loops().length, loops()[0].everyMs], [1, 500]);
+  loops()[0].end!();
+  setSetting(id, 'loopEvery', '0');
+  await checkLoopRoom(guild);
+  assert.equal(loops()[1].everyMs, undefined, '0 loops without a gap');
 });

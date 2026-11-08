@@ -7,7 +7,7 @@ const PLAYLISTS_SHOWN = 20;
 const LINK = /^(https?:\/\/|spotify:)/i;
 // What a file played once can be. The bot checks again, and how long it is
 const FILE_TYPES = ['.mp3', '.ogg', '.wav', '.m4a', '.opus', '.webm', '.flac'];
-const MOST_FILE_MB = 50;
+const MOST_FILE_MB = 60;
 
 const SOURCES = { youtube: 'YouTube', soundcloud: 'SoundCloud', spotify: 'Spotify' };
 /** What follows the artist while a song plays: paused, being found, or where it's from and where it's playing */
@@ -21,6 +21,83 @@ const time = (ms) => `${Math.floor(ms / 60_000)}:${String(Math.floor((ms % 60_00
 
 function cover(src, size) {
   return src ? el('img', { className: 'cover', src, alt: '', width: size, height: size, loading: 'lazy' }) : el('div', { className: 'cover none', style: `width:${size}px;height:${size}px` });
+}
+
+/**
+ * A progress bar that jumps within what's playing: click or drag it, and it jumps once let go, or use the arrow keys.
+ * `o.duration()` and `o.position()` are in milliseconds, `o.can()` says whether it can jump now, and `o.jump(ms)` asks the bot to
+ */
+function seekBar(o) {
+  const elapsed = el('span', { className: 'now-time' }, '0:00');
+  const total = el('span', { className: 'now-time' }, '0:00');
+  const bar = el('div', { className: 'now-bar' });
+  // Where it's being dragged or keyed to, shown until the bot has jumped there
+  let seekingTo = null;
+  let keyTimer;
+  const clamp = (ms) => Math.max(0, Math.min(ms, o.duration()));
+  const pointedAt = (e) => {
+    const box = track.getBoundingClientRect();
+    return Math.round(clamp(((e.clientX - box.left) / box.width) * o.duration()));
+  };
+  async function jump(ms) {
+    seekingTo = clamp(ms);
+    paint();
+    try {
+      await o.jump(seekingTo);
+    } finally {
+      seekingTo = null;
+      paint();
+    }
+  }
+  const track = el(
+    'div',
+    {
+      className: 'now-track',
+      role: 'slider',
+      tabIndex: 0,
+      'aria-label': o.label,
+      onpointerdown: (e) => {
+        if (!o.can()) return;
+        track.setPointerCapture(e.pointerId);
+        seekingTo = pointedAt(e);
+        paint();
+      },
+      onpointermove: (e) => {
+        if (seekingTo === null) return;
+        seekingTo = pointedAt(e);
+        paint();
+      },
+      onpointerup: () => seekingTo !== null && void jump(seekingTo),
+      onpointercancel: () => {
+        seekingTo = null;
+        paint();
+      },
+      onkeydown: (e) => {
+        const step = { ArrowLeft: -SEEK_STEP_MS, ArrowDown: -SEEK_STEP_MS, ArrowRight: SEEK_STEP_MS, ArrowUp: SEEK_STEP_MS }[e.key];
+        if (!step || !o.can()) return;
+        e.preventDefault();
+        // Presses in a row add up, and it jumps once they stop
+        seekingTo = clamp((seekingTo ?? o.position()) + step);
+        paint();
+        clearTimeout(keyTimer);
+        keyTimer = setTimeout(() => void jump(seekingTo), KEYS_SETTLE_MS);
+      },
+    },
+    el('div', { className: 'now-rail' }, bar),
+  );
+  function paint() {
+    const duration = o.duration();
+    const at = seekingTo ?? Math.min(duration, o.position());
+    elapsed.textContent = time(at);
+    total.textContent = time(duration);
+    bar.style.width = `${(100 * at) / Math.max(1, duration)}%`;
+    track.classList.toggle('can-seek', o.can());
+    track.setAttribute('aria-valuemin', '0');
+    track.setAttribute('aria-valuemax', String(Math.round(duration / 1000)));
+    track.setAttribute('aria-valuenow', String(Math.round(at / 1000)));
+    track.setAttribute('aria-valuetext', `${time(at)} of ${time(duration)}`);
+  }
+  return { node: el('div', { className: 'now-progress' }, elapsed, track, total), paint };
 }
 
 /** Music in voice, found on Spotify and played from YouTube: what's playing, search, and the queue everyone shares */
@@ -40,65 +117,17 @@ export function renderMusic(main) {
   const nowTitle = el('div', { className: 'now-title' });
   const nowArtist = el('div', { className: 'now-artist' });
   const nowNote = el('div', { className: 'now-note', hidden: true });
-  const elapsed = el('span', { className: 'now-time' }, '0:00');
-  const total = el('span', { className: 'now-time' }, '0:00');
-  const bar = el('div', { className: 'now-bar' });
-  // Dragging shows where it'll jump to, and jumps once let go
-  let seekingTo = null;
-  let keyTimer;
-  const track = el(
-    'div',
-    {
-      className: 'now-track',
-      role: 'slider',
-      tabIndex: 0,
-      'aria-label': 'Song position',
-      onpointerdown: (e) => {
-        if (!canSeek()) return;
-        track.setPointerCapture(e.pointerId);
-        seekingTo = pointedAt(e);
-        paintProgress();
-      },
-      onpointermove: (e) => {
-        if (seekingTo === null) return;
-        seekingTo = pointedAt(e);
-        paintProgress();
-      },
-      onpointerup: () => seekingTo !== null && void seek(seekingTo),
-      onpointercancel: () => {
-        seekingTo = null;
-        paintProgress();
-      },
-      onkeydown: (e) => {
-        const step = { ArrowLeft: -SEEK_STEP_MS, ArrowDown: -SEEK_STEP_MS, ArrowRight: SEEK_STEP_MS, ArrowUp: SEEK_STEP_MS }[e.key];
-        if (!step || !canSeek()) return;
-        e.preventDefault();
-        // Presses in a row add up, and it jumps once they stop
-        seekingTo = Math.max(0, Math.min((seekingTo ?? positionNow()) + step, data.queue[0].durationMs));
-        paintProgress();
-        clearTimeout(keyTimer);
-        keyTimer = setTimeout(() => void seek(seekingTo), KEYS_SETTLE_MS);
-      },
-    },
-    el('div', { className: 'now-rail' }, bar),
-  );
-  const progress = el('div', { className: 'now-progress' }, elapsed, track, total);
-  const canSeek = () => data?.phase === 'playing' || data?.phase === 'paused';
-  const pointedAt = (e) => {
-    const box = track.getBoundingClientRect();
-    return Math.round(Math.max(0, Math.min(1, (e.clientX - box.left) / box.width)) * data.queue[0].durationMs);
-  };
-  async function seek(ms) {
-    seekingTo = Math.max(0, Math.min(ms, data.queue[0].durationMs));
-    paintProgress();
-    try {
-      const fresh = await attempt(() => request(api('/music/seek'), { method: 'POST', json: { positionMs: seekingTo } }));
+  const songBar = seekBar({
+    label: 'Song position',
+    duration: () => data.queue[0].durationMs,
+    position: () => positionNow(),
+    can: () => data?.phase === 'playing' || data?.phase === 'paused',
+    jump: async (ms) => {
+      const fresh = await attempt(() => request(api('/music/seek'), { method: 'POST', json: { positionMs: ms } }));
       if (fresh?.queue) show(fresh);
-    } finally {
-      seekingTo = null;
-      paintProgress();
-    }
-  }
+    },
+  });
+  const progress = songBar.node;
 
   const picker = el('select', { ariaLabel: 'Voice channel', onchange: (e) => (chosen = e.target.value) });
   const playButton = el('button', { className: 'primary', onclick: () => void act(playOrPause) }, 'Play');
@@ -322,9 +351,18 @@ export function renderMusic(main) {
     },
   );
   const fileName = el('div', { className: 'song-title' });
-  const fileTime = el('div', { className: 'song-sub' });
   const fileStop = el('button', { onclick: () => void act(() => request(api('/music/file/stop'), { method: 'POST' })) }, 'Stop');
-  const fileNow = el('div', { className: 'song file-now', hidden: true }, el('div', { className: 'song-text' }, fileName, fileTime), el('div', { className: 'song-actions' }, fileStop));
+  const fileBar = seekBar({
+    label: 'File position',
+    duration: () => data.file.durationMs,
+    position: () => Math.min(data.file.durationMs, data.file.positionMs + Date.now() - fetchedAt),
+    can: () => !!data?.file,
+    jump: async (ms) => {
+      const fresh = await attempt(() => request(api('/music/file/seek'), { method: 'POST', json: { positionMs: ms } }));
+      if (fresh?.queue) show(fresh);
+    },
+  });
+  const fileNow = el('div', { className: 'file-now', hidden: true }, el('div', { className: 'song' }, el('div', { className: 'song-text' }, fileName), el('div', { className: 'song-actions' }, fileStop)), fileBar.node);
   const fileCard = el('section', { className: 'card music' }, el('h2', {}, 'Play a file'), el('div', { className: 'card-body music-file' }, fileZone, filePicker, fileNow));
 
   function paintFileZone(text) {
@@ -380,8 +418,7 @@ export function renderMusic(main) {
     fileNow.hidden = !file;
     if (!file) return;
     fileName.textContent = `Playing ${file.name}`;
-    const at = Math.min(file.durationMs, file.positionMs + Date.now() - fetchedAt);
-    fileTime.textContent = `${time(at)} of ${time(file.durationMs)}`;
+    fileBar.paint();
   }
 
   // ---------- queue ----------
@@ -481,15 +518,7 @@ export function renderMusic(main) {
     const song = data.phase !== 'stopped' ? data.queue[0] : null;
     progress.hidden = !song;
     if (!song) return;
-    const at = seekingTo ?? positionNow();
-    elapsed.textContent = time(at);
-    total.textContent = time(song.durationMs);
-    bar.style.width = `${(100 * at) / Math.max(1, song.durationMs)}%`;
-    track.classList.toggle('can-seek', canSeek());
-    track.setAttribute('aria-valuemin', '0');
-    track.setAttribute('aria-valuemax', String(Math.round(song.durationMs / 1000)));
-    track.setAttribute('aria-valuenow', String(Math.round(at / 1000)));
-    track.setAttribute('aria-valuetext', `${time(at)} of ${time(song.durationMs)}`);
+    songBar.paint();
   }
 
   function show(fresh) {

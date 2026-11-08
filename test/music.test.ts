@@ -23,6 +23,7 @@ import {
   queueOf,
   removeTrack,
   resetMusic,
+  seekFile,
   seekMusic,
   skipMusic,
   startMusic,
@@ -654,8 +655,18 @@ test('a file played from the page pauses the music, and the music takes over fro
   assert.equal(musicState(id).phase, 'paused');
   assert.match(musicState(id).note!, /Paused for a file/);
   assert.deepEqual([musicState(id).file?.name, lastPlayed().file], ['Tone', file]);
+  // Jumping within it starts it again from there, and keeps the file
+  assert.equal(await seekFile(id, 500), null);
+  assert.deepEqual([lastPlayed().file, lastPlayed().options.startMs], [file, 500]);
+  assert.ok(existsSync(file));
+  assert.ok(Math.abs(musicState(id).file!.positionMs - 500) < 50);
+  await seekFile(id, 60_000);
+  assert.equal(lastPlayed().options.startMs, 500, 'not right up to the end');
+  await seekFile(id, -5);
+  assert.equal(lastPlayed().options.startMs, undefined, 'from the top');
   assert.equal(await startMusic(guild, channel), null);
   assert.equal(musicState(id).file, null, 'Resume stops the file rather than play over it');
+  assert.equal(await seekFile(id, 0), 'No file is playing.');
   assert.ok(!existsSync(file));
   assert.equal(stopFile(id), false);
 

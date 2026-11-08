@@ -99,6 +99,45 @@ test('a sound can start partway in, and says whether it ended by itself or was s
   assert.equal(stopped, false);
 });
 
+test('a layered loop starts a fresh copy exactly every so often, over the ones still playing, until stopped', { skip: !hasFfmpeg }, async () => {
+  // One second of tone, started again every 400 ms: a whole number of cycles, so the copies add up in step
+  const beep = tone('layer.wav', 440, 1);
+  const mixer = new Mixer(0.5, 12);
+  const { peaks, done } = record(mixer);
+  let ended: boolean | undefined;
+  const stop = mixer.add(beep, 1, (b) => (ended = b), { loop: true, everyMs: 400 });
+  try {
+    await sleep(1500);
+    const one = peaks[5];
+    const ratio = (frame: number) => Math.round((peaks[frame] / one) * 10) / 10;
+    assert.deepEqual([ratio(19), ratio(20), ratio(39), ratio(40), ratio(45)], [1, 2, 2, 3, 3], `copies start on frames 20 and 40, got ${peaks.slice(15, 45).join(' ')}`);
+    // From one second on, the first copy has ended, so three play at a time
+    assert.equal(ratio(65), 3);
+  } finally {
+    stop();
+  }
+  await done;
+  assert.equal(ended, false);
+});
+
+test('a layered loop keeps at most 8 copies, fading the oldest out', { skip: !hasFfmpeg }, async () => {
+  // 500 Hz is exactly 10 cycles a frame, so copies a whole number of frames apart add up in step
+  const beep = tone('layer-many.wav', 500, 1);
+  const mixer = new Mixer(0.1, 12);
+  const { peaks, done } = record(mixer);
+  mixer.add(beep, 1, undefined, { loop: true, everyMs: 20 });
+  try {
+    await sleep(800);
+    const one = peaks[0];
+    const most = Math.max(...peaks);
+    // Eight, plus the oldest fading out over the frame the next one starts in
+    assert.ok(most / one > 7.5 && most / one < 9.1, `eight copies at most, got ${(most / one).toFixed(2)}`);
+  } finally {
+    mixer.stopLoops();
+  }
+  await done;
+});
+
 test('a sound’s gain scales only that sound', { skip: !hasFfmpeg }, async () => {
   const level = async (gain: number) => {
     const mixer = new Mixer(0.5, 12);

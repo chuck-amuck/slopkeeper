@@ -48,6 +48,8 @@ export const DEFAULTS = {
   loopRoom: null as string | null,
   loopSound: null as string | null,
   loopVolume: num('LOOP_VOLUME', 50),
+  // Seconds between fresh copies of the looping sound, which layer on top of each other. 0 loops it without a gap instead
+  loopEvery: num('LOOP_EVERY', 0),
   // Unset lets everyone change sounds
   soundManagerRole: null as string | null,
   tts: process.env.TTS !== 'false',
@@ -99,6 +101,7 @@ export const DEFAULT_ENV: Partial<Record<SettingKey, string>> = {
   joinSoundDelayMs: 'JOIN_SOUND_DELAY_MS',
   soundVolume: 'SOUND_VOLUME',
   loopVolume: 'LOOP_VOLUME',
+  loopEvery: 'LOOP_EVERY',
   tts: 'TTS',
   ttsMaxChars: 'TTS_MAX_CHARS',
   ttsCooldownSec: 'TTS_COOLDOWN_SEC',

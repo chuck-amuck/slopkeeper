@@ -726,6 +726,7 @@ export async function checkLoopRoom(guild: Guild) {
     return console.error(`Looping sound ${sound.name} in ${guild.name} couldn’t be prepared:`, err);
   }
   const gain = soundGain(guild.id, sound.name) * (setting(guild.id, 'loopVolume') / 100);
+  const everyMs = Math.round(setting(guild.id, 'loopEvery') * 1000);
   mixIn(
     guild.id,
     file,
@@ -734,7 +735,7 @@ export async function checkLoopRoom(guild: Guild) {
       looping.delete(guild.id);
       if (file !== sound.file) rmSync(file, { force: true });
     },
-    { loop: true },
+    { loop: true, ...(everyMs > 0 && { everyMs }) },
   );
 }
 

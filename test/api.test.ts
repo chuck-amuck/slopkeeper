@@ -1760,16 +1760,16 @@ test('a file from the page plays once at the music volume, and is deleted after'
   assert.match(await refused(400, url('notes.txt'), { method: 'POST', body: 'hello' }), /isn’t a file the bot can play/);
   assert.match(await refused(400, url('fake.mp3'), { method: 'POST', body: 'hello' }), /doesn’t have any audio/);
   assert.match(await refused(400, url('song.mp3', 'v1'), { method: 'POST', body: 'hello' }), /Nobody’s in voice/);
-  const huge = 51 * 1024 * 1024;
-  assert.match(await refused(400, url('huge.mp3'), { method: 'POST', headers: { 'content-length': String(huge) }, body: Buffer.alloc(huge) as BodyInit }), /over 50 MB/);
+  const huge = 61 * 1024 * 1024;
+  assert.match(await refused(400, url('huge.mp3'), { method: 'POST', headers: { 'content-length': String(huge) }, body: Buffer.alloc(huge) as BodyInit }), /over 60 MB/);
   // Sent in pieces, with no length up front, it's counted as it arrives
   const pieces = new ReadableStream({
     start(c) {
-      for (let i = 0; i < 52; i++) c.enqueue(new Uint8Array(1024 * 1024));
+      for (let i = 0; i < 62; i++) c.enqueue(new Uint8Array(1024 * 1024));
       c.close();
     },
   });
-  assert.match(await refused(413, url('huge.mp3'), { method: 'POST', body: pieces, duplex: 'half' } as RequestInit), /over 50 MB/);
+  assert.match(await refused(413, url('huge.mp3'), { method: 'POST', body: pieces, duplex: 'half' } as RequestInit), /over 60 MB/);
   assert.deepEqual(leftovers(), [], 'nothing refused is kept');
   assert.equal(added.mock.callCount(), 2);
 });

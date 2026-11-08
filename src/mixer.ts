@@ -14,6 +14,10 @@ const STREAM_MAX_BYTES = FRAME_BYTES * 25;
 // Music drops to this while someone's line is spoken, easing down and back up over a few frames
 const DUCKED = 0.3;
 const DUCK_STEP = 0.05;
+// A layered loop plays at most this many copies at once, so a long sound repeated often doesn't pile up ffmpegs
+const MOST_LAYERS = 8;
+// Each copy of a layered loop starts this many frames early, so it's decoded and ready on the beat
+const LAYER_LEAD_FRAMES = 10;
 
 export interface VoiceOptions {
   /** Plays over and over, without a gap, until stopped */
@@ -22,6 +26,8 @@ export interface VoiceOptions {
   lasting?: boolean;
   /** Starts this far in, to carry on after a pause */
   startMs?: number;
+  /** With `loop`: starts a fresh copy this often, layered over the ones still playing, rather than looping without a gap */
+  everyMs?: number;
   /** Sounds, speech and music each have a volume that can change while they play */
   group?: 'sound' | 'speech' | 'music';
 }
@@ -122,6 +128,89 @@ class Voice implements Source {
 /** Whether a stream has had all it will get, though some may still be unread. Node keeps this to itself, but it has for years */
 const sourceEnded = (pcm: Readable) => (pcm as unknown as { _readableState?: { ended?: boolean } })._readableState?.ended === true;
 
+/**
+ * A sound started afresh every `everyMs`, each copy playing out on top of those before it, until stopped. The copies are
+ * timed by the frames mixed, so they land exactly on the beat, and the oldest fades out once there are too many
+ */
+class LayeredVoice implements Source {
+  readonly file: string;
+  // The copies are mixed at this gain here, before they're added up, so the gain the mixer applies is 1
+  readonly gain = 1;
+  readonly loop = true;
+  readonly lasting = true;
+  readonly group: NonNullable<VoiceOptions['group']>;
+  ended = false;
+  heard = false;
+  replaces: Source[] = [];
+  private readonly level: number;
+  private readonly every: number;
+  /** Copies being heard, oldest first */
+  private copies: Voice[] = [];
+  /** The next copy, started early and waiting for its beat */
+  private next: Voice | undefined;
+  private framesToNext = 0;
+  private onEnd: ((byItself: boolean) => void) | undefined;
+
+  constructor(file: string, gain: number, everyMs: number, onEnd?: (byItself: boolean) => void, options: VoiceOptions = {}) {
+    this.file = file;
+    this.level = gain;
+    this.every = Math.max(1, Math.round(everyMs / FRAME_MS));
+    this.onEnd = onEnd;
+    this.group = options.group ?? 'sound';
+    this.next = this.copy();
+  }
+
+  private copy() {
+    return new Voice(this.file, 1, undefined, { group: this.group });
+  }
+
+  ready(): boolean {
+    return this.copies.length > 0 || !!this.next?.ready();
+  }
+
+  read(): Buffer | null {
+    let fading: Voice | undefined;
+    if (this.framesToNext <= 0 && this.next?.ready()) {
+      this.copies.push(this.next);
+      this.next = undefined;
+      this.framesToNext = this.every;
+      if (this.copies.length > MOST_LAYERS) fading = this.copies.shift();
+    }
+    if (!this.next && this.framesToNext <= LAYER_LEAD_FRAMES) this.next = this.copy();
+    this.framesToNext--;
+
+    const sum = new Float64Array(FRAME_BYTES / 2);
+    let any = false;
+    const add = (copy: Voice, fadeOut: boolean) => {
+      const chunk = copy.read();
+      if (!chunk) return;
+      any = true;
+      const samples = chunk.length >> 1;
+      for (let s = 0; s < samples; s++) sum[s] += chunk.readInt16LE(s * 2) * this.level * (fadeOut ? 1 - s / samples : 1);
+    };
+    if (fading) {
+      add(fading, true);
+      fading.stop();
+    }
+    for (const copy of this.copies) add(copy, false);
+    this.copies = this.copies.filter((c) => !c.ended);
+    if (!any) return null;
+    const frame = Buffer.alloc(FRAME_BYTES);
+    for (let s = 0; s < sum.length; s++) frame.writeInt16LE(Math.max(-32768, Math.min(32767, Math.round(sum[s]))), s * 2);
+    return frame;
+  }
+
+  stop() {
+    if (this.ended) return;
+    this.ended = true;
+    for (const copy of [...this.copies, ...(this.next ? [this.next] : [])]) copy.stop();
+    this.copies = [];
+    this.next = undefined;
+    this.onEnd?.(false);
+    this.onEnd = undefined;
+  }
+}
+
 /** Raw PCM that's already playing somewhere else, like music, mixed in as it arrives */
 class StreamVoice implements Source {
   private static count = 0;
@@ -208,7 +297,7 @@ export class Mixer extends Readable {
 
   /** `onEnd` runs once the sound is over, however that came about. Returns a way to stop it */
   add(file: string, gain = 1, onEnd?: (byItself: boolean) => void, options: VoiceOptions = {}): () => void {
-    const voice = new Voice(file, gain, onEnd, options);
+    const voice = options.loop && options.everyMs ? new LayeredVoice(file, gain, options.everyMs, onEnd, options) : new Voice(file, gain, onEnd, options);
     // A restart keeps the playing copy going until the new one has audio, so spamming leaves no gap while ffmpeg starts.
     // A copy from an earlier click that hasn't started yet is dropped, since this one supersedes it. A loop is never restarted by a click
     for (const old of this.voices) {

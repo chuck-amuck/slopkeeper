@@ -32,7 +32,9 @@ const FETCH_TIMEOUT_MS = 3 * 60_000;
 export const MOST_QUEUED = 500;
 const SHOWN_IN_DISCORD = 10;
 // A file played once from the web page, which can be a whole song or a mix
-export const MOST_FILE_BYTES = 50 * 1024 * 1024;
+export const MOST_FILE_BYTES = 60 * 1024 * 1024;
+// A jump within a file stops this far short of its end, which would only stop it
+const FILE_END_SLACK_MS = 500;
 const LONGEST_FILE_MS = 20 * 60_000;
 // A second of Spotify's audio in hand. The mixer skips ahead past anything more, rather than fall behind
 const AUDIO_BUFFER = 48_000 * 4;
@@ -587,8 +589,12 @@ export async function onSpotify(msg: SpotifyMessage) {
 
 interface PlayingFile {
   name: string;
+  file: string;
+  channel: VoiceBasedChannel;
   durationMs: number;
   startedAt: number;
+  /** Bumped each time it starts again from somewhere else, so the copy stopped for that doesn't delete the file */
+  turn: number;
   stop?: () => void;
 }
 
@@ -627,21 +633,46 @@ export async function playFile(guild: Guild, channel: VoiceBasedChannel, file: s
     return problem;
   }
   stopFile(guild.id);
-  const playing: PlayingFile = { name, durationMs: Math.round(seconds! * 1000), startedAt: Date.now() };
-  const stop = await playLong(channel, file, () => {
-    if (files.get(guild.id) === playing) files.delete(guild.id);
-    rmSync(file, { force: true });
-  });
-  if (typeof stop === 'string') {
-    rmSync(file, { force: true });
-    return stop;
-  }
-  playing.stop = stop;
+  const playing: PlayingFile = { name, file, channel, durationMs: Math.round(seconds! * 1000), startedAt: Date.now(), turn: 0 };
+  const failed = await playFileFrom(guild.id, playing, 0);
+  if (failed) return failed;
   files.set(guild.id, playing);
   const s = sessions.get(guild.id);
   if (s && s.phase !== 'paused') pauseHere(s, 'Paused for a file. Press Resume to carry on.');
   logActivity(guild.id, who, `Played the file **${name}**`);
   return null;
+}
+
+/** Plays a file from `ms` in, stopping where it was playing. If it can't, the file is deleted and the reason returned */
+async function playFileFrom(guildId: string, playing: PlayingFile, ms: number): Promise<string | null> {
+  const turn = ++playing.turn;
+  playing.stop?.();
+  const stop = await playLong(
+    playing.channel,
+    playing.file,
+    () => {
+      if (playing.turn !== turn) return;
+      if (files.get(guildId) === playing) files.delete(guildId);
+      rmSync(playing.file, { force: true });
+    },
+    ms,
+  );
+  if (typeof stop === 'string') {
+    if (files.get(guildId) === playing) files.delete(guildId);
+    rmSync(playing.file, { force: true });
+    return stop;
+  }
+  playing.stop = stop;
+  playing.startedAt = Date.now() - ms;
+  return null;
+}
+
+/** Jumps to `ms` into the file playing. Returns null on success, or why it couldn't */
+export async function seekFile(guildId: string, ms: number): Promise<string | null> {
+  const playing = files.get(guildId);
+  if (!playing) return 'No file is playing.';
+  // Not right up to the end, which would only stop it
+  return playFileFrom(guildId, playing, Math.round(Math.max(0, Math.min(ms, playing.durationMs - FILE_END_SLACK_MS))));
 }
 
 /** Stops the file playing in a server, if there is one. Returns whether there was */

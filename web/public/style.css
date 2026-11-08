@@ -1181,6 +1181,11 @@ textarea {
   gap: 10px;
 }
 
+.file-now {
+  display: grid;
+  gap: 4px;
+}
+
 .dropzone.busy {
   border-style: solid;
   color: var(--text);

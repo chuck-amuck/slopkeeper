@@ -44,6 +44,7 @@ const FIELDS = {
   loopRoom: { kind: 'voice', none: 'Off', hint: 'While anyone’s in this channel, the bot plays the looping sound there nonstop.' },
   loopSound: { kind: 'sound', none: 'Not set', hint: 'A sound from the library.' },
   loopVolume: { kind: 'number', unit: '%', hint: 'On top of the sound’s own level. It never stops, so it starts at half.' },
+  loopEvery: { kind: 'number', unit: 'seconds', hint: 'Starts a fresh copy this often, layered on top of the ones still playing, like 0.5 or 1. Up to 8 play at once. 0 loops it without a gap.' },
   ttsGreet: { hint: 'Says who joined voice, for people with no join sound. Uses the join sound cooldown and delay.' },
   ttsGreeting: { hint: 'What it says, with {name} for the person.' },
   ttsNightReminders: { hint: 'Says the reminder in the night’s voice channel too, if people are in it.' },
@@ -64,7 +65,7 @@ const GROUPS = [
   ['Free games', ['freeGames', 'freeGamesChannel', 'freeGamesMinRating', 'freeGamesTaste', 'freeGamesMultiplayer', 'freeGamesUnlisted']],
   ['Soundboard', ['soundVolume', 'evenVolume', 'joinSounds', 'joinSoundDelayMs', 'joinSoundCooldownMin', 'soundManagerRole']],
   ['Music', ['musicVolume', 'musicDjRole']],
-  ['Looping sound room', ['loopRoom', 'loopSound', 'loopVolume']],
+  ['Looping sound room', ['loopRoom', 'loopSound', 'loopVolume', 'loopEvery']],
   ['Text to speech', ['tts', 'ttsVoice', 'ttsSpeed', 'ttsVolume', 'ttsChannel', 'ttsChannelWho', 'ttsGreet', 'ttsGreeting', 'ttsNightReminders', 'ttsHopOn', 'ttsRole', 'ttsMaxChars', 'ttsCooldownSec']],
 ];
 
@@ -113,7 +114,7 @@ export function renderSettings(main) {
           value,
           min: setting.limits?.[0],
           max: setting.limits?.[1],
-          step: 1,
+          step: setting.step ?? 1,
           required: true,
           onchange: (e) => save(Number(e.target.value)),
         });

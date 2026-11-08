@@ -11,8 +11,8 @@ const LOCK_MS = 60_000;
 const MAX_BODY = 5 * 1024 * 1024 + 1024;
 // A music file to play once is far larger, so it's passed on as it arrives rather than held here
 const STREAMED = /^\/api\/guilds\/\d+\/music\/file$/;
-const MAX_STREAMED = 50 * 1024 * 1024 + 1024;
-const TOO_BIG = 'That file is over 50 MB.';
+const MAX_STREAMED = 60 * 1024 * 1024 + 1024;
+const TOO_BIG = 'That file is over 60 MB.';
 // Syncing a full soundboard to Discord takes a while
 const BOT_TIMEOUT_MS = 5 * 60_000;
 
