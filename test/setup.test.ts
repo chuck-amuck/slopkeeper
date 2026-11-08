@@ -238,3 +238,15 @@ test('looping speech takes up to 500 characters, a voice of its own, and its own
   assert.equal(setting('loop-speech', 'loopText'), '');
   assert.equal(setting('loop-speech', 'loopRoom'), 'therapy', 'turning the speech off keeps the room');
 });
+
+test('/setup loop-room sets an intro and its delay, and turns it off', async () => {
+  const guild = { id: 'loop-intro', channels: { cache: new Map() } } as never;
+  assert.deepEqual(checkSetting(guild, 'loopIntroDelayMs', 250), { value: 250 });
+  assert.match((checkSetting(guild, 'loopIntroDelayMs', 10_001) as { error: string }).error, /0 to 10000/);
+  assert.match((checkSetting(guild, 'loopIntro', 'nothing-here') as { error: string }).error, /Pick a sound/);
+  await run('loop-intro', 'loop-room', { intro_delay_ms: 400 });
+  assert.equal(setting('loop-intro', 'loopIntroDelayMs'), 400);
+  assert.ok(log('loop-intro').includes('Set Intro delay to 400 ms'));
+  await run('loop-intro', 'loop-room', { no_intro: true });
+  assert.equal(setting('loop-intro', 'loopIntro'), '');
+});

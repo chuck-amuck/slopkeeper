@@ -47,6 +47,7 @@ export const LIMITS = {
   loopVolume: [5, 200],
   loopEvery: [0, 60],
   loopTextEvery: [0, 60],
+  loopIntroDelayMs: [0, 10_000],
   musicVolume: [0, 200],
 } as const;
 
@@ -103,6 +104,8 @@ export const LABELS: Record<SettingKey, string> = {
   loopText: 'Looping speech',
   loopVoice: 'Looping speech voice',
   loopTextEvery: 'Speech every',
+  loopIntro: 'Intro sound',
+  loopIntroDelayMs: 'Intro delay',
   ttsChannel: 'Read chat aloud',
   ttsChannelWho: 'Whose messages are read',
   ttsGreet: 'Say who joined',
@@ -140,6 +143,7 @@ export function show(key: SettingKey, value: unknown): string {
     case 'joinSoundCooldownMin':
       return `${value} min`;
     case 'joinSoundDelayMs':
+    case 'loopIntroDelayMs':
       return `${value} ms`;
     case 'steamCountry':
       return String(value).toUpperCase();
@@ -172,6 +176,8 @@ export function show(key: SettingKey, value: unknown): string {
       return VOICES.find((v) => v.id === value)?.name ?? 'the default voice';
     case 'loopSound':
       return value ? String(value) : 'not set';
+    case 'loopIntro':
+      return value ? String(value) : 'off';
     case 'ttsCooldownSec':
       return `${value} seconds`;
     case 'ttsVoice':
@@ -261,6 +267,7 @@ export function checkSetting(guild: Guild, key: SettingKey, value: unknown): Che
       return problem ? { error: problem } : { value: channel.id };
     }
     case 'loopSound':
+    case 'loopIntro':
       return findSound(guild.id, String(value)) ? { value: String(value) } : { error: 'Pick a sound from the library.' };
     case 'ttsChannel': {
       const channel = guild.channels.cache.get(String(value));
@@ -493,7 +500,12 @@ export const setup: Feature = {
             .addNumberOption((o) =>
               o.setName('speech_every').setDescription('Seconds between fresh copies of the speech, layered. 0 says it again straight away').setMinValue(LIMITS.loopTextEvery[0]).setMaxValue(LIMITS.loopTextEvery[1]),
             )
-            .addBooleanOption((o) => o.setName('no_speech').setDescription('Stop saying the looping speech')),
+            .addBooleanOption((o) => o.setName('no_speech').setDescription('Stop saying the looping speech'))
+            .addStringOption((o) => o.setName('intro').setDescription('A sound played before the loop starts, and again whenever someone comes in').setAutocomplete(true))
+            .addIntegerOption((o) =>
+              o.setName('intro_delay_ms').setDescription('How long after someone comes in the intro plays, 250 is a quarter of a second').setMinValue(LIMITS.loopIntroDelayMs[0]).setMaxValue(LIMITS.loopIntroDelayMs[1]),
+            )
+            .addBooleanOption((o) => o.setName('no_intro').setDescription('Go straight to the loop, with no intro')),
         )
         .addSubcommand((s) =>
           s
@@ -696,7 +708,10 @@ export const setup: Feature = {
           const sound = i.options.getString('sound');
           const volume = i.options.getInteger('volume');
           const every = i.options.getNumber('every');
-          for (const [key, value] of [['loopRoom', channel?.id], ['loopSound', sound]] as const) {
+          const intro = i.options.getString('intro');
+          const introDelay = i.options.getInteger('intro_delay_ms');
+          const noIntro = i.options.getBoolean('no_intro');
+          for (const [key, value] of [['loopRoom', channel?.id], ['loopSound', sound], ['loopIntro', intro]] as const) {
             const checked = value ? checkSetting(i.guild, key, value) : null;
             if (checked && 'error' in checked) return i.reply({ content: checked.error, flags: MessageFlags.Ephemeral });
           }
@@ -712,7 +727,7 @@ export const setup: Feature = {
             checked[key] = result.value as string | number;
           }
           // Changing only how it sounds leaves the room as it is
-          const tweaked = sound || volume !== null || Object.keys(checked).length || noSpeech;
+          const tweaked = sound || volume !== null || Object.keys(checked).length || noSpeech || intro || introDelay !== null || noIntro;
           await apply(i, [
             ['loopRoom', channel?.id ?? (tweaked ? null : '')],
             ['loopSound', sound],
@@ -721,6 +736,8 @@ export const setup: Feature = {
             ['loopText', noSpeech ? '' : (checked.loopText ?? null)],
             ['loopVoice', checked.loopVoice ?? null],
             ['loopTextEvery', checked.loopTextEvery ?? null],
+            ['loopIntro', noIntro ? '' : intro],
+            ['loopIntroDelayMs', introDelay],
           ]);
           await refreshLoopRoom(i.guild);
           const speechProblem = checked.loopText || checked.loopVoice ? await loopSpeechProblem(i.guild) : null;

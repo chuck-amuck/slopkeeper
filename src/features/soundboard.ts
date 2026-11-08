@@ -361,6 +361,7 @@ export async function removeSound(guild: Guild, sound: Sound): Promise<string | 
   setFavourite(guild.id, sound.name, false);
   db.prepare('DELETE FROM sound_levels WHERE guild_id = ? AND name = ?').run(guild.id, sound.name);
   db.prepare('DELETE FROM join_sounds WHERE guild_id = ? AND name = ?').run(guild.id, sound.name);
+  if (storedSetting(guild.id, 'loopIntro') === sound.name) setSetting(guild.id, 'loopIntro', '');
   if (storedSetting(guild.id, 'loopSound') === sound.name) {
     setSetting(guild.id, 'loopSound', '');
     await refreshLoopRoom(guild);
@@ -405,6 +406,7 @@ export async function renameSound(guild: Guild, sound: Sound, name: string): Pro
   db.prepare('UPDATE OR REPLACE sound_levels SET name = ? WHERE guild_id = ? AND name = ?').run(name, guild.id, sound.name);
   db.prepare('UPDATE join_sounds SET name = ? WHERE guild_id = ? AND name = ?').run(name, guild.id, sound.name);
   if (storedSetting(guild.id, 'loopSound') === sound.name) setSetting(guild.id, 'loopSound', name);
+  if (storedSetting(guild.id, 'loopIntro') === sound.name) setSetting(guild.id, 'loopIntro', name);
   return null;
 }
 
@@ -644,7 +646,7 @@ function mixInto(guildId: string, add: (mixer: Mixer) => void) {
 }
 
 /** Plays a sound, or restarts it if it's already playing */
-function mixIn(guildId: string, file: string, gain: number, onEnd?: () => void, options: VoiceOptions = {}) {
+function mixIn(guildId: string, file: string, gain: number, onEnd?: (byItself: boolean) => void, options: VoiceOptions = {}) {
   mixInto(guildId, (mixer) => mixer.add(file, gain, onEnd, options));
 }
 
@@ -703,10 +705,18 @@ const loopKey = (guildId: string, part: LoopPart) => `${guildId}:${part}`;
 const isLooping = (guildId: string) => looping.has(loopKey(guildId, 'sound')) || looping.has(loopKey(guildId, 'speech'));
 /** Servers where Stop silenced the loop, until someone else joins the room */
 const silenced = new Set<string>();
+/** Each server's current run of the loop, counted up when someone coming in restarts it, so the run before leaves the new one alone */
+const loopRuns = new Map<string, number>();
+const runOf = (guildId: string) => loopRuns.get(guildId) ?? 0;
+/** How to stop each server's intro while it plays */
+const introStops = new Map<string, () => void>();
 let botClient: Client | undefined;
 
-/** Starts the looping sound and speech, whichever are set, if people are in the room and the bot isn't needed elsewhere */
-export async function checkLoopRoom(guild: Guild) {
+/**
+ * Starts the looping sound and speech, whichever are set, if people are in the room and the bot isn't needed elsewhere.
+ * Starting from nothing plays the intro first, unless `intro` is false
+ */
+export async function checkLoopRoom(guild: Guild, { intro = true } = {}) {
   const roomId = idSetting(guild.id, 'loopRoom');
   const sound = findSound(guild.id, setting(guild.id, 'loopSound') ?? '');
   const wanted: LoopPart[] = [];
@@ -721,22 +731,58 @@ export async function checkLoopRoom(guild: Guild) {
   const elsewhere = botChannelId && botChannelId !== room.id ? guild.channels.cache.get(botChannelId) : undefined;
   if (elsewhere?.isVoiceBased() && humansIn(elsewhere).length) return;
   for (const part of parts) looping.add(loopKey(guild.id, part));
+  const run = runOf(guild.id);
   const problem = await connect(room);
+  // Someone coming in while it connected restarted the room, and that run plays instead
+  if (runOf(guild.id) !== run) return;
   if (problem) {
     for (const part of parts) looping.delete(loopKey(guild.id, part));
     return console.log(`Looping room in ${guild.name} didn’t play: ${problem}`);
   }
-  await Promise.all(parts.map((part) => startLoop(guild, part, sound)));
+  const introSound = intro && parts.length === wanted.length ? findSound(guild.id, setting(guild.id, 'loopIntro') ?? '') : undefined;
+  if (introSound && !(await playIntro(guild, room, introSound, run))) {
+    if (runOf(guild.id) === run) for (const part of parts) looping.delete(loopKey(guild.id, part));
+    return;
+  }
+  await Promise.all(parts.map((part) => startLoop(guild, part, sound, run)));
+}
+
+/** Waits the intro delay, then plays the intro like a join sound. Says whether the loop should follow, which it shouldn't once stopped, restarted or left */
+async function playIntro(guild: Guild, room: VoiceBasedChannel, intro: Sound, run: number): Promise<boolean> {
+  const current = () => runOf(guild.id) === run && !silenced.has(guild.id) && humansIn(room).length > 0;
+  const delay = setting(guild.id, 'loopIntroDelayMs');
+  if (delay) await sleep(delay);
+  if (!current()) return false;
+  return new Promise((resolve) => {
+    let stop!: () => void;
+    // A file that won't play ends by itself too, so the loop still starts
+    mixInto(guild.id, (mixer) => (stop = mixer.add(intro.file, soundGain(guild.id, intro.name), (byItself) => {
+      if (introStops.get(guild.id) === stop) introStops.delete(guild.id);
+      resolve(byItself && current());
+    })));
+    introStops.set(guild.id, stop);
+  });
+}
+
+/** Someone else coming in starts the room over from the intro: the loop and any intro stop, and the next check plays it all again */
+function restartLoop(guildId: string) {
+  loopRuns.set(guildId, runOf(guildId) + 1);
+  introStops.get(guildId)?.();
+  introStops.delete(guildId);
+  audio.get(guildId)?.mixer?.stopLoops();
+  looping.delete(loopKey(guildId, 'sound'));
+  looping.delete(loopKey(guildId, 'speech'));
 }
 
 /** Plays one part of the room's loop over and over, at the loop volume, layered if it has a gap set */
-async function startLoop(guild: Guild, part: LoopPart, sound: Sound | undefined) {
+async function startLoop(guild: Guild, part: LoopPart, sound: Sound | undefined, run: number) {
   const key = loopKey(guild.id, part);
+  const current = () => runOf(guild.id) === run;
   let file: string;
   try {
     file = part === 'sound' ? await loopable(sound!.file) : await loopSpeechFile(guild);
   } catch (err) {
-    looping.delete(key);
+    if (current()) looping.delete(key);
     return console.error(`Looping ${part} in ${guild.name} couldn’t be prepared:`, (err as Error).message);
   }
   const volume = setting(guild.id, 'loopVolume') / 100;
@@ -747,7 +793,7 @@ async function startLoop(guild: Guild, part: LoopPart, sound: Sound | undefined)
     file,
     gain,
     () => {
-      looping.delete(key);
+      if (current()) looping.delete(key);
       // A copy made to loop cleanly, but not the library's file or the speech, which is kept to reuse
       if (part === 'sound' && file !== sound!.file) rmSync(file, { force: true });
     },
@@ -806,10 +852,11 @@ export const affectsLoopRoom = (key: string) => key.startsWith('loop') || key ==
 export function refreshLoopRoom(guild: Guild) {
   audio.get(guild.id)?.mixer?.stopLoops();
   silenced.delete(guild.id);
-  return checkLoopRoom(guild);
+  // Turning a setting shouldn't replay the intro each time. One that's playing carries on, and the loop after it has the new settings
+  return checkLoopRoom(guild, { intro: false });
 }
 
-/** Stop lasts until someone else joins the room, or it empties */
+/** Stop lasts until someone else joins the room, or it empties. With an intro, someone coming in starts the room over */
 export function noteLoopRoom(oldState: VoiceState, newState: VoiceState) {
   const { guild } = newState;
   const roomId = idSetting(guild.id, 'loopRoom');
@@ -817,6 +864,7 @@ export function noteLoopRoom(oldState: VoiceState, newState: VoiceState) {
   const room = guild.channels.cache.get(roomId);
   const arrived = newState.channelId === roomId && oldState.channelId !== roomId && !newState.member?.user.bot;
   if (arrived || (room?.isVoiceBased() && !humansIn(room).length)) silenced.delete(guild.id);
+  if (arrived && isLooping(guild.id) && findSound(guild.id, setting(guild.id, 'loopIntro') ?? '')) restartLoop(guild.id);
 }
 
 /** For the monthly recap */

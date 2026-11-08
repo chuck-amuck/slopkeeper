@@ -426,6 +426,7 @@ Pick a voice channel and a sound with `/setup loop-room` or in Settings, and the
 - **Loop volume** starts at half, as it never stops. Renaming the sound keeps it, and removing it turns the loop off.
 - **Looping speech** says some words over and over too, up to 500 characters, in a **Looping speech voice** of its own (the default voice until one's picked) at the speech speed. It plays alongside the sound, or alone with no sound set. **Speech every** spaces it out the way Loop every does for the sound. The voice container makes the speech once and the bot reuses it, so Settings warns straight away if it can't be made.
 - **Join sounds and greetings** don't play in the room, as they'd only talk over it.
+- **Intro sound** plays once before the loop starts, at its own level and the soundboard volume, **Intro delay** after someone comes in (250 ms by default). The loop starts when it ends. Someone else coming in stops the loop and starts again from the intro. Changing a loop setting doesn't replay it. Renaming its sound keeps it, and removing the sound turns the intro off.
 - **Loop every** layers it instead: a fresh copy starts that many seconds after the last, like 0.5 or 1, on top of the copies still playing. Up to 8 play at once, and the oldest fades out as the next starts. A sound shorter than the gap plays, goes quiet, then plays again. At 0, the default, it loops without a gap.
 
 ### Discord's soundboard
@@ -567,6 +568,8 @@ So the host can change a default for every server at once, and each server can s
 | Looping speech | `loop-room` | | off |
 | Looping speech voice | `loop-room` | | the default voice |
 | Speech every, in seconds (0 says it again straight away) | `loop-room` | `LOOP_TEXT_EVERY` | 0 |
+| Intro sound | `loop-room` | | off |
+| Intro delay, in milliseconds | `loop-room` | `LOOP_INTRO_DELAY_MS` | 250 |
 | Music volume, as a percentage | `music` | `MUSIC_VOLUME` | 40 |
 | Who can control music | `music` | | everyone |
 | Text to speech | `speech` | `TTS` (`false` to turn off) | on |

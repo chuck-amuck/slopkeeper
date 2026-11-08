@@ -13,6 +13,7 @@ import {
   leaveIfAlone,
   noteLoopRoom,
   play,
+  refreshLoopRoom,
   removeSound,
   renameSound,
   saveUpload,
@@ -277,4 +278,138 @@ test('speech that can’t be made leaves the sound playing', { skip: !hasFfmpeg 
   await checkLoopRoom(guild);
   assert.equal(loops().length, 1);
   assert.match(String(errors.mock.calls[0].arguments.join(' ')), /Looping speech .* couldn’t be prepared: The voice container/);
+});
+
+/** The room from `server`, with a chime from the library as its intro */
+async function withIntro(t: TestContext, delayMs = 0) {
+  const room = await server(t);
+  await saveUpload(room.id, 'chime', '.wav', execFileSync('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', 'sine=frequency=880:duration=0.2', '-f', 'wav', 'pipe:1']));
+  room.turnOn();
+  setSetting(room.id, 'loopIntro', 'chime');
+  setSetting(room.id, 'loopIntroDelayMs', delayMs);
+  const intros = () => room.adds.filter((a) => a.file === findSound(room.id, 'chime')!.file);
+  const finish = (add: { end?: () => void }) => (add.end as (byItself: boolean) => void)(true);
+  const state = (channelId: string | null, who: string) => ({ channelId, guild: room.guild, member: { user: { bot: false } }, id: who }) as never;
+  return { ...room, intros, finish, state };
+}
+
+test('the intro plays after its delay, at the sound’s own level, and the loop starts once it ends', { skip: !hasFfmpeg }, async (t) => {
+  const { id, guild, therapy, enter, loops, intros, finish } = await withIntro(t, 150);
+  enter(therapy, 'ana');
+  const started = checkLoopRoom(guild);
+  await sleep(60);
+  assert.equal(intros().length, 0, 'not before the delay');
+  await sleep(250);
+  assert.equal(intros().length, 1);
+  assert.deepEqual([intros()[0].loop, intros()[0].gain], [false, soundGain(id, 'chime')]);
+  assert.equal(loops().length, 0, 'the loop waits for the intro');
+  await checkLoopRoom(guild);
+  assert.equal(intros().length, 1, 'checking again during the intro changes nothing');
+  finish(intros()[0]);
+  await started;
+  assert.equal(loops().length, 1);
+});
+
+test('someone else coming in stops the loop and starts again from the intro', { skip: !hasFfmpeg }, async (t) => {
+  const { guild, therapy, enter, loops, intros, finish, state } = await withIntro(t);
+  const stopped = t.mock.method(Mixer.prototype, 'stopLoops');
+  enter(therapy, 'ana');
+  noteLoopRoom(state(null, 'ana'), state('therapy', 'ana'));
+  const first = checkLoopRoom(guild);
+  await sleep(50);
+  finish(intros()[0]);
+  await first;
+  const [old] = loops();
+  enter(therapy, 'ben');
+  noteLoopRoom(state('lounge', 'ben'), state('therapy', 'ben'));
+  assert.equal(stopped.mock.callCount(), 1);
+  const again = checkLoopRoom(guild);
+  await sleep(50);
+  assert.equal(intros().length, 2);
+  assert.equal(loops().length, 1, 'the loop waits for the intro again');
+  // The stopped loop ending late doesn't free the new run's place
+  old.end!();
+  finish(intros()[1]);
+  await again;
+  assert.equal(loops().length, 2);
+  await checkLoopRoom(guild);
+  assert.equal(loops().length, 2, 'no second copy');
+  // Muting, or someone leaving, isn't someone coming in
+  noteLoopRoom(state('therapy', 'ana'), state('therapy', 'ana'));
+  noteLoopRoom(state('therapy', 'ben'), state(null, 'ben'));
+  assert.equal(stopped.mock.callCount(), 1);
+});
+
+test('someone coming in during the intro starts it over, and only one loop follows', { skip: !hasFfmpeg }, async (t) => {
+  const { guild, therapy, enter, loops, intros, finish, state } = await withIntro(t, 100);
+  enter(therapy, 'ana');
+  const first = checkLoopRoom(guild);
+  await sleep(20);
+  enter(therapy, 'ben');
+  noteLoopRoom(state(null, 'ben'), state('therapy', 'ben'));
+  const second = checkLoopRoom(guild);
+  await sleep(200);
+  await first;
+  assert.equal(intros().length, 1, 'the first run gave up during its delay');
+  finish(intros()[0]);
+  await second;
+  assert.equal(loops().length, 1);
+});
+
+test('Stop or everyone leaving during the intro means no loop', { skip: !hasFfmpeg }, async (t) => {
+  const { id, guild, therapy, enter, loops, intros, finish } = await withIntro(t, 100);
+  enter(therapy, 'ana');
+  const stopping = checkLoopRoom(guild);
+  await sleep(150);
+  stopPlayback(id);
+  (intros()[0].end as (byItself: boolean) => void)(false);
+  await stopping;
+  assert.equal(loops().length, 0);
+  await checkLoopRoom(guild);
+  assert.equal(intros().length, 1, 'still silenced');
+
+  const { guild: other, therapy: room, enter: arrive, intros: otherIntros } = await withIntro(t, 100);
+  arrive(room, 'ana');
+  const leaving = checkLoopRoom(other);
+  await sleep(20);
+  room.members.clear();
+  await leaving;
+  assert.equal(otherIntros().length, 0, 'gone before the delay was up');
+  void finish;
+});
+
+test('changing a loop setting doesn’t replay the intro', { skip: !hasFfmpeg }, async (t) => {
+  const { id, guild, therapy, enter, loops, intros, finish } = await withIntro(t);
+  enter(therapy, 'ana');
+  const started = checkLoopRoom(guild);
+  await sleep(50);
+  finish(intros()[0]);
+  await started;
+  loops()[0].end!();
+  setSetting(id, 'loopVolume', 80);
+  await refreshLoopRoom(guild);
+  assert.equal(intros().length, 1);
+  assert.deepEqual(loops().map((l) => l.gain), [0.5 * soundGain(id, 'rain'), 0.8 * soundGain(id, 'rain')]);
+});
+
+test('without an intro, someone coming in leaves the loop playing', { skip: !hasFfmpeg }, async (t) => {
+  const { id, guild, therapy, enter, loops, turnOn } = await server(t);
+  const stopped = t.mock.method(Mixer.prototype, 'stopLoops');
+  turnOn();
+  enter(therapy, 'ana');
+  await checkLoopRoom(guild);
+  enter(therapy, 'ben');
+  noteLoopRoom({ channelId: null } as never, { channelId: 'therapy', guild, member: { user: { bot: false } }, id: 'ben' } as never);
+  await checkLoopRoom(guild);
+  assert.deepEqual([stopped.mock.callCount(), loops().length], [0, 1]);
+  void id;
+});
+
+test('renaming the intro’s sound keeps it, and removing it turns the intro off', { skip: !hasFfmpeg }, async (t) => {
+  const { id, guild } = await withIntro(t);
+  assert.equal(await renameSound(guild, findSound(id, 'chime')!, 'bell'), null);
+  assert.equal(setting(id, 'loopIntro'), 'bell');
+  await removeSound(guild, findSound(id, 'bell')!);
+  assert.equal(setting(id, 'loopIntro'), '');
+  assert.equal(setting(id, 'loopSound'), 'rain');
 });

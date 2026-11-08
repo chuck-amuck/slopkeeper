@@ -47,6 +47,8 @@ const FIELDS = {
   loopText: { hint: 'Words said over and over in the room, on top of the sound, up to 500 characters. Leave it empty for none.' },
   loopVoice: { kind: 'choice', options: [['', 'Same as the default voice'], ['1', 'Voice 1'], ['2', 'Voice 2'], ['5', 'Voice 5'], ['9', 'Voice 9']], hint: 'Who says the looping speech.' },
   loopTextEvery: { kind: 'number', unit: 'seconds', hint: 'Starts the speech again this often, layered over the last if it’s still talking. 0 says it again straight away.' },
+  loopIntro: { kind: 'sound', none: 'Off', hint: 'Played once, at its own level, before the loop starts. Someone else coming in stops the loop and starts again from the intro.' },
+  loopIntroDelayMs: { kind: 'number', unit: 'ms', hint: 'How long after someone comes in the intro plays. 250 is a quarter of a second.' },
   loopEvery: { kind: 'number', unit: 'seconds', hint: 'Starts a fresh copy this often, layered on top of the ones still playing, like 0.5 or 1. Up to 8 play at once. 0 loops it without a gap.' },
   ttsGreet: { hint: 'Says who joined voice, for people with no join sound. Uses the join sound cooldown and delay.' },
   ttsGreeting: { hint: 'What it says, with {name} for the person.' },
@@ -68,7 +70,7 @@ const GROUPS = [
   ['Free games', ['freeGames', 'freeGamesChannel', 'freeGamesMinRating', 'freeGamesTaste', 'freeGamesMultiplayer', 'freeGamesUnlisted']],
   ['Soundboard', ['soundVolume', 'evenVolume', 'joinSounds', 'joinSoundDelayMs', 'joinSoundCooldownMin', 'soundManagerRole']],
   ['Music', ['musicVolume', 'musicDjRole']],
-  ['Looping sound room', ['loopRoom', 'loopSound', 'loopVolume', 'loopEvery', 'loopText', 'loopVoice', 'loopTextEvery']],
+  ['Looping sound room', ['loopRoom', 'loopSound', 'loopVolume', 'loopEvery', 'loopText', 'loopVoice', 'loopTextEvery', 'loopIntro', 'loopIntroDelayMs']],
   ['Text to speech', ['tts', 'ttsVoice', 'ttsSpeed', 'ttsVolume', 'ttsChannel', 'ttsChannelWho', 'ttsGreet', 'ttsGreeting', 'ttsNightReminders', 'ttsHopOn', 'ttsRole', 'ttsMaxChars', 'ttsCooldownSec']],
 ];
 
