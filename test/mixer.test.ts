@@ -128,6 +128,20 @@ test('a loop keeps going past the sound’s length, without a gap, until stopped
   assert.equal(ended, true);
 });
 
+test('clicking the looping sound plays a second copy rather than restarting the loop', { skip: !hasFfmpeg }, async () => {
+  const mixer = new Mixer(0.5, 12);
+  const { done } = record(mixer);
+  const file = tone('loop3.wav', 440, 0.3);
+  const ended: string[] = [];
+  mixer.add(file, 1, () => ended.push('loop'), { loop: true });
+  await sleep(100);
+  mixer.add(file, 1, () => ended.push('click'));
+  await sleep(600);
+  assert.deepEqual(ended, ['click']);
+  mixer.stopAll();
+  await done;
+});
+
 test('clicking the looping sound plays a second copy, and the cap never drops the loop', { skip: !hasFfmpeg }, async () => {
   const mixer = new Mixer(0.5, 2);
   const { peaks, done } = record(mixer);
