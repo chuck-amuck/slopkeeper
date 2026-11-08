@@ -105,6 +105,12 @@ test('Spotify’s refusals become messages for whoever asked', async (t) => {
   });
   await assert.rejects(search('x'), /Try again in 7 seconds/);
   await assert.rejects(tracksFor({ kind: 'playlist', id: ID }), /Daily Mixes/);
+  t.mock.restoreAll();
+  fakeSpotify(t, {
+    [`/v1/playlists/${ID}`]: () => ({ name: 'Road Trip' }),
+    [`/v1/playlists/${ID}/items`]: () => new Response('{}', { status: 401 }),
+  });
+  await assert.rejects(tracksFor({ kind: 'playlist', id: ID }), /see what’s in \*\*Road Trip\*\*.*Add its songs or albums instead/);
 });
 
 test('a link is added to the queue with what it was, and words add the top result', async (t) => {

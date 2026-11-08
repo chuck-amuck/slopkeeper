@@ -82,7 +82,7 @@ export function renderMusic(main) {
   }
 
   // ---------- search ----------
-  const query = el('input', { type: 'search', ariaLabel: 'Search Spotify', placeholder: 'Search Spotify, or paste a song, album or playlist link', autocomplete: 'off', maxLength: 300 });
+  const query = el('input', { type: 'search', ariaLabel: 'Search Spotify', placeholder: 'Search Spotify, or paste a song or album link', autocomplete: 'off', maxLength: 300 });
   const searchButton = el('button', { type: 'submit' }, 'Search');
   const results = el('div', { className: 'music-results', hidden: true });
   const searchForm = el(

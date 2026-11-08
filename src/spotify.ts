@@ -127,7 +127,11 @@ export async function tracksFor(link: { kind: LinkKind; id: string }): Promise<{
     return { name: album.name, tracks: items.filter(playable).map((t) => toTrack(t, album)) };
   }
   const list = await get<{ name: string }>(`/playlists/${link.id}?${market}&fields=name`);
-  const first = await get<Page<{ track?: ApiTrack | null; item?: ApiTrack | null }>>(`/playlists/${link.id}/items?${market}&limit=100`);
+  // Since 2026 Spotify only shows what's in a playlist to apps acting for a signed-in person, which this one isn't
+  const first = await get<Page<{ track?: ApiTrack | null; item?: ApiTrack | null }>>(`/playlists/${link.id}/items?${market}&limit=100`).catch((err: unknown) => {
+    if (err instanceof SpotifyError && /HTTP 40[13]/.test(err.message)) throw new SpotifyError(`Spotify doesn’t let the bot see what’s in **${list.name}**, as it only shows playlists to apps someone has signed in to. Add its songs or albums instead.`);
+    throw err;
+  });
   const entries = await rest(first);
   return { name: list.name, tracks: entries.map((e) => e.item ?? e.track).filter(playable).map((t) => toTrack(t)) };
 }

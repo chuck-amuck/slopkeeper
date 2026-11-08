@@ -600,7 +600,7 @@ export const music: Feature = {
         .addSubcommand((s) =>
           s
             .setName('play')
-            .setDescription('Add a song, album or playlist, and start the music in your voice channel')
+            .setDescription('Add a song or album, and start the music in your voice channel')
             .addStringOption((o) => o.setName('song').setDescription('A song to search for, or a Spotify link').setAutocomplete(true).setMaxLength(300))
             .addBooleanOption((o) => o.setName('next').setDescription('Play it after the current song, instead of at the end')),
         )

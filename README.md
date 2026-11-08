@@ -460,14 +460,14 @@ Examples:
 
 The bot plays Spotify in voice, from a queue everyone shares. It needs a Spotify Premium account and the [music container](#the-music-container).
 
-- `/music play [song] [next]` adds a song, album or playlist by search or Spotify link, and starts the music in your voice channel. `next` puts it after the song playing instead of at the end. With no song, it carries on where it paused.
+- `/music play [song] [next]` adds a song or album by search or Spotify link, and starts the music in your voice channel. `next` puts it after the song playing instead of at the end. With no song, it carries on where it paused.
 - `/music pause`, `/music skip` and `/music stop` are said in the channel, so everyone can see who did it. **Stop** clears the queue too.
 - `/music queue` shows what's playing and the next 10 songs.
 - The web UI's **Music** tab has the same, plus search results to pick from, a progress bar and a volume slider. Drag songs to reorder them, or use the arrows on a phone.
 
 How it plays:
 
-- **Queue:** the bot keeps its own queue for each server, kept across restarts, up to 500 songs. An album or playlist link adds up to its first 100. When the queue runs out the music stops, with no suggested songs.
+- **Queue:** the bot keeps its own queue for each server, kept across restarts, up to 500 songs. An album link adds up to its first 100 songs. Playlist links don't work: Spotify only shows what's in a playlist to apps someone has signed in to, and this one only reads the catalogue. When the queue runs out the music stops, with no suggested songs.
 - **One server at a time:** Spotify plays one thing per account, so music playing in one server can't start in another until it's paused there.
 - **Sounds and speech** play on top. Music drops to under a third while the bot talks.
 - **Stop on the soundboard**, or everyone leaving, pauses the music and keeps the queue. Music counts as the bot being busy, so it doesn't leave for being idle and the looping room waits.
@@ -788,7 +788,7 @@ Music runs **Spotify Soloist**, Spotify's own player for devices with no screen,
 **Read this first.** Spotify's developer terms say an app can't play "from a single source to several simultaneous listeners", and playing into a Discord channel arguably is that. Spotify could revoke the key or act on the account. A spare or family-plan Premium account is safer than your own. Soloist's terms don't allow sharing the key or the player, so the image doesn't include the player: the container downloads it from Spotify each time it needs one, once you've accepted the terms.
 
 1. **Soloist key:** sign in to [developer.spotify.com/dashboard](https://developer.spotify.com/dashboard) with the Premium account, open Soloist, accept its terms and create a key.
-2. **Search app:** on the same dashboard, create an app (any name, redirect URI `http://127.0.0.1`) and copy its Client ID and Client Secret. It only reads the catalogue, and signs nobody in.
+2. **Search app:** on the same dashboard, create an app with any name, the redirect URI `http://127.0.0.1:8888/callback` (it's never used, but Spotify needs one) and only **Web API** ticked, then copy its Client ID and Client Secret from its settings. It only reads the catalogue, and signs nobody in.
 3. **Pair it.** On a computer on the same network as your phone, run this, then pick **Slopkeeper** as the speaker in Spotify:
    ```sh
    docker run --rm --network host -e SOLOIST_API_KEY=<key> -e SOLOIST_ACCEPT_TERMS=true ghcr.io/chuck-amuck/slopkeeper-music:latest node bridge.mjs pair
