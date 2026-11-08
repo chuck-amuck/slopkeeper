@@ -9,13 +9,17 @@ const LINK = /^(https?:\/\/|spotify:)/i;
 const FILE_TYPES = ['.mp3', '.ogg', '.wav', '.m4a', '.opus', '.webm', '.flac'];
 const MOST_FILE_MB = 50;
 
+const SOURCES = { youtube: 'YouTube', soundcloud: 'SoundCloud', spotify: 'Spotify' };
+/** What follows the artist while a song plays: paused, being found, or where it's from and where it's playing */
+const whereFrom = (data) =>
+  data.phase === 'paused' ? ['Paused'] : data.phase === 'starting' ? ['Finding it…'] : [SOURCES[data.via] && `from ${SOURCES[data.via]}`, data.channelName && `in ${data.channelName}`].filter(Boolean);
 const time = (ms) => `${Math.floor(ms / 60_000)}:${String(Math.floor((ms % 60_000) / 1000)).padStart(2, '0')}`;
 
 function cover(src, size) {
   return src ? el('img', { className: 'cover', src, alt: '', width: size, height: size, loading: 'lazy' }) : el('div', { className: 'cover none', style: `width:${size}px;height:${size}px` });
 }
 
-/** Spotify in voice: what's playing, search, and the queue everyone shares */
+/** Music in voice, found on Spotify and played from YouTube: what's playing, search, and the queue everyone shares */
 export function renderMusic(main) {
   const guildId = state.guildId;
   let data = null;
@@ -88,13 +92,13 @@ export function renderMusic(main) {
   }
 
   // ---------- search ----------
-  const query = el('input', { type: 'search', ariaLabel: 'Search Spotify', placeholder: 'Search Spotify, or paste a song or album link', autocomplete: 'off', maxLength: 300, oninput: () => mode === 'playlists' && showPlaylists() });
+  const query = el('input', { type: 'search', ariaLabel: 'Search Spotify', placeholder: 'Search Spotify, or paste a Spotify, YouTube or SoundCloud link', autocomplete: 'off', maxLength: 300, oninput: () => mode === 'playlists' && showPlaylists() });
   let mode = 'songs';
   // Loaded the first time they're shown, then filtered as you type
   let playlists = null;
   const modes = el('div', { className: 'views' });
   const MODES = [
-    ['songs', 'Songs', 'Search Spotify, or paste a song or album link'],
+    ['songs', 'Songs', 'Search Spotify, or paste a Spotify, YouTube or SoundCloud link'],
     ['playlists', 'My playlists', 'Find one of your playlists, or paste a link to it'],
   ];
   function setMode(id) {
@@ -401,8 +405,8 @@ export function renderMusic(main) {
   function paintControls() {
     const playing = data?.phase === 'playing';
     playButton.textContent = playing ? 'Pause' : data?.phase === 'paused' ? 'Resume' : 'Play';
-    playButton.disabled = !data || (!playing && (!!data.problem || !data.queue.length || !chosen || data.elsewhere));
-    playButton.title = !data ? '' : playing ? 'Pause, keeping the queue' : data.elsewhere ? 'Music is playing in another server' : !chosen ? 'Nobody’s in voice' : !data.queue.length ? 'The queue is empty' : '';
+    playButton.disabled = !data || (!playing && (!!data.problem || !data.queue.length || !chosen));
+    playButton.title = !data ? '' : playing ? 'Pause, keeping the queue' : !chosen ? 'Nobody’s in voice' : !data.queue.length ? 'The queue is empty' : '';
     skipButton.disabled = !data || data.phase === 'stopped';
     stopButton.disabled = !data || (data.phase === 'stopped' && !data.queue.length);
   }
@@ -432,19 +436,17 @@ export function renderMusic(main) {
       volume.title = `Music at ${data.volume}%`;
       volume.hidden = false;
     }
-    account.textContent = data.account ? `Spotify account: ${data.account}. While the bot plays, this account’s music stops everywhere else.` : '';
+    account.textContent = data.account ? `Songs YouTube doesn’t have play through Spotify, as ${data.account}. While one does, that account’s music stops everywhere else.` : '';
     account.hidden = !data.account;
 
     const song = data.phase !== 'stopped' ? data.queue[0] : null;
     nowCover.replaceChildren(cover(song?.cover, 96));
     nowTitle.textContent = song ? song.title : data.queue.length ? 'Not playing' : 'Nothing queued';
     nowArtist.textContent = song
-      ? `${song.artist}${data.phase === 'paused' ? ' · Paused' : data.channelName ? ` · in ${data.channelName}` : ''}`
-      : data.elsewhere
-        ? 'Music is playing in another server.'
-        : data.queue.length
-          ? 'Pick a channel and press Play.'
-          : 'Search for a song to start.';
+      ? [song.artist, ...whereFrom(data)].join(' · ')
+      : data.queue.length
+        ? 'Pick a channel and press Play.'
+        : 'Search for a song to start.';
     nowNote.textContent = data.note ?? '';
     nowNote.hidden = !data.note;
     if (data.channelId && data.phase !== 'stopped' && channels?.some((c) => c.id === data.channelId)) {

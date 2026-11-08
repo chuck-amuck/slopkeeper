@@ -20,6 +20,8 @@ export interface VoiceOptions {
   loop?: boolean;
   /** Never dropped for newer sounds, like a whole song */
   lasting?: boolean;
+  /** Starts this far in, to carry on after a pause */
+  startMs?: number;
   /** Sounds, speech and music each have a volume that can change while they play */
   group?: 'sound' | 'speech' | 'music';
 }
@@ -56,9 +58,9 @@ class Voice implements Source {
   heard = false;
   replaces: Source[] = [];
   private stopped = false;
-  private onEnd: (() => void) | undefined;
+  private onEnd: ((byItself: boolean) => void) | undefined;
 
-  constructor(file: string, gain: number, onEnd?: () => void, options: VoiceOptions = {}) {
+  constructor(file: string, gain: number, onEnd?: (byItself: boolean) => void, options: VoiceOptions = {}) {
     this.file = file;
     this.gain = gain;
     this.onEnd = onEnd;
@@ -66,14 +68,15 @@ class Voice implements Source {
     this.lasting = this.loop || (options.lasting ?? false);
     this.group = options.group ?? 'sound';
     const loop = this.loop ? ['-stream_loop', '-1'] : [];
-    this.proc = spawn('ffmpeg', ['-hide_banner', '-loglevel', 'error', ...loop, '-i', file, '-f', 's16le', '-ar', '48000', '-ac', '2', 'pipe:1'], {
+    const start = options.startMs ? ['-ss', (options.startMs / 1000).toFixed(3)] : [];
+    this.proc = spawn('ffmpeg', ['-hide_banner', '-loglevel', 'error', ...loop, ...start, '-i', file, '-f', 's16le', '-ar', '48000', '-ac', '2', 'pipe:1'], {
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     this.pcm = this.proc.stdout!;
     // Without a 'readable' listener, Node resumes stdout when ffmpeg exits and the unread PCM is discarded
     this.pcm.on('readable', () => {});
     // 'close' only follows 'end' once every buffered byte has been read, so nothing is cut off
-    this.pcm.once('close', () => this.finish());
+    this.pcm.once('close', () => this.finish(!this.stopped));
 
     // Only surface ffmpeg's errors for sounds that failed by themselves; a stopped one always complains about the closed pipe
     let stderr = '';
@@ -83,13 +86,14 @@ class Voice implements Source {
     });
     this.proc.once('error', (err) => {
       console.error('ffmpeg error:', err.message);
-      this.finish();
+      this.finish(false);
     });
   }
 
-  private finish() {
+  /** `byItself` is whether it played to the end, rather than being stopped or failing to start */
+  private finish(byItself: boolean) {
     this.ended = true;
-    this.onEnd?.();
+    this.onEnd?.(byItself);
     this.onEnd = undefined;
   }
 
@@ -106,13 +110,16 @@ class Voice implements Source {
   }
 
   stop() {
-    this.finish();
     this.stopped = true;
+    this.finish(false);
     // ffmpeg ignores SIGTERM while it's blocked writing to a full pipe, so close the pipe and SIGKILL it
     this.pcm.destroy();
     this.proc.kill('SIGKILL');
   }
 }
+
+/** Whether a stream has had all it will get, though some may still be unread. Node keeps this to itself, but it has for years */
+const sourceEnded = (pcm: Readable) => (pcm as unknown as { _readableState?: { ended?: boolean } })._readableState?.ended === true;
 
 /** Raw PCM that's already playing somewhere else, like music, mixed in as it arrives */
 class StreamVoice implements Source {
@@ -135,7 +142,10 @@ class StreamVoice implements Source {
     this.gain = gain;
     this.onEnd = onEnd;
     this.group = options.group ?? 'sound';
-    this.pcm.on('readable', () => {});
+    // A stream that ends while it's still filling up is never read again, so what's left, too little to play, is dropped for its end to be noticed
+    this.pcm.on('readable', () => {
+      if (this.pcm.readableLength < STREAM_START_BYTES && sourceEnded(this.pcm)) this.pcm.read();
+    });
     this.pcm.once('close', () => this.finish());
     this.pcm.once('error', (err) => {
       console.error('Audio stream error:', err.message);
@@ -196,7 +206,7 @@ export class Mixer extends Readable {
   }
 
   /** `onEnd` runs once the sound is over, however that came about. Returns a way to stop it */
-  add(file: string, gain = 1, onEnd?: () => void, options: VoiceOptions = {}): () => void {
+  add(file: string, gain = 1, onEnd?: (byItself: boolean) => void, options: VoiceOptions = {}): () => void {
     const voice = new Voice(file, gain, onEnd, options);
     // A restart keeps the playing copy going until the new one has audio, so spamming leaves no gap while ffmpeg starts.
     // A copy from an earlier click that hasn't started yet is dropped, since this one supersedes it. A loop is never restarted by a click

@@ -27,7 +27,7 @@ const ASSETS: Record<string, ReturnType<typeof asset>> = {
 
 const HEADERS = {
   // Server icons and custom emoji come from Discord's CDN, and album covers from Spotify's; nothing else is loaded from anywhere
-  'content-security-policy': "default-src 'self'; img-src 'self' https://cdn.discordapp.com https://i.scdn.co; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
+  'content-security-policy': "default-src 'self'; img-src 'self' https://cdn.discordapp.com https://i.scdn.co https://i.ytimg.com https://i1.sndcdn.com; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
   'x-content-type-options': 'nosniff',
   'referrer-policy': 'no-referrer',
 };

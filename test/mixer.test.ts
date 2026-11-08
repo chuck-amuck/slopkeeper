@@ -258,6 +258,19 @@ test('a stream ending by itself is over, and the cap never drops it', { skip: !h
   assert.equal(ended, true);
 });
 
+test('a stream that ends before it had enough to start is over too', async () => {
+  const mixer = new Mixer(1, 12);
+  const { done } = record(mixer);
+  const music = new PassThrough();
+  let ended = false;
+  mixer.addStream(music, 1, () => (ended = true), { group: 'music' });
+  music.write(pcm(2));
+  await sleep(50);
+  music.end();
+  await done;
+  assert.equal(ended, true);
+});
+
 test('music drops under speech and comes back up after', { skip: !hasFfmpeg }, async () => {
   const mixer = new Mixer(1, 12);
   const { peaks, done } = record(mixer);

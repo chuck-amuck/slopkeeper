@@ -1,15 +1,17 @@
 import './helpers.ts';
 import assert from 'node:assert/strict';
-import { after, beforeEach, mock, test } from 'node:test';
+import { after, beforeEach, mock, test, type TestContext } from 'node:test';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { getVoiceConnection, VoiceConnectionStatus } from '@discordjs/voice';
 import { recentActivity } from '../src/activity.ts';
 import { config } from '../src/config.ts';
+import { Mixer, type VoiceOptions } from '../src/mixer.ts';
 import {
   addTracks,
   clearQueue,
+  fileUploadPath,
   MOST_QUEUED,
   moveTrack,
   music,
@@ -17,7 +19,7 @@ import {
   onSpotify,
   pauseMusic,
   playFile,
-  fileUploadPath,
+  queueFrom,
   queueOf,
   removeTrack,
   resetMusic,
@@ -30,15 +32,24 @@ import {
 import { soundboard, stopPlayback } from '../src/features/soundboard.ts';
 import type { Track } from '../src/spotify.ts';
 
-const RUNNING: PlayerStatus = { state: 'running', message: '', loggedIn: true, account: 'someone', active: false, version: '1.3.10.51', expiresAt: null };
+const CANT_PLAY_MS = 5_000;
+// yt-dlp works and Spotify playback is off, as it is by default
+const RUNNING: PlayerStatus = { state: 'off', message: '', loggedIn: false, account: null, active: false, version: null, expiresAt: null, youtube: { ready: true, version: '2026.10.26', message: '' } };
+// Spotify signed in, to play what YouTube doesn't have
+const WITH_SPOTIFY: PlayerStatus = { ...RUNNING, state: 'running', loggedIn: true, account: 'someone', version: '1.3.10.51' };
 
 config.musicUrl = 'http://music.test';
 config.musicToken = 'music-token';
+config.musicAudioDir = '/audio';
 
-// The music container: commands are kept, and the audio is a stream the test can end
+// The music container. Commands are kept, Spotify's audio is a stream the test can end, and songs are "downloaded" unless
+// `youtube` says a song is missing, fails, or waits until the test lets it go on
 const commands: Record<string, unknown>[] = [];
+const fetched: string[] = [];
 let audio: ReadableStreamDefaultController<Uint8Array> | undefined;
 let refuseCommands = false;
+const youtube = new Map<string, 'missing' | 'fail' | Promise<void>>();
+let missingByDefault = false;
 mock.method(globalThis, 'fetch', async (url: string, init: RequestInit = {}) => {
   assert.ok(url.startsWith('http://music.test/'), `only the music container is asked, not ${url}`);
   assert.equal((init.headers as Record<string, string>).authorization, 'Bearer music-token');
@@ -48,11 +59,44 @@ mock.method(globalThis, 'fetch', async (url: string, init: RequestInit = {}) => 
     commands.push(JSON.parse(init.body as string) as Record<string, unknown>);
     return new Response('{}');
   }
+  if (where === '/fetch') {
+    const body = JSON.parse(init.body as string) as { uri?: string; url?: string };
+    const key = body.uri ?? body.url!;
+    fetched.push(key);
+    const how = youtube.get(key) ?? (missingByDefault ? 'missing' : undefined);
+    if (how instanceof Promise) await how;
+    if (how === 'missing') return Response.json({ error: 'No match on YouTube or SoundCloud.' }, { status: 404 });
+    if (how === 'fail') return Response.json({ error: 'Sign in to confirm you’re not a bot' }, { status: 502 });
+    return Response.json({ file: `yt-${key.slice(-4)}.webm`, source: 'youtube' });
+  }
+  if (where === '/lookup') {
+    const { url: link } = JSON.parse(init.body as string) as { url: string };
+    if (link.includes('list=')) return Response.json({ error: 'Playlists from YouTube and SoundCloud can’t be added.' }, { status: 404 });
+    return Response.json({ url: link, title: 'A Video', artist: 'Someone', durationMs: 61_000, cover: 'https://i.ytimg.com/vi/abc/hqdefault.jpg' });
+  }
   if (where === '/audio') return new Response(new ReadableStream<Uint8Array>({ start: (c) => void (audio = c) }));
   // Events are fed straight to onSpotify instead
   if (where === '/events') return new Promise<Response>(() => {});
   throw new Error(`unexpected ${where}`);
 });
+
+// What the mixer is asked to play, instead of playing it. `end` finishes it as a song ending would
+interface Played {
+  file: string;
+  options: VoiceOptions;
+  stopped: boolean;
+  end: () => void;
+}
+const played: Played[] = [];
+mock.method(Mixer.prototype, 'add', (file: string, _gain: number, onEnd: (byItself: boolean) => void, options: VoiceOptions) => {
+  const voice: Played = { file, options, stopped: false, end: () => onEnd(true) };
+  played.push(voice);
+  return () => {
+    voice.stopped = true;
+    onEnd(false);
+  };
+});
+const lastPlayed = () => played.at(-1)!;
 
 // A voice connection that's ready and swallows audio, since there's no real Discord to connect to
 const networking = { state: {}, on() {}, off() {}, prepareAudioPacket() {}, dispatchAudio: () => true, setSpeaking() {}, destroy() {} };
@@ -68,30 +112,46 @@ let nextGuild = 0;
 function server() {
   const id = `music-${nextGuild++}`;
   accepting.add(id);
+  const channel = { id: 'voice', name: 'General', joinable: true, isVoiceBased: () => true, toString: () => '#General', permissionsFor: () => ({ has: () => true }), guild: undefined as unknown };
   const guild = {
     id,
     name: 'Server',
     members: { me: {}, cache: new Map() },
     roles: { cache: new Map() },
-    channels: { cache: new Map() },
+    channels: { cache: new Map([['voice', channel]]) },
     voiceAdapterCreator: () => ({ sendPayload: () => true, destroy() {} }),
   };
-  const channel = { id: 'voice', name: 'General', joinable: true, toString: () => '#General', permissionsFor: () => ({ has: () => true }), guild };
+  channel.guild = guild;
   return { id, guild: guild as never as import('discord.js').Guild, channel: channel as never as import('discord.js').VoiceBasedChannel };
 }
 
-const CANT_PLAY_MS = 5_000;
 const song = (n: number, durationMs = 200_000): Track => ({ uri: `spotify:track:${String(n).padStart(22, '0')}`, title: `Song ${n}`, artist: 'Band', album: 'Album', cover: null, durationMs });
+const audioFile = (n: number) => `/audio/yt-${String(n).padStart(4, '0')}.webm`;
 const titles = (guildId: string) => queueOf(guildId).map((r) => r.title);
 const sent = (name: string) => commands.filter((c) => c.command === name);
 /** Spotify says where it's got to in the song */
 const at = (ms: number, speed = 1) => onSpotify({ type: 'position_sync', position: { position_ms: ms, timestamp_ms: Date.now(), speed } });
 const changed = (n: number) => onSpotify({ type: 'track_changed', item: { uri: song(n).uri } });
+/** Has YouTube find nothing, with Spotify signed in to play instead, for the tests of Spotify's side */
+const onlySpotify = () => {
+  missingByDefault = true;
+  resetMusic(WITH_SPOTIFY);
+};
+/** Lets the clock move, for where a song has got to */
+const clock = (t: TestContext) => {
+  let now = Date.now();
+  t.mock.timers.enable({ apis: ['Date'], now });
+  return (ms: number) => t.mock.timers.setTime((now += ms));
+};
 
 music.setup!({} as never);
 beforeEach(() => {
   resetMusic(RUNNING);
   commands.length = 0;
+  fetched.length = 0;
+  played.length = 0;
+  youtube.clear();
+  missingByDefault = false;
   refuseCommands = false;
 });
 after(() => {
@@ -143,10 +203,9 @@ test('removing and clearing keep the song playing, unless it’s the one removed
   assert.ok(await removeTrack(id, queueOf(id)[2].id, 'u2'));
   assert.deepEqual(titles(id), ['Song 1', 'Song 2', 'Song 4']);
   assert.equal(recentActivity(id, 1)[0].action, 'Removed **Song 3** from the music queue');
-  commands.length = 0;
   await removeTrack(id, queueOf(id)[0].id, 'u2');
   assert.deepEqual(titles(id), ['Song 2', 'Song 4']);
-  assert.deepEqual(sent('play').at(-1), { command: 'play', uri: song(2).uri }, 'removing the song playing skips it');
+  assert.equal(lastPlayed().file, audioFile(2), 'removing the song playing skips it');
   clearQueue(id, 'u2');
   assert.deepEqual(titles(id), ['Song 2']);
   assert.equal(await removeTrack(id, 12345, 'u2'), null);
@@ -160,15 +219,209 @@ test('the queue stops filling at its limit', () => {
   clearQueue(id, 'u1');
 });
 
-test('playing starts the first song on this speaker, then carries on where it paused', async () => {
+test('playing fetches the first song and plays it, fetching the next ahead, then carries on where it paused', async (t) => {
+  const tick = clock(t);
+  const { id, guild, channel } = server();
+  addTracks(id, [song(1), song(2)], 'u1');
+  assert.equal(await startMusic(guild, channel), null);
+  assert.deepEqual(played.map((p) => [p.file, p.options]), [[audioFile(1), { group: 'music', lasting: true }]]);
+  assert.deepEqual(fetched, [song(1).uri, song(2).uri], 'the next song is fetched while this one plays');
+  assert.deepEqual(commands, [], 'Spotify isn’t asked for anything');
+  const state = musicState(id);
+  assert.deepEqual([state.phase, state.channelId, state.via, state.account], ['playing', 'voice', 'youtube', null]);
+  tick(30_000);
+  assert.equal(musicState(id).positionMs, 30_000);
+  assert.equal(pauseMusic(id), null);
+  assert.equal(lastPlayed().stopped, true);
+  tick(60_000);
+  assert.deepEqual([musicState(id).phase, musicState(id).positionMs], ['paused', 30_000]);
+  assert.equal(await startMusic(guild, channel), null);
+  assert.deepEqual(lastPlayed().options, { group: 'music', lasting: true, startMs: 30_000 }, 'resumes where it paused');
+  assert.equal(await startMusic(guild, channel), null, 'already playing there');
+  assert.equal(played.length, 2);
+  stopMusic(id, 'u1');
+  assert.equal(lastPlayed().stopped, true);
+});
+
+test('a song ending plays the next, and the music stops after the last', async () => {
+  const { id, guild, channel } = server();
+  addTracks(id, [song(1), song(2)], 'u1');
+  await startMusic(guild, channel);
+  lastPlayed().end();
+  await sleep(5);
+  assert.deepEqual(titles(id), ['Song 2']);
+  assert.equal(lastPlayed().file, audioFile(2));
+  assert.equal(musicState(id).phase, 'playing');
+  lastPlayed().end();
+  await sleep(5);
+  assert.deepEqual(titles(id), []);
+  assert.equal(musicState(id).phase, 'stopped');
+});
+
+test('skipping plays the next song, or stops after the last', async () => {
+  const { id, guild, channel } = server();
+  addTracks(id, [song(1), song(2)], 'u1');
+  await startMusic(guild, channel);
+  assert.equal(await skipMusic(id, 'u3'), null);
+  assert.equal(played[0].stopped, true);
+  assert.equal(lastPlayed().file, audioFile(2));
+  assert.equal(recentActivity(id, 1)[0].action, 'Skipped **Song 1**');
+  await skipMusic(id, 'u3');
+  assert.equal(musicState(id).phase, 'stopped');
+  assert.equal(await skipMusic(id, 'u3'), 'Nothing is playing.');
+});
+
+test('skipping while paused waits on the next song until play is pressed', async () => {
+  const { id, guild, channel } = server();
+  addTracks(id, [song(1), song(2)], 'u1');
+  await startMusic(guild, channel);
+  pauseMusic(id);
+  await skipMusic(id, 'u1');
+  assert.deepEqual([titles(id), musicState(id).phase, played.length], [['Song 2'], 'paused', 1]);
+  await startMusic(guild, channel);
+  assert.deepEqual(lastPlayed().options, { group: 'music', lasting: true }, 'from the top of the new song');
+  stopMusic(id, 'u1');
+});
+
+test('a song YouTube doesn’t have is skipped and says so, or plays through Spotify when that’s on', async () => {
+  const { id, guild, channel } = server();
+  youtube.set(song(1).uri, 'missing');
+  addTracks(id, [song(1), song(2)], 'u1');
+  assert.equal(await startMusic(guild, channel), null);
+  assert.deepEqual(titles(id), ['Song 2']);
+  assert.equal(lastPlayed().file, audioFile(2));
+  assert.equal(musicState(id).note, 'Couldn’t find Song 1 on YouTube or SoundCloud, so it was skipped.');
+  stopMusic(id, 'u1');
+  // Nothing left to play says so straight away
+  addTracks(id, [song(1)], 'u1');
+  assert.match((await startMusic(guild, channel))!, /Couldn’t find Song 1/);
+  assert.equal(musicState(id).phase, 'stopped');
+
+  resetMusic(WITH_SPOTIFY);
+  addTracks(id, [song(1, 30_000), song(2)], 'u1');
+  assert.equal(await startMusic(guild, channel), null);
+  assert.deepEqual(commands, [{ command: 'activate' }, { command: 'play', uri: song(1).uri }]);
+  assert.equal(musicState(id).via, 'spotify');
+  assert.equal(musicState(id).account, 'someone');
+  // It ends, and the next one comes from YouTube, with Spotify paused
+  await at(28_000);
+  await onSpotify({ type: 'track_changed', item: { uri: 'spotify:track:suggestedsuggestedsugge' } });
+  assert.deepEqual(titles(id), ['Song 2']);
+  assert.equal(lastPlayed().file, audioFile(2));
+  assert.deepEqual(commands.at(-1), { command: 'pause' });
+  assert.equal(musicState(id).via, 'youtube');
+  await onSpotify({ type: 'playback_changed', status: 'paused' });
+  assert.equal(musicState(id).phase, 'playing', 'Spotify going quiet doesn’t touch YouTube’s song');
+  stopMusic(id, 'u1');
+});
+
+test('a song that can’t be fetched pauses and says why', async () => {
+  const { id, guild, channel } = server();
+  youtube.set(song(1).uri, 'fail');
+  addTracks(id, [song(1), song(2)], 'u1');
+  const errors = mock.method(console, 'error', () => {});
+  assert.match((await startMusic(guild, channel))!, /couldn’t get Song 1/);
+  errors.mock.restore();
+  assert.equal(musicState(id).phase, 'paused');
+  assert.match(musicState(id).note!, /couldn’t get Song 1/);
+  assert.deepEqual(titles(id), ['Song 1', 'Song 2'], 'nothing is skipped, as it may work in a moment');
+  stopMusic(id, 'u1');
+});
+
+test('pausing or skipping while a song downloads drops the download rather than playing it late', async () => {
+  const { id, guild, channel } = server();
+  let release!: () => void;
+  youtube.set(song(1).uri, new Promise<void>((resolve) => (release = resolve)));
+  addTracks(id, [song(1), song(2), song(3)], 'u1');
+  const starting = startMusic(guild, channel);
+  await sleep(5);
+  assert.equal(musicState(id).phase, 'starting');
+  pauseMusic(id);
+  release();
+  assert.equal(await starting, null);
+  assert.deepEqual([musicState(id).phase, played.length], ['paused', 0]);
+
+  youtube.set(song(2).uri, new Promise<void>((resolve) => (release = resolve)));
+  await skipMusic(id, 'u1');
+  const playing = startMusic(guild, channel);
+  await sleep(5);
+  const skipping = skipMusic(id, 'u1');
+  release();
+  await Promise.all([playing, skipping]);
+  assert.deepEqual(played.map((p) => p.file), [audioFile(3)], 'only the song skipped to plays');
+  stopMusic(id, 'u1');
+});
+
+test('Stop on the soundboard, or the song being cut off, pauses and keeps the queue', async () => {
+  const { id, guild, channel } = server();
+  addTracks(id, [song(1), song(2)], 'u1');
+  await startMusic(guild, channel);
+  stopPlayback(id);
+  assert.deepEqual([musicState(id).phase, musicState(id).note, lastPlayed().stopped], ['paused', null, true]);
+  assert.deepEqual(titles(id), ['Song 1', 'Song 2']);
+  await startMusic(guild, channel);
+  // The bot was pulled out of voice, say
+  const [voice] = played.slice(-1);
+  voice.stopped = true;
+  (Mixer.prototype.add as unknown as { mock: { calls: { arguments: [string, number, (byItself: boolean) => void] }[] } }).mock.calls.at(-1)!.arguments[2](false);
+  assert.equal(musicState(id).phase, 'paused');
+  assert.deepEqual(titles(id), ['Song 1', 'Song 2']);
+  stopMusic(id, 'u1');
+});
+
+test('music plays in several servers at once', async () => {
+  const a = server();
+  const b = server();
+  addTracks(a.id, [song(1)], 'u1');
+  addTracks(b.id, [song(2)], 'u1');
+  assert.equal(await startMusic(a.guild, a.channel), null);
+  assert.equal(await startMusic(b.guild, b.channel), null);
+  assert.deepEqual([musicState(a.id).phase, musicState(b.id).phase], ['playing', 'playing']);
+  stopMusic(a.id, 'u1');
+  assert.equal(musicState(b.id).phase, 'playing');
+  stopMusic(b.id, 'u1');
+});
+
+test('a YouTube or SoundCloud link adds what it is, and plays from the link', async () => {
+  const { id, guild, channel } = server();
+  const link = 'https://www.youtube.com/watch?v=abc';
+  assert.equal(await queueFrom(id, link, 'u1', false), 'Added **A Video by Someone**.');
+  const [row] = queueOf(id);
+  assert.deepEqual([row.uri, row.title, row.artist, row.cover, row.duration_ms], [link, 'A Video', 'Someone', 'https://i.ytimg.com/vi/abc/hqdefault.jpg', 61_000]);
+  await startMusic(guild, channel);
+  assert.equal(fetched[0], link);
+  await assert.rejects(queueFrom(id, 'https://www.youtube.com/playlist?list=x', 'u1', false), /Playlists from YouTube/);
+  await assert.rejects(queueFrom(id, 'https://vimeo.com/1', 'u1', false), /isn’t a Spotify, YouTube or SoundCloud link/);
+  stopMusic(id, 'u1');
+});
+
+test('says why music can’t play', async () => {
+  const { id, guild, channel } = server();
+  assert.match((await startMusic(guild, channel))!, /queue is empty/);
+  addTracks(id, [song(1)], 'u1');
+  resetMusic(null);
+  assert.match((await startMusic(guild, channel))!, /isn’t answering/);
+  resetMusic({ ...RUNNING, youtube: { ready: false, version: null, message: 'yt-dlp didn’t run: no python' } });
+  assert.match((await startMusic(guild, channel))!, /can’t reach YouTube: yt-dlp didn’t run/);
+  resetMusic({ ...RUNNING, youtube: undefined });
+  assert.match((await startMusic(guild, channel))!, /still starting/);
+  // Spotify's own problems don't stop YouTube
+  resetMusic({ ...RUNNING, state: 'no-key' });
+  assert.equal(await startMusic(guild, channel), null);
+  stopMusic(id, 'u1');
+});
+
+// ---------- songs played through Spotify, when YouTube doesn't have them ----------
+
+test('Spotify starts the song on this speaker, then carries on where it paused', async () => {
+  onlySpotify();
   const { id, guild, channel } = server();
   addTracks(id, [song(1), song(2)], 'u1');
   assert.equal(await startMusic(guild, channel), null);
   assert.deepEqual(commands, [{ command: 'activate' }, { command: 'play', uri: song(1).uri }]);
   assert.equal(musicState(id).phase, 'playing');
-  assert.equal(musicState(id).channelId, 'voice');
+  await at(40_000);
   assert.equal(pauseMusic(id), null);
-  assert.equal(musicState(id).phase, 'paused');
   assert.deepEqual(commands.at(-1), { command: 'pause' });
   await onSpotify({ type: 'playback_changed', status: 'paused' });
   assert.equal(musicState(id).note, null, 'its own pause isn’t mistaken for one from Spotify');
@@ -183,55 +436,8 @@ test('playing starts the first song on this speaker, then carries on where it pa
   stopMusic(id, 'u1');
 });
 
-test('the next song is handed over just before the end, and the queue moves on when it starts', async () => {
-  const { id, guild, channel } = server();
-  addTracks(id, [song(1, 60_000), song(2), song(3)], 'u1');
-  await startMusic(guild, channel);
-  await at(10_000);
-  assert.equal(sent('add_to_queue').length, 0, 'not yet, so the queue can still change');
-  await at(46_000);
-  await sleep(5);
-  assert.deepEqual(sent('add_to_queue'), [{ command: 'add_to_queue', uri: song(2).uri }]);
-  await changed(2);
-  assert.deepEqual(titles(id), ['Song 2', 'Song 3']);
-  assert.equal(sent('play').length, 1, 'Spotify went on by itself, so nothing more is asked');
-  stopMusic(id, 'u1');
-});
-
-test('a change to the queue after the hand-over still plays what’s next in it', async () => {
-  const { id, guild, channel } = server();
-  addTracks(id, [song(1, 30_000), song(2)], 'u1');
-  await startMusic(guild, channel);
-  await at(16_000);
-  await sleep(5);
-  addTracks(id, [song(3)], 'u1', true);
-  await at(29_000);
-  await changed(2);
-  assert.deepEqual(titles(id), ['Song 3', 'Song 2']);
-  assert.deepEqual(sent('play').at(-1), { command: 'play', uri: song(3).uri });
-  stopMusic(id, 'u1');
-});
-
-test('a song ending hands over the one after it only once that one is near its end', async (t) => {
-  const { id, guild, channel } = server();
-  addTracks(id, [song(1, 60_000), song(2, 60_000), song(3)], 'u1');
-  await startMusic(guild, channel);
-  // Long after it started, so the change can't be Spotify refusing the song
-  t.mock.timers.enable({ apis: ['Date'], now: Date.now() + CANT_PLAY_MS + 1 });
-  // Spotify's last word on the song and the next one starting arrive together
-  await at(58_000);
-  await onSpotify({ type: 'track_changed', item: { uri: 'spotify:track:suggestedsuggestedsugge' } });
-  await sleep(10);
-  assert.deepEqual(titles(id), ['Song 2', 'Song 3']);
-  assert.deepEqual(sent('play').at(-1), { command: 'play', uri: song(2).uri });
-  assert.deepEqual(sent('add_to_queue'), [], 'song 3 waits for song 2 to near its end');
-  await at(46_000);
-  await sleep(5);
-  assert.deepEqual(sent('add_to_queue'), [{ command: 'add_to_queue', uri: song(3).uri }]);
-  stopMusic(id, 'u1');
-});
-
 test('the music stops at the end of the queue rather than playing Spotify’s suggestions', async () => {
+  onlySpotify();
   const { id, guild, channel } = server();
   addTracks(id, [song(1, 30_000)], 'u1');
   await startMusic(guild, channel);
@@ -243,6 +449,7 @@ test('the music stops at the end of the queue rather than playing Spotify’s su
 });
 
 test('a song Spotify won’t play is skipped, and one it swaps for another copy is kept', async () => {
+  onlySpotify();
   const { id, guild, channel } = server();
   addTracks(id, [song(1), song(2), song(3)], 'u1');
   await startMusic(guild, channel);
@@ -255,31 +462,32 @@ test('a song Spotify won’t play is skipped, and one it swaps for another copy 
   assert.equal(musicState(id).note, 'Spotify wouldn’t play Song 1, so it was skipped.');
   await onSpotify({ type: 'track_changed', item: { uri: 'spotify:track:anothercopyanothercopy', decorations: { identity: { name: 'Song 2' } } } });
   assert.deepEqual(titles(id), ['Song 2', 'Song 3'], 'the same song under another address is still song 2');
-  assert.equal(sent('play').length, 2);
   await onSpotify({ type: 'track_changed', item: { uri: 'spotify:track:anothercopyanothercopy' } });
   assert.equal(musicState(id).phase, 'playing');
   stopMusic(id, 'u1');
 });
 
 test('a song picked from Spotify’s app, mid-song, pauses and keeps the queue', async (t) => {
+  onlySpotify();
   const { id, guild, channel } = server();
   addTracks(id, [song(1), song(2)], 'u1');
   await startMusic(guild, channel);
   // Long enough after the bot asked for its song that this is someone's choice
-  t.mock.timers.enable({ apis: ['Date'], now: Date.now() + 10_000 });
+  t.mock.timers.enable({ apis: ['Date'], now: Date.now() + CANT_PLAY_MS + 5_000 });
   await at(20_000);
   await onSpotify({ type: 'track_changed', item: { uri: 'spotify:track:somethingelsesomething' } });
-  const state = musicState(id);
-  assert.equal(state.phase, 'paused');
-  assert.match(state.note!, /started on this speaker from Spotify/);
+  assert.equal(musicState(id).phase, 'paused');
+  assert.match(musicState(id).note!, /started on this speaker from Spotify/);
   assert.deepEqual(titles(id), ['Song 1', 'Song 2']);
   commands.length = 0;
   await startMusic(guild, channel);
-  assert.deepEqual(sent('play'), [{ command: 'play', uri: song(1).uri }], 'starts the queue’s song again rather than resuming the other one');
+  assert.deepEqual(sent('play')[0], { command: 'play', uri: song(1).uri }, 'starts the queue’s song again rather than resuming the other one');
+  assert.deepEqual(sent('seek'), [{ command: 'seek', position_ms: 20_000 }], 'from where it was');
   stopMusic(id, 'u1');
 });
 
 test('Spotify pausing, or moving to another speaker, pauses; pausing at the very end moves on', async () => {
+  onlySpotify();
   const { id, guild, channel } = server();
   addTracks(id, [song(1, 30_000), song(2), song(3)], 'u1');
   await startMusic(guild, channel);
@@ -298,67 +506,40 @@ test('Spotify pausing, or moving to another speaker, pauses; pausing at the very
   stopMusic(id, 'u1');
 });
 
-test('skipping plays the next song, or stops after the last', async () => {
+test('Spotify’s audio dropping pauses, and Spotify signing out pauses with a reason', async () => {
+  onlySpotify();
   const { id, guild, channel } = server();
   addTracks(id, [song(1), song(2)], 'u1');
   await startMusic(guild, channel);
-  assert.equal(await skipMusic(id, 'u3'), null);
-  assert.deepEqual(sent('play').at(-1), { command: 'play', uri: song(2).uri });
-  assert.equal(recentActivity(id, 1)[0].action, 'Skipped **Song 1**');
-  await skipMusic(id, 'u3');
-  assert.equal(musicState(id).phase, 'stopped');
-  assert.equal(await skipMusic(id, 'u3'), 'Nothing is playing.');
-});
-
-test('Stop on the soundboard, or the audio dropping, pauses and keeps the queue', async () => {
-  const { id, guild, channel } = server();
-  addTracks(id, [song(1), song(2)], 'u1');
-  await startMusic(guild, channel);
-  stopPlayback(id);
-  assert.equal(musicState(id).phase, 'paused');
-  assert.equal(musicState(id).note, null);
-  assert.deepEqual(titles(id), ['Song 1', 'Song 2']);
-  await startMusic(guild, channel);
+  await sleep(20);
   audio!.close();
   await sleep(20);
   assert.equal(musicState(id).phase, 'paused');
-  assert.deepEqual(titles(id), ['Song 1', 'Song 2']);
-  stopMusic(id, 'u1');
-});
-
-test('music plays in one server at a time', async () => {
-  const a = server();
-  const b = server();
-  addTracks(a.id, [song(1)], 'u1');
-  addTracks(b.id, [song(2)], 'u1');
-  await startMusic(a.guild, a.channel);
-  assert.match((await startMusic(b.guild, b.channel))!, /another server/);
-  assert.equal(musicState(b.id).elsewhere, true);
-  pauseMusic(a.id);
-  assert.equal(await startMusic(b.guild, b.channel), null, 'paused there, so it can move');
-  assert.equal(musicState(a.id).phase, 'stopped');
-  assert.deepEqual(titles(a.id), ['Song 1'], 'the first server keeps its queue');
-  stopMusic(b.id, 'u1');
-  clearQueue(a.id, 'u1');
-});
-
-test('says why music can’t play', async () => {
-  const { id, guild, channel } = server();
-  assert.match((await startMusic(guild, channel))!, /queue is empty/);
-  addTracks(id, [song(1)], 'u1');
-  resetMusic({ ...RUNNING, loggedIn: false });
-  assert.match((await startMusic(guild, channel))!, /isn’t paired/);
-  resetMusic({ ...RUNNING, state: 'no-consent' });
-  assert.match((await startMusic(guild, channel))!, /SOLOIST_ACCEPT_TERMS/);
-  resetMusic(null);
-  assert.match((await startMusic(guild, channel))!, /isn’t answering/);
-  resetMusic(RUNNING);
+  await startMusic(guild, channel);
   refuseCommands = true;
   const errors = mock.method(console, 'error', () => {});
+  pauseMusic(id);
   assert.match((await startMusic(guild, channel))!, /didn’t start/);
   errors.mock.restore();
   assert.equal(musicState(id).phase, 'paused');
-  clearQueue(id, 'u1');
+  stopMusic(id, 'u1');
+});
+
+test('Spotify stands in for one server at a time', async () => {
+  onlySpotify();
+  const a = server();
+  const b = server();
+  addTracks(a.id, [song(1)], 'u1');
+  addTracks(b.id, [song(2), song(3)], 'u1');
+  youtube.set(song(3).uri, 'fail');
+  missingByDefault = true;
+  await startMusic(a.guild, a.channel);
+  assert.equal(musicState(a.id).via, 'spotify');
+  assert.match((await startMusic(b.guild, b.channel))!, /couldn’t get Song 3/);
+  assert.equal(musicState(b.id).note, 'The music player couldn’t get Song 3, so the music paused. Try again in a moment.');
+  assert.deepEqual(titles(b.id), ['Song 3'], 'song 2 was skipped, as Spotify was busy');
+  stopMusic(a.id, 'u1');
+  stopMusic(b.id, 'u1');
 });
 
 test('a file played from the page pauses the music, and the music takes over from it', { skip: spawnSync('ffmpeg', ['-version']).status !== 0 }, async () => {
@@ -370,12 +551,13 @@ test('a file played from the page pauses the music, and the music takes over fro
   };
   addTracks(id, [song(1)], 'u1');
   await startMusic(guild, channel);
-  const file = tone(5);
+  const song1 = lastPlayed();
+  const file = tone(1);
   assert.equal(await playFile(guild, channel, file, 'Tone', 'u1'), null);
+  assert.equal(song1.stopped, true);
   assert.equal(musicState(id).phase, 'paused');
   assert.match(musicState(id).note!, /Paused for a file/);
-  assert.deepEqual(commands.at(-1), { command: 'pause' });
-  assert.equal(musicState(id).file?.name, 'Tone');
+  assert.deepEqual([musicState(id).file?.name, lastPlayed().file], ['Tone', file]);
   assert.equal(await startMusic(guild, channel), null);
   assert.equal(musicState(id).file, null, 'Resume stops the file rather than play over it');
   assert.ok(!existsSync(file));
@@ -384,7 +566,7 @@ test('a file played from the page pauses the music, and the music takes over fro
   // One that ends by itself is deleted, and the state says nothing's playing
   const short = tone(0.3);
   await playFile(guild, channel, short, 'Short', 'u1');
-  for (let i = 0; i < 50 && musicState(id).file; i++) await sleep(50);
+  lastPlayed().end();
   assert.equal(musicState(id).file, null);
   assert.ok(!existsSync(short));
 

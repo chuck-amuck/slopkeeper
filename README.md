@@ -458,9 +458,9 @@ Examples:
 
 ## Music
 
-The bot plays Spotify in voice, from a queue everyone shares. It needs a Spotify Premium account and the [music container](#the-music-container).
+The bot plays music in voice, from a queue everyone shares. Songs are found on Spotify, and played from YouTube Music, YouTube or SoundCloud, so the Spotify account isn't used to play anything. It needs a Spotify app for search and the [music container](#the-music-container).
 
-- `/music play [song] [next] [shuffle]` adds a song, album or playlist by search or Spotify link, and starts the music in your voice channel. `next` puts it after the song playing instead of at the end, and `shuffle` adds 100 of an album's or playlist's songs at random instead of the first 100. With no song, it carries on where it paused. Its suggestions list the Spotify account's matching playlists first.
+- `/music play [song] [next] [shuffle]` adds a song, album or playlist by search or Spotify link, or a song by YouTube or SoundCloud link, and starts the music in your voice channel. `next` puts it after the song playing instead of at the end, and `shuffle` adds 100 of an album's or playlist's songs at random instead of the first 100. With no song, it carries on where it paused. Its suggestions list the Spotify account's matching playlists first.
 - `/music pause`, `/music skip` and `/music stop` are said in the channel, so everyone can see who did it. **Stop** clears the queue too.
 - `/music queue` shows what's playing and the next 10 songs.
 - The web UI's **Music** tab has the same, plus search results to pick from, a progress bar and a volume slider. Its **My playlists** switch lists the account's playlists to add, in order or shuffled. **Play a file** plays an audio file once in the chosen channel, up to 50 MB and 20 minutes, pausing the music meanwhile. It isn't kept: it's deleted once it ends or is stopped, and pressing Resume stops it. Drag songs to reorder them, or use the arrows on a phone.
@@ -468,11 +468,12 @@ The bot plays Spotify in voice, from a queue everyone shares. It needs a Spotify
 How it plays:
 
 - **Queue:** the bot keeps its own queue for each server, kept across restarts, up to 500 songs. An album or playlist adds up to its first 100 songs, or 100 at random from up to its first 1,000 when shuffled. When the queue runs out the music stops, with no suggested songs.
-- **One server at a time:** Spotify plays one thing per account, so music playing in one server can't start in another until it's paused there.
+- **Finding songs:** each Spotify song is matched by name and length, trying YouTube Music's official audio first, then YouTube, then SoundCloud. Live versions, covers and remixes are passed over unless that's what the Spotify song is. The next song is fetched while one plays, so it follows on without a wait. A song none of them has is skipped, and the Music tab says so.
+- **Several servers** can play at once, each with its own queue.
 - **Playlists:** Spotify only lets the bot read playlists the Spotify account made itself, or collaborates on, and only once that account has [signed in](#the-music-container) for it. Playlists by other people, even followed ones, and Spotify's own, like Daily Mixes, can't be read: add their songs or albums instead.
 - **Sounds and speech** play on top. Music drops to under a third while the bot talks.
 - **Stop on the soundboard**, or everyone leaving, pauses the music and keeps the queue. Music counts as the bot being busy, so it doesn't leave for being idle and the looping room waits.
-- **The Spotify account:** while the bot plays, that account's music stops on its phones and speakers, and the other way round. The bot shows up as a speaker called Slopkeeper in its Spotify app. Picking something else there pauses the bot, and the Music tab says why.
+- **Spotify playback (optional, off by default):** with `SPOTIFY_PLAYBACK=true` on the music container and Soloist set up, songs YouTube doesn't have play through the Spotify account instead, in one server at a time. While one does, that account's music stops on its phones and speakers, and picking something else in its Spotify app pauses the bot.
 - **Who can control it:** everyone, until `/setup music dj_role:` sets a role. Then only that role and people with **Manage Server** can add, pause, skip and stop. Anyone can see the queue. The web UI isn't limited by the role.
 - **Activity** shows what was added, removed and skipped, and by whom.
 
@@ -655,6 +656,7 @@ Set in `.env` (see `.env.example`).
 | `VOICE_URL` | off | Where the [voice container](#the-voice-container) is. Unset turns `/say` off |
 | `MUSIC_URL` | off | Where the [music container](#the-music-container) is. Unset turns music off |
 | `MUSIC_TOKEN` | none | Same value as the music container's `MUSIC_TOKEN` |
+| `MUSIC_AUDIO_DIR` | `/music/audio` | Where the bot reads the songs the music container downloads, from its volume |
 | `SPOTIFY_CLIENT_ID`, `SPOTIFY_CLIENT_SECRET` | none | A Spotify app's, for search and links. See [the music container](#the-music-container) |
 | `SPOTIFY_REFRESH_TOKEN` | none | From the Spotify account signing in once, so the bot can read its own playlists. See [the music container](#the-music-container) |
 | `SPOTIFY_MARKET` | `US` | The country whose Spotify catalogue search uses |
@@ -785,43 +787,52 @@ Set `VOICE_URL=http://voice:5000` on the bot, and don't publish the port. On fir
 
 ### The music container
 
-Music runs **Spotify Soloist**, Spotify's own player for devices with no screen, in a container built from [`music/`](music). It's the same player Music Assistant uses.
+Music needs a container built from [`music/`](music). It finds songs and downloads their audio with [yt-dlp](https://github.com/yt-dlp/yt-dlp), and can also run **Spotify Soloist**, Spotify's own player, for songs YouTube doesn't have.
 
-**Read this first.** Spotify's developer terms say an app can't play "from a single source to several simultaneous listeners", and playing into a Discord channel arguably is that. Spotify could revoke the key or act on the account. A spare or family-plan Premium account is safer than your own. Soloist's terms don't allow sharing the key or the player, so the image doesn't include the player: the container downloads it from Spotify each time it needs one, once you've accepted the terms.
+**Read this first.** Downloading from YouTube and SoundCloud is against their terms of service, and playing into a Discord channel for others may be too. It's for a few friends in a private server; YouTube can slow down or block an address that downloads a lot. yt-dlp never signs in to anything.
 
-1. **Soloist key:** sign in to [developer.spotify.com/dashboard](https://developer.spotify.com/dashboard) with the Premium account, open Soloist, accept its terms and create a key.
-2. **Search app:** on the same dashboard, create an app with any name, the redirect URI `http://127.0.0.1:8888/callback` (only step 6 uses it) and only **Web API** ticked, then copy its Client ID and Client Secret from its settings. On its own it only reads the catalogue. Step 6 adds the account's playlists.
-3. **Pair it.** On a computer on the same network as your phone, run this, then pick **Slopkeeper** as the speaker in Spotify:
-   ```sh
-   docker run --rm --network host -e SOLOIST_API_KEY=<key> -e SOLOIST_ACCEPT_TERMS=true ghcr.io/chuck-amuck/slopkeeper-music:latest node bridge.mjs pair
-   ```
-   It prints `SOLOIST_SESSION=...`, which goes in `.env`. A firewall that blocks incoming mDNS (port 5353) hides the speaker. The pairing only carries the sign-in, so the bot's host can be on another network.
-4. **Add the container,** and don't publish its port:
+1. **Search app:** sign in to [developer.spotify.com/dashboard](https://developer.spotify.com/dashboard), create an app with any name, the redirect URI `http://127.0.0.1:8888/callback` (only step 4 uses it) and only **Web API** ticked, then copy its Client ID and Client Secret from its settings. On its own it only reads the catalogue. Step 4 adds an account's playlists. Since February 2026 these apps need a Premium owner.
+2. **Add the container,** and don't publish its port. The bot reads the downloaded audio from the same volume:
    ```yaml
+   slopkeeper:
+     volumes:
+       - slopkeeper-data:/data
+       - slopkeeper-music:/music:ro
    music:
      image: ghcr.io/chuck-amuck/slopkeeper-music:latest
      restart: unless-stopped
      init: true
      environment:
        MUSIC_TOKEN: ${MUSIC_TOKEN}
-       SOLOIST_API_KEY: ${SOLOIST_API_KEY}
-       SOLOIST_ACCEPT_TERMS: ${SOLOIST_ACCEPT_TERMS}
-       SOLOIST_SESSION: ${SOLOIST_SESSION}
      volumes:
        - slopkeeper-music:/data
      deploy:
        resources:
          limits:
-           memory: 256M
+           memory: 512M
    ```
-5. **Set on the bot:** `MUSIC_URL=http://music:7700`, `MUSIC_TOKEN` (any long random value, the same on both), `SPOTIFY_CLIENT_ID` and `SPOTIFY_CLIENT_SECRET`.
-6. **Playlists (optional):** with the bot running, sign in once as the Premium account. The search app must belong to that account:
+3. **Set on the bot:** `MUSIC_URL=http://music:7700`, `MUSIC_TOKEN` (any long random value, the same on both), `SPOTIFY_CLIENT_ID` and `SPOTIFY_CLIENT_SECRET`.
+4. **Playlists (optional):** with the bot running, sign in once as the Spotify account whose playlists you want. The search app must belong to that account:
    ```sh
    docker compose exec -it slopkeeper node src/spotify-sign-in.ts
    ```
    It prints a link to open and agree to, then asks for the address the browser ends up on. That page doesn't load, which is expected. It prints `SPOTIFY_REFRESH_TOKEN=...` for `.env`. Restart the bot to use it. It only lets the bot read that account's playlists. If Spotify ever turns it down, the Music tab says so: run the script again and replace it.
 
-The container runs a private PulseAudio whose only output is a pipe, and passes Soloist's audio to the bot as raw 48 kHz audio, ready to mix. Soloist's builds stop working after 90 days, so the container checks for a new one daily and swaps it in once nothing's playing. It uses about 60 MB, and keeps up to 200 MB of Spotify's cache in its volume. `SOLOIST_SESSION` is only used if the volume has never been paired, so pairing again means removing the volume. Settings and the Music tab say if the key, the terms or the pairing are missing.
+YouTube changes often and old yt-dlp versions stop working, so the container updates yt-dlp when it starts and daily after that. Each song is about 3 to 9 MB. The container keeps the most recently played songs, up to `MUSIC_CACHE_MB` (1024 by default), so songs played again start at once. It uses about 100 MB of memory, and more for a moment while a song downloads. Settings and the Music tab say if yt-dlp isn't working. The bot reads the audio from `MUSIC_AUDIO_DIR`, `/music/audio` by default, which is the volume's `audio` folder.
+
+#### Spotify playback for what YouTube doesn't have (optional)
+
+Off unless `SPOTIFY_PLAYBACK=true` is set on the music container. Spotify's developer terms say an app can't play "from a single source to several simultaneous listeners", and playing into a Discord channel arguably is that. Spotify could revoke the key or act on the account, so a spare or family-plan Premium account is safer than your own. Soloist's terms don't allow sharing the key or the player, so the image doesn't include the player: the container downloads it from Spotify each time it needs one, once you've accepted the terms.
+
+1. **Soloist key:** on the same dashboard, as the Premium account, open Soloist, accept its terms and create a key.
+2. **Pair it.** On a computer on the same network as your phone, run this, then pick **Slopkeeper** as the speaker in Spotify:
+   ```sh
+   docker run --rm --network host -e SOLOIST_API_KEY=<key> -e SOLOIST_ACCEPT_TERMS=true ghcr.io/chuck-amuck/slopkeeper-music:latest node bridge.mjs pair
+   ```
+   It prints `SOLOIST_SESSION=...`, which goes in `.env`. A firewall that blocks incoming mDNS (port 5353) hides the speaker. The pairing only carries the sign-in, so the bot's host can be on another network.
+3. **Add to the music container's environment:** `SPOTIFY_PLAYBACK: "true"`, `SOLOIST_API_KEY: ${SOLOIST_API_KEY}`, `SOLOIST_ACCEPT_TERMS: ${SOLOIST_ACCEPT_TERMS}` and `SOLOIST_SESSION: ${SOLOIST_SESSION}`.
+
+The container then also runs a private PulseAudio whose only output is a pipe, and passes Soloist's audio to the bot as raw 48 kHz audio, ready to mix. Soloist's builds stop working after 90 days, so the container checks for a new one daily and swaps it in once nothing's playing. It keeps up to 200 MB of Spotify's cache in its volume. `SOLOIST_SESSION` is only used if the volume has never been paired, so pairing again means removing the volume. Settings and the Music tab say if the key, the terms or the pairing are missing.
 
 ### Hosting the bot
 

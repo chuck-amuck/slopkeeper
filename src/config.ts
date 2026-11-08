@@ -27,6 +27,8 @@ export const config = {
   // The music container, which plays Spotify, and the password it shares with the bot. Unset turns music off
   musicUrl: process.env.MUSIC_URL || null,
   musicToken: process.env.MUSIC_TOKEN || null,
+  // Where the music container's downloaded audio is, read-only, shared with it as a volume
+  musicAudioDir: process.env.MUSIC_AUDIO_DIR || '/music/audio',
   // A Spotify app's credentials, for search. They only read the catalogue, so nobody signs in
   spotifyClientId: process.env.SPOTIFY_CLIENT_ID || null,
   spotifyClientSecret: process.env.SPOTIFY_CLIENT_SECRET || null,

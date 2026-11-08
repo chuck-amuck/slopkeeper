@@ -151,7 +151,7 @@ test('a link is added to the queue with what it was, and words add the top resul
     ['Song 8', 'Song 7'],
   );
   await assert.rejects(queueFrom('sp', 'https://spotify.link/abc', 'u1', false), /open\.spotify\.com/);
-  await assert.rejects(queueFrom('sp', 'https://youtube.com/watch?v=1', 'u1', false), /isn’t a Spotify/);
+  await assert.rejects(queueFrom('sp', 'https://vimeo.com/1', 'u1', false), /isn’t a Spotify/);
 });
 
 test('the owner’s own playlists are listed, and a new sign-in from Spotify is kept until the setting changes', async (t) => {

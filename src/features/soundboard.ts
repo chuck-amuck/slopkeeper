@@ -664,14 +664,14 @@ export async function playStream(channel: VoiceBasedChannel, pcm: Readable, onEn
 }
 
 /**
- * Plays a long file, like a song, at the music volume, where newer sounds can't push it out. `onEnd` runs once it's over.
- * Returns a way to stop it, or the reason it couldn't play, for the user
+ * Plays a long file, like a song, at the music volume, where newer sounds can't push it out, from `startMs` in.
+ * `onEnd` runs once it's over, saying whether it played to the end. Returns a way to stop it, or the reason it couldn't play, for the user
  */
-export async function playLong(channel: VoiceBasedChannel, file: string, onEnd: () => void): Promise<(() => void) | string> {
+export async function playLong(channel: VoiceBasedChannel, file: string, onEnd: (byItself: boolean) => void, startMs = 0): Promise<(() => void) | string> {
   const problem = await connect(channel);
   if (problem) return problem;
   let stop!: () => void;
-  mixInto(channel.guild.id, (mixer) => (stop = mixer.add(file, 1, onEnd, { group: 'music', lasting: true })));
+  mixInto(channel.guild.id, (mixer) => (stop = mixer.add(file, 1, onEnd, { group: 'music', lasting: true, ...(startMs > 0 && { startMs }) })));
   return stop;
 }
 

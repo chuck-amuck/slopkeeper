@@ -23,24 +23,27 @@ import { isShortLink, MOST_FROM_LINK, myPlaylists, parseLink, playlistsReady, se
 import type { Feature } from '../types.ts';
 import { botChannelId, EXTENSIONS, onPlaybackStop, playLong, playStream } from './soundboard.ts';
 
-// The next song is handed to Spotify this long before the current one ends, so it follows without a gap
-const HAND_OVER_MS = 15_000;
 // Spotify moving on this close to a song's end is the song finishing, not someone choosing something else
 const END_SLACK_MS = 6_000;
-// A different song this soon after the bot asked for one is Spotify not playing it, rather than someone's choice
+// A different song this soon after the bot asked Spotify for one is Spotify not playing it, rather than someone's choice
 const CANT_PLAY_MS = 5_000;
+// Finding a song and downloading it takes seconds; this is for when YouTube is struggling
+const FETCH_TIMEOUT_MS = 3 * 60_000;
 export const MOST_QUEUED = 500;
 const SHOWN_IN_DISCORD = 10;
 // A file played once from the web page, which can be a whole song or a mix
 export const MOST_FILE_BYTES = 50 * 1024 * 1024;
 const LONGEST_FILE_MS = 20 * 60_000;
-// A second of audio in hand. The mixer skips ahead past anything more, rather than fall behind
+// A second of Spotify's audio in hand. The mixer skips ahead past anything more, rather than fall behind
 const AUDIO_BUFFER = 48_000 * 4;
+const SAFE_FILE = /^[\w.-]+$/;
+const OTHER_LINK = /^https?:\/\/((www|m|music)\.)?(youtube\.com|youtu\.be|soundcloud\.com)\//i;
 
 export interface QueueRow {
   id: number;
   guild_id: string;
   pos: number;
+  /** A Spotify song's URI, or the YouTube or SoundCloud link it was added by */
   uri: string;
   title: string;
   artist: string;
@@ -51,15 +54,16 @@ export interface QueueRow {
   added_at: number;
 }
 
-/** What the music container reports about itself and Spotify */
+/** What the music container reports: yt-dlp, and Spotify, whose playback is optional */
 export interface PlayerStatus {
-  state: 'starting' | 'downloading' | 'running' | 'failed' | 'no-key' | 'no-consent';
+  state: 'starting' | 'downloading' | 'running' | 'failed' | 'no-key' | 'no-consent' | 'off';
   message: string;
   loggedIn: boolean;
   account: string | null;
   active: boolean;
   version: string | null;
   expiresAt: number | null;
+  youtube?: { ready: boolean; version: string | null; message: string } | null;
 }
 
 interface Position {
@@ -68,29 +72,31 @@ interface Position {
   speed: number;
 }
 
-/** Music playing, or paused, in one server. Spotify plays one thing at a time, so there's at most one */
+/** Music playing, or paused, in one server */
 interface Session {
-  guildId: string;
+  guild: Guild;
   channelId: string;
   phase: 'starting' | 'playing' | 'paused';
   /** The queue row being played */
   current: QueueRow;
+  /** Where the song playing came from: youtube or soundcloud, or spotify for a song they didn't have */
+  via: string | null;
+  /** Counts each change of what's playing, so a download or an ending from before it is ignored */
+  turn: number;
+  position: Position;
+  stopAudio?: () => void;
+  /** Why it stopped or skipped by itself, for the web page */
+  note: string | null;
+  // Only for songs played through Spotify
   /** The song Spotify has loaded, which is the current one unless someone changed it from Spotify */
   loaded: string | null;
-  /** The song handed to Spotify to follow the current one */
-  handedNext: string | null;
   /** When the bot last asked Spotify for a song */
   requestedAt: number;
-  position: Position;
   /** A pause the bot asked for, so it isn't mistaken for one from Spotify */
   pausing: boolean;
-  stopStream?: () => void;
-  handOverTimer?: NodeJS.Timeout;
-  /** Why it stopped by itself, for the web page */
-  note: string | null;
 }
 
-let session: Session | undefined;
+const sessions = new Map<string, Session>();
 let status: PlayerStatus | null = null;
 /** Why the music container can't be reached, while it can't */
 let unreachable: string | null = null;
@@ -103,7 +109,7 @@ export function queueOf(guildId: string): QueueRow[] {
 }
 
 /** Whether the first row is the song playing (or paused), which stays put while the rest move around it */
-const holdsFirst = (guildId: string) => session?.guildId === guildId;
+const holdsFirst = (guildId: string) => sessions.has(guildId);
 
 /** Adds songs to the end, or after the song playing with `next`. Returns how many fitted */
 export function addTracks(guildId: string, tracks: Track[], who: string, next = false): number {
@@ -120,7 +126,7 @@ export function addTracks(guildId: string, tracks: Track[], who: string, next = 
   );
   adding.forEach((t, i) => insert.run(guildId, before + step * (i + 1), t.uri, t.title, t.artist, t.album, t.cover, t.durationMs, who, Date.now()));
   renumber(guildId);
-  scheduleHandOver();
+  fetchNext(guildId);
   return adding.length;
 }
 
@@ -140,7 +146,7 @@ export function moveTrack(guildId: string, id: number, to: number): boolean {
   rows.splice(Math.max(first, Math.min(rows.length, Math.trunc(to))), 0, row);
   const update = db.prepare('UPDATE music_queue SET pos = ? WHERE id = ?');
   rows.forEach((r, i) => update.run(i, r.id));
-  scheduleHandOver();
+  fetchNext(guildId);
   return true;
 }
 
@@ -148,30 +154,27 @@ export function moveTrack(guildId: string, id: number, to: number): boolean {
 export async function removeTrack(guildId: string, id: number, who: string): Promise<QueueRow | null> {
   const row = queueOf(guildId).find((r) => r.id === id);
   if (!row) return null;
-  if (session?.guildId === guildId && session.current.id === id) await moveOn(session);
+  const s = sessions.get(guildId);
+  if (s?.current.id === id) await moveOn(s);
   else db.prepare('DELETE FROM music_queue WHERE id = ?').run(id);
   logActivity(guildId, who, `Removed **${row.title}** from the music queue`);
-  scheduleHandOver();
+  fetchNext(guildId);
   return row;
 }
 
 /** Empties the queue, apart from the song playing */
 export function clearQueue(guildId: string, who: string) {
-  const keep = session?.guildId === guildId ? session.current.id : -1;
+  const keep = sessions.get(guildId)?.current.id ?? -1;
   db.prepare('DELETE FROM music_queue WHERE guild_id = ? AND id != ?').run(guildId, keep);
   logActivity(guildId, who, 'Cleared the music queue');
-  scheduleHandOver();
 }
 
 // ---------- the music container ----------
 
+const asBridge = () => ({ authorization: `Bearer ${config.musicToken}`, 'content-type': 'application/json' });
+
 async function command(body: Record<string, unknown>) {
-  const res = await fetch(`${config.musicUrl}/command`, {
-    method: 'POST',
-    headers: { authorization: `Bearer ${config.musicToken}`, 'content-type': 'application/json' },
-    body: JSON.stringify(body),
-    signal: AbortSignal.timeout(10_000),
-  });
+  const res = await fetch(`${config.musicUrl}/command`, { method: 'POST', headers: asBridge(), body: JSON.stringify(body), signal: AbortSignal.timeout(10_000) });
   if (!res.ok) throw new Error(`music container refused ${String(body.command)}: HTTP ${res.status}`);
 }
 
@@ -182,6 +185,31 @@ async function openAudio(): Promise<Readable> {
   const res = await fetch(`${config.musicUrl}/audio`, { headers: { authorization: `Bearer ${config.musicToken}` } });
   if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
   return Readable.fromWeb(res.body as ReadableStream<Uint8Array>, { highWaterMark: AUDIO_BUFFER });
+}
+
+/** Asks the music container something about YouTube. A 404 is "not found", with the reason; anything else that isn't fine throws */
+async function askYoutube(where: '/fetch' | '/lookup', body: Record<string, unknown>): Promise<Record<string, unknown> & { missing?: string }> {
+  const res = await fetch(`${config.musicUrl}${where}`, { method: 'POST', headers: asBridge(), body: JSON.stringify(body), signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
+  const answer = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+  if (res.status === 404) return { missing: String(answer.error ?? 'Not found.') };
+  if (!res.ok) throw new Error(String(answer.error ?? `HTTP ${res.status}`));
+  return answer;
+}
+
+/** The audio for a song: a file the music container downloaded, or why there isn't one */
+async function fetchAudio(row: QueueRow): Promise<{ file: string; source: string } | { missing: string }> {
+  const answer = await askYoutube('/fetch', row.uri.startsWith('spotify:') ? { uri: row.uri, title: row.title, artist: row.artist, durationMs: row.duration_ms } : { url: row.uri });
+  if (answer.missing) return { missing: answer.missing };
+  if (typeof answer.file !== 'string' || !SAFE_FILE.test(answer.file)) throw new Error('the music container named the file oddly');
+  return { file: path.join(config.musicAudioDir, answer.file), source: String(answer.source ?? 'youtube') };
+}
+
+/** Starts downloading the song after the one playing, so it follows without a wait */
+function fetchNext(guildId: string) {
+  const s = sessions.get(guildId);
+  const next = queueOf(guildId)[1];
+  if (!s || s.phase === 'paused' || !next || unavailable()) return;
+  void fetchAudio(next).catch((err: unknown) => console.error(`Music: couldn’t fetch ${next.title} ahead:`, (err as Error).message));
 }
 
 /** Follows the music container's events for as long as the bot runs, reconnecting when it drops */
@@ -213,7 +241,8 @@ async function listen(signal: AbortSignal) {
       if (unreachable !== reason) console.error(`Music container unreachable: ${reason}`);
       unreachable = reason;
       status = null;
-      if (session?.phase === 'playing') pauseHere(session, 'The music player stopped answering, so the music paused.');
+      const s = onSpotifyNow();
+      if (s?.phase === 'playing') pauseHere(s, 'The music player stopped answering, so the music paused.');
       await sleep(5_000, undefined, { signal }).catch(() => {});
     }
   }
@@ -221,7 +250,8 @@ async function listen(signal: AbortSignal) {
 
 function onStatus(next: PlayerStatus) {
   status = next;
-  if (session?.phase === 'playing' && !(next.state === 'running' && next.loggedIn)) pauseHere(session, 'Spotify signed out, so the music paused.');
+  const s = onSpotifyNow();
+  if (s?.phase === 'playing' && !spotifyReady()) pauseHere(s, 'Spotify signed out, so the music paused.');
 }
 
 // ---------- playing ----------
@@ -230,176 +260,228 @@ function onStatus(next: PlayerStatus) {
 export function unavailable(): string | null {
   if (!config.musicUrl || !config.musicToken) return 'Music isn’t set up on this bot. It needs MUSIC_URL and MUSIC_TOKEN.';
   if (unreachable || !status) return 'The music player isn’t answering. Check that the music container is running.';
-  if (status.state === 'no-key') return 'The music player needs a Spotify Soloist key (SOLOIST_API_KEY).';
-  if (status.state === 'no-consent') return 'The music player won’t download Spotify Soloist until SOLOIST_ACCEPT_TERMS is true.';
-  if (status.state === 'failed') return `The music player failed: ${status.message}`;
-  if (status.state !== 'running') return 'The music player is still starting. Try again in a moment.';
-  if (!status.loggedIn) return 'The music player isn’t paired with a Spotify account yet. See the README’s music section.';
+  if (!status.youtube?.ready) return status.youtube?.message ? `The music player can’t reach YouTube: ${status.youtube.message}` : 'The music player is still starting. Try again in a moment.';
   return null;
 }
 
-/** Where Spotify has got to in the song playing, in milliseconds */
+/** Whether songs YouTube doesn't have can play through Spotify instead */
+const spotifyReady = () => status?.state === 'running' && status.loggedIn;
+/** The server whose song is playing through Spotify, which only plays one thing at a time */
+const onSpotifyNow = () => [...sessions.values()].find((s) => s.via === 'spotify');
+
+/** Where the song playing has got to, in milliseconds */
 const positionOf = (s: Session) => s.position.ms + Math.max(0, Date.now() - s.position.at) * s.position.speed;
 const nearEnd = (s: Session) => positionOf(s) >= s.current.duration_ms - END_SLACK_MS;
+const channelOf = (s: Session) => {
+  const channel = s.guild.channels.cache.get(s.channelId);
+  return channel?.isVoiceBased() ? channel : undefined;
+};
 
 /** Starts the queue in a channel, or carries on where it paused. Returns null on success or the reason it couldn't, for the user */
 export async function startMusic(guild: Guild, channel: VoiceBasedChannel): Promise<string | null> {
   const problem = unavailable();
   if (problem) return problem;
-  if (session && session.guildId !== guild.id && session.phase !== 'paused') return 'Music is already playing in another server, and Spotify only plays one thing at a time.';
   const first = queueOf(guild.id)[0];
   if (!first) return 'The queue is empty. Add a song first.';
   // The music takes over from a file, rather than playing on top of it
   stopFile(guild.id);
-  if (session?.guildId === guild.id && session.phase !== 'paused' && session.channelId === channel.id) return null;
-  if (session && session.guildId !== guild.id) endSession(session);
+  let s = sessions.get(guild.id);
+  if (s && s.phase !== 'paused' && s.channelId === channel.id) return null;
+  const carryOn = s?.current.id === first.id ? positionOf(s) : 0;
+  if (s) Object.assign(s, { channelId: channel.id, note: null, current: first });
+  else {
+    s = { guild, channelId: channel.id, phase: 'starting', current: first, via: null, turn: 0, position: { ms: 0, at: Date.now(), speed: 0 }, note: null, loaded: null, requestedAt: 0, pausing: false };
+    sessions.set(guild.id, s);
+  }
+  return playCurrent(s, carryOn);
+}
 
-  const carryOn = session?.guildId === guild.id && session.current.id === first.id && session.loaded === first.uri;
-  const s: Session =
-    session?.guildId === guild.id
-      ? Object.assign(session, { channelId: channel.id, phase: 'starting' as const, note: null })
-      : { guildId: guild.id, channelId: channel.id, phase: 'starting', current: first, loaded: null, handedNext: null, requestedAt: 0, position: { ms: 0, at: Date.now(), speed: 0 }, pausing: false, note: null };
-  session = s;
-  s.current = first;
-  s.stopStream?.();
-  s.stopStream = undefined;
+/** Plays the current song from `fromMs`: from YouTube or SoundCloud, or through Spotify if they don't have it and that's on */
+async function playCurrent(s: Session, fromMs = 0): Promise<string | null> {
+  const turn = ++s.turn;
+  const row = s.current;
+  s.phase = 'starting';
+  stopAudioOf(s);
+  if (s.via === 'spotify' && s.loaded === row.uri && fromMs > 0) return playOnSpotify(s, turn, true);
+  let found: Awaited<ReturnType<typeof fetchAudio>>;
+  try {
+    found = await fetchAudio(row);
+  } catch (err) {
+    if (s.turn !== turn) return null;
+    console.error(`Music: couldn’t get ${row.title}:`, (err as Error).message);
+    pauseHere(s, `The music player couldn’t get ${row.title}, so the music paused. Try again in a moment.`);
+    return `The music player couldn’t get ${row.title}. Try again in a moment.`;
+  }
+  if (s.turn !== turn || sessions.get(s.guild.id) !== s) return null;
+  if ('missing' in found) {
+    // Spotify plays one thing at a time, so it can't stand in while it's playing in another server
+    const elsewhere = onSpotifyNow();
+    if (row.uri.startsWith('spotify:') && spotifyReady() && (!elsewhere || elsewhere === s || elsewhere.phase === 'paused')) return playOnSpotify(s, turn, false, fromMs);
+    const note = `Couldn’t find ${row.title} on YouTube or SoundCloud, so it was skipped.`;
+    const next = await moveOn(s);
+    if (sessions.get(s.guild.id) !== s) return note;
+    // The next song's own problem says more than this one being skipped
+    if (next) return next;
+    s.note ??= note;
+    return null;
+  }
+  leaveSpotify(s);
+  const channel = channelOf(s);
+  const stop = channel ? await playLong(channel, found.file, (byItself) => onSongEnd(s, turn, byItself), fromMs) : 'That voice channel is gone.';
+  if (s.turn !== turn) {
+    if (typeof stop !== 'string') stop();
+    return null;
+  }
+  if (typeof stop === 'string') {
+    s.phase = 'paused';
+    s.position = { ms: fromMs, at: Date.now(), speed: 0 };
+    return stop;
+  }
+  Object.assign(s, { stopAudio: stop, via: found.source, phase: 'playing', position: { ms: fromMs, at: Date.now(), speed: 1 } });
+  fetchNext(s.guild.id);
+  return null;
+}
 
+/** A song from a file is over: it ended, so the next one plays, or it was cut off, so the music pauses */
+function onSongEnd(s: Session, turn: number, byItself: boolean) {
+  if (s.turn !== turn || sessions.get(s.guild.id) !== s) return;
+  s.stopAudio = undefined;
+  if (byItself && s.phase === 'playing') void moveOn(s);
+  else if (s.phase !== 'paused') pauseHere(s, null);
+}
+
+/** Plays the current song through Spotify, carrying on where Spotify paused or starting it from `fromMs` */
+async function playOnSpotify(s: Session, turn: number, carryOn: boolean, fromMs = 0): Promise<string | null> {
+  // Spotify plays one thing at a time, so another server paused on Spotify loses its place
+  for (const other of sessions.values()) if (other !== s && other.via === 'spotify') Object.assign(other, { via: null, loaded: null });
+  const channel = channelOf(s);
   let pcm: Readable;
   try {
     pcm = await openAudio();
   } catch (err) {
-    console.error('Music: couldn’t open the audio:', (err as Error).message);
+    console.error('Music: couldn’t open Spotify’s audio:', (err as Error).message);
     s.phase = 'paused';
     return 'The music player isn’t answering. Check that the music container is running.';
   }
-  const stop = await playStream(channel, pcm, () => onStreamEnd(s));
+  if (s.turn !== turn || !channel) {
+    pcm.destroy();
+    return channel ? null : 'That voice channel is gone.';
+  }
+  const stop = await playStream(channel, pcm, () => onSpotifyStreamEnd(s, turn));
   if (typeof stop === 'string') {
     s.phase = 'paused';
     return stop;
   }
-  s.stopStream = stop;
+  Object.assign(s, { stopAudio: stop, via: 'spotify' });
   try {
     // Spotify only plays here once this device is the account's active one
     await command({ command: 'activate' });
     if (carryOn) await command({ command: 'play' });
-    else await playUri(s, first.uri);
+    else {
+      s.loaded = s.current.uri;
+      s.requestedAt = Date.now();
+      s.position = { ms: 0, at: Date.now(), speed: 0 };
+      await command({ command: 'play', uri: s.current.uri });
+      if (fromMs > 0) await command({ command: 'seek', position_ms: Math.round(fromMs) });
+    }
   } catch (err) {
     console.error('Music:', (err as Error).message);
-    stopStreamOf(s);
+    stopAudioOf(s);
     s.phase = 'paused';
     return 'The music player didn’t start. Try again in a moment.';
   }
   s.phase = 'playing';
-  scheduleHandOver();
+  fetchNext(s.guild.id);
   return null;
 }
 
-async function playUri(s: Session, uri: string) {
-  s.loaded = uri;
-  s.handedNext = null;
-  s.requestedAt = Date.now();
-  s.position = { ms: 0, at: Date.now(), speed: 0 };
-  await command({ command: 'play', uri });
-}
-
-function stopStreamOf(s: Session) {
-  const stop = s.stopStream;
-  s.stopStream = undefined;
-  stop?.();
-}
-
-/** The music's audio stopped: Stop was pressed, everyone left, or the bot left voice */
-function onStreamEnd(s: Session) {
-  if (session !== s || !s.stopStream) return;
-  s.stopStream = undefined;
+/** Spotify's audio stopped: Stop was pressed, everyone left, or the bot left voice */
+function onSpotifyStreamEnd(s: Session, turn: number) {
+  if (s.turn !== turn || !s.stopAudio) return;
+  s.stopAudio = undefined;
   if (s.phase !== 'paused') pauseHere(s, null);
+}
+
+/** Pauses Spotify and lets it go, when the next song comes from somewhere else */
+function leaveSpotify(s: Session) {
+  if (s.via === 'spotify') {
+    s.pausing = true;
+    void quietly({ command: 'pause' });
+  }
+  Object.assign(s, { via: null, loaded: null });
+}
+
+function stopAudioOf(s: Session) {
+  const stop = s.stopAudio;
+  s.stopAudio = undefined;
+  stop?.();
 }
 
 /** Pauses, keeping the queue. `note` says why, when it wasn't someone asking */
 function pauseHere(s: Session, note: string | null, tellSpotify = true) {
+  s.turn++;
   s.phase = 'paused';
   s.note = note;
   s.position = { ms: positionOf(s), at: Date.now(), speed: 0 };
-  clearTimeout(s.handOverTimer);
-  stopStreamOf(s);
-  if (tellSpotify && status?.loggedIn) {
+  stopAudioOf(s);
+  if (s.via === 'spotify' && tellSpotify && status?.loggedIn) {
     s.pausing = true;
     void quietly({ command: 'pause' });
   }
 }
 
 export function pauseMusic(guildId: string): string | null {
-  if (session?.guildId !== guildId || session.phase === 'paused') return 'Nothing is playing.';
-  pauseHere(session, null);
+  const s = sessions.get(guildId);
+  if (!s || s.phase === 'paused') return 'Nothing is playing.';
+  pauseHere(s, null);
   return null;
 }
 
 /** Ends the current song early. Returns null on success, or why it couldn't */
 export async function skipMusic(guildId: string, who: string): Promise<string | null> {
-  if (session?.guildId !== guildId) return 'Nothing is playing.';
-  logActivity(guildId, who, `Skipped **${session.current.title}**`);
-  await moveOn(session);
+  const s = sessions.get(guildId);
+  if (!s) return 'Nothing is playing.';
+  logActivity(guildId, who, `Skipped **${s.current.title}**`);
+  await moveOn(s);
   return null;
 }
 
 /** Stops the music and empties the queue */
 export function stopMusic(guildId: string, who: string) {
-  if (session?.guildId === guildId) endSession(session);
+  const s = sessions.get(guildId);
+  if (s) endSession(s);
   db.prepare('DELETE FROM music_queue WHERE guild_id = ?').run(guildId);
   logActivity(guildId, who, 'Stopped the music and cleared the queue');
 }
 
-/** Goes on to the next song in the queue, or stops once there isn't one */
-async function moveOn(s: Session) {
+/** Goes on to the next song in the queue, or stops once there isn't one. Returns why the next song couldn't play, if it couldn't */
+async function moveOn(s: Session): Promise<string | null> {
   db.prepare('DELETE FROM music_queue WHERE id = ?').run(s.current.id);
-  const next = queueOf(s.guildId)[0];
-  if (!next) return endSession(s);
+  const next = queueOf(s.guild.id)[0];
+  if (!next) {
+    endSession(s);
+    return null;
+  }
   s.current = next;
   s.note = null;
   if (s.phase === 'paused') {
     // It starts from the top of the new song once someone presses play
+    s.turn++;
+    s.position = { ms: 0, at: Date.now(), speed: 0 };
     s.loaded = null;
-    s.handedNext = null;
-    return;
+    return null;
   }
-  try {
-    await playUri(s, next.uri);
-  } catch (err) {
-    console.error('Music:', (err as Error).message);
-    pauseHere(s, 'The music player didn’t start the next song, so the music paused.', false);
-  }
-  scheduleHandOver();
+  return playCurrent(s);
 }
 
 function endSession(s: Session) {
-  clearTimeout(s.handOverTimer);
-  stopStreamOf(s);
-  if (s.phase !== 'paused') {
+  s.turn++;
+  stopAudioOf(s);
+  if (s.via === 'spotify' && s.phase !== 'paused') {
     s.pausing = true;
     void quietly({ command: 'pause' });
   }
-  if (session === s) session = undefined;
-}
-
-/** Hands Spotify the next song shortly before the current one ends. Later than that, the queue can still change */
-function scheduleHandOver() {
-  const s = session;
-  if (!s) return;
-  clearTimeout(s.handOverTimer);
-  if (s.phase !== 'playing' || s.handedNext || s.position.speed === 0) return;
-  const wait = s.current.duration_ms - positionOf(s) - HAND_OVER_MS;
-  const song = s.current.id;
-  s.handOverTimer = setTimeout(
-    () => {
-      // Timed for one song, so it's no good once another is playing
-      if (session !== s || s.phase !== 'playing' || s.handedNext || s.current.id !== song) return;
-      const following = queueOf(s.guildId)[1];
-      if (!following) return;
-      s.handedNext = following.uri;
-      void quietly({ command: 'add_to_queue', uri: following.uri });
-    },
-    Math.max(0, wait),
-  );
+  if (sessions.get(s.guild.id) === s) sessions.delete(s.guild.id);
 }
 
 interface SpotifyMessage {
@@ -411,31 +493,21 @@ interface SpotifyMessage {
   position?: { position_ms: number; timestamp_ms: number; speed: number };
 }
 
-/** Follows what Spotify does, which is how a song ending is known */
+/** Follows what Spotify does while it plays a song, which is how that song ending is known */
 export async function onSpotify(msg: SpotifyMessage) {
-  const s = session;
+  const s = onSpotifyNow();
   if (!s) return;
   if (msg.position && (msg.type === 'position_sync' || msg.type === 'playback_state')) {
-    // Read before a change of song arrives, as that resets it
     s.position = { ms: msg.position.position_ms, at: msg.position.timestamp_ms, speed: msg.position.speed };
-    scheduleHandOver();
     return;
   }
   if (msg.type === 'track_changed') {
     const uri = msg.item?.uri;
     if (!uri || uri === s.loaded) return;
-    if (uri === s.handedNext || nearEnd(s)) {
-      // The song finished. Spotify went on to the one it was handed, or to suggestions of its own once there was none
-      db.prepare('DELETE FROM music_queue WHERE id = ?').run(s.current.id);
-      clearTimeout(s.handOverTimer);
-      s.handedNext = null;
-      const next = queueOf(s.guildId)[0];
-      if (!next) return endSession(s);
-      s.current = next;
-      s.position = { ms: 0, at: Date.now(), speed: 0 };
-      if (next.uri === uri) s.loaded = uri;
-      else if (s.phase === 'playing') await playUri(s, next.uri).catch((err: unknown) => console.error('Music:', (err as Error).message));
-      else s.loaded = null;
+    if (nearEnd(s)) {
+      // The song finished, and Spotify went on to suggestions of its own
+      s.loaded = uri;
+      if (s.phase === 'playing') await moveOn(s);
       return;
     }
     if (s.phase !== 'paused' && Date.now() - s.requestedAt < CANT_PLAY_MS) {
@@ -446,7 +518,7 @@ export async function onSpotify(msg: SpotifyMessage) {
       }
       const title = s.current.title;
       await moveOn(s);
-      if (session === s) s.note = `Spotify wouldn’t play ${title}, so it was skipped.`;
+      if (sessions.get(s.guild.id) === s) s.note = `Spotify wouldn’t play ${title}, so it was skipped.`;
       return;
     }
     // Someone chose something else for this device in Spotify
@@ -463,7 +535,7 @@ export async function onSpotify(msg: SpotifyMessage) {
     else if (s.phase === 'playing') pauseHere(s, 'The music was paused from Spotify.', false);
     return;
   }
-  if (msg.type === 'playback_changed' && msg.status === 'playing' && s.phase === 'paused' && !s.stopStream) {
+  if (msg.type === 'playback_changed' && msg.status === 'playing' && s.phase === 'paused' && !s.stopAudio) {
     // Played from the Spotify app while the bot isn't in voice, where nobody would hear it
     s.pausing = true;
     void quietly({ command: 'pause' });
@@ -529,7 +601,8 @@ export async function playFile(guild: Guild, channel: VoiceBasedChannel, file: s
   }
   playing.stop = stop;
   files.set(guild.id, playing);
-  if (session?.guildId === guild.id && session.phase !== 'paused') pauseHere(session, 'Paused for a file. Press Resume to carry on.');
+  const s = sessions.get(guild.id);
+  if (s && s.phase !== 'paused') pauseHere(s, 'Paused for a file. Press Resume to carry on.');
   logActivity(guild.id, who, `Played the file **${name}**`);
   return null;
 }
@@ -543,15 +616,34 @@ export function stopFile(guildId: string): boolean {
 
 // ---------- adding by search or link ----------
 
-/** Songs for whatever was typed: a link to a song, album or playlist, or words to search for. The name says what was found */
+/** Songs for whatever was typed: a Spotify link to a song, album or playlist, a YouTube or SoundCloud link, or words to search for. The name says what was found */
 export async function resolve(input: string, shuffle = false): Promise<{ name: string; tracks: Track[] }> {
   if (isShortLink(input)) throw new SpotifyError('Short spotify.link links can’t be read. Open it and copy the open.spotify.com link instead.');
   const link = parseLink(input);
   if (link) return tracksFor(link, shuffle);
-  if (/^https?:\/\//i.test(input.trim())) throw new SpotifyError('That isn’t a Spotify song, album or playlist link.');
+  if (OTHER_LINK.test(input.trim())) return lookUp(input.trim());
+  if (/^https?:\/\//i.test(input.trim())) throw new SpotifyError('That isn’t a Spotify, YouTube or SoundCloud link.');
   const [top] = await search(input);
   if (!top) throw new SpotifyError(`Nothing on Spotify matches “${input.trim()}”.`);
   return { name: `${top.title} by ${top.artist}`, tracks: [top] };
+}
+
+/** What a YouTube or SoundCloud link is, from the music container */
+async function lookUp(url: string): Promise<{ name: string; tracks: Track[] }> {
+  const problem = unavailable();
+  if (problem) throw new SpotifyError(problem);
+  let answer: Awaited<ReturnType<typeof askYoutube>>;
+  try {
+    answer = await askYoutube('/lookup', { url });
+  } catch (err) {
+    console.error('Music: couldn’t look up a link:', (err as Error).message);
+    throw new SpotifyError('The music player couldn’t read that link. Try again in a moment.');
+  }
+  if (answer.missing) throw new SpotifyError(answer.missing);
+  const title = String(answer.title ?? 'Untitled').slice(0, 300);
+  const cover = typeof answer.cover === 'string' && /^https:\/\/(i\.ytimg\.com|i1\.sndcdn\.com)\//.test(answer.cover) ? answer.cover : null;
+  const track: Track = { uri: String(answer.url ?? url), title, artist: String(answer.artist ?? '').slice(0, 300), album: '', cover, durationMs: Number(answer.durationMs) || 0 };
+  return { name: track.artist ? `${title} by ${track.artist}` : title, tracks: [track] };
 }
 
 /** Adds what was typed and says what happened. `shuffle` picks an album's or playlist's songs at random. Throws SpotifyError with a message for the user */
@@ -570,17 +662,18 @@ export async function queueFrom(guildId: string, input: string, who: string, nex
 // ---------- what the web page and /music queue show ----------
 
 export function musicState(guildId: string) {
-  const s = session?.guildId === guildId ? session : undefined;
+  const s = sessions.get(guildId);
   return {
     problem: unavailable(),
     searchReady: searchReady(),
-    account: status?.account ?? null,
+    // Only while Spotify can play, which is when the account matters
+    account: status && status.state !== 'off' ? status.account : null,
     phase: s?.phase ?? 'stopped',
     // Playing a sound elsewhere from the soundboard takes the bot, and the music, with it
-    channelId: s ? ((s.stopStream && botChannelId(guildId)) || s.channelId) : null,
-    positionMs: s ? Math.round(positionOf(s)) : 0,
+    channelId: s ? ((s.stopAudio && botChannelId(guildId)) || s.channelId) : null,
+    positionMs: s ? Math.round(Math.min(positionOf(s), s.current.duration_ms)) : 0,
     note: s?.note ?? null,
-    elsewhere: !!session && session.guildId !== guildId && session.phase !== 'paused',
+    via: s?.via ?? null,
     file: playingFile(guildId),
   };
 }
@@ -657,7 +750,8 @@ async function run(i: ChatInputCommandInteraction<'cached'>) {
         return i.editReply(err.message);
       }
     }
-    const playing = session?.guildId === i.guildId && session.phase !== 'paused';
+    const s = sessions.get(i.guildId);
+    const playing = !!s && s.phase !== 'paused';
     const say = (content: string) => (i.deferred ? i.editReply(content) : reply(content));
     if (playing) return say(added || 'The music is already playing.');
     const channel = i.member.voice.channel;
@@ -672,7 +766,7 @@ async function run(i: ChatInputCommandInteraction<'cached'>) {
     return problem ? reply(problem) : announce('Paused the music. Use /music play to carry on.');
   }
   if (sub === 'skip') {
-    const title = session?.guildId === i.guildId ? session.current.title : null;
+    const title = sessions.get(i.guildId)?.current.title ?? null;
     const problem = await skipMusic(i.guildId, i.user.id);
     return problem ? reply(problem) : announce(`Skipped **${title}**.`);
   }
@@ -688,7 +782,7 @@ export const music: Feature = {
     {
       data: new SlashCommandBuilder()
         .setName('music')
-        .setDescription('Spotify in voice, with a queue everyone shares')
+        .setDescription('Music in voice, with a queue everyone shares')
         .setDMPermission(false)
         .addSubcommand((s) =>
           s
@@ -712,7 +806,8 @@ export const music: Feature = {
     if (!config.musicUrl || !config.musicToken) return;
     // Stop, and everyone leaving, pause the music rather than lose the queue
     onPlaybackStop((guildId) => {
-      if (session?.guildId === guildId && session.phase !== 'paused') pauseHere(session, null);
+      const s = sessions.get(guildId);
+      if (s && s.phase !== 'paused') pauseHere(s, null);
     });
     listening = new AbortController();
     void listen(listening.signal);
@@ -720,17 +815,17 @@ export const music: Feature = {
   shutdown() {
     for (const guildId of files.keys()) stopFile(guildId);
     listening?.abort();
-    if (session) endSession(session);
+    for (const s of [...sessions.values()]) endSession(s);
   },
 };
 
 /** The bot's own voice channel, for the web page to default to */
-export const musicChannelFor = (guildId: string) => (session?.guildId === guildId ? session.channelId : botChannelId(guildId));
+export const musicChannelFor = (guildId: string) => sessions.get(guildId)?.channelId ?? botChannelId(guildId);
 
 /** For tests: starts from nothing and follows a fake music container's status */
 export function resetMusic(next: PlayerStatus | null = null) {
-  if (session) clearTimeout(session.handOverTimer);
-  session = undefined;
+  for (const s of sessions.values()) s.turn++;
+  sessions.clear();
   status = next;
   unreachable = null;
 }

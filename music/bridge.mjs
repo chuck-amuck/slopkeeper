@@ -1,5 +1,6 @@
-// The music container: runs Spotify Soloist, Spotify's own headless player, and hands its audio and controls to the bot.
-// Soloist can't be shipped in a public image, so it's downloaded from Spotify on start, once the host has accepted its terms
+// The music container: finds songs on YouTube with yt-dlp for the bot to play, and, when SPOTIFY_PLAYBACK is on, runs
+// Spotify Soloist, Spotify's own headless player, for songs YouTube doesn't have. Soloist can't be shipped in a public image,
+// so it's downloaded from Spotify on start, once the host has accepted its terms
 import { execFile, spawn } from 'node:child_process';
 import { timingSafeEqual } from 'node:crypto';
 import fs from 'node:fs';
@@ -8,6 +9,7 @@ import path from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { promisify } from 'node:util';
 import zlib from 'node:zlib';
+import { createFetcher } from './youtube.mjs';
 
 // 20 ms of 48 kHz 16-bit stereo, the frame the bot mixes
 export const FRAME_BYTES = 3840;
@@ -92,6 +94,12 @@ export function createBridge(options = {}) {
     apiKey: env.SOLOIST_API_KEY || '',
     consent: env.SOLOIST_ACCEPT_TERMS === 'true',
     session: env.SOLOIST_SESSION || '',
+    spotifyPlayback: env.SPOTIFY_PLAYBACK === 'true',
+    cacheBytes: Number(env.MUSIC_CACHE_MB || 1024) * 1024 * 1024,
+    // yt-dlp lives in its own Python environment, which the node user can update
+    fetchCommand: ['/opt/ytdlp/bin/python', path.join(import.meta.dirname, 'fetch.py')],
+    versionCommand: ['/opt/ytdlp/bin/python', '-c', 'import yt_dlp; print(yt_dlp.version.__version__)'],
+    updateCommand: ['/opt/ytdlp/bin/pip', 'install', '--quiet', '--upgrade', 'yt-dlp[default,deno]'],
     deviceName: env.MUSIC_DEVICE_NAME || 'Slopkeeper',
     wsPort: 37901,
     cdn: CDN,
@@ -111,7 +119,7 @@ export function createBridge(options = {}) {
   const socket = path.join(runDir, 'pulse.sock');
   const redact = (text) => (o.apiKey ? text.split(o.apiKey).join('<key>') : text);
 
-  const status = { state: 'starting', message: '', version: null, expiresAt: null, loggedIn: false, account: null, active: false, volume: null, playback: null };
+  const status = { state: 'starting', message: '', version: null, expiresAt: null, loggedIn: false, account: null, active: false, volume: null, playback: null, youtube: null };
   const sse = new Set();
   const listeners = new Set();
   let ws;
@@ -133,6 +141,9 @@ export function createBridge(options = {}) {
     Object.assign(status, changes);
     broadcast('status', status);
   };
+  const youtube = createFetcher({ ...o, audioDir: o.audioDir ?? path.join(o.dataDir, 'audio') });
+  status.youtube = youtube.state;
+  youtube.onChange((state) => setStatus({ youtube: { ...state } }));
 
   const meta = () => {
     try {
@@ -437,8 +448,8 @@ export function createBridge(options = {}) {
       req.once('close', () => audioClients.delete(res));
       return;
     }
-    if (route === 'POST /command') {
-      let body;
+    let body;
+    if (req.method === 'POST') {
       try {
         let raw = '';
         for await (const chunk of req) if ((raw += chunk).length > 10_000) throw new Error('too long');
@@ -446,6 +457,22 @@ export function createBridge(options = {}) {
       } catch {
         return json(res, 400, { error: 'bad JSON' });
       }
+    }
+    if (route === 'POST /fetch' || route === 'POST /lookup') {
+      const song = typeof body?.uri === 'string' && typeof body.title === 'string' && typeof body.artist === 'string' && Number.isFinite(body.durationMs);
+      const link = typeof body?.url === 'string' && /^https:\/\//.test(body.url);
+      if (route === 'POST /fetch' ? !song && !link : !link) return json(res, 400, { error: 'say which song or link' });
+      if (!youtube.state.ready) return json(res, 503, { error: youtube.state.message || 'yt-dlp isn’t ready' });
+      try {
+        const answer = route === 'POST /lookup' ? await youtube.lookup(body.url) : await youtube.fetchAudio(link ? { url: body.url } : { uri: body.uri, title: body.title, artist: body.artist, durationMs: body.durationMs });
+        if (answer.error) return json(res, answer.missing ? 404 : 502, { error: answer.error });
+        return json(res, 200, answer);
+      } catch (err) {
+        o.log('yt-dlp failed:', err.message);
+        return json(res, 502, { error: err.message });
+      }
+    }
+    if (route === 'POST /command') {
       if (!COMMANDS.has(body?.command)) return json(res, 400, { error: 'unknown command' });
       if (!ws || ws.readyState !== WebSocket.OPEN) return json(res, 503, { error: status.message || 'Spotify Soloist isn’t running' });
       ws.send(JSON.stringify({ ...body, type: 'command' }));
@@ -491,6 +518,8 @@ export function createBridge(options = {}) {
         for (const res of sse) res.write(': ping\n\n');
       }, 15_000);
       pingTimer.unref?.();
+      await youtube.start();
+      if (!o.spotifyPlayback) return setStatus({ state: 'off', message: 'Spotify playback is off (SPOTIFY_PLAYBACK)' });
       if (!o.arch) return setStatus({ state: 'failed', message: `Spotify Soloist has no build for this CPU (${process.arch})` });
       if (!o.apiKey) return setStatus({ state: 'no-key', message: 'SOLOIST_API_KEY isn’t set' });
       if (!o.consent) return setStatus({ state: 'no-consent', message: 'SOLOIST_ACCEPT_TERMS isn’t true, so Spotify Soloist wasn’t downloaded' });
@@ -510,6 +539,7 @@ export function createBridge(options = {}) {
       clearInterval(refreshTimer);
       clearInterval(pingTimer);
       clearTimeout(paceTimer);
+      youtube.stop();
       ws?.close();
       soloist?.kill('SIGTERM');
       pulse?.kill('SIGTERM');
