@@ -17,6 +17,7 @@ function run(guildId: string, sub: string, values: Record<string, unknown>) {
     user: { id: 'admin' },
     options: { getSubcommand: () => sub, getInteger: pick, getNumber: pick, getBoolean: pick, getString: pick, getRole: pick, getChannel: pick },
     reply: async () => {},
+    followUp: async () => {},
   } as never);
 }
 
@@ -219,4 +220,21 @@ test('/setup music sets the volume and who can control it, and keeps what isn’
   assert.deepEqual(checkSetting(guild, 'musicVolume', 500), { error: 'Music volume has to be a whole number from 0 to 200.' });
   assert.deepEqual(checkSetting(guild, 'musicDjRole', 'djs'), { value: 'djs' });
   assert.deepEqual(checkSetting(guild, 'musicDjRole', 'nope'), { error: 'Pick a role.' });
+});
+
+test('looping speech takes up to 500 characters, a voice of its own, and its own gap, and can be turned off', async () => {
+  const guild = { channels: { cache: new Map() } } as never;
+  assert.deepEqual(checkSetting(guild, 'loopText', '  stay a while  '), { value: 'stay a while' });
+  assert.match((checkSetting(guild, 'loopText', '   ') as { error: string }).error, /Type something/);
+  assert.match((checkSetting(guild, 'loopText', 'a'.repeat(501)) as { error: string }).error, /up to 500/);
+  assert.deepEqual(checkSetting(guild, 'loopVoice', '9'), { value: '9' });
+  assert.match((checkSetting(guild, 'loopVoice', '7') as { error: string }).error, /Pick a voice/);
+  assert.deepEqual(checkSetting(guild, 'loopTextEvery', 2.5), { value: 2.5 });
+  await run('loop-speech', 'loop-room', { channel: { id: 'therapy', type: ChannelType.GuildVoice, joinable: true, guild: { members: { me: {} } }, permissionsFor: () => ({ has: () => true }) } });
+  await run('loop-speech', 'loop-room', { speech: 'stay a while', speech_voice: '9', speech_every: 4 });
+  assert.deepEqual([setting('loop-speech', 'loopText'), setting('loop-speech', 'loopVoice'), setting('loop-speech', 'loopTextEvery'), setting('loop-speech', 'loopRoom')], ['stay a while', '9', 4, 'therapy']);
+  assert.ok(log('loop-speech').includes('Set Looping speech to “stay a while”'));
+  await run('loop-speech', 'loop-room', { no_speech: true });
+  assert.equal(setting('loop-speech', 'loopText'), '');
+  assert.equal(setting('loop-speech', 'loopRoom'), 'therapy', 'turning the speech off keeps the room');
 });

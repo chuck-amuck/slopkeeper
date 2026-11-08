@@ -50,6 +50,12 @@ export const DEFAULTS = {
   loopVolume: num('LOOP_VOLUME', 50),
   // Seconds between fresh copies of the looping sound, which layer on top of each other. 0 loops it without a gap instead
   loopEvery: num('LOOP_EVERY', 0),
+  // Said over and over in the room as well as the sound, in its own voice. Unset says nothing
+  loopText: null as string | null,
+  // Unset uses the server's default voice
+  loopVoice: null as string | null,
+  // Seconds between fresh copies of the speech, layered like the sound's. 0 says it again straight away
+  loopTextEvery: num('LOOP_TEXT_EVERY', 0),
   // Unset lets everyone change sounds
   soundManagerRole: null as string | null,
   tts: process.env.TTS !== 'false',
@@ -102,6 +108,7 @@ export const DEFAULT_ENV: Partial<Record<SettingKey, string>> = {
   soundVolume: 'SOUND_VOLUME',
   loopVolume: 'LOOP_VOLUME',
   loopEvery: 'LOOP_EVERY',
+  loopTextEvery: 'LOOP_TEXT_EVERY',
   tts: 'TTS',
   ttsMaxChars: 'TTS_MAX_CHARS',
   ttsCooldownSec: 'TTS_COOLDOWN_SEC',

@@ -38,7 +38,7 @@ import {
   type VoiceState,
 } from 'discord.js';
 import { execFile } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { copyFileSync, existsSync, mkdirSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -695,48 +695,100 @@ export function applySoundVolume(guildId: string) {
   audio.get(guildId)?.mixer?.setGroupGain('sound', setting(guildId, 'soundVolume') / 100);
 }
 
-/** Servers whose looping sound is playing, or about to */
+/** The room loops its sound, its speech, or both, each on its own */
+type LoopPart = 'sound' | 'speech';
+/** Which parts of each server's loop are playing, or about to, as `guildId:part` */
 const looping = new Set<string>();
+const loopKey = (guildId: string, part: LoopPart) => `${guildId}:${part}`;
+const isLooping = (guildId: string) => looping.has(loopKey(guildId, 'sound')) || looping.has(loopKey(guildId, 'speech'));
 /** Servers where Stop silenced the loop, until someone else joins the room */
 const silenced = new Set<string>();
 let botClient: Client | undefined;
 
-/** Starts the looping sound if people are in the room and the bot isn't needed elsewhere */
+/** Starts the looping sound and speech, whichever are set, if people are in the room and the bot isn't needed elsewhere */
 export async function checkLoopRoom(guild: Guild) {
   const roomId = idSetting(guild.id, 'loopRoom');
   const sound = findSound(guild.id, setting(guild.id, 'loopSound') ?? '');
-  if (!roomId || !sound || looping.has(guild.id) || silenced.has(guild.id)) return;
+  const wanted: LoopPart[] = [];
+  if (sound) wanted.push('sound');
+  if (setting(guild.id, 'loopText') && loopSpeaker) wanted.push('speech');
+  const parts = wanted.filter((part) => !looping.has(loopKey(guild.id, part)));
+  if (!roomId || !parts.length || silenced.has(guild.id)) return;
   const room = guild.channels.cache.get(roomId);
   if (!room?.isVoiceBased() || !humansIn(room).length) return;
   // People using the bot in another channel keep it, until that channel empties or the bot goes idle
   const botChannelId = getVoiceConnection(guild.id)?.joinConfig.channelId;
   const elsewhere = botChannelId && botChannelId !== room.id ? guild.channels.cache.get(botChannelId) : undefined;
   if (elsewhere?.isVoiceBased() && humansIn(elsewhere).length) return;
-  looping.add(guild.id);
+  for (const part of parts) looping.add(loopKey(guild.id, part));
   const problem = await connect(room);
   if (problem) {
-    looping.delete(guild.id);
-    return console.log(`Looping sound in ${guild.name} didn’t play: ${problem}`);
+    for (const part of parts) looping.delete(loopKey(guild.id, part));
+    return console.log(`Looping room in ${guild.name} didn’t play: ${problem}`);
   }
-  let file = sound.file;
+  await Promise.all(parts.map((part) => startLoop(guild, part, sound)));
+}
+
+/** Plays one part of the room's loop over and over, at the loop volume, layered if it has a gap set */
+async function startLoop(guild: Guild, part: LoopPart, sound: Sound | undefined) {
+  const key = loopKey(guild.id, part);
+  let file: string;
   try {
-    file = await loopable(sound.file);
+    file = part === 'sound' ? await loopable(sound!.file) : await loopSpeechFile(guild);
   } catch (err) {
-    looping.delete(guild.id);
-    return console.error(`Looping sound ${sound.name} in ${guild.name} couldn’t be prepared:`, err);
+    looping.delete(key);
+    return console.error(`Looping ${part} in ${guild.name} couldn’t be prepared:`, (err as Error).message);
   }
-  const gain = soundGain(guild.id, sound.name) * (setting(guild.id, 'loopVolume') / 100);
-  const everyMs = Math.round(setting(guild.id, 'loopEvery') * 1000);
+  const volume = setting(guild.id, 'loopVolume') / 100;
+  const gain = part === 'sound' ? soundGain(guild.id, sound!.name) * volume : volume;
+  const everyMs = Math.round(setting(guild.id, part === 'sound' ? 'loopEvery' : 'loopTextEvery') * 1000);
   mixIn(
     guild.id,
     file,
     gain,
     () => {
-      looping.delete(guild.id);
-      if (file !== sound.file) rmSync(file, { force: true });
+      looping.delete(key);
+      // A copy made to loop cleanly, but not the library's file or the speech, which is kept to reuse
+      if (part === 'sound' && file !== sound!.file) rmSync(file, { force: true });
     },
     { loop: true, ...(everyMs > 0 && { everyMs }) },
   );
+}
+
+const loopSpeechDir = () => path.join(config.dataDir, 'loop-speech');
+
+/**
+ * The room's looping speech as a file, made by the voice container once for each line, voice and speed, then reused.
+ * An older line for the same server is deleted once it's replaced
+ */
+async function loopSpeechFile(guild: Guild): Promise<string> {
+  const text = setting(guild.id, 'loopText') ?? '';
+  const voice = setting(guild.id, 'loopVoice') || setting(guild.id, 'ttsVoice');
+  const made = createHash('sha256').update(JSON.stringify([text, voice, setting(guild.id, 'ttsSpeed')])).digest('hex').slice(0, 16);
+  const file = path.join(loopSpeechDir(), `${guild.id}-${made}.wav`);
+  if (existsSync(file)) return file;
+  mkdirSync(loopSpeechDir(), { recursive: true });
+  const making = `${file}.${randomUUID()}.new.wav`;
+  try {
+    await loopSpeaker!(guild, text, voice, making);
+    renameSync(making, file);
+  } finally {
+    rmSync(making, { force: true });
+  }
+  for (const old of readdirSync(loopSpeechDir())) if (old.startsWith(`${guild.id}-`) && old !== path.basename(file) && !old.includes('.new.')) rmSync(path.join(loopSpeechDir(), old), { force: true });
+  return file;
+}
+
+/** Why the room's looping speech can't be made, or null if it can or there isn't any. Makes it ahead of time if it can */
+export async function loopSpeechProblem(guild: Guild): Promise<string | null> {
+  if (!setting(guild.id, 'loopText')) return null;
+  if (!loopSpeaker) return 'Text to speech isn’t running on this bot.';
+  try {
+    await loopSpeechFile(guild);
+    return null;
+  } catch (err) {
+    return (err as Error).message;
+  }
 }
 
 /** A WAV copy to loop, as some formats (m4a, for one) leave a moment of silence the first time ffmpeg goes round */
@@ -746,6 +798,9 @@ async function loopable(file: string): Promise<string> {
   await promisify(execFile)('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-i', file, '-ar', '48000', '-ac', '2', copy]);
   return copy;
 }
+
+/** Whether a setting changes what the looping room plays: its own, or the speech voice and speed its speech can follow */
+export const affectsLoopRoom = (key: string) => key.startsWith('loop') || key === 'ttsVoice' || key === 'ttsSpeed';
 
 /** After the looping settings change: stops the loop as it was, then starts it again if it should be playing */
 export function refreshLoopRoom(guild: Guild) {
@@ -794,6 +849,8 @@ export async function playJoinSound(oldState: VoiceState, newState: VoiceState) 
   const { channel, guild, member } = newState;
   // Coming from another channel, or muting, is not joining
   if (!channel || oldState.channelId || member?.user.bot || channel.id === guild.afkChannelId) return;
+  // The looping room has its own sound going, which a join sound or greeting would only talk over
+  if (channel.id === idSetting(guild.id, 'loopRoom')) return;
   const name = setting(guild.id, 'joinSounds') ? joinSounds(guild.id).find((r) => r.user_id === newState.id)?.name : undefined;
   const sound = name && findSound(guild.id, name);
   // A join sound already says who it is
@@ -836,6 +893,13 @@ export async function playJoinSound(oldState: VoiceState, newState: VoiceState) 
 
 let greeter: { line(member: GuildMember): string | null; say(channel: VoiceBasedChannel, line: string): Promise<string | null> } | undefined;
 
+let loopSpeaker: ((guild: Guild, text: string, voiceId: string, file: string) => Promise<void>) | undefined;
+
+/** How text to speech makes the looping room's speech, handed over like the greeter */
+export function setLoopSpeaker(speak: (guild: Guild, text: string, voiceId: string, file: string) => Promise<void>) {
+  loopSpeaker = speak;
+}
+
 /** How text to speech greets people, kept here by being handed over since it already depends on this file */
 export function setGreeter(line: (member: GuildMember) => string | null, say: (channel: VoiceBasedChannel, line: string) => Promise<string | null>) {
   greeter = { line, say };
@@ -848,7 +912,7 @@ export const onPlaybackStop = (listener: (guildId: string) => void) => void stop
 
 export function stopPlayback(guildId: string) {
   for (const listener of stopListeners) listener(guildId);
-  if (looping.has(guildId)) silenced.add(guildId);
+  if (isLooping(guildId)) silenced.add(guildId);
   const a = audio.get(guildId);
   a?.mixer?.stopAll();
   a?.player.stop(true);

@@ -12,7 +12,7 @@ import { idSetting, setting } from '../settings.ts';
 import type { Feature } from '../types.ts';
 import { humansIn } from '../util.ts';
 import { plural } from './gamestats.ts';
-import { onPlaybackStop, play, setGreeter } from './soundboard.ts';
+import { onPlaybackStop, play, setGreeter, setLoopSpeaker } from './soundboard.ts';
 
 /** Speakers in the voice container's model, numbered as they were when they were picked */
 export const VOICES = [
@@ -93,6 +93,23 @@ export function speechFor(guild: Guild, typed: string) {
     .replace(/_/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+/** Says a line into a WAV file, levelled like any other speech, for the looping room to play over and over. Throws why it couldn't, for the user */
+async function speakToFile(guild: Guild, typed: string, voiceId: string, file: string) {
+  if (!config.voiceUrl) throw new Error('Text to speech isn’t set up on this bot. It needs VOICE_URL.');
+  const text = speechFor(guild, typed);
+  if (!hasWords(text)) throw new Error('There’s nothing in that to say.');
+  const voice = VOICES.find((v) => v.id === voiceId) ?? VOICES[0];
+  const raw = `${file}.raw.wav`;
+  try {
+    writeFileSync(raw, await speech(text, voice.speaker, setting(guild.id, 'ttsSpeed'), new AbortController().signal).catch(() => {
+      throw new Error('The voice container isn’t answering, so the looping speech can’t be made.');
+    }));
+    await levelSpeech(raw, file);
+  } finally {
+    rmSync(raw, { force: true });
+  }
 }
 
 /** The length_scale that gives a speed, as a percentage of the voice's natural speed */
@@ -333,6 +350,7 @@ export const speak: Feature = {
   setup(client) {
     onPlaybackStop(stopLines);
     setGreeter(greetingFor, sayOut);
+    setLoopSpeaker(speakToFile);
     client.on(Events.MessageCreate, (message) => void readMessage(message).catch(console.error));
   },
 };

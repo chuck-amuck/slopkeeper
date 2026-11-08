@@ -12,7 +12,7 @@ import { recentActivity } from '../src/activity.ts';
 import { config } from '../src/config.ts';
 import { Mixer } from '../src/mixer.ts';
 import { announceAloud, lengthFor, phrases, readMessage, removePhrase, savePhrase, say, sayOut, speak, speechFor } from '../src/features/say.ts';
-import { playJoinSound, saveUpload, setJoinSound, soundboard, stopPlayback } from '../src/features/soundboard.ts';
+import { loopSpeechProblem, playJoinSound, saveUpload, setJoinSound, soundboard, stopPlayback } from '../src/features/soundboard.ts';
 import { setSetting } from '../src/settings.ts';
 
 const hasFfmpeg = spawnSync('ffmpeg', ['-version']).status === 0;
@@ -731,4 +731,49 @@ test('/say suggests saved lines as you type', async () => {
   assert.equal((await suggest('yyy'))[0].name.length, 100);
   assert.equal((await suggest('gotta'))[0].value, String(phrases(voice.guild.id)[1].id));
   assert.deepEqual(await suggest('good', null), []);
+});
+
+test('the looping room’s speech is made once in its own voice, and remade when the line, voice or speed changes', { skip: !hasFfmpeg }, async (t) => {
+  const asked = fakeVoice(t);
+  const { guild: server, id } = chat();
+  const guild = server as never as import('discord.js').Guild;
+  assert.equal(await loopSpeechProblem(guild), null, 'nothing to make without a line');
+  setSetting(id, 'loopText', 'stay a while');
+  setSetting(id, 'ttsVoice', '2');
+  assert.equal(await loopSpeechProblem(guild), null);
+  assert.deepEqual(asked.map((a) => [a.text, a.speaker]), [['stay a while', 100]], 'the default voice until one’s picked');
+  assert.equal(await loopSpeechProblem(guild), null);
+  assert.equal(asked.length, 1, 'made once, then reused');
+  setSetting(id, 'loopVoice', '9');
+  await loopSpeechProblem(guild);
+  setSetting(id, 'ttsSpeed', 120);
+  await loopSpeechProblem(guild);
+  assert.deepEqual(asked.slice(1).map((a) => a.speaker), [800, 800]);
+  assert.ok(asked[2].length < asked[1].length, 'faster');
+  const kept = readdirSync(path.join(config.dataDir, 'loop-speech')).filter((f) => f.startsWith(`${id}-`));
+  assert.equal(kept.length, 1, 'only the line in use is kept');
+});
+
+test('the looping room’s speech says why it can’t be made', { skip: !hasFfmpeg }, async (t) => {
+  fakeVoice(t, async () => new Response('down', { status: 503 }));
+  const { guild: server, id } = chat();
+  const guild = server as never as import('discord.js').Guild;
+  setSetting(id, 'loopText', 'stay a while');
+  assert.match((await loopSpeechProblem(guild))!, /voice container isn’t answering/);
+  setSetting(id, 'loopText', '🎉🎉');
+  assert.match((await loopSpeechProblem(guild))!, /nothing in that to say/);
+  config.voiceUrl = null;
+  setSetting(id, 'loopText', 'hi');
+  assert.match((await loopSpeechProblem(guild))!, /isn’t set up/);
+});
+
+test('no join sound or greeting in the looping room', { skip: !hasFfmpeg }, async (t) => {
+  const { said } = heard(t);
+  const { join, id } = joining();
+  setSetting(id, 'loopRoom', 'lounge');
+  await join();
+  assert.deepEqual(await said(), []);
+  setSetting(id, 'loopRoom', 'other');
+  await join();
+  assert.deepEqual(await said(), ['Ana joined'], 'anywhere else, as before');
 });

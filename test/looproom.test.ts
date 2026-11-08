@@ -16,6 +16,7 @@ import {
   removeSound,
   renameSound,
   saveUpload,
+  setLoopSpeaker,
   soundboard,
   soundGain,
   stopPlayback,
@@ -233,4 +234,47 @@ test('a gap set layers fresh copies that often, rather than looping without one'
   setSetting(id, 'loopEvery', '0');
   await checkLoopRoom(guild);
   assert.equal(loops()[1].everyMs, undefined, '0 loops without a gap');
+});
+
+test('looping speech plays alongside the sound, or alone, at the loop volume, with its own gap', { skip: !hasFfmpeg }, async (t) => {
+  const { id, guild, therapy, enter, loops, turnOn } = await server(t);
+  const made: string[] = [];
+  setLoopSpeaker(async (_guild, text, _voice, file) => {
+    made.push(text);
+    execFileSync('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', 'sine=frequency=300:duration=0.3', file]);
+  });
+  t.after(() => setLoopSpeaker(undefined as never));
+  turnOn();
+  setSetting(id, 'loopText', 'stay a while');
+  setSetting(id, 'loopTextEvery', '2.5');
+  enter(therapy, 'ana');
+  await checkLoopRoom(guild);
+  const [sound, speech] = [loops().find((l) => l.file.endsWith('.wav') && !l.file.includes('loop-speech')), loops().find((l) => l.file.includes('loop-speech'))];
+  assert.ok(sound && speech, `both play, got ${loops().map((l) => l.file).join(', ')}`);
+  assert.deepEqual([speech.gain, speech.everyMs, sound.everyMs], [0.5, 2500, undefined]);
+  // The sound ending (Stop does this) leaves the speech, and checking again brings back only the sound
+  sound.end!();
+  await checkLoopRoom(guild);
+  assert.equal(loops().length, 3);
+  assert.equal(made.length, 1, 'the speech isn’t made again');
+  // With no sound set, the speech plays alone
+  for (const l of loops()) l.end?.();
+  setSetting(id, 'loopSound', '');
+  await checkLoopRoom(guild);
+  assert.deepEqual(loops().slice(3).map((l) => l.file.includes('loop-speech')), [true]);
+});
+
+test('speech that can’t be made leaves the sound playing', { skip: !hasFfmpeg }, async (t) => {
+  const { id, guild, therapy, enter, loops, turnOn } = await server(t);
+  setLoopSpeaker(async () => {
+    throw new Error('The voice container isn’t answering');
+  });
+  t.after(() => setLoopSpeaker(undefined as never));
+  const errors = t.mock.method(console, 'error', () => {});
+  turnOn();
+  setSetting(id, 'loopText', 'stay a while');
+  enter(therapy, 'ana');
+  await checkLoopRoom(guild);
+  assert.equal(loops().length, 1);
+  assert.match(String(errors.mock.calls[0].arguments.join(' ')), /Looping speech .* couldn’t be prepared: The voice container/);
 });

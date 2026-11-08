@@ -41,9 +41,12 @@ const FIELDS = {
   soundVolume: { kind: 'number', unit: '%', hint: 'How loud every sound plays, including join sounds and the looping sound. Speech has its own volume. The slider on the Soundboard tab changes this too.' },
   musicVolume: { kind: 'number', unit: '%', hint: 'How loud music plays. It drops to under a third while the bot is talking. The slider on the Music tab changes this too.' },
   musicDjRole: { kind: 'role', none: 'Everyone', hint: 'Who can add, skip, pause and stop music with /music, along with people with Manage Server. Anyone can see the queue. This page isn’t limited by it.' },
-  loopRoom: { kind: 'voice', none: 'Off', hint: 'While anyone’s in this channel, the bot plays the looping sound there nonstop.' },
+  loopRoom: { kind: 'voice', none: 'Off', hint: 'While anyone’s in this channel, the bot plays the looping sound and speech there nonstop. Join sounds don’t play there.' },
   loopSound: { kind: 'sound', none: 'Not set', hint: 'A sound from the library.' },
   loopVolume: { kind: 'number', unit: '%', hint: 'On top of the sound’s own level. It never stops, so it starts at half.' },
+  loopText: { hint: 'Words said over and over in the room, on top of the sound, up to 500 characters. Leave it empty for none.' },
+  loopVoice: { kind: 'choice', options: [['', 'Same as the default voice'], ['1', 'Voice 1'], ['2', 'Voice 2'], ['5', 'Voice 5'], ['9', 'Voice 9']], hint: 'Who says the looping speech.' },
+  loopTextEvery: { kind: 'number', unit: 'seconds', hint: 'Starts the speech again this often, layered over the last if it’s still talking. 0 says it again straight away.' },
   loopEvery: { kind: 'number', unit: 'seconds', hint: 'Starts a fresh copy this often, layered on top of the ones still playing, like 0.5 or 1. Up to 8 play at once. 0 loops it without a gap.' },
   ttsGreet: { hint: 'Says who joined voice, for people with no join sound. Uses the join sound cooldown and delay.' },
   ttsGreeting: { hint: 'What it says, with {name} for the person.' },
@@ -65,7 +68,7 @@ const GROUPS = [
   ['Free games', ['freeGames', 'freeGamesChannel', 'freeGamesMinRating', 'freeGamesTaste', 'freeGamesMultiplayer', 'freeGamesUnlisted']],
   ['Soundboard', ['soundVolume', 'evenVolume', 'joinSounds', 'joinSoundDelayMs', 'joinSoundCooldownMin', 'soundManagerRole']],
   ['Music', ['musicVolume', 'musicDjRole']],
-  ['Looping sound room', ['loopRoom', 'loopSound', 'loopVolume', 'loopEvery']],
+  ['Looping sound room', ['loopRoom', 'loopSound', 'loopVolume', 'loopEvery', 'loopText', 'loopVoice', 'loopTextEvery']],
   ['Text to speech', ['tts', 'ttsVoice', 'ttsSpeed', 'ttsVolume', 'ttsChannel', 'ttsChannelWho', 'ttsGreet', 'ttsGreeting', 'ttsNightReminders', 'ttsHopOn', 'ttsRole', 'ttsMaxChars', 'ttsCooldownSec']],
 ];
 

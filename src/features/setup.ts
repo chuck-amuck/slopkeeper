@@ -14,7 +14,7 @@ import { DEFAULT_ENV, DEFAULTS, setSetting, setting, storedSetting, type Setting
 import type { Feature } from '../types.ts';
 import { isTimeZone, pingWarning } from '../util.ts';
 import { VOICES } from './say.ts';
-import { applyLevels, applyMusicVolume, applySoundVolume, cantJoin, findSound, listSounds, refreshLoopRoom } from './soundboard.ts';
+import { affectsLoopRoom, applyLevels, applyMusicVolume, applySoundVolume, cantJoin, findSound, listSounds, loopSpeechProblem, refreshLoopRoom } from './soundboard.ts';
 
 const ANNOUNCE_PERMISSIONS = [
   [PermissionFlagsBits.ViewChannel, 'View Channel'],
@@ -46,11 +46,14 @@ export const LIMITS = {
   soundVolume: [0, 200],
   loopVolume: [5, 200],
   loopEvery: [0, 60],
+  loopTextEvery: [0, 60],
   musicVolume: [0, 200],
 } as const;
 
 /** Settings that take fractions, and in what steps. The rest are whole numbers */
-export const STEPS: Partial<Record<keyof typeof LIMITS, number>> = { loopEvery: 0.1 };
+export const STEPS: Partial<Record<keyof typeof LIMITS, number>> = { loopEvery: 0.1, loopTextEvery: 0.1 };
+/** The longest looping speech, in characters */
+export const LOOP_TEXT_MAX = 500;
 
 const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 const TIME_ZONES = Intl.supportedValuesOf('timeZone');
@@ -97,6 +100,9 @@ export const LABELS: Record<SettingKey, string> = {
   loopSound: 'Looping sound',
   loopVolume: 'Loop volume',
   loopEvery: 'Loop every',
+  loopText: 'Looping speech',
+  loopVoice: 'Looping speech voice',
+  loopTextEvery: 'Speech every',
   ttsChannel: 'Read chat aloud',
   ttsChannelWho: 'Whose messages are read',
   ttsGreet: 'Say who joined',
@@ -158,7 +164,12 @@ export function show(key: SettingKey, value: unknown): string {
     case 'loopRoom':
       return value ? `<#${value}>` : 'off';
     case 'loopEvery':
+    case 'loopTextEvery':
       return value ? `${value} seconds, layered` : 'without a gap';
+    case 'loopText':
+      return value ? `“${String(value)}”` : 'off';
+    case 'loopVoice':
+      return VOICES.find((v) => v.id === value)?.name ?? 'the default voice';
     case 'loopSound':
       return value ? String(value) : 'not set';
     case 'ttsCooldownSec':
@@ -275,7 +286,13 @@ export function checkSetting(guild: Guild, key: SettingKey, value: unknown): Che
     case 'patchNotes':
       return Object.hasOwn(PATCH_MODES, String(value)) ? { value: String(value) } : { error: 'Patch notes are off, each one posted, or a weekly digest.' };
     case 'ttsVoice':
+    case 'loopVoice':
       return VOICES.some((v) => v.id === value) ? { value: String(value) } : { error: 'Pick a voice from the list.' };
+    case 'loopText': {
+      const text = String(value).trim();
+      if (!text) return { error: 'Type something to say.' };
+      return text.length > LOOP_TEXT_MAX ? { error: `Looping speech can be up to ${LOOP_TEXT_MAX} characters.` } : { value: text };
+    }
     case 'ttsChannelWho':
       return Object.hasOwn(READ_WHO, String(value)) ? { value: String(value) } : { error: 'Read everyone, or only people in voice.' };
     case 'ttsGreeting':
@@ -470,7 +487,13 @@ export const setup: Feature = {
             .addIntegerOption((o) => o.setName('volume').setDescription('How loud, as a percentage (50 by default)').setMinValue(LIMITS.loopVolume[0]).setMaxValue(LIMITS.loopVolume[1]))
             .addNumberOption((o) =>
               o.setName('every').setDescription('Seconds between fresh copies, layered on top of each other, like 0.5. 0 loops it without a gap').setMinValue(LIMITS.loopEvery[0]).setMaxValue(LIMITS.loopEvery[1]),
-            ),
+            )
+            .addStringOption((o) => o.setName('speech').setDescription('Words to say over and over as well as the sound').setMaxLength(LOOP_TEXT_MAX))
+            .addStringOption((o) => o.setName('speech_voice').setDescription('The voice that says them').addChoices(...VOICES.map((v) => ({ name: v.name, value: v.id }))))
+            .addNumberOption((o) =>
+              o.setName('speech_every').setDescription('Seconds between fresh copies of the speech, layered. 0 says it again straight away').setMinValue(LIMITS.loopTextEvery[0]).setMaxValue(LIMITS.loopTextEvery[1]),
+            )
+            .addBooleanOption((o) => o.setName('no_speech').setDescription('Stop saying the looping speech')),
         )
         .addSubcommand((s) =>
           s
@@ -677,16 +700,31 @@ export const setup: Feature = {
             const checked = value ? checkSetting(i.guild, key, value) : null;
             if (checked && 'error' in checked) return i.reply({ content: checked.error, flags: MessageFlags.Ephemeral });
           }
-          const checkedEvery = every === null ? null : checkSetting(i.guild, 'loopEvery', every);
-          if (checkedEvery && 'error' in checkedEvery) return i.reply({ content: checkedEvery.error, flags: MessageFlags.Ephemeral });
-          // Changing only the sound, volume or gap leaves the room as it is
+          const speech = i.options.getString('speech');
+          const speechVoice = i.options.getString('speech_voice');
+          const speechEvery = i.options.getNumber('speech_every');
+          const noSpeech = i.options.getBoolean('no_speech');
+          const checked: Partial<Record<SettingKey, string | number>> = {};
+          for (const [key, value] of [['loopEvery', every], ['loopText', speech], ['loopVoice', speechVoice], ['loopTextEvery', speechEvery]] as const) {
+            if (value === null) continue;
+            const result = checkSetting(i.guild, key, value);
+            if ('error' in result) return i.reply({ content: result.error, flags: MessageFlags.Ephemeral });
+            checked[key] = result.value as string | number;
+          }
+          // Changing only how it sounds leaves the room as it is
+          const tweaked = sound || volume !== null || Object.keys(checked).length || noSpeech;
           await apply(i, [
-            ['loopRoom', channel?.id ?? (sound || volume !== null || every !== null ? null : '')],
+            ['loopRoom', channel?.id ?? (tweaked ? null : '')],
             ['loopSound', sound],
             ['loopVolume', volume],
-            ['loopEvery', checkedEvery ? (checkedEvery.value as number) : null],
+            ['loopEvery', checked.loopEvery ?? null],
+            ['loopText', noSpeech ? '' : (checked.loopText ?? null)],
+            ['loopVoice', checked.loopVoice ?? null],
+            ['loopTextEvery', checked.loopTextEvery ?? null],
           ]);
           await refreshLoopRoom(i.guild);
+          const speechProblem = checked.loopText || checked.loopVoice ? await loopSpeechProblem(i.guild) : null;
+          if (speechProblem) await i.followUp({ content: `⚠️ ${speechProblem}`, flags: MessageFlags.Ephemeral });
           return;
         }
 
@@ -715,18 +753,23 @@ export const setup: Feature = {
           const greeting = i.options.getString('greeting');
           const problem = greeting && greetingProblem(greeting);
           if (problem) return i.reply({ content: problem, flags: MessageFlags.Ephemeral });
-          return apply(i, [
+          const voice = i.options.getString('voice');
+          const speed = i.options.getInteger('speed');
+          await apply(i, [
             ['ttsGreet', i.options.getBoolean('greet')],
             ['ttsGreeting', greeting && greeting.trim()],
             ['ttsNightReminders', i.options.getBoolean('night_reminders')],
             ['ttsHopOn', i.options.getBoolean('hop_on')],
             ['tts', i.options.getBoolean('enabled')],
-            ['ttsVoice', i.options.getString('voice')],
-            ['ttsSpeed', i.options.getInteger('speed')],
+            ['ttsVoice', voice],
+            ['ttsSpeed', speed],
             ['ttsVolume', i.options.getInteger('volume')],
             ['ttsMaxChars', i.options.getInteger('max_characters')],
             ['ttsCooldownSec', i.options.getInteger('wait_seconds')],
           ]);
+          // The looping room's speech may be in this voice, or at this speed
+          if (voice !== null || speed !== null) await refreshLoopRoom(i.guild);
+          return;
         }
 
         if (sub === 'reset') {
@@ -737,7 +780,7 @@ export const setup: Feature = {
           if (key === 'evenVolume') await applyLevels(i.guild);
           if (key === 'soundVolume') applySoundVolume(i.guildId);
           if (key === 'musicVolume') applyMusicVolume(i.guildId);
-          if (key.startsWith('loop')) await refreshLoopRoom(i.guild);
+          if (affectsLoopRoom(key)) await refreshLoopRoom(i.guild);
           return i.reply({
             content: `↩️ ${LABELS[key]} is back to the default: ${show(key, setting(i.guildId, key))}.`,
             flags: MessageFlags.Ephemeral,

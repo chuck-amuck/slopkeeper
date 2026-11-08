@@ -3000,3 +3000,10 @@ test('the page lists the Spotify account’s own playlists, and can shuffle one 
   assert.ok(music.queue.some((r: any) => Number(r.title.slice(5)) >= 100), 'from all of it, not just the first 100');
   await ok(`/guilds/${GUILD}/music/queue`, { method: 'DELETE' });
 });
+
+test('looping speech that can’t be made is warned about when it’s set', async () => {
+  const { warning } = await ok(`/guilds/${GUILD}/settings/loopText`, { method: 'PUT', json: { value: 'stay a while' } });
+  assert.match(warning, /Text to speech/);
+  assert.equal(setting(GUILD, 'loopText'), 'stay a while');
+  assert.match(await refused(400, `/guilds/${GUILD}/settings/loopText`, { method: 'PUT', json: { value: '   ' } }), /Type something/);
+});

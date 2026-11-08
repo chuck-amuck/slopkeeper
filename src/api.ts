@@ -23,7 +23,7 @@ import { addTracks, clearQueue, fileProblem, fileUploadPath, MOST_FILE_BYTES, mo
 import { phrases, removePhrase, savePhrase, say, VOICES } from './features/say.ts';
 import { voiceTotals } from './features/sessions.ts';
 import { checkSetting, LABELS, LIMITS, show, source, STEPS } from './features/setup.ts';
-import { addSound, addToDiscord, applyLevels, applyMusicVolume, applySoundVolume, BIN_DAYS, changeEmoji, deletedSounds, discordVolume, eraseDeleted, expiresAt, favourites, findSound, isTrimmed, joinSounds, listSounds, parseEmoji, playCounts, playDiscordSound, playFromWeb, postPanel, refreshLoopRoom, refreshPanels, removeSound, renameSound, restoreDeleted, restoreSound, saveFromDiscord, setFavourite, setJoinSound, setSoundVolume, type Sound, soundLevels, stopPlayback, swapOnDiscord, syncToDiscord, takeOffDiscord, trimProblem, trimSound, uploadProblem, voiceVolume, volumeProblem } from './features/soundboard.ts';
+import { addSound, addToDiscord, affectsLoopRoom, applyLevels, applyMusicVolume, applySoundVolume, BIN_DAYS, changeEmoji, deletedSounds, discordVolume, eraseDeleted, expiresAt, favourites, findSound, isTrimmed, joinSounds, listSounds, loopSpeechProblem, parseEmoji, playCounts, playDiscordSound, playFromWeb, postPanel, refreshLoopRoom, refreshPanels, removeSound, renameSound, restoreDeleted, restoreSound, saveFromDiscord, setFavourite, setJoinSound, setSoundVolume, type Sound, soundLevels, stopPlayback, swapOnDiscord, syncToDiscord, takeOffDiscord, trimProblem, trimSound, uploadProblem, voiceVolume, volumeProblem } from './features/soundboard.ts';
 import { DEFAULTS, idSetting, isAllowed, setSetting, setting, type SettingKey } from './settings.ts';
 import { myPlaylists, playlistsReady, search, SpotifyError, type Track } from './spotify.ts';
 import type { Feature } from './types.ts';
@@ -1102,7 +1102,7 @@ async function handleSettings(guild: Guild, req: IncomingMessage, key?: string) 
     if (settingKey === 'evenVolume') await applyLevels(guild);
     if (settingKey === 'soundVolume') applySoundVolume(guild.id);
     if (settingKey === 'musicVolume') applyMusicVolume(guild.id);
-    if (settingKey.startsWith('loop')) await refreshLoopRoom(guild);
+    if (affectsLoopRoom(settingKey)) await refreshLoopRoom(guild);
   };
   if (req.method === 'DELETE') {
     setSetting(guild.id, settingKey, undefined);
@@ -1116,7 +1116,9 @@ async function handleSettings(guild: Guild, req: IncomingMessage, key?: string) 
   setSetting(guild.id, settingKey, checked.value);
   logActivity(guild.id, by(), `Set ${LABELS[settingKey]} to ${show(settingKey, setting(guild.id, settingKey))}`);
   await settled();
-  return { warning: checked.warning && plain(guild, checked.warning) };
+  // The speech is made now, so a voice container that's down shows here rather than as silence in the room
+  const speechProblem = settingKey === 'loopText' || settingKey === 'loopVoice' ? await loopSpeechProblem(guild) : null;
+  return { warning: (checked.warning && plain(guild, checked.warning)) || speechProblem || undefined };
 }
 
 async function handle(client: Client<true>, req: IncomingMessage, res: ServerResponse) {
