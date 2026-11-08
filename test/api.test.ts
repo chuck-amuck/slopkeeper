@@ -1727,6 +1727,51 @@ test('plays a Discord sound in voice as loud as it is there, or as the library h
   assert.match(await refused(400, url, { method: 'POST', json: { channelId: 'v1' } }), /Nobody’s in voice/);
 });
 
+test('a file from the page plays once at the music volume, and is deleted after', async (t) => {
+  permitted.push(PermissionFlagsBits.Connect, PermissionFlagsBits.Speak);
+  const connection = joinVoiceChannel({ channelId: '702', guildId: GUILD, adapterCreator: guild.voiceAdapterCreator as never });
+  Object.assign(connection, { state: { ...connection.state, status: VoiceConnectionStatus.Ready } });
+  t.after(async () => {
+    await ok(`/guilds/${GUILD}/stop`, { method: 'POST' });
+    soundboard.shutdown!();
+  });
+  const added = t.mock.method(Mixer.prototype, 'add', (_file: string, _gain: number, onEnd: () => void) => onEnd);
+  const folder = path.join(process.env.DATA_DIR!, 'music-files');
+  const leftovers = () => (existsSync(folder) ? readdirSync(folder) : []);
+  const url = (name: string, channelId = '702') => `/guilds/${GUILD}/music/file?name=${encodeURIComponent(name)}&channelId=${channelId}`;
+
+  let music = await ok(url('My Song.wav'), { method: 'POST', body: wav(2) as BodyInit });
+  assert.equal(music.file.name, 'My Song');
+  assert.ok(Math.abs(music.file.durationMs - 2000) < 100, String(music.file.durationMs));
+  const [file, gain, , options] = added.mock.calls[0].arguments;
+  assert.deepEqual([gain, options], [1, { group: 'music', lasting: true }], 'at the music volume, and sounds can’t push it out');
+  assert.ok(existsSync(file));
+  assert.equal(recentActivity(GUILD, 1)[0].action, 'Played the file **My Song**');
+
+  await ok(url('Another.wav'), { method: 'POST', body: wav(1) as BodyInit });
+  assert.ok(!existsSync(file), 'a second file stops the first, which is deleted');
+  music = await ok(`/guilds/${GUILD}/music/file/stop`, { method: 'POST' });
+  assert.equal(music.file, null);
+  assert.deepEqual(leftovers(), []);
+  assert.match(await refused(409, `/guilds/${GUILD}/music/file/stop`, { method: 'POST' }), /No file is playing/);
+
+  assert.match(await refused(400, url('notes.txt'), { method: 'POST', body: 'hello' }), /isn’t a file the bot can play/);
+  assert.match(await refused(400, url('fake.mp3'), { method: 'POST', body: 'hello' }), /doesn’t have any audio/);
+  assert.match(await refused(400, url('song.mp3', 'v1'), { method: 'POST', body: 'hello' }), /Nobody’s in voice/);
+  const huge = 51 * 1024 * 1024;
+  assert.match(await refused(400, url('huge.mp3'), { method: 'POST', headers: { 'content-length': String(huge) }, body: Buffer.alloc(huge) as BodyInit }), /over 50 MB/);
+  // Sent in pieces, with no length up front, it's counted as it arrives
+  const pieces = new ReadableStream({
+    start(c) {
+      for (let i = 0; i < 52; i++) c.enqueue(new Uint8Array(1024 * 1024));
+      c.close();
+    },
+  });
+  assert.match(await refused(413, url('huge.mp3'), { method: 'POST', body: pieces, duplex: 'half' } as RequestInit), /over 50 MB/);
+  assert.deepEqual(leftovers(), [], 'nothing refused is kept');
+  assert.equal(added.mock.callCount(), 2);
+});
+
 const DAY = 86_400_000;
 const bin = async () => (await ok(`/guilds/${GUILD}/deleted-sounds`)).sounds as any[];
 const remove = (name: string) => ok(`/guilds/${GUILD}/sounds/${name}`, { method: 'DELETE' });

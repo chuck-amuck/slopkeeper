@@ -1,8 +1,9 @@
 import { ChannelType, type Client, type Guild, type GuildTextBasedChannel, type VoiceBasedChannel, type VoiceChannel } from 'discord.js';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { createHash, timingSafeEqual } from 'node:crypto';
-import { createReadStream, statSync } from 'node:fs';
+import { createReadStream, createWriteStream, rmSync, statSync } from 'node:fs';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
+import { pipeline } from 'node:stream/promises';
 import path from 'node:path';
 import { FROM_WEB, fromWebUser, linkWebUser, logActivity, recentActivity, seeWebUser, webUser, webUserFor } from './activity.ts';
 import { config } from './config.ts';
@@ -18,7 +19,7 @@ import { activity, checkpoint, comparison, PERIODS, pickFor, sessionCount, stats
 import { postVote } from './features/gamevote.ts';
 import { recapFor } from './features/recap.ts';
 import { gameName, gameSpellings, mergeGames, separateGame } from './gameNames.ts';
-import { addTracks, clearQueue, moveTrack, musicChannelFor, musicState, pauseMusic, queueFrom, queueOf, removeTrack, skipMusic, startMusic, stopMusic } from './features/music.ts';
+import { addTracks, clearQueue, fileProblem, fileUploadPath, MOST_FILE_BYTES, moveTrack, musicChannelFor, musicState, pauseMusic, playFile, queueFrom, queueOf, removeTrack, skipMusic, startMusic, stopFile, stopMusic } from './features/music.ts';
 import { phrases, removePhrase, savePhrase, say, VOICES } from './features/say.ts';
 import { voiceTotals } from './features/sessions.ts';
 import { checkSetting, LABELS, LIMITS, show, source } from './features/setup.ts';
@@ -109,6 +110,27 @@ async function readBody(req: IncomingMessage): Promise<Buffer> {
     chunks.push(chunk);
   }
   return Buffer.concat(chunks);
+}
+
+/** Writes a large upload straight to a file, refusing it once it's over `max` bytes */
+async function saveBody(req: IncomingMessage, file: string, max: number) {
+  let size = 0;
+  try {
+    await pipeline(
+      req,
+      async function* (chunks: AsyncIterable<Buffer>) {
+        for await (const chunk of chunks) {
+          size += chunk.length;
+          if (size > max) throw new Refused(413, `That file is over ${max / 1024 / 1024} MB.`);
+          yield chunk;
+        }
+      },
+      createWriteStream(file),
+    );
+  } catch (err) {
+    rmSync(file, { force: true });
+    throw err;
+  }
 }
 
 async function readJson(req: IncomingMessage): Promise<Record<string, unknown>> {
@@ -1017,6 +1039,21 @@ async function handleMusic(guild: Guild, req: IncomingMessage, url: URL, rest: s
       if (!moveTrack(guild.id, id, to as number)) throw new Refused(409, 'That song can’t move: it’s playing, or gone.');
       return musicList(guild);
     }
+  }
+  if (key === 'POST file') {
+    // Sent as the file itself, so what it is and where to play it come in the address
+    const name = (url.searchParams.get('name') ?? '').trim().slice(0, 200);
+    const ext = path.extname(name).toLowerCase();
+    refuse(guild, fileProblem(ext, Number(req.headers['content-length'] ?? 0)));
+    const channel = voiceChannelFor(guild, url.searchParams.get('channelId'));
+    const file = fileUploadPath(ext);
+    await saveBody(req, file, MOST_FILE_BYTES);
+    refuse(guild, await playFile(guild, channel, file, path.basename(name, path.extname(name)) || 'a file', by()));
+    return musicList(guild);
+  }
+  if (key === 'POST file/stop') {
+    if (!stopFile(guild.id)) throw new Refused(409, 'No file is playing.');
+    return musicList(guild);
   }
   if (key === 'POST play') {
     const { channelId } = await readJson(req);

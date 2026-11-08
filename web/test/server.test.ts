@@ -142,6 +142,32 @@ test('passes uploads through intact', async () => {
   assert.deepEqual(seen[0].body, data);
 });
 
+test('passes a music file through as it arrives, past the usual limit, up to its own', async () => {
+  const cookie = await login();
+  const data = Buffer.from(Array.from({ length: 8 * 1024 * 1024 }, (_, i) => (i * 7) % 256));
+  const res = await fetch(`${base}/api/guilds/1/music/file?name=a.mp3&channelId=2`, { method: 'POST', headers: { cookie, 'x-slopkeeper': '1', 'content-type': 'audio/mpeg' }, body: data });
+  assert.equal(res.status, 200);
+  assert.equal(seen[0].url, '/guilds/1/music/file?name=a.mp3&channelId=2');
+  assert.equal(seen[0].headers['content-type'], 'audio/mpeg');
+  assert.ok(seen[0].body.equals(data));
+
+  const big = await fetch(`${base}/api/guilds/1/music/file`, { method: 'POST', headers: { cookie, 'x-slopkeeper': '1' }, body: Buffer.alloc(51 * 1024 * 1024) });
+  assert.equal(big.status, 413);
+  assert.deepEqual(await big.json(), { error: 'That file is over 50 MB.' });
+  assert.equal(seen.length, 1, 'too big to say so up front is never sent on');
+  const pieces = new ReadableStream({
+    start(c) {
+      for (let i = 0; i < 52; i++) c.enqueue(new Uint8Array(1024 * 1024));
+      c.close();
+    },
+  });
+  const chunked = await fetch(`${base}/api/guilds/1/music/file`, { method: 'POST', headers: { cookie, 'x-slopkeeper': '1' }, body: pieces, duplex: 'half' } as RequestInit);
+  assert.equal(chunked.status, 413, 'sent with no length up front, it’s cut off once it’s too big');
+  // Only that address gets the larger limit
+  const elsewhere = await fetch(`${base}/api/guilds/1/music/queue`, { method: 'POST', headers: { cookie, 'x-slopkeeper': '1' }, body: Buffer.alloc(6 * 1024 * 1024) });
+  assert.equal(elsewhere.status, 413);
+});
+
 test('passes audio back with its type, and nothing else from the bot', async () => {
   const res = await fetch(`${base}/api/audio`, { headers: { cookie: await login() } });
   assert.equal(res.headers.get('content-type'), 'audio/wav');

@@ -8,16 +8,20 @@ import {
   type GuildMember,
   type VoiceBasedChannel,
 } from 'discord.js';
+import { randomBytes } from 'node:crypto';
+import { mkdirSync, rmSync } from 'node:fs';
+import path from 'node:path';
 import { Readable } from 'node:stream';
 import type { ReadableStream } from 'node:stream/web';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { logActivity } from '../activity.ts';
 import { config } from '../config.ts';
 import { db } from '../db.ts';
+import { durationOf, hasAudio } from '../discordSounds.ts';
 import { idSetting } from '../settings.ts';
 import { isShortLink, MOST_FROM_LINK, myPlaylists, parseLink, playlistsReady, search, searchReady, SpotifyError, tracksFor, type Track } from '../spotify.ts';
 import type { Feature } from '../types.ts';
-import { botChannelId, onPlaybackStop, playStream } from './soundboard.ts';
+import { botChannelId, EXTENSIONS, onPlaybackStop, playLong, playStream } from './soundboard.ts';
 
 // The next song is handed to Spotify this long before the current one ends, so it follows without a gap
 const HAND_OVER_MS = 15_000;
@@ -27,6 +31,9 @@ const END_SLACK_MS = 6_000;
 const CANT_PLAY_MS = 5_000;
 export const MOST_QUEUED = 500;
 const SHOWN_IN_DISCORD = 10;
+// A file played once from the web page, which can be a whole song or a mix
+export const MOST_FILE_BYTES = 50 * 1024 * 1024;
+const LONGEST_FILE_MS = 20 * 60_000;
 // A second of audio in hand. The mixer skips ahead past anything more, rather than fall behind
 const AUDIO_BUFFER = 48_000 * 4;
 
@@ -242,6 +249,8 @@ export async function startMusic(guild: Guild, channel: VoiceBasedChannel): Prom
   if (session && session.guildId !== guild.id && session.phase !== 'paused') return 'Music is already playing in another server, and Spotify only plays one thing at a time.';
   const first = queueOf(guild.id)[0];
   if (!first) return 'The queue is empty. Add a song first.';
+  // The music takes over from a file, rather than playing on top of it
+  stopFile(guild.id);
   if (session?.guildId === guild.id && session.phase !== 'paused' && session.channelId === channel.id) return null;
   if (session && session.guildId !== guild.id) endSession(session);
 
@@ -465,6 +474,73 @@ export async function onSpotify(msg: SpotifyMessage) {
   }
 }
 
+// ---------- a file, played once ----------
+
+interface PlayingFile {
+  name: string;
+  durationMs: number;
+  startedAt: number;
+  stop?: () => void;
+}
+
+/** The file playing in each server, which is deleted once it's over */
+const files = new Map<string, PlayingFile>();
+const filesDir = () => path.join(config.dataDir, 'music-files');
+
+/** Why a file can't be played, from its name and size alone, or null if it might */
+export function fileProblem(ext: string, size: number): string | null {
+  if (!EXTENSIONS.includes(ext)) return `That isn’t a file the bot can play. Use one of: ${EXTENSIONS.join(', ')}`;
+  return size > MOST_FILE_BYTES ? `That file is over ${MOST_FILE_BYTES / 1024 / 1024} MB.` : null;
+}
+
+/** Where to keep an upload while it plays */
+export function fileUploadPath(ext: string): string {
+  mkdirSync(filesDir(), { recursive: true });
+  return path.join(filesDir(), `${randomBytes(8).toString('hex')}${ext}`);
+}
+
+/**
+ * Plays an uploaded file once in a channel, pausing the music here and stopping any file already playing. The file is deleted once it's over.
+ * Returns null on success or the reason it couldn't play, for the user
+ */
+export async function playFile(guild: Guild, channel: VoiceBasedChannel, file: string, name: string, who: string): Promise<string | null> {
+  const seconds = (await hasAudio(file)) ? await durationOf(file).catch(() => NaN) : null;
+  const problem =
+    seconds === null
+      ? 'That file doesn’t have any audio the bot can read.'
+      : !Number.isFinite(seconds)
+        ? 'The bot can’t tell how long that file is, so it won’t play it.'
+        : seconds * 1000 > LONGEST_FILE_MS
+          ? `That file is over ${LONGEST_FILE_MS / 60_000} minutes long.`
+          : null;
+  if (problem) {
+    rmSync(file, { force: true });
+    return problem;
+  }
+  stopFile(guild.id);
+  const playing: PlayingFile = { name, durationMs: Math.round(seconds! * 1000), startedAt: Date.now() };
+  const stop = await playLong(channel, file, () => {
+    if (files.get(guild.id) === playing) files.delete(guild.id);
+    rmSync(file, { force: true });
+  });
+  if (typeof stop === 'string') {
+    rmSync(file, { force: true });
+    return stop;
+  }
+  playing.stop = stop;
+  files.set(guild.id, playing);
+  if (session?.guildId === guild.id && session.phase !== 'paused') pauseHere(session, 'Paused for a file. Press Resume to carry on.');
+  logActivity(guild.id, who, `Played the file **${name}**`);
+  return null;
+}
+
+/** Stops the file playing in a server, if there is one. Returns whether there was */
+export function stopFile(guildId: string): boolean {
+  const playing = files.get(guildId);
+  playing?.stop?.();
+  return !!playing;
+}
+
 // ---------- adding by search or link ----------
 
 /** Songs for whatever was typed: a link to a song, album or playlist, or words to search for. The name says what was found */
@@ -505,7 +581,13 @@ export function musicState(guildId: string) {
     positionMs: s ? Math.round(positionOf(s)) : 0,
     note: s?.note ?? null,
     elsewhere: !!session && session.guildId !== guildId && session.phase !== 'paused',
+    file: playingFile(guildId),
   };
+}
+
+function playingFile(guildId: string) {
+  const playing = files.get(guildId);
+  return playing ? { name: playing.name, durationMs: playing.durationMs, positionMs: Math.min(playing.durationMs, Date.now() - playing.startedAt) } : null;
 }
 
 const time = (ms: number) => `${Math.floor(ms / 60_000)}:${String(Math.floor((ms % 60_000) / 1000)).padStart(2, '0')}`;
@@ -625,6 +707,8 @@ export const music: Feature = {
     },
   ],
   setup() {
+    // Files left from before a restart, which nothing will play now
+    rmSync(filesDir(), { recursive: true, force: true });
     if (!config.musicUrl || !config.musicToken) return;
     // Stop, and everyone leaving, pause the music rather than lose the queue
     onPlaybackStop((guildId) => {
@@ -634,6 +718,7 @@ export const music: Feature = {
     void listen(listening.signal);
   },
   shutdown() {
+    for (const guildId of files.keys()) stopFile(guildId);
     listening?.abort();
     if (session) endSession(session);
   },

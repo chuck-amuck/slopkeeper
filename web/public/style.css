@@ -1154,6 +1154,17 @@ textarea {
   padding: 0;
 }
 
+.music-file {
+  display: grid;
+  gap: 10px;
+}
+
+.dropzone.busy {
+  border-style: solid;
+  color: var(--text);
+  cursor: progress;
+}
+
 .music-search .views button {
   padding: 4px 12px;
 }

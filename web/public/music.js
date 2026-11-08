@@ -1,10 +1,13 @@
-import { api, attempt, confirmButton, el, request, state, toast } from './lib.js';
+import { api, attempt, confirmButton, el, RequestError, request, session, state, toast } from './lib.js';
 
 const REFRESH_MS = 3000;
 // A playlist adds this many songs, the first or at random
 const FROM_A_LIST = 100;
 const PLAYLISTS_SHOWN = 20;
 const LINK = /^(https?:\/\/|spotify:)/i;
+// What a file played once can be. The bot checks again, and how long it is
+const FILE_TYPES = ['.mp3', '.ogg', '.wav', '.m4a', '.opus', '.webm', '.flac'];
+const MOST_FILE_MB = 50;
 
 const time = (ms) => `${Math.floor(ms / 60_000)}:${String(Math.floor((ms % 60_000) / 1000)).padStart(2, '0')}`;
 
@@ -216,6 +219,108 @@ export function renderMusic(main) {
   const searchCard = el('section', { className: 'card music' }, el('h2', {}, 'Add music'), el('div', { className: 'card-body music-search' }, searchNote, modes, searchForm, results));
   setMode('songs');
 
+  // ---------- a file, played once ----------
+  let uploading = false;
+  const filePicker = el('input', {
+    type: 'file',
+    accept: `${FILE_TYPES.join(',')},audio/*`,
+    hidden: true,
+    onchange: () => {
+      const [file] = filePicker.files;
+      filePicker.value = '';
+      if (file) void attempt(() => playFile(file));
+    },
+  });
+  const choose = () => !uploading && filePicker.click();
+  const fileZone = el(
+    'div',
+    {
+      className: 'dropzone',
+      tabIndex: 0,
+      role: 'button',
+      onclick: choose,
+      onkeydown: (e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          choose();
+        }
+      },
+      ondragover: (e) => {
+        e.preventDefault();
+        fileZone.classList.add('over');
+      },
+      ondragleave: () => fileZone.classList.remove('over'),
+      ondrop: (e) => {
+        e.preventDefault();
+        fileZone.classList.remove('over');
+        const [file] = e.dataTransfer.files;
+        if (file && !uploading) void attempt(() => playFile(file));
+      },
+    },
+  );
+  const fileName = el('div', { className: 'song-title' });
+  const fileTime = el('div', { className: 'song-sub' });
+  const fileStop = el('button', { onclick: () => void act(() => request(api('/music/file/stop'), { method: 'POST' })) }, 'Stop');
+  const fileNow = el('div', { className: 'song file-now', hidden: true }, el('div', { className: 'song-text' }, fileName, fileTime), el('div', { className: 'song-actions' }, fileStop));
+  const fileCard = el('section', { className: 'card music' }, el('h2', {}, 'Play a file'), el('div', { className: 'card-body music-file' }, fileZone, filePicker, fileNow));
+
+  function paintFileZone(text) {
+    fileZone.textContent = text ?? `Drop an audio file here, or click to choose. It plays once in the channel above and isn’t kept. Up to ${MOST_FILE_MB} MB.`;
+    fileZone.classList.toggle('busy', uploading);
+  }
+  paintFileZone();
+
+  /** Sends a file to play, showing how far the upload has got. fetch can't tell, so this is XMLHttpRequest */
+  function upload(file, channelId) {
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', api(`/music/file?name=${encodeURIComponent(file.name)}&channelId=${encodeURIComponent(channelId)}`));
+      xhr.setRequestHeader('x-slopkeeper', '1');
+      xhr.setRequestHeader('content-type', file.type || 'application/octet-stream');
+      xhr.upload.onprogress = (e) => e.lengthComputable && paintFileZone(`Sending ${file.name}: ${Math.round((100 * e.loaded) / e.total)}%`);
+      xhr.upload.onload = () => paintFileZone(`Starting ${file.name}…`);
+      xhr.onload = () => {
+        let body = {};
+        try {
+          body = JSON.parse(xhr.responseText);
+        } catch {}
+        if (xhr.status === 401) {
+          session.onExpired();
+          return reject(new RequestError('Log in again.'));
+        }
+        if (xhr.status >= 400) return reject(new RequestError(body.error ?? `Couldn’t play it (${xhr.status}).`));
+        resolve(body);
+      };
+      xhr.onerror = () => reject(new RequestError('Couldn’t reach the web UI. Check your connection.'));
+      xhr.send(file);
+    });
+  }
+
+  async function playFile(file) {
+    const ext = file.name.slice(file.name.lastIndexOf('.')).toLowerCase();
+    if (!file.name.includes('.') || !FILE_TYPES.includes(ext)) throw new RequestError(`That isn’t a file the bot can play. Use one of: ${FILE_TYPES.join(', ')}`);
+    if (file.size > MOST_FILE_MB * 1024 * 1024) throw new RequestError(`That file is over ${MOST_FILE_MB} MB.`);
+    if (!chosen) throw new RequestError('Nobody’s in voice, so there’s nowhere to play it.');
+    uploading = true;
+    paintFileZone(`Sending ${file.name}…`);
+    try {
+      show(await upload(file, chosen));
+      toast(`Playing ${data.file?.name ?? file.name}.`);
+    } finally {
+      uploading = false;
+      paintFileZone();
+    }
+  }
+
+  function paintFile() {
+    const file = data?.file;
+    fileNow.hidden = !file;
+    if (!file) return;
+    fileName.textContent = `Playing ${file.name}`;
+    const at = Math.min(file.durationMs, file.positionMs + Date.now() - fetchedAt);
+    fileTime.textContent = `${time(at)} of ${time(file.durationMs)}`;
+  }
+
   // ---------- queue ----------
   const list = el('ol', { className: 'music-queue' });
   const queueCount = el('span', { className: 'voice-label' });
@@ -304,6 +409,7 @@ export function renderMusic(main) {
 
   function paintProgress() {
     if (!data) return;
+    paintFile();
     const song = data.phase !== 'stopped' ? data.queue[0] : null;
     progress.hidden = !song;
     if (!song) return;
@@ -365,7 +471,7 @@ export function renderMusic(main) {
 
   const refresh = async () => show(await request(api('/music')));
 
-  main.append(problem, now, searchCard, queueCard);
+  main.append(problem, now, searchCard, fileCard, queueCard);
   list.append(el('li', { className: 'empty-note' }, 'Loading the queue…'));
   void attempt(async () => {
     await refresh();

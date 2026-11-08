@@ -1,6 +1,8 @@
 import './helpers.ts';
 import assert from 'node:assert/strict';
 import { after, beforeEach, mock, test } from 'node:test';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { getVoiceConnection, VoiceConnectionStatus } from '@discordjs/voice';
 import { recentActivity } from '../src/activity.ts';
@@ -14,11 +16,14 @@ import {
   musicState,
   onSpotify,
   pauseMusic,
+  playFile,
+  fileUploadPath,
   queueOf,
   removeTrack,
   resetMusic,
   skipMusic,
   startMusic,
+  stopFile,
   stopMusic,
   type PlayerStatus,
 } from '../src/features/music.ts';
@@ -354,4 +359,38 @@ test('says why music can’t play', async () => {
   errors.mock.restore();
   assert.equal(musicState(id).phase, 'paused');
   clearQueue(id, 'u1');
+});
+
+test('a file played from the page pauses the music, and the music takes over from it', { skip: spawnSync('ffmpeg', ['-version']).status !== 0 }, async () => {
+  const { id, guild, channel } = server();
+  const tone = (seconds: number) => {
+    const file = fileUploadPath('.wav');
+    execFileSync('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', `sine=frequency=440:duration=${seconds}`, file]);
+    return file;
+  };
+  addTracks(id, [song(1)], 'u1');
+  await startMusic(guild, channel);
+  const file = tone(5);
+  assert.equal(await playFile(guild, channel, file, 'Tone', 'u1'), null);
+  assert.equal(musicState(id).phase, 'paused');
+  assert.match(musicState(id).note!, /Paused for a file/);
+  assert.deepEqual(commands.at(-1), { command: 'pause' });
+  assert.equal(musicState(id).file?.name, 'Tone');
+  assert.equal(await startMusic(guild, channel), null);
+  assert.equal(musicState(id).file, null, 'Resume stops the file rather than play over it');
+  assert.ok(!existsSync(file));
+  assert.equal(stopFile(id), false);
+
+  // One that ends by itself is deleted, and the state says nothing's playing
+  const short = tone(0.3);
+  await playFile(guild, channel, short, 'Short', 'u1');
+  for (let i = 0; i < 50 && musicState(id).file; i++) await sleep(50);
+  assert.equal(musicState(id).file, null);
+  assert.ok(!existsSync(short));
+
+  const long = fileUploadPath('.ogg');
+  execFileSync('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', 'anullsrc=r=8000:cl=mono', '-t', '1201', '-c:a', 'libvorbis', '-q:a', '0', long]);
+  assert.match((await playFile(guild, channel, long, 'Long', 'u1'))!, /over 20 minutes/);
+  assert.ok(!existsSync(long));
+  stopMusic(id, 'u1');
 });

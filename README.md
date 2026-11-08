@@ -463,7 +463,7 @@ The bot plays Spotify in voice, from a queue everyone shares. It needs a Spotify
 - `/music play [song] [next] [shuffle]` adds a song, album or playlist by search or Spotify link, and starts the music in your voice channel. `next` puts it after the song playing instead of at the end, and `shuffle` adds 100 of an album's or playlist's songs at random instead of the first 100. With no song, it carries on where it paused. Its suggestions list the Spotify account's matching playlists first.
 - `/music pause`, `/music skip` and `/music stop` are said in the channel, so everyone can see who did it. **Stop** clears the queue too.
 - `/music queue` shows what's playing and the next 10 songs.
-- The web UI's **Music** tab has the same, plus search results to pick from, a progress bar and a volume slider. Its **My playlists** switch lists the account's playlists to add, in order or shuffled. Drag songs to reorder them, or use the arrows on a phone.
+- The web UI's **Music** tab has the same, plus search results to pick from, a progress bar and a volume slider. Its **My playlists** switch lists the account's playlists to add, in order or shuffled. **Play a file** plays an audio file once in the chosen channel, up to 50 MB and 20 minutes, pausing the music meanwhile. It isn't kept: it's deleted once it ends or is stopped, and pressing Resume stops it. Drag songs to reorder them, or use the arrows on a phone.
 
 How it plays:
 

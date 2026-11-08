@@ -18,6 +18,8 @@ const DUCK_STEP = 0.05;
 export interface VoiceOptions {
   /** Plays over and over, without a gap, until stopped */
   loop?: boolean;
+  /** Never dropped for newer sounds, like a whole song */
+  lasting?: boolean;
   /** Sounds, speech and music each have a volume that can change while they play */
   group?: 'sound' | 'speech' | 'music';
 }
@@ -61,7 +63,7 @@ class Voice implements Source {
     this.gain = gain;
     this.onEnd = onEnd;
     this.loop = options.loop ?? false;
-    this.lasting = this.loop;
+    this.lasting = this.loop || (options.lasting ?? false);
     this.group = options.group ?? 'sound';
     const loop = this.loop ? ['-stream_loop', '-1'] : [];
     this.proc = spawn('ffmpeg', ['-hide_banner', '-loglevel', 'error', ...loop, '-i', file, '-f', 's16le', '-ar', '48000', '-ac', '2', 'pipe:1'], {
@@ -193,8 +195,8 @@ export class Mixer extends Readable {
     return this.done || this.destroyed;
   }
 
-  /** `onEnd` runs once the sound is over, however that came about */
-  add(file: string, gain = 1, onEnd?: () => void, options: VoiceOptions = {}) {
+  /** `onEnd` runs once the sound is over, however that came about. Returns a way to stop it */
+  add(file: string, gain = 1, onEnd?: () => void, options: VoiceOptions = {}): () => void {
     const voice = new Voice(file, gain, onEnd, options);
     // A restart keeps the playing copy going until the new one has audio, so spamming leaves no gap while ffmpeg starts.
     // A copy from an earlier click that hasn't started yet is dropped, since this one supersedes it. A loop is never restarted by a click
@@ -207,6 +209,10 @@ export class Mixer extends Readable {
       }
     }
     this.include(voice);
+    return () => {
+      voice.stop();
+      this.voices = this.voices.filter((v) => v !== voice);
+    };
   }
 
   /** Mixes in raw 48 kHz stereo PCM as it arrives, until the stream ends or it's stopped. Returns a way to stop it */

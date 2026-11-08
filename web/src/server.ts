@@ -1,7 +1,7 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
-import { Readable } from 'node:stream';
+import { Readable, Transform } from 'node:stream';
 
 const SESSION_DAYS = 30;
 const COOKIE = 'slopkeeper_session';
@@ -9,6 +9,10 @@ const MAX_FAILURES = 5;
 const LOCK_MS = 60_000;
 // A little over the largest sound, which is the largest thing the page sends
 const MAX_BODY = 5 * 1024 * 1024 + 1024;
+// A music file to play once is far larger, so it's passed on as it arrives rather than held here
+const STREAMED = /^\/api\/guilds\/\d+\/music\/file$/;
+const MAX_STREAMED = 50 * 1024 * 1024 + 1024;
+const TOO_BIG = 'That file is over 50 MB.';
 // Syncing a full soundboard to Discord takes a while
 const BOT_TIMEOUT_MS = 5 * 60_000;
 
@@ -128,8 +132,26 @@ export function createWeb({ password, apiToken, botUrl, proxySecret }: WebOption
   async function proxy(req: IncomingMessage, res: ServerResponse) {
     const who = identity(req);
     const hasBody = req.method !== 'GET' && req.method !== 'HEAD';
-    const body = hasBody ? await readBody(req) : undefined;
+    const streamed = req.method === 'POST' && STREAMED.test(req.url!.split('?')[0]);
     // The rest of it was never read, so the connection can't be reused
+    if (streamed && Number(req.headers['content-length'] ?? 0) > MAX_STREAMED) return json(res, 413, { error: TOO_BIG }, { connection: 'close' });
+    let over = false;
+    let size = 0;
+    const body = streamed
+      ? Readable.toWeb(
+          req.pipe(
+            new Transform({
+              transform(chunk: Buffer, _encoding, done) {
+                size += chunk.length;
+                over = size > MAX_STREAMED;
+                done(over ? new Error(TOO_BIG) : null, chunk);
+              },
+            }),
+          ),
+        )
+      : hasBody
+        ? await readBody(req)
+        : undefined;
     if (body === null) return json(res, 413, { error: 'File is over 5 MB.' }, { connection: 'close' });
     const type = req.headers['content-type'];
     let answer: Response;
@@ -142,9 +164,11 @@ export function createWeb({ password, apiToken, botUrl, proxySecret }: WebOption
           ...(who && { 'x-slopkeeper-email': encodeURIComponent(who.email), 'x-slopkeeper-name': encodeURIComponent(who.name) }),
         },
         body: body as BodyInit | undefined,
+        ...(streamed && { duplex: 'half' }),
         signal: AbortSignal.timeout(BOT_TIMEOUT_MS),
-      });
+      } as RequestInit);
     } catch (err) {
+      if (over) return json(res, 413, { error: TOO_BIG }, { connection: 'close' });
       console.error('Bot request failed:', err instanceof Error ? err.message : err);
       return json(res, 502, { error: 'The bot isn’t answering. It may be restarting.' });
     }

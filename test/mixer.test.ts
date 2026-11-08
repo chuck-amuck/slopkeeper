@@ -159,6 +159,20 @@ test('clicking the looping sound plays a second copy, and the cap never drops th
   assert.ok(peaks.length > 30);
 });
 
+test('a lasting sound is never pushed out by newer ones, and can be stopped by itself', { skip: !hasFfmpeg }, async () => {
+  const mixer = new Mixer(1, 2);
+  const { done } = record(mixer);
+  let songEnded = false;
+  const stopSong = mixer.add(tone('song.wav', 330, 3), 1, () => (songEnded = true), { group: 'music', lasting: true });
+  for (const [n, f] of [[1, 500], [2, 600], [3, 700]] as const) mixer.add(tone(`click${n}.wav`, f, 2), 1);
+  await sleep(200);
+  assert.equal(songEnded, false, 'sounds past the cap drop each other, not the song');
+  stopSong();
+  assert.equal(songEnded, true);
+  mixer.stopAll();
+  await done;
+});
+
 test('a group’s volume changes what’s already playing, and only that group', { skip: !hasFfmpeg }, async () => {
   const mixer = new Mixer(0.5, 12);
   const { peaks, done } = record(mixer);

@@ -57,7 +57,7 @@ import type { Feature } from '../types.ts';
 import type { DiscordSound } from '../discordSounds.ts';
 import { humansIn, requestTimeout, servedGuilds } from '../util.ts';
 
-const EXTENSIONS = ['.mp3', '.ogg', '.wav', '.m4a', '.opus', '.webm', '.flac'];
+export const EXTENSIONS = ['.mp3', '.ogg', '.wav', '.m4a', '.opus', '.webm', '.flac'];
 const MAX_BYTES = 5 * 1024 * 1024;
 const VOLUME = 0.5;
 const MAX_VOICES = 12;
@@ -660,6 +660,18 @@ export async function playStream(channel: VoiceBasedChannel, pcm: Readable, onEn
   }
   let stop!: () => void;
   mixInto(channel.guild.id, (mixer) => (stop = mixer.addStream(pcm, 1, onEnd, { group: 'music' })));
+  return stop;
+}
+
+/**
+ * Plays a long file, like a song, at the music volume, where newer sounds can't push it out. `onEnd` runs once it's over.
+ * Returns a way to stop it, or the reason it couldn't play, for the user
+ */
+export async function playLong(channel: VoiceBasedChannel, file: string, onEnd: () => void): Promise<(() => void) | string> {
+  const problem = await connect(channel);
+  if (problem) return problem;
+  let stop!: () => void;
+  mixInto(channel.guild.id, (mixer) => (stop = mixer.add(file, 1, onEnd, { group: 'music', lasting: true })));
   return stop;
 }
 
