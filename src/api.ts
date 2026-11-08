@@ -24,7 +24,7 @@ import { voiceTotals } from './features/sessions.ts';
 import { checkSetting, LABELS, LIMITS, show, source } from './features/setup.ts';
 import { addSound, addToDiscord, applyLevels, applyMusicVolume, applySoundVolume, BIN_DAYS, changeEmoji, deletedSounds, discordVolume, eraseDeleted, expiresAt, favourites, findSound, isTrimmed, joinSounds, listSounds, parseEmoji, playCounts, playDiscordSound, playFromWeb, postPanel, refreshLoopRoom, refreshPanels, removeSound, renameSound, restoreDeleted, restoreSound, saveFromDiscord, setFavourite, setJoinSound, setSoundVolume, type Sound, soundLevels, stopPlayback, swapOnDiscord, syncToDiscord, takeOffDiscord, trimProblem, trimSound, uploadProblem, voiceVolume, volumeProblem } from './features/soundboard.ts';
 import { DEFAULTS, idSetting, isAllowed, setSetting, setting, type SettingKey } from './settings.ts';
-import { search, SpotifyError, type Track } from './spotify.ts';
+import { myPlaylists, playlistsReady, search, SpotifyError, type Track } from './spotify.ts';
 import type { Feature } from './types.ts';
 import { humansIn, pingWarning, servedGuilds } from './util.ts';
 
@@ -982,8 +982,12 @@ async function handleMusic(guild: Guild, req: IncomingMessage, url: URL, rest: s
     const tracks: Track[] = await search(q).catch(spotifyRefused);
     return { tracks };
   }
+  if (key === 'GET playlists') {
+    if (!playlistsReady()) return { playlists: [], problem: 'Playlists need the bot signed in to Spotify once, with SPOTIFY_REFRESH_TOKEN. See the README’s music container section.' };
+    return { playlists: await myPlaylists().catch(spotifyRefused), problem: null };
+  }
   if (key === 'POST queue') {
-    const { query, track, next } = await readJson(req);
+    const { query, track, next, shuffle } = await readJson(req);
     if (track && typeof track === 'object') {
       // A search result picked on the page, sent back as it came
       const t = track as Record<string, unknown>;
@@ -994,7 +998,7 @@ async function handleMusic(guild: Guild, req: IncomingMessage, url: URL, rest: s
       return musicList(guild);
     }
     if (typeof query !== 'string' || !query.trim()) throw new Refused(400, 'Search for a song, or paste a Spotify link.');
-    const message = await queueFrom(guild.id, query, by(), next === true).catch(spotifyRefused);
+    const message = await queueFrom(guild.id, query, by(), next === true, shuffle === true).catch(spotifyRefused);
     return { ...musicList(guild), message: plain(guild, message) };
   }
   if (key === 'DELETE queue') {

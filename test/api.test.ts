@@ -21,6 +21,7 @@ import { steam } from '../src/features/steam.ts';
 import { BIN_DAYS, clearBin, levelLibrary, setJoinSound, soundboard, soundGain } from '../src/features/soundboard.ts';
 import { lengthFor } from '../src/features/say.ts';
 import { setting, setSetting } from '../src/settings.ts';
+import { resetSpotify } from '../src/spotify.ts';
 
 const TOKEN = 'secret';
 const GUILD = 'g1';
@@ -2918,10 +2919,37 @@ test('the music queue can be filled, reordered and emptied from the page', async
   const search = await call(`/guilds/${GUILD}/music/search?q=hello`);
   assert.equal(search.status, 502);
   assert.match(((await search.json()) as any).error, /SPOTIFY_CLIENT_ID/);
+  assert.match((await ok(`/guilds/${GUILD}/music/playlists`)).problem, /SPOTIFY_REFRESH_TOKEN/);
   const play = await call(`/guilds/${GUILD}/music/play`, { method: 'POST', json: { channelId: 'v1' } });
   assert.equal(play.status, 400);
 
   music = await ok(`/guilds/${GUILD}/music/queue`, { method: 'DELETE' });
   assert.deepEqual(music.queue, []);
   assert.equal(recentActivity(GUILD, 1)[0].action, 'Cleared the music queue');
+});
+
+test('the page lists the Spotify account’s own playlists, and can shuffle one into the queue', async (t) => {
+  Object.assign(config, { spotifyClientId: 'id', spotifyClientSecret: 'secret', spotifyRefreshToken: 'refresh' });
+  t.after(() => {
+    Object.assign(config, { spotifyClientId: null, spotifyClientSecret: null, spotifyRefreshToken: null });
+    resetSpotify();
+  });
+  const LIST = 'pppppppppppppppppppppp';
+  const songs = Array.from({ length: 150 }, (_, n) => ({ uri: `spotify:track:${String(n).padStart(22, 'b')}`, name: `Tune ${n}`, duration_ms: 1000, artists: [{ name: 'Band' }], album: { name: 'A', images: [] } }));
+  const realFetch = globalThis.fetch;
+  t.mock.method(globalThis, 'fetch', async (input: string, init?: RequestInit) => {
+    const url = new URL(String(input));
+    if (url.host === 'accounts.spotify.com') return Response.json({ access_token: 'x', expires_in: 3600 });
+    if (url.host !== 'api.spotify.com') return realFetch(input, init);
+    if (url.pathname === '/v1/me') return Response.json({ id: 'me' });
+    if (url.pathname === '/v1/me/playlists') return Response.json({ items: [{ id: LIST, name: 'Road Trip', owner: { id: 'me' }, images: [], items: { total: 150 } }], next: null });
+    if (url.pathname === `/v1/playlists/${LIST}`) return Response.json({ name: 'Road Trip' });
+    const offset = Number(url.searchParams.get('offset') ?? 0);
+    return Response.json({ items: songs.slice(offset, offset + 100).map((item) => ({ item })), next: offset ? null : `https://api.spotify.com/v1/playlists/${LIST}/items?offset=100` });
+  });
+  assert.deepEqual(await ok(`/guilds/${GUILD}/music/playlists`), { playlists: [{ id: LIST, name: 'Road Trip', cover: null, songs: 150 }], problem: null });
+  const music = await ok(`/guilds/${GUILD}/music/queue`, { method: 'POST', json: { query: `spotify:playlist:${LIST}`, shuffle: true } });
+  assert.equal(music.message, 'Added 100 random songs from Road Trip.');
+  assert.ok(music.queue.some((r: any) => Number(r.title.slice(5)) >= 100), 'from all of it, not just the first 100');
+  await ok(`/guilds/${GUILD}/music/queue`, { method: 'DELETE' });
 });

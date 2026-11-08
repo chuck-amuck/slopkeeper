@@ -1,6 +1,9 @@
 import { api, attempt, confirmButton, el, request, state, toast } from './lib.js';
 
 const REFRESH_MS = 3000;
+// A playlist adds this many songs, the first or at random
+const FROM_A_LIST = 100;
+const PLAYLISTS_SHOWN = 20;
 const LINK = /^(https?:\/\/|spotify:)/i;
 
 const time = (ms) => `${Math.floor(ms / 60_000)}:${String(Math.floor((ms % 60_000) / 1000)).padStart(2, '0')}`;
@@ -82,7 +85,26 @@ export function renderMusic(main) {
   }
 
   // ---------- search ----------
-  const query = el('input', { type: 'search', ariaLabel: 'Search Spotify', placeholder: 'Search Spotify, or paste a song or album link', autocomplete: 'off', maxLength: 300 });
+  const query = el('input', { type: 'search', ariaLabel: 'Search Spotify', placeholder: 'Search Spotify, or paste a song or album link', autocomplete: 'off', maxLength: 300, oninput: () => mode === 'playlists' && showPlaylists() });
+  let mode = 'songs';
+  // Loaded the first time they're shown, then filtered as you type
+  let playlists = null;
+  const modes = el('div', { className: 'views' });
+  const MODES = [
+    ['songs', 'Songs', 'Search Spotify, or paste a song or album link'],
+    ['playlists', 'My playlists', 'Find one of your playlists, or paste a link to it'],
+  ];
+  function setMode(id) {
+    mode = id;
+    const [, label, hint] = MODES.find(([m]) => m === id);
+    modes.replaceChildren(...MODES.map(([m, text]) => el('button', { type: 'button', ...(m === id && { 'aria-current': 'page' }), onclick: () => setMode(m) }, text)));
+    query.placeholder = hint;
+    query.ariaLabel = label === 'Songs' ? 'Search Spotify' : 'Find a playlist';
+    query.value = '';
+    searchButton.hidden = id === 'playlists';
+    results.hidden = true;
+    if (id === 'playlists') void loadPlaylists();
+  }
   const searchButton = el('button', { type: 'submit' }, 'Search');
   const results = el('div', { className: 'music-results', hidden: true });
   const searchForm = el(
@@ -94,6 +116,7 @@ export function renderMusic(main) {
         const text = query.value.trim();
         if (!text) return;
         if (LINK.test(text)) return void addFrom({ query: text }, false, true);
+        if (mode === 'playlists') return;
         searchButton.disabled = true;
         void attempt(async () => {
           const { tracks } = await request(api(`/music/search?q=${encodeURIComponent(text)}`));
@@ -115,6 +138,63 @@ export function renderMusic(main) {
     show(fresh);
   }
 
+  async function loadPlaylists() {
+    if (!playlists) {
+      results.hidden = false;
+      results.replaceChildren(el('div', { className: 'empty-note' }, 'Loading your playlists…'));
+      const fresh = await attempt(() => request(api('/music/playlists')));
+      if (guildId !== state.guildId || mode !== 'playlists') return;
+      if (!fresh) return void (results.hidden = true);
+      if (fresh.problem) return results.replaceChildren(el('div', { className: 'empty-note' }, fresh.problem));
+      playlists = fresh.playlists;
+    }
+    showPlaylists();
+  }
+
+  function showPlaylists() {
+    if (!playlists) return;
+    const typed = query.value.trim().toLowerCase();
+    if (LINK.test(typed)) return void (results.hidden = true);
+    const matching = playlists.filter((p) => p.name.toLowerCase().includes(typed));
+    results.hidden = false;
+    results.replaceChildren(
+      ...matching.slice(0, PLAYLISTS_SHOWN).map((p) => {
+        const buttons = [];
+        const add = (label, next, shuffle) => {
+          const button = el(
+            'button',
+            {
+              onclick: async () => {
+                // A playlist takes a moment to read, and twice would add it twice
+                for (const b of buttons) b.disabled = true;
+                await addFrom({ query: `spotify:playlist:${p.id}`, shuffle }, next);
+                for (const b of buttons) b.disabled = false;
+              },
+            },
+            label,
+          );
+          buttons.push(button);
+          return button;
+        };
+        const long = p.songs > FROM_A_LIST;
+        return el(
+          'div',
+          { className: 'song' },
+          cover(p.cover, 40),
+          el(
+            'div',
+            { className: 'song-text' },
+            el('div', { className: 'song-title' }, p.name),
+            el('div', { className: 'song-sub' }, long ? `${p.songs} songs · adds the first ${FROM_A_LIST}, or ${FROM_A_LIST} at random` : `${p.songs} song${p.songs === 1 ? '' : 's'}`),
+          ),
+          el('div', { className: 'song-actions' }, add('Play next', true, false), add('Add', false, false), long && add('Shuffle', false, true)),
+        );
+      }),
+      ...(matching.length > PLAYLISTS_SHOWN ? [el('div', { className: 'empty-note' }, `…and ${matching.length - PLAYLISTS_SHOWN} more. Type to narrow them down.`)] : []),
+      ...(matching.length ? [] : [el('div', { className: 'empty-note' }, playlists.length ? `None of your playlists are called “${query.value.trim()}”.` : 'This Spotify account has no playlists of its own.')]),
+    );
+  }
+
   function showResults(tracks, text) {
     results.hidden = false;
     results.replaceChildren(
@@ -133,7 +213,8 @@ export function renderMusic(main) {
     );
   }
 
-  const searchCard = el('section', { className: 'card music' }, el('h2', {}, 'Add music'), el('div', { className: 'card-body music-search' }, searchNote, searchForm, results));
+  const searchCard = el('section', { className: 'card music' }, el('h2', {}, 'Add music'), el('div', { className: 'card-body music-search' }, searchNote, modes, searchForm, results));
+  setMode('songs');
 
   // ---------- queue ----------
   const list = el('ol', { className: 'music-queue' });

@@ -2,8 +2,10 @@ import './helpers.ts';
 import assert from 'node:assert/strict';
 import { beforeEach, test, type TestContext } from 'node:test';
 import { config } from '../src/config.ts';
-import { isShortLink, MOST_FROM_LINK, parseLink, resetSpotify, search, SpotifyError, tracksFor } from '../src/spotify.ts';
-import { queueFrom, queueOf } from '../src/features/music.ts';
+import { getKv } from '../src/db.ts';
+import { isShortLink, MOST_FROM_LINK, myPlaylists, parseLink, resetSpotify, search, SpotifyError, tracksFor } from '../src/spotify.ts';
+import { music, queueFrom, queueOf } from '../src/features/music.ts';
+import { codeFrom, REDIRECT, signInLink } from '../src/spotify-sign-in.ts';
 
 const ID = '4uLU6hMCjMI75M1A2tKUQC';
 const apiTrack = (n: number, extra = {}) => ({
@@ -15,32 +17,56 @@ const apiTrack = (n: number, extra = {}) => ({
   ...extra,
 });
 
-/** Spotify's sign-in and Web API, answering from `routes` by path */
-function fakeSpotify(t: TestContext, routes: Record<string, (url: URL) => unknown>) {
+/**
+ * Spotify's sign-in and Web API, answering from `routes` by path. The app's access tokens are `token-N` and the owner's `owner-N`,
+ * and `signIn` can answer the owner's sign-in instead, given the refresh token it was sent
+ */
+function fakeSpotify(t: TestContext, routes: Record<string, (url: URL) => unknown>, signIn?: (refreshToken: string) => Response | Record<string, unknown>) {
   const asked: string[] = [];
+  const as: string[] = [];
+  const refreshedWith: string[] = [];
   let tokens = 0;
   t.mock.method(globalThis, 'fetch', async (input: string, init: RequestInit = {}) => {
     const url = new URL(input);
     if (url.host === 'accounts.spotify.com') {
       tokens++;
       assert.equal((init.headers as Record<string, string>).authorization, `Basic ${Buffer.from('id:secret').toString('base64')}`);
-      return Response.json({ access_token: `token-${tokens}`, expires_in: 3600 });
+      const body = new URLSearchParams(String(init.body));
+      if (body.get('grant_type') === 'client_credentials') return Response.json({ access_token: `token-${tokens}`, expires_in: 3600 });
+      assert.equal(body.get('grant_type'), 'refresh_token');
+      refreshedWith.push(body.get('refresh_token')!);
+      const answer = signIn?.(body.get('refresh_token')!) ?? { access_token: `owner-${tokens}`, expires_in: 3600 };
+      return answer instanceof Response ? answer : Response.json(answer);
     }
     assert.equal(url.host, 'api.spotify.com');
     asked.push(url.pathname + url.search);
+    as.push((init.headers as Record<string, string>).authorization.replace(/^Bearer (\w+)-\d+$/, '$1'));
     const route = routes[url.pathname];
     if (!route) return new Response('{}', { status: 404 });
     const body = route(url);
     return body instanceof Response ? body : Response.json(body);
   });
-  return { asked, tokens: () => tokens };
+  return { asked, as, refreshedWith, tokens: () => tokens };
 }
 
 beforeEach(() => {
   resetSpotify();
   config.spotifyClientId = 'id';
   config.spotifyClientSecret = 'secret';
+  config.spotifyRefreshToken = null;
 });
+
+/** A playlist of `length` songs, served 100 at a time like Spotify does */
+const playlistRoutes = (length: number, name = 'Road Trip') => {
+  const songs = Array.from({ length }, (_, n) => apiTrack(n));
+  return {
+    [`/v1/playlists/${ID}`]: () => ({ name }),
+    [`/v1/playlists/${ID}/items`]: (url: URL) => {
+      const offset = Number(url.searchParams.get('offset') ?? 0);
+      return { items: songs.slice(offset, offset + 100).map((item) => ({ item })), next: offset + 100 < length ? `https://api.spotify.com/v1/playlists/${ID}/items?offset=${offset + 100}` : null };
+    },
+  };
+};
 
 test('reads song, album and playlist links and URIs, and nothing else', () => {
   assert.deepEqual(parseLink(`https://open.spotify.com/track/${ID}?si=abc`), { kind: 'track', id: ID });
@@ -126,4 +152,119 @@ test('a link is added to the queue with what it was, and words add the top resul
   );
   await assert.rejects(queueFrom('sp', 'https://spotify.link/abc', 'u1', false), /open\.spotify\.com/);
   await assert.rejects(queueFrom('sp', 'https://youtube.com/watch?v=1', 'u1', false), /isn’t a Spotify/);
+});
+
+test('the owner’s own playlists are listed, and a new sign-in from Spotify is kept until the setting changes', async (t) => {
+  config.spotifyRefreshToken = 'first';
+  const playlist = (id: string, owner: string, extra = {}) => ({ id, name: `List ${id}`, owner: { id: owner }, images: [{ url: `https://i.scdn.co/image/${id}`, width: 300 }], items: { total: 7 }, ...extra });
+  let handOut: string | undefined = 'second';
+  const spotify = fakeSpotify(
+    t,
+    {
+      '/v1/me': () => ({ id: 'me' }),
+      '/v1/me/playlists': (url) =>
+        url.searchParams.get('offset')
+          ? { items: [playlist('d', 'me', { images: null, items: undefined, tracks: { total: 3 } })], next: null }
+          : { items: [playlist('a', 'me'), playlist('b', 'someone'), playlist('c', 'someone', { collaborative: true }), null], next: 'https://api.spotify.com/v1/me/playlists?offset=50&limit=50' },
+    },
+    () => {
+      const answer = { access_token: 'owner-1', expires_in: 3600, ...(handOut && { refresh_token: handOut }) };
+      handOut = undefined;
+      return answer;
+    },
+  );
+  const lists = await myPlaylists();
+  assert.deepEqual(
+    lists.map((p) => [p.id, p.songs]),
+    [['a', 7], ['c', 7], ['d', 3]],
+    'playlists someone else made can’t be read, so they’re left out',
+  );
+  assert.deepEqual(lists[0], { id: 'a', name: 'List a', cover: 'https://i.scdn.co/image/a', songs: 7 });
+  assert.equal(lists[2].cover, null);
+  assert.ok(spotify.as.every((who) => who === 'owner'));
+  assert.ok(spotify.asked.includes('/v1/me/playlists?limit=50'));
+  const askedSoFar = spotify.asked.length;
+  await myPlaylists();
+  assert.equal(spotify.asked.length, askedSoFar, 'the list is kept for a few minutes');
+
+  resetSpotify();
+  await myPlaylists();
+  assert.deepEqual(spotify.refreshedWith, ['first', 'second'], 'the refresh token Spotify handed out replaces the setting’s');
+  assert.ok(!getKv('spotifyRefreshToken')!.includes('first'), 'the setting itself isn’t stored');
+  config.spotifyRefreshToken = 'signed in again';
+  resetSpotify();
+  await myPlaylists();
+  assert.equal(spotify.refreshedWith.at(-1), 'signed in again', 'a new setting wins over the one kept');
+});
+
+test('playlists are read as the owner, picked at random from the whole list when shuffled, and others’ say why they can’t be', async (t) => {
+  config.spotifyRefreshToken = 'first';
+  const spotify = fakeSpotify(t, playlistRoutes(350));
+  const inOrder = await tracksFor({ kind: 'playlist', id: ID });
+  assert.deepEqual(
+    inOrder.tracks.map((s) => s.title),
+    Array.from({ length: MOST_FROM_LINK }, (_, n) => `Song ${n}`),
+  );
+  assert.equal(spotify.asked.filter((a) => a.includes('/items')).length, 1, 'only as many pages as it needs');
+  assert.ok(spotify.as.every((who) => who === 'owner'));
+
+  const shuffled = await tracksFor({ kind: 'playlist', id: ID }, true);
+  const numbers = shuffled.tracks.map((s) => Number(s.title.slice(5)));
+  assert.equal(numbers.length, MOST_FROM_LINK);
+  assert.equal(new Set(numbers).size, MOST_FROM_LINK, 'no song twice');
+  assert.ok(numbers.some((n) => n >= 300), 'picked from the end of the list too');
+  assert.notDeepEqual(numbers, [...numbers].sort((a, b) => a - b));
+
+  t.mock.restoreAll();
+  fakeSpotify(t, { ...playlistRoutes(5, 'Their Mix'), [`/v1/playlists/${ID}/items`]: () => new Response('{}', { status: 403 }) });
+  await assert.rejects(tracksFor({ kind: 'playlist', id: ID }), /made by the Spotify account it’s signed in as, and \*\*Their Mix\*\* isn’t one/);
+
+  t.mock.restoreAll();
+  resetSpotify();
+  fakeSpotify(t, playlistRoutes(5), () => new Response('{"error":"invalid_grant"}', { status: 400 }));
+  await assert.rejects(tracksFor({ kind: 'playlist', id: ID }), /Sign in to Spotify again and update SPOTIFY_REFRESH_TOKEN/);
+});
+
+test('shuffling a playlist into the queue says so, and a long one in order says shuffle reaches further', async (t) => {
+  config.spotifyRefreshToken = 'first';
+  fakeSpotify(t, playlistRoutes(250));
+  assert.equal(await queueFrom('shuffled', `spotify:playlist:${ID}`, 'u1', false, true), `Added ${MOST_FROM_LINK} random songs from **Road Trip**.`);
+  assert.equal(queueOf('shuffled').length, MOST_FROM_LINK);
+  assert.equal(await queueFrom('in order', `https://open.spotify.com/playlist/${ID}`, 'u1', false), `Added ${MOST_FROM_LINK} songs from **Road Trip** (the first ${MOST_FROM_LINK}; shuffle picks from all of it).`);
+  t.mock.restoreAll();
+  fakeSpotify(t, playlistRoutes(20));
+  assert.equal(await queueFrom('short', `spotify:playlist:${ID}`, 'u1', false, true), 'Added 20 random songs from **Road Trip**.');
+});
+
+test('/music play suggests the owner’s matching playlists first, then songs', async (t) => {
+  const offered = async (typed: string) => {
+    let answer: { name: string; value: string }[] = [];
+    await music.commands![0].autocomplete!({ options: { getFocused: () => typed }, respond: async (a: typeof answer) => void (answer = a) } as never);
+    return answer;
+  };
+  fakeSpotify(t, {
+    '/v1/me': () => ({ id: 'me' }),
+    '/v1/me/playlists': () => ({ items: [{ id: 'p1', name: 'Road Trip', owner: { id: 'me' }, items: { total: 1 } }, { id: 'p2', name: 'Gym', owner: { id: 'me' }, items: { total: 40 } }], next: null }),
+    '/v1/search': () => ({ tracks: { items: [apiTrack(1)], next: null } }),
+  });
+  assert.deepEqual(await offered('road'), [{ name: 'Song 1 – Band, Friend', value: apiTrack(1).uri }], 'without the sign-in, only songs');
+  config.spotifyRefreshToken = 'first';
+  assert.deepEqual(await offered('ROAD'), [
+    { name: 'Playlist: Road Trip (1 song)', value: 'spotify:playlist:p1' },
+    { name: 'Song 1 – Band, Friend', value: apiTrack(1).uri },
+  ]);
+  assert.deepEqual(await offered('g'), [{ name: 'Playlist: Gym (40 songs)', value: 'spotify:playlist:p2' }], 'too short to search songs, but enough for playlists');
+});
+
+test('signing in once asks only to read playlists, and takes the code only from this sign-in', () => {
+  const link = new URL(signInLink('id', 'abc'));
+  assert.equal(link.host, 'accounts.spotify.com');
+  assert.equal(link.searchParams.get('scope'), 'playlist-read-private playlist-read-collaborative');
+  assert.equal(link.searchParams.get('redirect_uri'), REDIRECT);
+  assert.equal(link.searchParams.get('state'), 'abc');
+  assert.equal(codeFrom(`  ${REDIRECT}?code=xyz&state=abc `, 'abc'), 'xyz');
+  assert.throws(() => codeFrom(`${REDIRECT}?code=xyz&state=old`, 'abc'), /different sign-in/);
+  assert.throws(() => codeFrom(`${REDIRECT}?error=access_denied&state=abc`, 'abc'), /access_denied/);
+  assert.throws(() => codeFrom(link.href, 'abc'), /no code/);
+  assert.throws(() => codeFrom('xyz', 'abc'), /whole address/);
 });

@@ -15,7 +15,7 @@ import { logActivity } from '../activity.ts';
 import { config } from '../config.ts';
 import { db } from '../db.ts';
 import { idSetting } from '../settings.ts';
-import { isShortLink, MOST_FROM_LINK, parseLink, search, searchReady, SpotifyError, tracksFor, type Track } from '../spotify.ts';
+import { isShortLink, MOST_FROM_LINK, myPlaylists, parseLink, playlistsReady, search, searchReady, SpotifyError, tracksFor, type Track } from '../spotify.ts';
 import type { Feature } from '../types.ts';
 import { botChannelId, onPlaybackStop, playStream } from './soundboard.ts';
 
@@ -470,25 +470,26 @@ export async function onSpotify(msg: SpotifyMessage) {
 // ---------- adding by search or link ----------
 
 /** Songs for whatever was typed: a link to a song, album or playlist, or words to search for. The name says what was found */
-export async function resolve(input: string): Promise<{ name: string; tracks: Track[] }> {
+export async function resolve(input: string, shuffle = false): Promise<{ name: string; tracks: Track[] }> {
   if (isShortLink(input)) throw new SpotifyError('Short spotify.link links can’t be read. Open it and copy the open.spotify.com link instead.');
   const link = parseLink(input);
-  if (link) return tracksFor(link);
+  if (link) return tracksFor(link, shuffle);
   if (/^https?:\/\//i.test(input.trim())) throw new SpotifyError('That isn’t a Spotify song, album or playlist link.');
   const [top] = await search(input);
   if (!top) throw new SpotifyError(`Nothing on Spotify matches “${input.trim()}”.`);
   return { name: `${top.title} by ${top.artist}`, tracks: [top] };
 }
 
-/** Adds what was typed and says what happened. Throws SpotifyError with a message for the user */
-export async function queueFrom(guildId: string, input: string, who: string, next: boolean): Promise<string> {
-  const found = await resolve(input);
+/** Adds what was typed and says what happened. `shuffle` picks an album's or playlist's songs at random. Throws SpotifyError with a message for the user */
+export async function queueFrom(guildId: string, input: string, who: string, next: boolean, shuffle = false): Promise<string> {
+  const found = await resolve(input, shuffle);
   if (!found.tracks.length) throw new SpotifyError(`**${found.name}** has no songs that can be played here.`);
   const added = addTracks(guildId, found.tracks, who, next);
   if (!added) throw new SpotifyError(`The queue is full (${MOST_QUEUED} songs).`);
-  const what = found.tracks.length === 1 ? `**${found.name}**` : `${added} song${added === 1 ? '' : 's'} from **${found.name}**`;
+  const songs = `${added}${shuffle && found.tracks.length > 1 ? ' random' : ''} song${added === 1 ? '' : 's'}`;
+  const what = found.tracks.length === 1 ? `**${found.name}**` : `${songs} from **${found.name}**`;
   logActivity(guildId, who, `Added ${what} to the music queue${next ? ' to play next' : ''}`);
-  const cut = found.tracks.length > added || found.tracks.length >= MOST_FROM_LINK ? ` (only the first ${added} fitted)` : '';
+  const cut = found.tracks.length > added ? ` (only ${added} fitted)` : !shuffle && found.tracks.length >= MOST_FROM_LINK ? ` (the first ${MOST_FROM_LINK}; shuffle picks from all of it)` : '';
   return `Added ${what}${cut}.`;
 }
 
@@ -520,16 +521,28 @@ function canControl(member: GuildMember): boolean {
 
 const searches = new Map<string, { at: number; tracks: Track[] }>();
 
-async function suggest(i: AutocompleteInteraction) {
-  const typed = String(i.options.getFocused()).trim();
-  if (typed.length < 3 || parseLink(typed) || !searchReady()) return i.respond([]);
+async function searched(typed: string): Promise<Track[]> {
   let found = searches.get(typed.toLowerCase());
   if (!found || Date.now() - found.at > 60_000) {
     found = { at: Date.now(), tracks: await search(typed).catch(() => []) };
     searches.set(typed.toLowerCase(), found);
     if (searches.size > 200) searches.delete(searches.keys().next().value!);
   }
-  return i.respond(found.tracks.map((t) => ({ name: `${t.title} – ${t.artist}`.slice(0, 100), value: t.uri })));
+  return found.tracks;
+}
+
+async function suggest(i: AutocompleteInteraction) {
+  const typed = String(i.options.getFocused()).trim();
+  if (!typed || parseLink(typed) || !searchReady()) return i.respond([]);
+  // The account's own playlists that match come first, as searching can't find them. Discord waits 3 seconds, so both are asked at once
+  const [lists, tracks] = await Promise.all([
+    playlistsReady() ? myPlaylists().then((all) => all.filter((p) => p.name.toLowerCase().includes(typed.toLowerCase())).slice(0, 5), () => []) : [],
+    typed.length < 3 ? [] : searched(typed),
+  ]);
+  return i.respond([
+    ...lists.map((p) => ({ name: `Playlist: ${p.name} (${p.songs} song${p.songs === 1 ? '' : 's'})`.slice(0, 100), value: `spotify:playlist:${p.id}` })),
+    ...tracks.slice(0, 25 - lists.length).map((t) => ({ name: `${t.title} – ${t.artist}`.slice(0, 100), value: t.uri })),
+  ]);
 }
 
 async function run(i: ChatInputCommandInteraction<'cached'>) {
@@ -558,7 +571,7 @@ async function run(i: ChatInputCommandInteraction<'cached'>) {
     if (input) {
       await i.deferReply();
       try {
-        added = await queueFrom(i.guildId, input, i.user.id, next);
+        added = await queueFrom(i.guildId, input, i.user.id, next, i.options.getBoolean('shuffle') ?? false);
       } catch (err) {
         if (!(err instanceof SpotifyError)) throw err;
         return i.editReply(err.message);
@@ -602,7 +615,8 @@ export const music: Feature = {
             .setName('play')
             .setDescription('Add a song or album, and start the music in your voice channel')
             .addStringOption((o) => o.setName('song').setDescription('A song to search for, or a Spotify link').setAutocomplete(true).setMaxLength(300))
-            .addBooleanOption((o) => o.setName('next').setDescription('Play it after the current song, instead of at the end')),
+            .addBooleanOption((o) => o.setName('next').setDescription('Play it after the current song, instead of at the end'))
+            .addBooleanOption((o) => o.setName('shuffle').setDescription('For an album or playlist: 100 of its songs at random, instead of the first 100')),
         )
         .addSubcommand((s) => s.setName('pause').setDescription('Pause the music, keeping the queue'))
         .addSubcommand((s) => s.setName('skip').setDescription('Skip to the next song'))

@@ -30,6 +30,8 @@ export const config = {
   // A Spotify app's credentials, for search. They only read the catalogue, so nobody signs in
   spotifyClientId: process.env.SPOTIFY_CLIENT_ID || null,
   spotifyClientSecret: process.env.SPOTIFY_CLIENT_SECRET || null,
+  // From the account owner signing in to that app once, so the bot can read their own playlists. Unset leaves playlists out
+  spotifyRefreshToken: process.env.SPOTIFY_REFRESH_TOKEN || null,
   // Which country's catalogue search uses, since what can be played differs between them
   spotifyMarket: (process.env.SPOTIFY_MARKET || 'US').toUpperCase(),
 };

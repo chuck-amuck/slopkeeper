@@ -1154,6 +1154,10 @@ textarea {
   padding: 0;
 }
 
+.music-search .views button {
+  padding: 4px 12px;
+}
+
 .music-search input[type='search'] {
   flex: 1 1 220px;
   min-width: 0;
