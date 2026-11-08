@@ -75,6 +75,7 @@ function server() {
   return { id, guild: guild as never as import('discord.js').Guild, channel: channel as never as import('discord.js').VoiceBasedChannel };
 }
 
+const CANT_PLAY_MS = 5_000;
 const song = (n: number, durationMs = 200_000): Track => ({ uri: `spotify:track:${String(n).padStart(22, '0')}`, title: `Song ${n}`, artist: 'Band', album: 'Album', cover: null, durationMs });
 const titles = (guildId: string) => queueOf(guildId).map((r) => r.title);
 const sent = (name: string) => commands.filter((c) => c.command === name);
@@ -105,6 +106,10 @@ test('songs go on the end, or after the one playing with play next, and each ser
   assert.equal(await startMusic(a.guild, a.channel), null);
   addTracks(a.id, [song(4), song(5)], 'u1', true);
   assert.deepEqual(titles(a.id), ['Song 3', 'Song 4', 'Song 5', 'Song 1', 'Song 2'], 'after the song playing, in order');
+  // Each goes between the song playing and the last one added, which would run out of room without renumbering
+  for (let n = 100; n < 160; n++) addTracks(a.id, [song(n)], 'u1', true);
+  assert.deepEqual(titles(a.id).slice(0, 4), ['Song 3', 'Song 159', 'Song 158', 'Song 157']);
+  assert.deepEqual(titles(a.id).slice(-5), ['Song 100', 'Song 4', 'Song 5', 'Song 1', 'Song 2']);
   assert.deepEqual(titles(b.id), ['Song 9']);
   stopMusic(a.id, 'u1');
 });
@@ -165,6 +170,11 @@ test('playing starts the first song on this speaker, then carries on where it pa
   commands.length = 0;
   assert.equal(await startMusic(guild, channel), null);
   assert.deepEqual(commands, [{ command: 'activate' }, { command: 'play' }], 'resumes rather than starting the song again');
+  // Paused and played again before Spotify said it had paused: that late word isn't a pause from Spotify
+  pauseMusic(id);
+  await startMusic(guild, channel);
+  await onSpotify({ type: 'playback_changed', status: 'paused' });
+  assert.equal(musicState(id).phase, 'playing');
   stopMusic(id, 'u1');
 });
 
@@ -197,10 +207,12 @@ test('a change to the queue after the hand-over still plays what’s next in it'
   stopMusic(id, 'u1');
 });
 
-test('a song ending hands over the one after it only once that one is near its end', async () => {
+test('a song ending hands over the one after it only once that one is near its end', async (t) => {
   const { id, guild, channel } = server();
   addTracks(id, [song(1, 60_000), song(2, 60_000), song(3)], 'u1');
   await startMusic(guild, channel);
+  // Long after it started, so the change can't be Spotify refusing the song
+  t.mock.timers.enable({ apis: ['Date'], now: Date.now() + CANT_PLAY_MS + 1 });
   // Spotify's last word on the song and the next one starting arrive together
   await at(58_000);
   await onSpotify({ type: 'track_changed', item: { uri: 'spotify:track:suggestedsuggestedsugge' } });

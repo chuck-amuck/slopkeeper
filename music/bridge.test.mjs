@@ -157,6 +157,12 @@ test('a pairing from SOLOIST_SESSION is put in place once, and only its own file
   fs.writeFileSync(path.join(dataDir, 'soloist/settings/Users/someone/prefs'), 'newer');
   await bridge({ dataDir, session });
   assert.equal(fs.readFileSync(path.join(dataDir, 'soloist/settings/Users/someone/prefs'), 'utf8'), 'newer');
+  // A pairing with nobody signed in would only stop the volume taking a real one later
+  const lines = [];
+  const empty = temp();
+  await bridge({ dataDir: empty, session: tarGz([{ name: 'cache/client_token', data: Buffer.from('token') }]).toString('base64'), log: (...args) => lines.push(args.join(' ')) });
+  assert.ok(!fs.existsSync(path.join(empty, 'soloist/cache/client_token')));
+  assert.ok(lines.some((l) => l.includes('no signed-in account')), lines.join('\n'));
 });
 
 test('audio passes through in whole samples, at the pace it’s played', { skip: spawnSync('mkfifo', ['--version']).status !== 0 }, async () => {

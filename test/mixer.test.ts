@@ -203,6 +203,11 @@ test('a stream plays at its group’s volume, goes quiet while it runs dry, and 
   await sleep(300);
   assert.equal(peaks.at(-1), 0);
   assert.equal(ended, 0);
+  // A trickle after running dry waits until there's enough in hand, rather than stuttering
+  const dry = peaks.length;
+  music.write(pcm(2));
+  await sleep(100);
+  assert.ok(!peaks.slice(dry).includes(400), 'two frames aren’t enough to start again');
   music.write(pcm(10));
   await sleep(150);
   assert.ok(peaks.slice(-8).includes(400), 'picked up again once it had enough in hand');

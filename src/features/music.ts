@@ -378,8 +378,6 @@ function scheduleHandOver() {
   if (!s) return;
   clearTimeout(s.handOverTimer);
   if (s.phase !== 'playing' || s.handedNext || s.position.speed === 0) return;
-  const next = queueOf(s.guildId)[1];
-  if (!next) return;
   const wait = s.current.duration_ms - positionOf(s) - HAND_OVER_MS;
   const song = s.current.id;
   s.handOverTimer = setTimeout(
