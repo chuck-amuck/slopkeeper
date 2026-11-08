@@ -703,6 +703,8 @@ export function musicState(guildId: string) {
   return {
     problem: unavailable(),
     searchReady: searchReady(),
+    // Only with the account's sign-in; without it the page doesn't offer them
+    playlistsReady: playlistsReady(),
     // Only while Spotify can play, which is when the account matters
     account: status && status.state !== 'off' ? status.account : null,
     phase: s?.phase ?? 'stopped',

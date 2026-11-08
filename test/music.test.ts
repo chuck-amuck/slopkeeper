@@ -466,6 +466,15 @@ test('says why music can’t play', async () => {
   stopMusic(id, 'u1');
 });
 
+test('the page is told playlists exist only with the Spotify account signed in', (t) => {
+  const { id } = server();
+  t.after(() => Object.assign(config, { spotifyClientId: null, spotifyClientSecret: null, spotifyRefreshToken: null }));
+  Object.assign(config, { spotifyClientId: 'id', spotifyClientSecret: 'secret', spotifyRefreshToken: null });
+  assert.deepEqual([musicState(id).searchReady, musicState(id).playlistsReady], [true, false], 'search alone doesn’t show anyone’s playlists');
+  config.spotifyRefreshToken = 'refresh';
+  assert.equal(musicState(id).playlistsReady, true);
+});
+
 // ---------- songs played through Spotify, when YouTube doesn't have them ----------
 
 test('Spotify starts the song on this speaker, then carries on where it paused', async () => {

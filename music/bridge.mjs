@@ -520,6 +520,7 @@ export function createBridge(options = {}) {
       pingTimer.unref?.();
       await youtube.start();
       if (!o.spotifyPlayback) return setStatus({ state: 'off', message: 'Spotify playback is off (SPOTIFY_PLAYBACK)' });
+      o.log('SPOTIFY_PLAYBACK is deprecated: songs play from YouTube, and Spotify playback will be removed. It plays on the Spotify account, which Spotify’s terms may not allow.');
       if (!o.arch) return setStatus({ state: 'failed', message: `Spotify Soloist has no build for this CPU (${process.arch})` });
       if (!o.apiKey) return setStatus({ state: 'no-key', message: 'SOLOIST_API_KEY isn’t set' });
       if (!o.consent) return setStatus({ state: 'no-consent', message: 'SOLOIST_ACCEPT_TERMS isn’t true, so Spotify Soloist wasn’t downloaded' });

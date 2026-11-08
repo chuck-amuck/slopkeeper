@@ -473,7 +473,7 @@ How it plays:
 - **Playlists:** Spotify only lets the bot read playlists the Spotify account made itself, or collaborates on, and only once that account has [signed in](#the-music-container) for it. Playlists by other people, even followed ones, and Spotify's own, like Daily Mixes, can't be read: add their songs or albums instead.
 - **Sounds and speech** play on top. Music drops to under a third while the bot talks.
 - **Stop on the soundboard**, or everyone leaving, pauses the music and keeps the queue. Music counts as the bot being busy, so it doesn't leave for being idle and the looping room waits.
-- **Spotify playback (optional, off by default):** with `SPOTIFY_PLAYBACK=true` on the music container and Soloist set up, songs YouTube doesn't have play through the Spotify account instead, in one server at a time. While one does, that account's music stops on its phones and speakers, and picking something else in its Spotify app pauses the bot.
+- **Spotify playback (deprecated, off by default):** YouTube streaming replaces it, and it will be removed. With `SPOTIFY_PLAYBACK=true` on the music container and Soloist set up, songs YouTube doesn't have play through the Spotify account instead, in one server at a time. While one does, that account's music stops on its phones and speakers, and picking something else in its Spotify app pauses the bot.
 - **Who can control it:** everyone, until `/setup music dj_role:` sets a role. Then only that role and people with **Manage Server** can add, pause, skip and stop. Anyone can see the queue. The web UI isn't limited by the role.
 - **Activity** shows what was added, removed and skipped, and by whom.
 
@@ -812,7 +812,7 @@ Music needs a container built from [`music/`](music). It finds songs and downloa
            memory: 512M
    ```
 3. **Set on the bot:** `MUSIC_URL=http://music:7700`, `MUSIC_TOKEN` (any long random value, the same on both), `SPOTIFY_CLIENT_ID` and `SPOTIFY_CLIENT_SECRET`.
-4. **Playlists (optional):** with the bot running, sign in once as the Spotify account whose playlists you want. The search app must belong to that account:
+4. **Playlists (optional):** the Music tab's **My playlists** only shows once this is done. With the bot running, sign in once as the Spotify account whose playlists you want. The search app must belong to that account:
    ```sh
    docker compose exec -it slopkeeper node src/spotify-sign-in.ts
    ```
@@ -820,9 +820,9 @@ Music needs a container built from [`music/`](music). It finds songs and downloa
 
 YouTube changes often and old yt-dlp versions stop working, so the container updates yt-dlp when it starts and daily after that. Each song is about 3 to 9 MB. The container keeps the most recently played songs, up to `MUSIC_CACHE_MB` (1024 by default), so songs played again start at once. It uses about 100 MB of memory, and more for a moment while a song downloads. Settings and the Music tab say if yt-dlp isn't working. The bot reads the audio from `MUSIC_AUDIO_DIR`, `/music/audio` by default, which is the volume's `audio` folder.
 
-#### Spotify playback for what YouTube doesn't have (optional)
+#### Spotify playback for what YouTube doesn't have (deprecated)
 
-Off unless `SPOTIFY_PLAYBACK=true` is set on the music container. Spotify's developer terms say an app can't play "from a single source to several simultaneous listeners", and playing into a Discord channel arguably is that. Spotify could revoke the key or act on the account, so a spare or family-plan Premium account is safer than your own. Soloist's terms don't allow sharing the key or the player, so the image doesn't include the player: the container downloads it from Spotify each time it needs one, once you've accepted the terms.
+**Deprecated in favour of YouTube streaming, and to be removed.** Off unless `SPOTIFY_PLAYBACK=true` is set on the music container, which then logs a warning. Spotify's developer terms say an app can't play "from a single source to several simultaneous listeners", and playing into a Discord channel arguably is that. Spotify could revoke the key or act on the account, so a spare or family-plan Premium account is safer than your own. Soloist's terms don't allow sharing the key or the player, so the image doesn't include the player: the container downloads it from Spotify each time it needs one, once you've accepted the terms.
 
 1. **Soloist key:** on the same dashboard, as the Premium account, open Soloist, accept its terms and create a key.
 2. **Pair it.** On a computer on the same network as your phone, run this, then pick **Slopkeeper** as the speaker in Spotify:

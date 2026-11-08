@@ -499,6 +499,9 @@ export function renderMusic(main) {
     problem.textContent = data.problem ?? '';
     problem.hidden = !data.problem;
     searchNote.hidden = data.searchReady;
+    // Playlists only show with the Spotify account signed in
+    modes.hidden = !data.playlistsReady;
+    if (!data.playlistsReady && mode === 'playlists') setMode('songs');
     query.disabled = searchButton.disabled = !data.searchReady;
     if (volume.hidden) {
       volume.value = data.volume;
