@@ -159,7 +159,10 @@ function compare(main) {
     const { members } = await request(api('/pick/options'));
     if (guildId !== state.guildId || !main.isConnected) return;
     if (members.length < 2) return content.replaceChildren(el('div', { className: 'empty' }, 'It takes two people to compare.'));
-    for (const [idx, picker] of [first, second].entries()) picker.replaceChildren(...members.map((m, n) => el('option', { value: m.id, selected: n === idx }, m.name)));
+    // Whoever's signed in goes first, so the comparison starts with them
+    const mine = members.findIndex((m) => m.id === state.me?.userId);
+    const starts = mine < 0 ? [0, 1] : [mine, mine === 0 ? 1 : 0];
+    for (const [idx, picker] of [first, second].entries()) picker.replaceChildren(...members.map((m, n) => el('option', { value: m.id, selected: n === starts[idx] }, m.name)));
     await show();
   });
 }

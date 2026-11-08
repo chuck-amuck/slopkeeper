@@ -568,7 +568,7 @@ One running bot can serve several servers. Each server gets its own:
 
 ## Web UI
 
-A page for your home network, in [`web/`](web), that runs as a second container next to the bot:
+A page in [`web/`](web) that runs as a second container next to the bot, for your home network or behind a sign-in proxy like [Pangolin](#signing-in-through-pangolin):
 
 - **Soundboard:** big buttons that play in voice, with favourites first and then whatever gets played most, and a box for having the bot say something.
 - **Library:** upload files or whole folders, preview, rename and delete sounds, set a sound's volume, trim it with a way back to the original, and choose what's on Discord's soundboard, with a waveform for picking part of a long sound. **Recently deleted** restores a sound or erases it for good.
@@ -578,11 +578,11 @@ A page for your home network, in [`web/`](web), that runs as a second container 
 - **Stats:** **Overview** has game and voice time, overall or for one person or game, with sessions, rank and when it was last played. **Compare** is `/compare` with every game two people both own and their achievements in any of them, and **Monthly recap** is `/recap`.
 - **Discord's soundboard:** on Library, see what fills the slots, play or save any sound, and swap sounds between Discord and the library.
 - **Merging games:** on Stats, Merge games puts different spellings of a game together, and Separate on a clicked game takes one back out.
-- **Activity:** a history of changes to sounds, games, settings and game nights.
+- **Activity:** a history of changes to sounds, games, settings and game nights, and who made them.
 - **Settings:** everything in `/setup`, for each server, game ping roles, everyone's join sounds, which free games are being posted or hidden and why, and what's on sale now. **Who gets pinged** changes anyone's hop-on and game pings, as `/notify` and `/pings` do.
 - **Posting to Discord:** **Post panel** on Soundboard is `/sound panel`, and **Post Choose games button** on Settings is `/gamerole menu`.
 
-Anything that shows information stays on the page. Only a vote, a panel and the Choose games button post to Discord. The page doesn't know who you are, so anyone with the password can change anyone's pings, as with Steam accounts.
+Anything that shows information stays on the page. Only a vote, a panel and the Choose games button post to Discord. Anyone with the password can change anyone's pings, as with Steam accounts.
 
 It holds no data of its own. The bot does everything through its [management API](#management-api), so the rules are the same as for the slash commands, and a change here updates the bot's posted soundboard panels too.
 
@@ -595,9 +595,20 @@ browser → web UI (password, session cookie) → bot API (token) → database a
 | `WEB_PASSWORD` | required | The password for the page. Changing it logs everyone out |
 | `API_TOKEN` | required | Same value as the bot's `API_TOKEN`. It turns the bot's API on, and never reaches the browser |
 | `BOT_URL` | `http://slopkeeper:8787` | Where the bot's API is |
+| `PROXY_SECRET` | off | Turns on [signing in through Pangolin](#signing-in-through-pangolin) |
 | `PORT` | 8080 | Port inside the container |
 
-Build the image from `web/Dockerfile`. Keep the page on your home network: it serves plain HTTP, so the password isn't encrypted on the way in.
+Build the image from `web/Dockerfile`. It serves plain HTTP, so keep it on your home network or put it behind a proxy that adds HTTPS.
+
+### Signing in through Pangolin
+
+Behind [Pangolin](https://github.com/fosrl/pangolin) with SSO, the page knows who's using it. Pangolin adds `Remote-Email` and `Remote-Name` headers after someone signs in, and the page trusts them only when the request also carries `PROXY_SECRET` in an `x-slopkeeper-proxy-secret` header, so nobody can send them straight to the port. To set it up, set `PROXY_SECRET` to a long random value (`openssl rand -hex 32`) and add it to the resource in Pangolin as a custom request header. Keep the resource SSO-only: a PIN, password or share link forwards no identity.
+
+The password is still asked for. Once someone is signed in:
+
+- Their name shows in the header, and their changes show under it in **Activity**. Changes from anywhere that skips Pangolin still show as **Web UI**.
+- Clicking their name lets them say which Discord member they are. Their changes then show under that name, and planning a night, **Who gets pinged**, join sounds and **Compare** start on them. One sign-in per Discord member, and linking is recorded in **Activity**.
+- Wrong passwords lock out only them for a minute, not everyone.
 
 There are no runtime dependencies. In `web/`, `npm test` runs the tests with Node 24, and `npm run typecheck` needs `npm ci` first.
 
@@ -625,7 +636,7 @@ Everything else is a per-server setting. Servers set their own with `/setup`; th
 
 With `API_TOKEN` set, the bot serves an HTTP API for managing sounds and settings, for the [web UI](#web-ui) to use. It's off by default, and the bot works the same without it.
 
-It applies the same rules as `/sound` and `/setup`, and every request needs an `Authorization: Bearer <token>` header. It has no other login, so keep it on the container network: don't publish the port or put it behind a proxy.
+It applies the same rules as `/sound` and `/setup`, and every request needs an `Authorization: Bearer <token>` header. The web UI adds `x-slopkeeper-email` and `x-slopkeeper-name`, URL-encoded, for someone signed in through Pangolin, and changes are credited to them. It has no other login, so keep it on the container network: don't publish the port or put it behind a proxy.
 
 | Request | What it does |
 | --- | --- |
@@ -699,6 +710,9 @@ It applies the same rules as `/sound` and `/setup`, and every request needs an `
 | `POST /guilds/:id/sound-panels` | Posts a soundboard panel: `{ "channelId": "..." }` |
 | `POST /guilds/:id/game-pings/menu` | Posts the Choose games button: `{ "channelId": "..." }` |
 | `GET /guilds/:id/activity?before=<id>` | The last year of changes to sounds, settings and game nights, 50 at a time, newest first |
+| `GET /guilds/:id/me` | Who's signed in through Pangolin, and which member they said they are |
+| `PUT /guilds/:id/me` | Says which member the signed-in person is: `{ "userId": "..." }` |
+| `DELETE /guilds/:id/me` | Unlinks them |
 | `GET /guilds/:id/stats?period=<week\|month\|year\|all>&user=<id>&game=<name>` | Game and voice totals, with game time over the period, plus sessions, rank and when it was last played where a person or game is chosen |
 | `GET /guilds/:id/settings` | Lists settings, channels, roles and time zones |
 | `PUT /guilds/:id/settings/:key` | Changes a setting: `{ "value": ... }` |

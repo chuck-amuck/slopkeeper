@@ -279,7 +279,7 @@ export function renderSettings(main) {
     return el('div', { className: 'field' }, el('div', {}, el('div', { className: 'series-name' }, title), el('p', { className: 'hint' }, hint)), form, message);
   }
 
-  /** The page doesn't know who's using it, so this is for anyone, as Steam accounts are */
+  /** For anyone's pings, as Steam accounts are, starting on whoever's signed in */
   function pingsDialog() {
     const who = el('select', { ariaLabel: 'Person', onchange: () => show() });
     const list = el('div', { className: 'merge-list' });
@@ -330,7 +330,7 @@ export function renderSettings(main) {
     );
     void attempt(async () => {
       const { members } = await request(api('/pick/options'));
-      who.replaceChildren(...members.map((m) => el('option', { value: m.id }, m.name)));
+      who.replaceChildren(...members.map((m) => el('option', { value: m.id, selected: m.id === state.me?.userId }, m.name)));
       if (members.length) await show();
     });
   }
@@ -398,7 +398,7 @@ export function renderSettings(main) {
 
   function joinSoundCard(first) {
     const body = el('div');
-    const who = el('select', { required: true, ariaLabel: 'Person' }, el('option', { value: '' }, 'Pick a person'), first.members.map((m) => el('option', { value: m.id }, m.name)));
+    const who = el('select', { required: true, ariaLabel: 'Person' }, el('option', { value: '' }, 'Pick a person'), first.members.map((m) => el('option', { value: m.id, selected: m.id === state.me?.userId }, m.name)));
     const sound = el('select', { required: true, ariaLabel: 'Sound' }, el('option', { value: '' }, 'Pick a sound'), first.sounds.map((name) => el('option', { value: name }, name)));
     const load = async () => paint((await request(api('/join-sounds'))).joinSounds);
     const paint = (current) =>

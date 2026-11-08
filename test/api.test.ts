@@ -209,7 +209,7 @@ beforeEach(() => {
   db.exec(`DELETE FROM sound_emoji; DELETE FROM discord_sounds; DELETE FROM sound_plays; DELETE FROM guild_settings; DELETE FROM sound_panels;
     DELETE FROM sound_favourites; DELETE FROM game_nights; DELETE FROM game_night_series; DELETE FROM game_plays; DELETE FROM session_members; DELETE FROM sessions;
     DELETE FROM sound_levels; DELETE FROM join_sounds; DELETE FROM activity; DELETE FROM game_aliases; DELETE FROM deleted_sounds; DELETE FROM games;
-    DELETE FROM steam_links; DELETE FROM steam_owned; DELETE FROM steam_family; DELETE FROM sale_prices; DELETE FROM game_roles; DELETE FROM hidden_apps; DELETE FROM game_votes`);
+    DELETE FROM steam_links; DELETE FROM steam_owned; DELETE FROM steam_family; DELETE FROM sale_prices; DELETE FROM game_roles; DELETE FROM hidden_apps; DELETE FROM game_votes; DELETE FROM web_users`);
   db.prepare("INSERT INTO sound_panels (message_id, guild_id, channel_id, page) VALUES ('m', ?, '111', 0)").run(GUILD);
   if (existsSync(soundFolder)) for (const f of readdirSync(soundFolder)) execFileSync('rm', ['-r', path.join(soundFolder, f)]);
 });
@@ -1116,6 +1116,92 @@ test('names who did it in Discord, and pages back through the history', async ()
   assert.equal(rest.more, false);
   assert.equal(rest.entries[9].action, 'Change 0');
   assert.equal(rest.entries[9].who, 'Ana');
+});
+
+/** Headers the web UI adds for someone Pangolin signed in */
+const as = (email: string, name?: string) => ({ 'x-slopkeeper-email': encodeURIComponent(email), ...(name && { 'x-slopkeeper-name': encodeURIComponent(name) }) });
+const whoDid = async () => (await ok(`/guilds/${GUILD}/activity`)).entries.map((e: any) => [e.who, e.action]);
+
+test('credits changes to whoever Pangolin signed in, and Web UI to anyone else', async () => {
+  await ok(`/guilds/${GUILD}/settings/hopOnCooldownMin`, { method: 'PUT', json: { value: 5 }, headers: as('chuck@example.com', 'Chuck Z') });
+  await ok(`/guilds/${GUILD}/settings/hopOnCooldownMin`, { method: 'PUT', json: { value: 6 }, headers: as('pat@example.com') });
+  await ok(`/guilds/${GUILD}/settings/hopOnCooldownMin`, { method: 'PUT', json: { value: 7 } });
+  assert.deepEqual(await whoDid(), [
+    ['Web UI', 'Set Hop-on cooldown to 7 min'],
+    ['pat@example.com', 'Set Hop-on cooldown to 6 min'],
+    ['Chuck Z', 'Set Hop-on cooldown to 5 min'],
+  ]);
+});
+
+test('a sign-in name keeps up with Pangolin, and isn’t mangled', async () => {
+  await ok(`/guilds/${GUILD}/settings/hopOnCooldownMin`, { method: 'PUT', json: { value: 5 }, headers: as('jose@example.com', 'Jose') });
+  await ok(`/guilds/${GUILD}/sounds`, { headers: as('jose@example.com', 'José Ñandú') });
+  assert.deepEqual(await whoDid(), [['José Ñandú', 'Set Hop-on cooldown to 5 min']]);
+});
+
+test('a header that isn’t encoded properly names nobody', async () => {
+  await ok(`/guilds/${GUILD}/settings/hopOnCooldownMin`, { method: 'PUT', json: { value: 5 }, headers: { 'x-slopkeeper-email': '%E0%A4%A' } });
+  assert.deepEqual(await whoDid(), [['Web UI', 'Set Hop-on cooldown to 5 min']]);
+});
+
+test('says who’s signed in, and nobody for the home network', async () => {
+  assert.deepEqual(await ok(`/guilds/${GUILD}/me`), { me: null });
+  assert.deepEqual(await ok(`/guilds/${GUILD}/me`, { headers: as('chuck@example.com', 'Chuck') }), { me: { name: 'Chuck', userId: null } });
+});
+
+test('someone signed in can say which Discord member they are, and their changes show that name', async () => {
+  const chuck = as('chuck@example.com', 'Chuck');
+  await ok(`/guilds/${GUILD}/settings/hopOnCooldownMin`, { method: 'PUT', json: { value: 5 }, headers: chuck });
+  assert.deepEqual(await ok(`/guilds/${GUILD}/me`, { method: 'PUT', json: { userId: 'u1' }, headers: chuck }), { me: { name: 'Chuck', userId: 'u1' } });
+  // Saying it again changes nothing, so it isn't recorded twice
+  await ok(`/guilds/${GUILD}/me`, { method: 'PUT', json: { userId: 'u1' }, headers: chuck });
+  assert.deepEqual(await ok(`/guilds/${GUILD}/me`, { headers: chuck }), { me: { name: 'Chuck', userId: 'u1' } });
+  assert.deepEqual(await whoDid(), [
+    ['Ana', 'Linked the web sign-in for Chuck to Ana'],
+    ['Ana', 'Set Hop-on cooldown to 5 min'],
+  ]);
+
+  await ok(`/guilds/${GUILD}/me`, { method: 'PUT', json: { userId: 'u2' }, headers: chuck });
+  await ok(`/guilds/${GUILD}/me`, { method: 'DELETE', headers: chuck });
+  assert.deepEqual(await ok(`/guilds/${GUILD}/me`, { headers: chuck }), { me: { name: 'Chuck', userId: null } });
+  assert.deepEqual((await whoDid()).slice(0, 2), [
+    ['Chuck', 'Unlinked the web sign-in for Chuck from Ben'],
+    ['Chuck', 'Linked the web sign-in for Chuck to Ben'],
+  ]);
+});
+
+test('two sign-ins can’t be the same Discord member', async () => {
+  await ok(`/guilds/${GUILD}/me`, { method: 'PUT', json: { userId: 'u1' }, headers: as('chuck@example.com', 'Chuck') });
+  assert.match(await refused(409, `/guilds/${GUILD}/me`, { method: 'PUT', json: { userId: 'u1' }, headers: as('pat@example.com') }), /already said they’re Ana/);
+  assert.equal((await ok(`/guilds/${GUILD}/me`, { headers: as('pat@example.com') })).me.userId, null);
+});
+
+test('only someone signed in can say who they are, and only as someone in the server', async () => {
+  assert.match(await refused(403, `/guilds/${GUILD}/me`, { method: 'PUT', json: { userId: 'u1' } }), /signed in through Pangolin/);
+  await refused(403, `/guilds/${GUILD}/me`, { method: 'DELETE' });
+  const pat = as('pat@example.com');
+  await refused(404, `/guilds/${GUILD}/me`, { method: 'PUT', json: { userId: 'nobody' }, headers: pat });
+  await refused(404, `/guilds/${GUILD}/me`, { method: 'PUT', json: {}, headers: pat });
+  await refused(405, `/guilds/${GUILD}/me`, { method: 'POST', headers: pat });
+  assert.deepEqual(await whoDid(), []);
+});
+
+test('a link to someone who left the server isn’t used', async () => {
+  const chuck = as('chuck@example.com', 'Chuck');
+  await ok(`/guilds/${GUILD}/me`, { method: 'PUT', json: { userId: 'u3' }, headers: chuck });
+  const cy = guild.members.cache.get('u3')!;
+  guild.members.cache.delete('u3');
+  try {
+    assert.deepEqual(await ok(`/guilds/${GUILD}/me`, { headers: chuck }), { me: { name: 'Chuck', userId: null } });
+    assert.equal((await whoDid())[0][0], 'Chuck');
+  } finally {
+    guild.members.cache.set('u3', cy);
+  }
+});
+
+test('games added and hidden from the web are put down to whoever did it', async () => {
+  await ok(`/guilds/${GUILD}/games`, { method: 'POST', json: { name: 'Valheim' }, headers: as('chuck@example.com', 'Chuck') });
+  assert.equal((db.prepare('SELECT added_by FROM games WHERE guild_id = ?').get(GUILD) as any).added_by, 'web:chuck@example.com');
 });
 
 test('activity stays with its server and goes after a year', async () => {

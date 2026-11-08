@@ -11,6 +11,7 @@ const server = createWeb({
   password: required('WEB_PASSWORD'),
   apiToken: required('API_TOKEN'),
   botUrl: process.env.BOT_URL || 'http://slopkeeper:8787',
+  proxySecret: process.env.PROXY_SECRET || undefined,
 });
 
 server.listen(port, () => console.log(`Listening on port ${port}`));

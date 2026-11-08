@@ -32,7 +32,20 @@ export interface WebOptions {
   password: string;
   apiToken: string;
   botUrl: string;
+  /** Pangolin sends this with every request, so its Remote-Email header can be told apart from one sent straight to the port */
+  proxySecret?: string;
 }
+
+/** Who Pangolin signed in. Nothing at all for the home network, which skips Pangolin */
+interface Identity {
+  email: string;
+  name: string;
+}
+
+const header = (req: IncomingMessage, name: string) => {
+  const value = req.headers[name];
+  return typeof value === 'string' ? value : undefined;
+};
 
 const same = (a: Buffer, b: Buffer) => a.length === b.length && timingSafeEqual(a, b);
 
@@ -69,14 +82,27 @@ function json(res: ServerResponse, status: number, body: unknown, headers = {}) 
   res.writeHead(status, { ...HEADERS, 'content-type': 'application/json', ...headers }).end(JSON.stringify(body));
 }
 
-export function createWeb({ password, apiToken, botUrl }: WebOptions): Server {
+export function createWeb({ password, apiToken, botUrl, proxySecret }: WebOptions): Server {
   const expected = Buffer.from(password);
-  // One lock for everyone: the page has one password, so there's nobody else to tell apart
-  let failures = 0;
-  let lockedUntil = 0;
+  const secret = proxySecret ? Buffer.from(proxySecret) : undefined;
+  // A lock per person signed in through Pangolin, and one shared by everyone who isn't
+  const locks = new Map<string, { failures: number; lockedUntil: number }>();
+
+  function identity(req: IncomingMessage): Identity | undefined {
+    const given = header(req, 'x-slopkeeper-proxy-secret');
+    if (!secret || !given || !same(Buffer.from(given), secret)) return undefined;
+    const email = header(req, 'remote-email')?.trim().toLowerCase();
+    if (!email || email.length > 254) return undefined;
+    // Node reads header bytes as Latin-1, and Pangolin sends names as UTF-8
+    const name = Buffer.from(header(req, 'remote-name') ?? '', 'latin1').toString('utf8').trim().slice(0, 100);
+    return { email, name: name || email };
+  }
 
   async function login(req: IncomingMessage, res: ServerResponse) {
-    if (Date.now() < lockedUntil) return json(res, 429, { error: 'Too many wrong passwords. Try again in a minute.' });
+    const key = identity(req)?.email ?? '';
+    const lock = locks.get(key) ?? { failures: 0, lockedUntil: 0 };
+    locks.set(key, lock);
+    if (Date.now() < lock.lockedUntil) return json(res, 429, { error: 'Too many wrong passwords. Try again in a minute.' });
     let given = '';
     try {
       const body = await readBody(req);
@@ -85,21 +111,22 @@ export function createWeb({ password, apiToken, botUrl }: WebOptions): Server {
       return json(res, 400, { error: 'Bad request.' });
     }
     if (!same(Buffer.from(given), expected)) {
-      failures += 1;
-      if (failures >= MAX_FAILURES) {
-        failures = 0;
-        lockedUntil = Date.now() + LOCK_MS;
+      lock.failures += 1;
+      if (lock.failures >= MAX_FAILURES) {
+        lock.failures = 0;
+        lock.lockedUntil = Date.now() + LOCK_MS;
       }
       return json(res, 401, { error: 'Wrong password.' });
     }
-    failures = 0;
+    lock.failures = 0;
     const maxAge = SESSION_DAYS * 86_400;
     const expires = Date.now() + maxAge * 1000;
     json(res, 200, {}, { 'set-cookie': `${COOKIE}=${expires}.${sign(password, expires)}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${maxAge}` });
   }
 
-  /** Passes a request to the bot with the token, which never reaches the browser */
+  /** Passes a request to the bot with the token, which never reaches the browser, and who's asking if Pangolin said */
   async function proxy(req: IncomingMessage, res: ServerResponse) {
+    const who = identity(req);
     const hasBody = req.method !== 'GET' && req.method !== 'HEAD';
     const body = hasBody ? await readBody(req) : undefined;
     // The rest of it was never read, so the connection can't be reused
@@ -109,7 +136,11 @@ export function createWeb({ password, apiToken, botUrl }: WebOptions): Server {
     try {
       answer = await fetch(botUrl + req.url!.slice('/api'.length), {
         method: req.method,
-        headers: { authorization: `Bearer ${apiToken}`, ...(type && { 'content-type': type }) },
+        headers: {
+          authorization: `Bearer ${apiToken}`,
+          ...(type && { 'content-type': type }),
+          ...(who && { 'x-slopkeeper-email': encodeURIComponent(who.email), 'x-slopkeeper-name': encodeURIComponent(who.name) }),
+        },
         body: body as BodyInit | undefined,
         signal: AbortSignal.timeout(BOT_TIMEOUT_MS),
       });

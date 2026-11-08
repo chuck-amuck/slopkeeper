@@ -8,7 +8,7 @@ export function renderActivity(main) {
   const guildId = state.guildId;
   const list = el('div', { className: 'list' }, el('div', { className: 'empty' }, 'Loading activity…'));
   const older = el('button', { hidden: true, onclick: () => attempt(load) }, 'Show older');
-  main.append(el('p', { className: 'page-note' }, 'Changes made in Discord show who made them. The page has one shared password, so changes made here all show as Web UI.'), list, older);
+  main.append(el('p', { className: 'page-note' }, 'Changes show who made them: in Discord, or here when signed in. Changes from the home network address show as Web UI.'), list, older);
   let last;
 
   async function load() {

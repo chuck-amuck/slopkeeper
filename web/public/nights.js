@@ -29,7 +29,7 @@ function pickOne(options, chosen, props = {}) {
   return el('select', { required: true, ...props }, options.map(([value, label]) => el('option', { value, selected: value === chosen }, label)));
 }
 
-/** Plans a night by the same rules as /gamenight plan. The page doesn't know who's using it, so it asks who's hosting */
+/** Plans a night by the same rules as /gamenight plan. Asks who's hosting, starting on whoever's signed in */
 function planDialog(main, data, onPlanned) {
   const whenNote = el('span', { className: 'form-note' }, WHEN_HINT);
   let timer;
@@ -58,7 +58,7 @@ function planDialog(main, data, onPlanned) {
   const voiceChannel = pickOne([['', 'None'], ...data.voiceChannels.map((c) => [c.id, c.name])], '', { required: false });
   const host = pickOne(
     data.members.map((m) => [m.id, m.name]),
-    recall('nightHost'),
+    state.me?.userId ?? recall('nightHost'),
   );
   const repeat = pickOne([['', 'Just this once'], ['7', 'Every week'], ['14', 'Every 2 weeks']], '', { required: false });
   const details = el('textarea', { maxLength: 1000, rows: 2 });

@@ -222,3 +222,81 @@ test('a right password clears the count of wrong ones', async () => {
   web2.close();
   web2.closeAllConnections();
 });
+
+const SECRET = 'pangolin-secret';
+const sso = (email: string, name?: string) => ({ 'x-slopkeeper-proxy-secret': SECRET, 'remote-email': email, ...(name && { 'remote-name': name }) });
+
+/** A web UI of its own, so its login lock starts clear, that knows Pangolin's secret unless told otherwise */
+async function withSecret(run: (url: string, cookie: (headers?: Record<string, string>) => Promise<string>) => Promise<void>, proxySecret: string | null = SECRET) {
+  const signed = createWeb({ password: PASSWORD, apiToken: TOKEN, botUrl: `http://127.0.0.1:${(bot.address() as AddressInfo).port}`, proxySecret: proxySecret ?? undefined });
+  const url = `http://127.0.0.1:${await listen(signed)}`;
+  const cookie = async (headers = {}) => {
+    const res = await fetch(`${url}/auth/login`, { method: 'POST', headers: { ...write, ...headers }, body: JSON.stringify({ password: PASSWORD }) });
+    assert.equal(res.status, 200);
+    return res.headers.get('set-cookie')!.split(';')[0];
+  };
+  try {
+    await run(url, cookie);
+  } finally {
+    signed.close();
+    signed.closeAllConnections();
+  }
+}
+
+test('tells the bot who Pangolin signed in', async () => {
+  await withSecret(async (url, cookie) => {
+    await fetch(`${url}/api/guilds`, { headers: { cookie: await cookie(), ...sso('Chuck@Example.com', 'Chuck') } });
+    assert.equal(seen[0].headers['x-slopkeeper-email'], 'chuck%40example.com');
+    assert.equal(seen[0].headers['x-slopkeeper-name'], 'Chuck');
+  });
+});
+
+test('a name outside ASCII reaches the bot intact', async () => {
+  await withSecret(async (url, cookie) => {
+    // As Pangolin sends it: UTF-8 bytes, which Node reads as Latin-1
+    const name = Buffer.from('José Ñandú', 'utf8').toString('latin1');
+    await fetch(`${url}/api/guilds`, { headers: { cookie: await cookie(), ...sso('jose@example.com', name) } });
+    assert.equal(decodeURIComponent(seen[0].headers['x-slopkeeper-name'] as string), 'José Ñandú');
+  });
+});
+
+test('without a name, the email stands in', async () => {
+  await withSecret(async (url, cookie) => {
+    await fetch(`${url}/api/guilds`, { headers: { cookie: await cookie(), ...sso('pat@example.com') } });
+    assert.equal(seen[0].headers['x-slopkeeper-name'], 'pat%40example.com');
+  });
+});
+
+test('Remote-Email without Pangolin’s secret names nobody', async () => {
+  await withSecret(async (url, cookie) => {
+    const c = await cookie();
+    const forged: Record<string, string>[] = [{ 'remote-email': 'chuck@example.com' }, { ...sso('chuck@example.com'), 'x-slopkeeper-proxy-secret': 'guess' }, { 'x-slopkeeper-email': 'chuck%40example.com' }];
+    for (const headers of forged) {
+      await fetch(`${url}/api/guilds`, { headers: { cookie: c, ...headers } });
+    }
+  });
+  assert.equal(seen.length, 3);
+  for (const request of seen) assert.equal(request.headers['x-slopkeeper-email'], undefined);
+});
+
+test('without a secret set up, nobody is named', async () => {
+  await withSecret(async (url, cookie) => {
+    await fetch(`${url}/api/guilds`, { headers: { cookie: await cookie(), ...sso('chuck@example.com', 'Chuck') } });
+  }, null);
+  assert.equal(seen[0].headers['x-slopkeeper-email'], undefined);
+});
+
+test('wrong passwords lock out only the person typing them', async () => {
+  await withSecret(async (url, cookie) => {
+    const post = (headers: Record<string, string>, password: string) =>
+      fetch(`${url}/auth/login`, { method: 'POST', headers: { ...write, ...headers }, body: JSON.stringify({ password }) });
+    for (let i = 0; i < 5; i++) assert.equal((await post(sso('pat@example.com'), 'wrong')).status, 401);
+    assert.equal((await post(sso('pat@example.com'), PASSWORD)).status, 429);
+    await cookie(sso('chuck@example.com'));
+    await cookie();
+    // Without the secret, the email can't pick which lock to use
+    for (let i = 0; i < 5; i++) assert.equal((await post({ 'remote-email': 'chuck@example.com' }, 'wrong')).status, 401);
+    assert.equal((await post({}, PASSWORD)).status, 429);
+    await cookie(sso('chuck@example.com'));
+  });
+});

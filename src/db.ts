@@ -318,11 +318,19 @@ db.exec(`
     id INTEGER PRIMARY KEY,
     guild_id TEXT NOT NULL,
     at INTEGER NOT NULL,
-    -- A user id, or 'web' for the web UI, which has one shared login
+    -- A user id, 'web:<email>' for someone signed in to the web UI through Pangolin, or 'web' for anyone else on it
     actor TEXT NOT NULL,
     action TEXT NOT NULL
   );
   CREATE INDEX IF NOT EXISTS activity_by_guild ON activity (guild_id, id);
+
+  -- People signed in to the web UI through Pangolin, by their sign-in email, and who they said they are in Discord
+  CREATE TABLE IF NOT EXISTS web_users (
+    email TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    user_id TEXT UNIQUE,
+    seen_at INTEGER NOT NULL
+  );
 
   CREATE TABLE IF NOT EXISTS kv (
     key TEXT PRIMARY KEY,

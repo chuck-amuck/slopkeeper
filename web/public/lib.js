@@ -78,7 +78,8 @@ export function ago(ms) {
   return days < 730 ? `${Math.round(days / 30)} months ago` : `${Math.round(days / 365)} years ago`;
 }
 
-export const state = { guilds: [], guildId: null };
+// me: who Pangolin signed in, with the Discord member they said they are in this server. Null from the home network
+export const state = { guilds: [], guildId: null, me: null };
 export const api = (path) => `/api/guilds/${state.guildId}${path}`;
 export const soundPath = (name, part = '') => api(`/sounds/${encodeURIComponent(name)}${part}`);
 

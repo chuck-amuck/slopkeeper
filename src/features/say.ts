@@ -174,7 +174,7 @@ function sayProblem(guild: Guild, text: string, who: string): string | null {
   return queueFor(guild.id).lines.length >= MOST_WAITING ? `There are already ${MOST_WAITING} lines waiting. Try again in a moment.` : null;
 }
 
-/** Says something in a channel, after any lines ahead of it. Returns null once it's started, or why it couldn't. `who` is a user id, or FROM_WEB */
+/** Says something in a channel, after any lines ahead of it. Returns null once it's started, or why it couldn't. `who` is a user id, or who on the web UI (see activity.ts) */
 export async function say(channel: VoiceBasedChannel, typed: string, voiceId: string | undefined, who: string): Promise<string | null> {
   const { guild } = channel;
   const voice = VOICES.find((v) => v.id === (voiceId ?? setting(guild.id, 'ttsVoice')));
