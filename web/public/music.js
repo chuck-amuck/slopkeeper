@@ -13,6 +13,10 @@ const SOURCES = { youtube: 'YouTube', soundcloud: 'SoundCloud', spotify: 'Spotif
 /** What follows the artist while a song plays: paused, being found, or where it's from and where it's playing */
 const whereFrom = (data) =>
   data.phase === 'paused' ? ['Paused'] : data.phase === 'starting' ? ['Finding it…'] : [SOURCES[data.via] && `from ${SOURCES[data.via]}`, data.channelName && `in ${data.channelName}`].filter(Boolean);
+// How far the arrow keys move along a song
+const SEEK_STEP_MS = 10_000;
+// How long after the last arrow key it jumps
+const KEYS_SETTLE_MS = 400;
 const time = (ms) => `${Math.floor(ms / 60_000)}:${String(Math.floor((ms % 60_000) / 1000)).padStart(2, '0')}`;
 
 function cover(src, size) {
@@ -39,7 +43,62 @@ export function renderMusic(main) {
   const elapsed = el('span', { className: 'now-time' }, '0:00');
   const total = el('span', { className: 'now-time' }, '0:00');
   const bar = el('div', { className: 'now-bar' });
-  const progress = el('div', { className: 'now-progress' }, elapsed, el('div', { className: 'now-track' }, bar), total);
+  // Dragging shows where it'll jump to, and jumps once let go
+  let seekingTo = null;
+  let keyTimer;
+  const track = el(
+    'div',
+    {
+      className: 'now-track',
+      role: 'slider',
+      tabIndex: 0,
+      'aria-label': 'Song position',
+      onpointerdown: (e) => {
+        if (!canSeek()) return;
+        track.setPointerCapture(e.pointerId);
+        seekingTo = pointedAt(e);
+        paintProgress();
+      },
+      onpointermove: (e) => {
+        if (seekingTo === null) return;
+        seekingTo = pointedAt(e);
+        paintProgress();
+      },
+      onpointerup: () => seekingTo !== null && void seek(seekingTo),
+      onpointercancel: () => {
+        seekingTo = null;
+        paintProgress();
+      },
+      onkeydown: (e) => {
+        const step = { ArrowLeft: -SEEK_STEP_MS, ArrowDown: -SEEK_STEP_MS, ArrowRight: SEEK_STEP_MS, ArrowUp: SEEK_STEP_MS }[e.key];
+        if (!step || !canSeek()) return;
+        e.preventDefault();
+        // Presses in a row add up, and it jumps once they stop
+        seekingTo = Math.max(0, Math.min((seekingTo ?? positionNow()) + step, data.queue[0].durationMs));
+        paintProgress();
+        clearTimeout(keyTimer);
+        keyTimer = setTimeout(() => void seek(seekingTo), KEYS_SETTLE_MS);
+      },
+    },
+    el('div', { className: 'now-rail' }, bar),
+  );
+  const progress = el('div', { className: 'now-progress' }, elapsed, track, total);
+  const canSeek = () => data?.phase === 'playing' || data?.phase === 'paused';
+  const pointedAt = (e) => {
+    const box = track.getBoundingClientRect();
+    return Math.round(Math.max(0, Math.min(1, (e.clientX - box.left) / box.width)) * data.queue[0].durationMs);
+  };
+  async function seek(ms) {
+    seekingTo = Math.max(0, Math.min(ms, data.queue[0].durationMs));
+    paintProgress();
+    try {
+      const fresh = await attempt(() => request(api('/music/seek'), { method: 'POST', json: { positionMs: seekingTo } }));
+      if (fresh?.queue) show(fresh);
+    } finally {
+      seekingTo = null;
+      paintProgress();
+    }
+  }
 
   const picker = el('select', { ariaLabel: 'Voice channel', onchange: (e) => (chosen = e.target.value) });
   const playButton = el('button', { className: 'primary', onclick: () => void act(playOrPause) }, 'Play');
@@ -411,16 +470,26 @@ export function renderMusic(main) {
     stopButton.disabled = !data || (data.phase === 'stopped' && !data.queue.length);
   }
 
+  function positionNow() {
+    const song = data.queue[0];
+    return Math.min(song.durationMs, data.positionMs + (data.phase === 'playing' ? Date.now() - fetchedAt : 0));
+  }
+
   function paintProgress() {
     if (!data) return;
     paintFile();
     const song = data.phase !== 'stopped' ? data.queue[0] : null;
     progress.hidden = !song;
     if (!song) return;
-    const at = Math.min(song.durationMs, data.positionMs + (data.phase === 'playing' ? Date.now() - fetchedAt : 0));
+    const at = seekingTo ?? positionNow();
     elapsed.textContent = time(at);
     total.textContent = time(song.durationMs);
     bar.style.width = `${(100 * at) / Math.max(1, song.durationMs)}%`;
+    track.classList.toggle('can-seek', canSeek());
+    track.setAttribute('aria-valuemin', '0');
+    track.setAttribute('aria-valuemax', String(Math.round(song.durationMs / 1000)));
+    track.setAttribute('aria-valuenow', String(Math.round(at / 1000)));
+    track.setAttribute('aria-valuetext', `${time(at)} of ${time(song.durationMs)}`);
   }
 
   function show(fresh) {

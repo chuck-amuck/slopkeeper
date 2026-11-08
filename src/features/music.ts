@@ -171,6 +171,11 @@ export function clearQueue(guildId: string, who: string) {
 
 // ---------- the music container ----------
 
+// The song playing, or first to play, and the one after it
+const FETCHED_AHEAD = 2;
+const ASKED_AHEAD_MS = 10 * 60_000;
+const askedAhead = new Set<string>();
+
 const asBridge = () => ({ authorization: `Bearer ${config.musicToken}`, 'content-type': 'application/json' });
 
 async function command(body: Record<string, unknown>) {
@@ -204,12 +209,16 @@ async function fetchAudio(row: QueueRow): Promise<{ file: string; source: string
   return { file: path.join(config.musicAudioDir, answer.file), source: String(answer.source ?? 'youtube') };
 }
 
-/** Starts downloading the song after the one playing, so it follows without a wait */
+/** Starts downloading the first two songs in the queue, so pressing play, and the song after, start without a wait */
 function fetchNext(guildId: string) {
-  const s = sessions.get(guildId);
-  const next = queueOf(guildId)[1];
-  if (!s || s.phase === 'paused' || !next || unavailable()) return;
-  void fetchAudio(next).catch((err: unknown) => console.error(`Music: couldn’t fetch ${next.title} ahead:`, (err as Error).message));
+  if (unavailable()) return;
+  for (const row of queueOf(guildId).slice(0, FETCHED_AHEAD)) {
+    // The music container keeps what it downloads, but not what it couldn't find, so each is only asked about once in a while
+    if (askedAhead.has(row.uri)) continue;
+    askedAhead.add(row.uri);
+    setTimeout(() => askedAhead.delete(row.uri), ASKED_AHEAD_MS).unref();
+    void fetchAudio(row).catch((err: unknown) => console.error(`Music: couldn’t fetch ${row.title} ahead:`, (err as Error).message));
+  }
 }
 
 /** Follows the music container's events for as long as the bot runs, reconnecting when it drops */
@@ -434,6 +443,34 @@ export function pauseMusic(guildId: string): string | null {
   const s = sessions.get(guildId);
   if (!s || s.phase === 'paused') return 'Nothing is playing.';
   pauseHere(s, null);
+  return null;
+}
+
+/** Jumps to `ms` into the song playing, or to there for when it's resumed. Returns null on success, or why it couldn't */
+export async function seekMusic(guildId: string, ms: number): Promise<string | null> {
+  const s = sessions.get(guildId);
+  if (!s) return 'Nothing is playing.';
+  // Not right up to the end, which would only skip it
+  const to = Math.round(Math.max(0, Math.min(ms, s.current.duration_ms - END_SLACK_MS)));
+  // Still starting, maybe from an earlier seek: it starts again from here instead
+  if (s.phase === 'starting') {
+    s.loaded = null;
+    return playCurrent(s, to);
+  }
+  if (s.phase === 'paused') {
+    s.position = { ms: to, at: Date.now(), speed: 0 };
+    // Spotify would carry on from where it paused, rather than from here
+    if (s.via === 'spotify') s.loaded = null;
+    return null;
+  }
+  if (s.via !== 'spotify') return playCurrent(s, to);
+  try {
+    await command({ command: 'seek', position_ms: to });
+  } catch (err) {
+    console.error('Music:', (err as Error).message);
+    return 'The music player didn’t answer. Try again in a moment.';
+  }
+  s.position = { ms: to, at: Date.now(), speed: 1 };
   return null;
 }
 
@@ -824,6 +861,7 @@ export const musicChannelFor = (guildId: string) => sessions.get(guildId)?.chann
 
 /** For tests: starts from nothing and follows a fake music container's status */
 export function resetMusic(next: PlayerStatus | null = null) {
+  askedAhead.clear();
   for (const s of sessions.values()) s.turn++;
   sessions.clear();
   status = next;

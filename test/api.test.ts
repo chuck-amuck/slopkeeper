@@ -1754,6 +1754,8 @@ test('a file from the page plays once at the music volume, and is deleted after'
   assert.equal(music.file, null);
   assert.deepEqual(leftovers(), []);
   assert.match(await refused(409, `/guilds/${GUILD}/music/file/stop`, { method: 'POST' }), /No file is playing/);
+  assert.match(await refused(400, `/guilds/${GUILD}/music/seek`, { method: 'POST', json: { positionMs: 'half' } }), /positionMs must be a number/);
+  assert.match(await refused(400, `/guilds/${GUILD}/music/seek`, { method: 'POST', json: { positionMs: 1000 } }), /Nothing is playing/);
 
   assert.match(await refused(400, url('notes.txt'), { method: 'POST', body: 'hello' }), /isn’t a file the bot can play/);
   assert.match(await refused(400, url('fake.mp3'), { method: 'POST', body: 'hello' }), /doesn’t have any audio/);

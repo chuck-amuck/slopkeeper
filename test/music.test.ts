@@ -23,6 +23,7 @@ import {
   queueOf,
   removeTrack,
   resetMusic,
+  seekMusic,
   skipMusic,
   startMusic,
   stopFile,
@@ -225,7 +226,7 @@ test('playing fetches the first song and plays it, fetching the next ahead, then
   addTracks(id, [song(1), song(2)], 'u1');
   assert.equal(await startMusic(guild, channel), null);
   assert.deepEqual(played.map((p) => [p.file, p.options]), [[audioFile(1), { group: 'music', lasting: true }]]);
-  assert.deepEqual(fetched, [song(1).uri, song(2).uri], 'the next song is fetched while this one plays');
+  assert.deepEqual(fetched, [song(1).uri, song(2).uri, song(1).uri], 'the first two are fetched once queued, so play starts from what’s already there');
   assert.deepEqual(commands, [], 'Spotify isn’t asked for anything');
   const state = musicState(id);
   assert.deepEqual([state.phase, state.channelId, state.via, state.account], ['playing', 'voice', 'youtube', null]);
@@ -241,6 +242,22 @@ test('playing fetches the first song and plays it, fetching the next ahead, then
   assert.equal(played.length, 2);
   stopMusic(id, 'u1');
   assert.equal(lastPlayed().stopped, true);
+});
+
+test('queueing fetches the first two songs ahead, each once, and the next as the queue moves', async () => {
+  const { id, guild, channel } = server();
+  addTracks(id, [song(1), song(2), song(3), song(4)], 'u1');
+  assert.deepEqual(fetched, [song(1).uri, song(2).uri], 'not the whole queue');
+  addTracks(id, [song(5)], 'u1', true);
+  // Put next with nothing playing, it goes first
+  assert.deepEqual(fetched.slice(2), [song(5).uri], 'a song put first is fetched, and the ones already asked for aren’t asked again');
+  fetched.length = 0;
+  await startMusic(guild, channel);
+  await skipMusic(id, 'u1');
+  assert.deepEqual(fetched, [song(5).uri, song(1).uri], 'each song played is asked for; song 2, next, was fetched when it was queued');
+  addTracks(id, [song(6)], 'u1', true);
+  assert.deepEqual(fetched.slice(2), [song(6).uri], 'a song put next while one plays is fetched ahead');
+  stopMusic(id, 'u1');
 });
 
 test('a song ending plays the next, and the music stops after the last', async () => {
@@ -269,6 +286,44 @@ test('skipping plays the next song, or stops after the last', async () => {
   await skipMusic(id, 'u3');
   assert.equal(musicState(id).phase, 'stopped');
   assert.equal(await skipMusic(id, 'u3'), 'Nothing is playing.');
+});
+
+test('seeking jumps within the song, playing or paused, and not past its ends', async (t) => {
+  const tick = clock(t);
+  const { id, guild, channel } = server();
+  assert.equal(await seekMusic(id, 1000), 'Nothing is playing.');
+  addTracks(id, [song(1), song(2)], 'u1');
+  await startMusic(guild, channel);
+  assert.equal(await seekMusic(id, 90_000), null);
+  assert.equal(played[0].stopped, true);
+  assert.deepEqual([lastPlayed().file, lastPlayed().options], [audioFile(1), { group: 'music', lasting: true, startMs: 90_000 }], 'the same song, from there');
+  tick(5_000);
+  assert.deepEqual([musicState(id).phase, musicState(id).positionMs, titles(id)], ['playing', 95_000, ['Song 1', 'Song 2']]);
+  await seekMusic(id, 10_000_000);
+  assert.equal(lastPlayed().options.startMs, 194_000, 'not right up to the end, which would only skip it');
+  await seekMusic(id, -50);
+  assert.equal(lastPlayed().options.startMs, undefined, 'from the top');
+  pauseMusic(id);
+  const count = played.length;
+  assert.equal(await seekMusic(id, 60_000), null);
+  assert.deepEqual([played.length, musicState(id).phase, musicState(id).positionMs], [count, 'paused', 60_000], 'paused, it only moves where it’ll resume');
+  await startMusic(guild, channel);
+  assert.equal(lastPlayed().options.startMs, 60_000);
+  stopMusic(id, 'u1');
+});
+
+test('seeking while a song is still starting starts it from there instead', async () => {
+  const { id, guild, channel } = server();
+  let release!: () => void;
+  addTracks(id, [song(1), song(2)], 'u1');
+  youtube.set(song(1).uri, new Promise<void>((resolve) => (release = resolve)));
+  const starting = startMusic(guild, channel);
+  await sleep(5);
+  const seeking = seekMusic(id, 40_000);
+  release();
+  assert.deepEqual(await Promise.all([starting, seeking]), [null, null]);
+  assert.deepEqual(played.map((p) => p.options.startMs), [40_000], 'played once, from there');
+  stopMusic(id, 'u1');
 });
 
 test('skipping while paused waits on the next song until play is pressed', async () => {
@@ -433,6 +488,22 @@ test('Spotify starts the song on this speaker, then carries on where it paused',
   await startMusic(guild, channel);
   await onSpotify({ type: 'playback_changed', status: 'paused' });
   assert.equal(musicState(id).phase, 'playing');
+  stopMusic(id, 'u1');
+});
+
+test('seeking a song playing through Spotify asks Spotify, and paused, it starts from there on resume', async () => {
+  onlySpotify();
+  const { id, guild, channel } = server();
+  addTracks(id, [song(1), song(2)], 'u1');
+  await startMusic(guild, channel);
+  assert.equal(await seekMusic(id, 80_000), null);
+  assert.deepEqual(commands.at(-1), { command: 'seek', position_ms: 80_000 });
+  assert.equal(musicState(id).positionMs >= 80_000, true);
+  pauseMusic(id);
+  await seekMusic(id, 30_000);
+  commands.length = 0;
+  await startMusic(guild, channel);
+  assert.deepEqual(commands, [{ command: 'activate' }, { command: 'play', uri: song(1).uri }, { command: 'seek', position_ms: 30_000 }]);
   stopMusic(id, 'u1');
 });
 

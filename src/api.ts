@@ -19,7 +19,7 @@ import { activity, checkpoint, comparison, PERIODS, pickFor, sessionCount, stats
 import { postVote } from './features/gamevote.ts';
 import { recapFor } from './features/recap.ts';
 import { gameName, gameSpellings, mergeGames, separateGame } from './gameNames.ts';
-import { addTracks, clearQueue, fileProblem, fileUploadPath, MOST_FILE_BYTES, moveTrack, musicChannelFor, musicState, pauseMusic, playFile, queueFrom, queueOf, removeTrack, skipMusic, startMusic, stopFile, stopMusic } from './features/music.ts';
+import { addTracks, clearQueue, fileProblem, fileUploadPath, MOST_FILE_BYTES, moveTrack, musicChannelFor, musicState, pauseMusic, playFile, queueFrom, queueOf, removeTrack, seekMusic, skipMusic, startMusic, stopFile, stopMusic } from './features/music.ts';
 import { phrases, removePhrase, savePhrase, say, VOICES } from './features/say.ts';
 import { voiceTotals } from './features/sessions.ts';
 import { checkSetting, LABELS, LIMITS, show, source } from './features/setup.ts';
@@ -1062,6 +1062,12 @@ async function handleMusic(guild: Guild, req: IncomingMessage, url: URL, rest: s
   }
   if (key === 'POST pause') {
     refuse(guild, pauseMusic(guild.id));
+    return musicList(guild);
+  }
+  if (key === 'POST seek') {
+    const { positionMs } = await readJson(req);
+    if (typeof positionMs !== 'number' || !Number.isFinite(positionMs)) throw new Refused(400, 'positionMs must be a number.');
+    refuse(guild, await seekMusic(guild.id, positionMs));
     return musicList(guild);
   }
   if (key === 'POST skip') {
