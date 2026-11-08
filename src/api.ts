@@ -1,4 +1,4 @@
-import { ChannelType, type Client, type Guild, type GuildTextBasedChannel, type VoiceBasedChannel } from 'discord.js';
+import { ChannelType, type Client, type Guild, type GuildTextBasedChannel, type VoiceBasedChannel, type VoiceChannel } from 'discord.js';
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { createReadStream, statSync } from 'node:fs';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
@@ -20,47 +20,7 @@ import { gameName, gameSpellings, mergeGames, separateGame } from './gameNames.t
 import { phrases, removePhrase, savePhrase, say, VOICES } from './features/say.ts';
 import { voiceTotals } from './features/sessions.ts';
 import { checkSetting, LABELS, LIMITS, show, source } from './features/setup.ts';
-import {
-  addSound,
-  addToDiscord,
-  applyLevels,
-  BIN_DAYS,
-  changeEmoji,
-  deletedSounds,
-  discordVolume,
-  eraseDeleted,
-  expiresAt,
-  favourites,
-  findSound,
-  isTrimmed,
-  joinSounds,
-  listSounds,
-  parseEmoji,
-  playCounts,
-  playFromWeb,
-  refreshPanels,
-  removeSound,
-  renameSound,
-  restoreDeleted,
-  restoreSound,
-  setFavourite,
-  setJoinSound,
-  setSoundVolume,
-  soundLevels,
-  stopPlayback,
-  syncToDiscord,
-  trimProblem,
-  trimSound,
-  uploadProblem,
-  voiceVolume,
-  volumeProblem,
-  playDiscordSound,
-  postPanel,
-  saveFromDiscord,
-  swapOnDiscord,
-  takeOffDiscord,
-  type Sound,
-} from './features/soundboard.ts';
+import { addSound, addToDiscord, applyLevels, applySoundVolume, BIN_DAYS, changeEmoji, deletedSounds, discordVolume, eraseDeleted, expiresAt, favourites, findSound, isTrimmed, joinSounds, listSounds, parseEmoji, playCounts, playDiscordSound, playFromWeb, postPanel, refreshLoopRoom, refreshPanels, removeSound, renameSound, restoreDeleted, restoreSound, saveFromDiscord, setFavourite, setJoinSound, setSoundVolume, type Sound, soundLevels, stopPlayback, swapOnDiscord, syncToDiscord, takeOffDiscord, trimProblem, trimSound, uploadProblem, voiceVolume, volumeProblem } from './features/soundboard.ts';
 import { DEFAULTS, idSetting, isAllowed, setSetting, setting, type SettingKey } from './settings.ts';
 import type { Feature } from './types.ts';
 import { humansIn, pingWarning, servedGuilds } from './util.ts';
@@ -193,6 +153,11 @@ function settingList(guild: Guild) {
       limits: LIMITS[key as keyof typeof LIMITS] ?? null,
     })),
     channels: textChannels(guild),
+    voiceChannels: [...guild.channels.cache.values()]
+      .filter((c): c is VoiceChannel => c.type === ChannelType.GuildVoice && c.id !== guild.afkChannelId)
+      .sort((a, b) => a.rawPosition - b.rawPosition)
+      .map((c) => ({ id: c.id, name: c.name })),
+    sounds: listSounds(guild.id).map((s) => s.name),
     roles: [...guild.roles.cache.values()]
       .filter((r) => r.id !== guild.id && !r.managed)
       .sort((a, b) => b.position - a.position)
@@ -924,7 +889,11 @@ async function handleSettings(guild: Guild, req: IncomingMessage, key?: string) 
   if (!Object.hasOwn(DEFAULTS, key)) throw new Refused(404, 'No such setting.');
   const settingKey = key as SettingKey;
   // Discord's copies have their own volume, so they don't follow this by themselves
-  const settled = () => (settingKey === 'evenVolume' ? applyLevels(guild) : undefined);
+  const settled = async () => {
+    if (settingKey === 'evenVolume') await applyLevels(guild);
+    if (settingKey === 'soundVolume') applySoundVolume(guild.id);
+    if (settingKey.startsWith('loop')) await refreshLoopRoom(guild);
+  };
   if (req.method === 'DELETE') {
     setSetting(guild.id, settingKey, undefined);
     logActivity(guild.id, FROM_WEB, `Put ${LABELS[settingKey]} back to the default`);
@@ -1009,7 +978,7 @@ async function handle(client: Client<true>, req: IncomingMessage, res: ServerRes
   }
   if (section === 'discord-sounds' && (rest.length === 1 || rest.length === 2)) return handleDiscordSound(client, guild, req, res, rest[0], rest[1]);
   if (section === 'settings' && rest.length <= 1) return handleSettings(guild, req, rest[0]);
-  if (section === 'voice' && !rest.length && req.method === 'GET') return voiceList(guild);
+  if (section === 'voice' && !rest.length && req.method === 'GET') return { ...voiceList(guild), soundVolume: setting(guild.id, 'soundVolume') };
   if (section === 'stats' && !rest.length && req.method === 'GET') return statsFor(guild, url);
   if (section === 'activity' && !rest.length && req.method === 'GET') return activityList(guild, url);
   if (section === 'free-games' && !rest.length && req.method === 'GET') {

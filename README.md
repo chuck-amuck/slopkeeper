@@ -412,6 +412,19 @@ Every sound is measured when it's added, so a whisper and an air horn play about
 
 Sounds from before this existed are measured when the bot starts. Copies on Discord's soundboard are levelled using Discord's own volume for each sound, which can only go up to 1, so a sound that needs a big boost stays quieter there than on the bot.
 
+### Soundboard volume
+
+**Soundboard volume** turns every sound up or down at once, including join sounds and the looping sound, and changes sounds that are already playing. It's the slider next to **Stop** on the web UI, in Settings, and `volume` in `/setup sounds`. Speech has its own volume.
+
+### Looping sound room
+
+Pick a voice channel and a sound with `/setup loop-room` or in Settings, and the bot plays that sound over and over, without a gap, while anyone's in the channel. It leaves when the last person does. It's off until both are set.
+
+- Other sounds, join sounds and speech play on top. Playing the looping sound by hand plays a second copy.
+- **Stop** silences it until someone else joins the room.
+- The room gives way: if the bot is busy in another channel with people in it, the room waits until that channel empties or the bot has been idle for 5 minutes. Playing something in another channel takes the bot there, and the loop comes back the same way.
+- **Loop volume** starts at half, as it never stops. Renaming the sound keeps it, and removing it turns the loop off.
+
 ### Discord's soundboard
 
 Bot buttons have a short lock after each click (roughly half a second). That's how long Discord takes to send the click to the bot and back, and the bot can't shorten it. Discord's own soundboard, the speaker button in a voice call, has no lock, because its sounds play straight from your Discord app. Its sounds also play *from you* rather than from the bot.
@@ -464,7 +477,8 @@ Every setting has a sensible default, so only the announce channel needs setting
 | `/setup free-games enabled [channel]` | Turns free game posts on or off. `channel` gives them their own channel; without it they go to the announce channel. To move them back to the announce channel, use `/setup reset setting:Free games channel`. |
 | `/setup gamenight-reminder minutes` | How long before a game night to remind the people who are in. `0` turns reminders off. |
 | `/setup monthly-recap enabled` | Turns the post on the 1st of each month on or off. |
-| `/setup sounds [even_volume] [join_sounds] [join_cooldown_minutes] [join_delay_ms]` | Turns [even volume](#even-volume) and join sounds on or off, and sets how often one person's join sound can play and how long the bot waits after connecting before it plays. |
+| `/setup sounds [even_volume] [join_sounds] [join_cooldown_minutes] [join_delay_ms] [volume]` | Turns [even volume](#even-volume) and join sounds on or off, and sets how often one person's join sound can play and how long the bot waits after connecting before it plays. `volume` sets how loud every sound plays. |
+| `/setup loop-room [channel] [sound] [volume]` | Plays a sound nonstop while anyone's in a voice channel. Giving nothing turns it off. See [looping sound room](#looping-sound-room). |
 | `/setup sound-managers [role]` | Limits changing sounds to a role, plus people with **Manage Server**. Leave `role` empty to let everyone change them, which is the default. See [who can change sounds](#who-can-change-sounds). |
 | `/setup reset setting` | Puts one setting back to its default. |
 
@@ -520,6 +534,10 @@ So the host can change a default for every server at once, and each server can s
 | Join sounds | `sounds` | `JOIN_SOUNDS` (`false` to turn off) | on |
 | Minutes between one person's join sounds | `sounds` | `JOIN_SOUND_COOLDOWN_MIN` | 10 |
 | Milliseconds the bot waits after connecting before a join sound | `sounds` | `JOIN_SOUND_DELAY_MS` | 500 |
+| Soundboard volume, as a percentage | `sounds` | `SOUND_VOLUME` | 100 |
+| Looping sound room | `loop-room` | | off |
+| Looping sound | `loop-room` | | not set |
+| Loop volume, as a percentage | `loop-room` | `LOOP_VOLUME` | 50 |
 | Text to speech | `speech` | `TTS` (`false` to turn off) | on |
 | Default voice | `speech` | `TTS_VOICE` (`1`, `2`, `5` or `9`) | 5 |
 | Speech speed, as a percentage of the voice's natural speed | `speech` | `TTS_SPEED` | 85 |

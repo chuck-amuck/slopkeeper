@@ -37,17 +37,20 @@ import {
   type VoiceBasedChannel,
   type VoiceState,
 } from 'discord.js';
+import { execFile } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { copyFileSync, existsSync, mkdirSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
+import { promisify } from 'node:util';
 import { logActivity } from '../activity.ts';
 import { config } from '../config.ts';
 import { db } from '../db.ts';
 import * as discordBoard from '../discordSounds.ts';
 import { measureGain } from '../loudness.ts';
-import { Mixer } from '../mixer.ts';
-import { idSetting, isAllowed, setSetting, setting } from '../settings.ts';
+import { Mixer, type VoiceOptions } from '../mixer.ts';
+import { idSetting, isAllowed, setSetting, setting, storedSetting } from '../settings.ts';
 import { cutAudio } from '../trim.ts';
 import type { Feature } from '../types.ts';
 import type { DiscordSound } from '../discordSounds.ts';
@@ -357,6 +360,10 @@ export async function removeSound(guild: Guild, sound: Sound): Promise<string | 
   setFavourite(guild.id, sound.name, false);
   db.prepare('DELETE FROM sound_levels WHERE guild_id = ? AND name = ?').run(guild.id, sound.name);
   db.prepare('DELETE FROM join_sounds WHERE guild_id = ? AND name = ?').run(guild.id, sound.name);
+  if (storedSetting(guild.id, 'loopSound') === sound.name) {
+    setSetting(guild.id, 'loopSound', '');
+    await refreshLoopRoom(guild);
+  }
   return problem;
 }
 
@@ -396,6 +403,7 @@ export async function renameSound(guild: Guild, sound: Sound, name: string): Pro
   db.prepare('UPDATE OR REPLACE sound_favourites SET name = ? WHERE guild_id = ? AND name = ?').run(name, guild.id, sound.name);
   db.prepare('UPDATE OR REPLACE sound_levels SET name = ? WHERE guild_id = ? AND name = ?').run(name, guild.id, sound.name);
   db.prepare('UPDATE join_sounds SET name = ? WHERE guild_id = ? AND name = ?').run(name, guild.id, sound.name);
+  if (storedSetting(guild.id, 'loopSound') === sound.name) setSetting(guild.id, 'loopSound', name);
   return null;
 }
 
@@ -551,7 +559,12 @@ function audioFor(guildId: string): GuildAudio {
 
 function leaveWhenIdle(guildId: string, a: GuildAudio) {
   clearTimeout(a.idleTimer);
-  a.idleTimer = setTimeout(() => getVoiceConnection(guildId)?.destroy(), IDLE_LEAVE_MS).unref();
+  a.idleTimer = setTimeout(() => {
+    getVoiceConnection(guildId)?.destroy();
+    // Being free again might mean it's wanted in the looping room
+    const guild = botClient?.guilds.cache.get(guildId);
+    if (guild) void checkLoopRoom(guild).catch(console.error);
+  }, IDLE_LEAVE_MS).unref();
 }
 
 /** Why the bot can't play in a channel, or null if it can */
@@ -594,6 +607,8 @@ async function connect(channel: VoiceBasedChannel): Promise<string | null> {
   // Joining again also revives a connection that dropped, which is otherwise only cleared up a few seconds later
   if (!connection || connection.joinConfig.channelId !== channel.id || connection.state.status === VoiceConnectionStatus.Disconnected) {
     const isNew = !connection;
+    // The loop belongs to the room, so it doesn't follow the bot anywhere else
+    if (connection && connection.joinConfig.channelId !== channel.id) a.mixer?.stopLoops();
     connection = joinVoiceChannel({
       channelId: channel.id,
       guildId: channel.guild.id,
@@ -614,24 +629,98 @@ async function connect(channel: VoiceBasedChannel): Promise<string | null> {
   return null;
 }
 
-function mixIn(guildId: string, file: string, gain: number, onEnd?: () => void) {
+function mixIn(guildId: string, file: string, gain: number, onEnd?: () => void, options: VoiceOptions = {}) {
   const a = audioFor(guildId);
   clearTimeout(a.idleTimer);
   // Layer onto whatever is already playing (or restart this sound if it's one of them); a fresh mixer is only needed once the last one has gone quiet
   if (a.mixer && !a.mixer.finished) {
-    a.mixer.add(file, gain, onEnd);
+    a.mixer.add(file, gain, onEnd, options);
     return;
   }
   a.mixer = new Mixer(VOLUME, MAX_VOICES);
-  a.mixer.add(file, gain, onEnd);
+  a.mixer.setGroupGain('sound', setting(guildId, 'soundVolume') / 100);
+  a.mixer.add(file, gain, onEnd, options);
   a.player.play(createAudioResource(a.mixer, { inputType: StreamType.Raw }));
 }
 
 /** Plays a sound in a channel. Returns null on success or the reason it couldn't, for the user. `onEnd` runs once it's over, if it played */
-export async function play(channel: VoiceBasedChannel, file: string, gain = 1, onEnd?: () => void): Promise<string | null> {
+export async function play(channel: VoiceBasedChannel, file: string, gain = 1, onEnd?: () => void, options: VoiceOptions = {}): Promise<string | null> {
   const problem = await connect(channel);
-  if (!problem) mixIn(channel.guild.id, file, gain, onEnd);
+  if (!problem) mixIn(channel.guild.id, file, gain, onEnd, options);
   return problem;
+}
+
+/** Applies the soundboard volume to sounds already playing */
+export function applySoundVolume(guildId: string) {
+  audio.get(guildId)?.mixer?.setGroupGain('sound', setting(guildId, 'soundVolume') / 100);
+}
+
+/** Servers whose looping sound is playing, or about to */
+const looping = new Set<string>();
+/** Servers where Stop silenced the loop, until someone else joins the room */
+const silenced = new Set<string>();
+let botClient: Client | undefined;
+
+/** Starts the looping sound if people are in the room and the bot isn't needed elsewhere */
+export async function checkLoopRoom(guild: Guild) {
+  const roomId = idSetting(guild.id, 'loopRoom');
+  const sound = findSound(guild.id, setting(guild.id, 'loopSound') ?? '');
+  if (!roomId || !sound || looping.has(guild.id) || silenced.has(guild.id)) return;
+  const room = guild.channels.cache.get(roomId);
+  if (!room?.isVoiceBased() || !humansIn(room).length) return;
+  // People using the bot in another channel keep it, until that channel empties or the bot goes idle
+  const botChannelId = getVoiceConnection(guild.id)?.joinConfig.channelId;
+  const elsewhere = botChannelId && botChannelId !== room.id ? guild.channels.cache.get(botChannelId) : undefined;
+  if (elsewhere?.isVoiceBased() && humansIn(elsewhere).length) return;
+  looping.add(guild.id);
+  const problem = await connect(room);
+  if (problem) {
+    looping.delete(guild.id);
+    return console.log(`Looping sound in ${guild.name} didn’t play: ${problem}`);
+  }
+  let file = sound.file;
+  try {
+    file = await loopable(sound.file);
+  } catch (err) {
+    looping.delete(guild.id);
+    return console.error(`Looping sound ${sound.name} in ${guild.name} couldn’t be prepared:`, err);
+  }
+  const gain = soundGain(guild.id, sound.name) * (setting(guild.id, 'loopVolume') / 100);
+  mixIn(
+    guild.id,
+    file,
+    gain,
+    () => {
+      looping.delete(guild.id);
+      if (file !== sound.file) rmSync(file, { force: true });
+    },
+    { loop: true },
+  );
+}
+
+/** A WAV copy to loop, as some formats (m4a, for one) leave a moment of silence the first time ffmpeg goes round */
+async function loopable(file: string): Promise<string> {
+  if (path.extname(file) === '.wav') return file;
+  const copy = path.join(tmpdir(), `slopkeeper-loop-${randomUUID()}.wav`);
+  await promisify(execFile)('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-i', file, '-ar', '48000', '-ac', '2', copy]);
+  return copy;
+}
+
+/** After the looping settings change: stops the loop as it was, then starts it again if it should be playing */
+export function refreshLoopRoom(guild: Guild) {
+  audio.get(guild.id)?.mixer?.stopLoops();
+  silenced.delete(guild.id);
+  return checkLoopRoom(guild);
+}
+
+/** Stop lasts until someone else joins the room, or it empties */
+export function noteLoopRoom(oldState: VoiceState, newState: VoiceState) {
+  const { guild } = newState;
+  const roomId = idSetting(guild.id, 'loopRoom');
+  if (!roomId) return;
+  const room = guild.channels.cache.get(roomId);
+  const arrived = newState.channelId === roomId && oldState.channelId !== roomId && !newState.member?.user.bot;
+  if (arrived || (room?.isVoiceBased() && !humansIn(room).length)) silenced.delete(guild.id);
 }
 
 /** For the monthly recap */
@@ -718,6 +807,7 @@ export const onPlaybackStop = (listener: (guildId: string) => void) => void stop
 
 export function stopPlayback(guildId: string) {
   for (const listener of stopListeners) listener(guildId);
+  if (looping.has(guildId)) silenced.add(guildId);
   const a = audio.get(guildId);
   a?.mixer?.stopAll();
   a?.player.stop(true);
@@ -1232,6 +1322,8 @@ export const soundboard: Feature = {
     },
   ],
   async setup(client) {
+    botClient = client;
+    for (const guild of servedGuilds(client)) void checkLoopRoom(guild).catch(console.error);
     const sweep = () => {
       try {
         clearBin();
@@ -1252,7 +1344,9 @@ export const soundboard: Feature = {
     client.on(Events.VoiceStateUpdate, (old, state) => {
       if (!isAllowed(state.guild.id)) return;
       leaveIfAlone(state.guild);
+      noteLoopRoom(old, state);
       void playJoinSound(old, state).catch(console.error);
+      void checkLoopRoom(state.guild).catch(console.error);
     });
     client.on(Events.GuildSoundboardSoundDelete, (sound) => {
       if (discordBoard.forget(sound.soundId) && sound.guildId) void refreshPanels(client, sound.guildId);

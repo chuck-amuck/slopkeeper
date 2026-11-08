@@ -328,6 +328,16 @@ main {
   border-bottom-left-radius: 0;
 }
 
+.voice-volume {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.voice-volume input {
+  width: 110px;
+}
+
 .voice-label {
   color: var(--muted);
   font-size: 13px;

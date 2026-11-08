@@ -14,7 +14,7 @@ import { DEFAULT_ENV, DEFAULTS, setSetting, setting, storedSetting, type Setting
 import type { Feature } from '../types.ts';
 import { isTimeZone, pingWarning } from '../util.ts';
 import { VOICES } from './say.ts';
-import { applyLevels } from './soundboard.ts';
+import { applyLevels, applySoundVolume, cantJoin, findSound, listSounds, refreshLoopRoom } from './soundboard.ts';
 
 const ANNOUNCE_PERMISSIONS = [
   [PermissionFlagsBits.ViewChannel, 'View Channel'],
@@ -43,6 +43,8 @@ export const LIMITS = {
   ttsCooldownSec: [0, 3600],
   ttsSpeed: [50, 150],
   ttsVolume: [25, 200],
+  soundVolume: [0, 200],
+  loopVolume: [5, 200],
 } as const;
 
 const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -85,6 +87,10 @@ export const LABELS: Record<SettingKey, string> = {
   ttsVoice: 'Default voice',
   ttsSpeed: 'Speech speed',
   ttsVolume: 'Speech volume',
+  soundVolume: 'Soundboard volume',
+  loopRoom: 'Looping sound room',
+  loopSound: 'Looping sound',
+  loopVolume: 'Loop volume',
   ttsChannel: 'Read chat aloud',
   ttsChannelWho: 'Whose messages are read',
   ttsGreet: 'Say who joined',
@@ -136,7 +142,13 @@ export function show(key: SettingKey, value: unknown): string {
       return `${value} characters`;
     case 'ttsSpeed':
     case 'ttsVolume':
+    case 'soundVolume':
+    case 'loopVolume':
       return `${value}%`;
+    case 'loopRoom':
+      return value ? `<#${value}>` : 'off';
+    case 'loopSound':
+      return value ? String(value) : 'not set';
     case 'ttsCooldownSec':
       return `${value} seconds`;
     case 'ttsVoice':
@@ -213,6 +225,14 @@ export function checkSetting(guild: Guild, key: SettingKey, value: unknown): Che
       const problem = cantPost(guild, channel);
       return problem ? { error: problem } : { value: channel.id };
     }
+    case 'loopRoom': {
+      const channel = guild.channels.cache.get(String(value));
+      if (channel?.type !== ChannelType.GuildVoice || channel.id === guild.afkChannelId) return { error: 'Pick a voice channel.' };
+      const problem = cantJoin(channel);
+      return problem ? { error: problem } : { value: channel.id };
+    }
+    case 'loopSound':
+      return findSound(guild.id, String(value)) ? { value: String(value) } : { error: 'Pick a sound from the library.' };
     case 'ttsChannel': {
       const channel = guild.channels.cache.get(String(value));
       if (channel?.type !== ChannelType.GuildText && channel?.type !== ChannelType.GuildAnnouncement) return { error: 'Pick a text channel.' };
@@ -419,7 +439,16 @@ export const setup: Feature = {
             )
             .addIntegerOption((o) =>
               o.setName('join_delay_ms').setDescription('How long the bot waits after connecting before a join sound, 500 is half a second').setMinValue(LIMITS.joinSoundDelayMs[0]).setMaxValue(LIMITS.joinSoundDelayMs[1]),
-            ),
+            )
+            .addIntegerOption((o) => o.setName('volume').setDescription('How loud every sound plays, as a percentage (100 by default)').setMinValue(LIMITS.soundVolume[0]).setMaxValue(LIMITS.soundVolume[1])),
+        )
+        .addSubcommand((s) =>
+          s
+            .setName('loop-room')
+            .setDescription('Play a sound nonstop while anyone’s in a voice channel. Give nothing to turn it off')
+            .addChannelOption((o) => o.setName('channel').setDescription('The voice channel').addChannelTypes(ChannelType.GuildVoice))
+            .addStringOption((o) => o.setName('sound').setDescription('The sound to loop').setAutocomplete(true))
+            .addIntegerOption((o) => o.setName('volume').setDescription('How loud, as a percentage (50 by default)').setMinValue(LIMITS.loopVolume[0]).setMaxValue(LIMITS.loopVolume[1])),
         )
         .addSubcommand((s) =>
           s
@@ -486,6 +515,16 @@ export const setup: Feature = {
               .filter((key) => LABELS[key].toLowerCase().includes(typed))
               .slice(0, 25)
               .map((key) => ({ name: LABELS[key], value: key })),
+          );
+        }
+        if (i.options.getSubcommand() === 'loop-room') {
+          const typed = i.options.getFocused().toLowerCase();
+          const sounds = i.guildId ? listSounds(i.guildId) : [];
+          return i.respond(
+            sounds
+              .filter((s) => s.name.includes(typed))
+              .slice(0, 25)
+              .map((s) => ({ name: s.name, value: s.name })),
           );
         }
         const query = i.options.getFocused().toLowerCase().replaceAll(' ', '_');
@@ -589,11 +628,31 @@ export const setup: Feature = {
           const evenVolume = i.options.getBoolean('even_volume');
           await apply(i, [
             ['evenVolume', evenVolume],
+            ['soundVolume', i.options.getInteger('volume')],
             ['joinSounds', i.options.getBoolean('join_sounds')],
             ['joinSoundCooldownMin', i.options.getInteger('join_cooldown_minutes')],
             ['joinSoundDelayMs', i.options.getInteger('join_delay_ms')],
           ]);
           if (evenVolume !== null) await applyLevels(i.guild);
+          applySoundVolume(i.guildId);
+          return;
+        }
+
+        if (sub === 'loop-room') {
+          const channel = i.options.getChannel('channel', false, [ChannelType.GuildVoice]);
+          const sound = i.options.getString('sound');
+          const volume = i.options.getInteger('volume');
+          for (const [key, value] of [['loopRoom', channel?.id], ['loopSound', sound]] as const) {
+            const checked = value ? checkSetting(i.guild, key, value) : null;
+            if (checked && 'error' in checked) return i.reply({ content: checked.error, flags: MessageFlags.Ephemeral });
+          }
+          // Changing only the sound or volume leaves the room as it is
+          await apply(i, [
+            ['loopRoom', channel?.id ?? (sound || volume !== null ? null : '')],
+            ['loopSound', sound],
+            ['loopVolume', volume],
+          ]);
+          await refreshLoopRoom(i.guild);
           return;
         }
 
@@ -634,6 +693,8 @@ export const setup: Feature = {
           setSetting(i.guildId, key, undefined);
           logActivity(i.guildId, i.user.id, `Put ${LABELS[key]} back to the default`);
           if (key === 'evenVolume') await applyLevels(i.guild);
+          if (key === 'soundVolume') applySoundVolume(i.guildId);
+          if (key.startsWith('loop')) await refreshLoopRoom(i.guild);
           return i.reply({
             content: `↩️ ${LABELS[key]} is back to the default: ${show(key, setting(i.guildId, key))}.`,
             flags: MessageFlags.Ephemeral,

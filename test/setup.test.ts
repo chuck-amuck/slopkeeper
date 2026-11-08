@@ -12,7 +12,8 @@ function run(guildId: string, sub: string, values: Record<string, unknown>) {
   return setup.commands![0].run({
     inCachedGuild: () => true,
     guildId,
-    guild: { id: guildId, members: { me: {} } },
+    // Channels given as options are in the server too
+    guild: { id: guildId, members: { me: {} }, channels: { cache: new Map(Object.values(values).flatMap((v) => (v && typeof v === 'object' && 'type' in v ? [[(v as unknown as { id: string }).id, v]] : []))) } },
     user: { id: 'admin' },
     options: { getSubcommand: () => sub, getInteger: pick, getBoolean: pick, getString: pick, getRole: pick, getChannel: pick },
     reply: async () => {},
@@ -156,4 +157,31 @@ test('/setup speech-channel sets, keeps and clears the channel', async () => {
   assert.equal(setting('reading', 'ttsChannelWho'), 'voice');
   await run('reading', 'speech-channel', {});
   assert.equal(setting('reading', 'ttsChannel'), '');
+});
+
+test('the looping room has to be a voice channel the bot can use, with a sound from the library', async () => {
+  const room = (id: string, type: ChannelType, missing = false) => ({ id, type, guild: null as unknown, name: id, joinable: true, permissionsFor: () => ({ has: () => !missing }) });
+  const guild: any = { id: 'looping', afkChannelId: 'afk', members: { me: {} }, channels: { cache: new Map() } };
+  for (const r of [room('therapy', ChannelType.GuildVoice), room('afk', ChannelType.GuildVoice), room('general', ChannelType.GuildText), room('locked', ChannelType.GuildVoice, true)]) {
+    r.guild = guild;
+    guild.channels.cache.set(r.id, r);
+  }
+  assert.deepEqual(checkSetting(guild, 'loopRoom', 'therapy'), { value: 'therapy' });
+  for (const bad of ['afk', 'general', 'nope']) assert.deepEqual(checkSetting(guild, 'loopRoom', bad), { error: 'Pick a voice channel.' });
+  assert.match((checkSetting(guild, 'loopRoom', 'locked') as { error: string }).error, /Connect/);
+  assert.deepEqual(checkSetting(guild, 'loopSound', 'nope'), { error: 'Pick a sound from the library.' });
+  assert.equal(setting('looping', 'loopRoom'), null);
+  assert.equal(setting('looping', 'loopVolume'), 50);
+  assert.equal(setting('looping', 'soundVolume'), 100);
+});
+
+test('/setup loop-room sets, keeps and clears the room', async () => {
+  const therapy = { id: 'therapy', type: ChannelType.GuildVoice, joinable: true, guild: { members: { me: {} } }, permissionsFor: () => ({ has: () => true }) };
+  await run('loop-setup', 'loop-room', { channel: therapy });
+  assert.equal(setting('loop-setup', 'loopRoom'), 'therapy');
+  await run('loop-setup', 'loop-room', { volume: 80 });
+  assert.equal(setting('loop-setup', 'loopRoom'), 'therapy', 'changing only the volume keeps the room');
+  assert.equal(setting('loop-setup', 'loopVolume'), 80);
+  await run('loop-setup', 'loop-room', {});
+  assert.equal(setting('loop-setup', 'loopRoom'), '');
 });

@@ -9,6 +9,13 @@ const MAX_LEAD_MS = 60;
 // Audio a new sound buffers before it's mixed in, enough to cover the lead
 const START_BYTES = FRAME_BYTES * 4;
 
+export interface VoiceOptions {
+  /** Plays over and over, without a gap, until stopped */
+  loop?: boolean;
+  /** Sounds and speech each have a volume that can change while they play */
+  group?: 'sound' | 'speech';
+}
+
 /** One playing sound, decoded to raw PCM by its own ffmpeg process */
 class Voice {
   readonly proc: ChildProcess;
@@ -16,6 +23,8 @@ class Voice {
   readonly file: string;
   /** Multiplies its samples, to even out loudness between sounds */
   readonly gain: number;
+  readonly loop: boolean;
+  readonly group: string;
   ended = false;
   /** Whether any of its audio has been mixed in yet */
   heard = false;
@@ -24,11 +33,14 @@ class Voice {
   private stopped = false;
   private onEnd: (() => void) | undefined;
 
-  constructor(file: string, gain: number, onEnd?: () => void) {
+  constructor(file: string, gain: number, onEnd?: () => void, options: VoiceOptions = {}) {
     this.file = file;
     this.gain = gain;
     this.onEnd = onEnd;
-    this.proc = spawn('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-i', file, '-f', 's16le', '-ar', '48000', '-ac', '2', 'pipe:1'], {
+    this.loop = options.loop ?? false;
+    this.group = options.group ?? 'sound';
+    const loop = this.loop ? ['-stream_loop', '-1'] : [];
+    this.proc = spawn('ffmpeg', ['-hide_banner', '-loglevel', 'error', ...loop, '-i', file, '-f', 's16le', '-ar', '48000', '-ac', '2', 'pipe:1'], {
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     this.pcm = this.proc.stdout!;
@@ -89,6 +101,7 @@ export class Mixer extends Readable {
   private timer: NodeJS.Timeout | undefined;
   private started = false;
   private done = false;
+  private readonly groupGains = new Map<string, number>();
 
   constructor(volume: number, maxVoices: number) {
     super();
@@ -101,12 +114,12 @@ export class Mixer extends Readable {
   }
 
   /** `onEnd` runs once the sound is over, however that came about */
-  add(file: string, gain = 1, onEnd?: () => void) {
-    const voice = new Voice(file, gain, onEnd);
+  add(file: string, gain = 1, onEnd?: () => void, options: VoiceOptions = {}) {
+    const voice = new Voice(file, gain, onEnd, options);
     // A restart keeps the playing copy going until the new one has audio, so spamming leaves no gap while ffmpeg starts.
-    // A copy from an earlier click that hasn't started yet is dropped, since this one supersedes it
+    // A copy from an earlier click that hasn't started yet is dropped, since this one supersedes it. A loop is never restarted by a click
     for (const old of this.voices) {
-      if (old.file !== file || old.ended) continue;
+      if (old.file !== file || old.ended || old.loop || voice.loop) continue;
       if (old.heard) voice.replaces.push(old);
       else {
         voice.replaces.push(...old.replaces);
@@ -114,9 +127,22 @@ export class Mixer extends Readable {
       }
     }
     this.voices = this.voices.filter((v) => !v.ended);
-    // Past the cap, the oldest sound is dropped rather than piling up ffmpeg processes
-    if (this.voices.length >= this.maxVoices) this.voices.shift()!.stop();
+    // Past the cap, the oldest sound is dropped rather than piling up ffmpeg processes, but not a loop
+    if (this.voices.length >= this.maxVoices) {
+      const oldest = Math.max(0, this.voices.findIndex((v) => !v.loop));
+      this.voices.splice(oldest, 1)[0].stop();
+    }
     this.voices.push(voice);
+  }
+
+  /** Changes the volume of a group, including what's already playing */
+  setGroupGain(group: NonNullable<VoiceOptions['group']>, gain: number) {
+    this.groupGains.set(group, gain);
+  }
+
+  stopLoops() {
+    for (const voice of this.voices) if (voice.loop) voice.stop();
+    this.voices = this.voices.filter((v) => !v.ended);
   }
 
   stopAll() {
@@ -151,8 +177,9 @@ export class Mixer extends Readable {
 
     const sum = new Int32Array(FRAME_BYTES / 2);
     let heard = false;
-    const mix = (chunk: Buffer, gain: number, fadeOut = false) => {
+    const mix = (chunk: Buffer, voice: Voice, fadeOut = false) => {
       heard = true;
+      const gain = voice.gain * (this.groupGains.get(voice.group) ?? 1);
       const samples = chunk.length >> 1;
       for (let s = 0; s < samples; s++) sum[s] += chunk.readInt16LE(s * 2) * gain * (fadeOut ? 1 - s / samples : 1);
     };
@@ -164,11 +191,11 @@ export class Mixer extends Readable {
       if (!chunk) continue;
       voice.heard = true;
       starting.add(voice);
-      mix(chunk, voice.gain);
+      mix(chunk, voice);
       for (const old of voice.replaces) {
         if (old.ended) continue;
         const last = old.read();
-        if (last) mix(last, old.gain, true);
+        if (last) mix(last, old, true);
         old.stop();
       }
       voice.replaces = [];
@@ -176,7 +203,7 @@ export class Mixer extends Readable {
     for (const voice of this.voices) {
       if (!voice.heard || voice.ended || starting.has(voice)) continue;
       const chunk = voice.read();
-      if (chunk) mix(chunk, voice.gain);
+      if (chunk) mix(chunk, voice);
     }
     // Hold off until ffmpeg delivers the first sound, rather than leading with silence while it starts up
     if (!this.started) {

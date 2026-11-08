@@ -113,3 +113,54 @@ test('says when a sound is over, however it ended', { skip: !hasFfmpeg }, async 
   assert.ok(ended.includes('stopped'));
   assert.ok(ended.includes('dropped'));
 });
+
+test('a loop keeps going past the sound’s length, without a gap, until stopped', { skip: !hasFfmpeg }, async () => {
+  const mixer = new Mixer(0.5, 12);
+  const { peaks, done } = record(mixer);
+  let ended = false;
+  mixer.add(tone('loop.wav', 440, 0.3), 1, () => (ended = true), { loop: true });
+  await sleep(1300);
+  assert.equal(ended, false);
+  assert.ok(peaks.length > 50, 'still going after four times its length');
+  assert.ok(peaks.slice(0, -2).every((p) => p > 1000), 'no quiet frames where it wraps around');
+  mixer.stopLoops();
+  await done;
+  assert.equal(ended, true);
+});
+
+test('clicking the looping sound plays a second copy, and the cap never drops the loop', { skip: !hasFfmpeg }, async () => {
+  const mixer = new Mixer(0.5, 2);
+  const { peaks, done } = record(mixer);
+  const file = tone('loop2.wav', 440, 0.3);
+  const ended: string[] = [];
+  mixer.add(file, 1, () => ended.push('loop'), { loop: true });
+  await sleep(100);
+  mixer.add(file, 1, () => ended.push('click'));
+  mixer.add(tone('other.wav', 660, 0.2), 1, () => ended.push('other'));
+  await sleep(700);
+  assert.deepEqual(ended.sort(), ['click', 'other'], 'the loop outlived both, and the cap dropped the click instead');
+  mixer.stopAll();
+  await done;
+  assert.ok(peaks.length > 30);
+});
+
+test('a group’s volume changes what’s already playing, and only that group', { skip: !hasFfmpeg }, async () => {
+  const mixer = new Mixer(0.5, 12);
+  const { peaks, done } = record(mixer);
+  mixer.add(tone('group-sound.wav', 440, 1.2));
+  await sleep(300);
+  const before = Math.max(...peaks.slice(-5));
+  mixer.setGroupGain('sound', 0.5);
+  await sleep(300);
+  const after = Math.max(...peaks.slice(-5));
+  assert.ok(Math.abs(after / before - 0.5) < 0.05, `halved, got ${after / before}`);
+  mixer.stopAll();
+  await done;
+
+  const speech = new Mixer(0.5, 12);
+  speech.setGroupGain('sound', 0);
+  const spoken = record(speech);
+  speech.add(tone('group-speech.wav', 440, 0.3), 1, undefined, { group: 'speech' });
+  await spoken.done;
+  assert.ok(Math.max(...spoken.peaks) > 1000, 'speech isn’t changed by the soundboard volume');
+});

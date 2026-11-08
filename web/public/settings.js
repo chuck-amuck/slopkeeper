@@ -38,6 +38,10 @@ const FIELDS = {
   ttsVolume: { kind: 'number', unit: '%', hint: 'How loud it talks. 100 is about as loud as a sound with even volume on.' },
   ttsChannel: { kind: 'channel', none: 'Off', hint: 'The bot reads out what people type here, in the voice channel they’re in, or else where the bot is or where most people are.' },
   ttsChannelWho: { kind: 'choice', options: [['everyone', 'Everyone'], ['voice', 'Only people in voice']], hint: 'Only people in voice leaves out anyone who’s only typing.' },
+  soundVolume: { kind: 'number', unit: '%', hint: 'How loud every sound plays, including join sounds and the looping sound. Speech has its own volume. The slider on the Soundboard tab changes this too.' },
+  loopRoom: { kind: 'voice', none: 'Off', hint: 'While anyone’s in this channel, the bot plays the looping sound there nonstop.' },
+  loopSound: { kind: 'sound', none: 'Not set', hint: 'A sound from the library.' },
+  loopVolume: { kind: 'number', unit: '%', hint: 'On top of the sound’s own level. It never stops, so it starts at half.' },
   ttsGreet: { hint: 'Says who joined voice, for people with no join sound. Uses the join sound cooldown and delay.' },
   ttsGreeting: { hint: 'What it says, with {name} for the person.' },
   ttsNightReminders: { hint: 'Says the reminder in the night’s voice channel too, if people are in it.' },
@@ -56,7 +60,8 @@ const GROUPS = [
   ['Sale alerts', ['saleMinDiscount', 'saleSteamWishlists', 'saleChannel']],
   ['Patch notes', ['patchNotes', 'patchNotesChannel']],
   ['Free games', ['freeGames', 'freeGamesChannel', 'freeGamesMinRating', 'freeGamesTaste', 'freeGamesMultiplayer', 'freeGamesUnlisted']],
-  ['Soundboard', ['evenVolume', 'joinSounds', 'joinSoundDelayMs', 'joinSoundCooldownMin', 'soundManagerRole']],
+  ['Soundboard', ['soundVolume', 'evenVolume', 'joinSounds', 'joinSoundDelayMs', 'joinSoundCooldownMin', 'soundManagerRole']],
+  ['Looping sound room', ['loopRoom', 'loopSound', 'loopVolume']],
   ['Text to speech', ['tts', 'ttsVoice', 'ttsSpeed', 'ttsVolume', 'ttsChannel', 'ttsChannelWho', 'ttsGreet', 'ttsGreeting', 'ttsNightReminders', 'ttsHopOn', 'ttsRole', 'ttsMaxChars', 'ttsCooldownSec']],
 ];
 
@@ -86,6 +91,10 @@ export function renderSettings(main) {
         return select([['', spec.none], ...data.channels.map((c) => [c.id, c.category ? `#${c.name} (${c.category})` : `#${c.name}`])]);
       case 'role':
         return select([['', spec.none], ...data.roles.map((r) => [r.id, `@${r.name}`])]);
+      case 'voice':
+        return select([['', spec.none], ...data.voiceChannels.map((c) => [c.id, `🔊 ${c.name}`])]);
+      case 'sound':
+        return select([['', spec.none], ...data.sounds.map((name) => [name, name])]);
       case 'choice':
         return select(spec.options);
       case 'day':

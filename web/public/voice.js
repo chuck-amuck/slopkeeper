@@ -17,9 +17,27 @@ export function voiceBar(main, onChange) {
     },
   });
 
+  const volume = el('input', {
+    type: 'range',
+    min: 0,
+    max: 200,
+    step: 5,
+    ariaLabel: 'Soundboard volume',
+    hidden: true,
+    oninput: () => (volume.title = `Sounds at ${volume.value}%`),
+    onchange: () => void attempt(() => request(api('/settings/soundVolume'), { method: 'PUT', json: { value: Number(volume.value) } })),
+  });
+
   async function load() {
-    const fresh = (await request(api('/voice'))).channels;
+    const data = await request(api('/voice'));
+    const fresh = data.channels;
     if (guildId !== state.guildId || !main.isConnected) return;
+    // Only the first time, so it never jumps while being dragged
+    if (volume.hidden) {
+      volume.value = data.soundVolume;
+      volume.title = `Sounds at ${data.soundVolume}%`;
+      volume.hidden = false;
+    }
     // Rebuilding the picker would close it if it's open
     if (JSON.stringify(fresh) === JSON.stringify(channels)) return;
     channels = fresh;
@@ -46,6 +64,7 @@ export function voiceBar(main, onChange) {
       { className: 'toolbar voice' },
       el('span', { className: 'voice-label' }, 'Play in'),
       picker,
+      el('label', { className: 'voice-volume' }, el('span', { className: 'voice-label' }, 'Volume'), volume),
       el('button', { onclick: () => attempt(() => request(api('/stop'), { method: 'POST' })) }, 'Stop'),
     ),
     channel: () => channels?.find((c) => c.id === chosen),
