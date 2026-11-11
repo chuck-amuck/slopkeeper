@@ -38,6 +38,13 @@ function fakeSpotify(t: TestContext, routes: Record<string, (url: URL) => unknow
       const answer = signIn?.(body.get('refresh_token')!) ?? { access_token: `owner-${tokens}`, expires_in: 3600 };
       return answer instanceof Response ? answer : Response.json(answer);
     }
+    if (url.host === 'open.spotify.com') {
+      asked.push(url.href);
+      const route = routes[url.pathname];
+      if (!route) return new Response('not found', { status: 404 });
+      const body = route(url);
+      return body instanceof Response ? body : new Response(String(body), { headers: { 'content-type': 'text/html' } });
+    }
     assert.equal(url.host, 'api.spotify.com');
     asked.push(url.pathname + url.search);
     as.push((init.headers as Record<string, string>).authorization.replace(/^Bearer (\w+)-\d+$/, '$1'));
@@ -67,6 +74,19 @@ const playlistRoutes = (length: number, name = 'Road Trip') => {
     },
   };
 };
+
+/** Spotify's embed player page for a public playlist, with `length` songs (it never lists more than 100) */
+const embedPage = (length: number, name = 'Top Hits', extra: unknown[] = []) => {
+  const trackList = [
+    ...extra,
+    ...Array.from({ length }, (_, n) => ({ uri: `spotify:track:${String(n).padStart(22, '0')}`, uid: `u${n}`, title: `Hit ${n}`, subtitle: 'Singer, Other', duration: 180_000 + n, isPlayable: true, entityType: 'track' })),
+  ].slice(0, 100);
+  const data = { props: { pageProps: { state: { data: { entity: { type: 'playlist', name, trackList } }, settings: {} } } } };
+  return `<!DOCTYPE html><html><body><div id="__next"></div><script id="__NEXT_DATA__" type="application/json">${JSON.stringify(data)}</script></body></html>`;
+};
+const embedRoute = (page: () => unknown) => ({ [`/embed/playlist/${ID}`]: page });
+/** What the embed page shows for a playlist that's private or gone */
+const MISSING_PAGE = `<html><script id="__NEXT_DATA__" type="application/json">${JSON.stringify({ props: { pageProps: { status: 404, title: 'Page not found' } } })}</script></html>`;
 
 test('reads song, album and playlist links and URIs, and nothing else', () => {
   assert.deepEqual(parseLink(`https://open.spotify.com/track/${ID}?si=abc`), { kind: 'track', id: ID });
@@ -116,6 +136,7 @@ test('an album or playlist link adds every song that can play, up to the limit',
   assert.equal(album.name, 'The Album');
   assert.equal(album.tracks.length, 60);
   assert.equal(album.tracks[0].cover, 'https://i.scdn.co/image/album', 'album songs carry the album’s cover');
+  config.spotifyRefreshToken = 'first';
   const list = await tracksFor({ kind: 'playlist', id: ID });
   assert.equal(list.name, 'The List');
   assert.equal(list.tracks.length, MOST_FROM_LINK - 3, 'local files, podcasts and gaps are left out');
@@ -130,13 +151,53 @@ test('Spotify’s refusals become messages for whoever asked', async (t) => {
     '/v1/search': () => new Response('{}', { status: 429, headers: { 'retry-after': '7' } }),
   });
   await assert.rejects(search('x'), /Try again in 7 seconds/);
-  await assert.rejects(tracksFor({ kind: 'playlist', id: ID }), /Daily Mixes/);
+  await assert.rejects(tracksFor({ kind: 'album', id: ID }), /couldn’t find that/);
+});
+
+test('any public playlist is read from Spotify’s embed player, with no sign-in, and a private one says so', async (t) => {
+  config.spotifyClientId = '';
+  config.spotifyClientSecret = '';
+  const unplayable = [
+    { uri: 'spotify:episode:abc', title: 'A podcast', subtitle: 'Host', duration: 1, entityType: 'episode' },
+    { uri: `spotify:track:${'x'.repeat(22)}`, title: 'Gone', subtitle: 'Nobody', duration: 1, isPlayable: false },
+    null,
+  ];
+  const spotify = fakeSpotify(t, embedRoute(() => embedPage(5, 'Today’s Top Hits', unplayable)));
+  const list = await tracksFor({ kind: 'playlist', id: ID });
+  assert.equal(list.name, 'Today’s Top Hits');
+  assert.equal(list.capped, false);
+  assert.deepEqual(list.tracks[0], { uri: `spotify:track:${'0'.repeat(22)}`, title: 'Hit 0', artist: 'Singer, Other', album: '', cover: null, durationMs: 180_000 });
+  assert.deepEqual(
+    list.tracks.map((s) => s.title),
+    ['Hit 0', 'Hit 1', 'Hit 2', 'Hit 3', 'Hit 4'],
+    'podcasts, unplayable songs and gaps are left out',
+  );
+  assert.deepEqual(spotify.asked, [`https://open.spotify.com/embed/playlist/${ID}`], 'no sign-in or Web API needed');
+  assert.equal(spotify.tokens(), 0);
+
   t.mock.restoreAll();
-  fakeSpotify(t, {
-    [`/v1/playlists/${ID}`]: () => ({ name: 'Road Trip' }),
-    [`/v1/playlists/${ID}/items`]: () => new Response('{}', { status: 401 }),
-  });
-  await assert.rejects(tracksFor({ kind: 'playlist', id: ID }), /see what’s in \*\*Road Trip\*\*.*Add its songs or albums instead/);
+  fakeSpotify(t, embedRoute(() => MISSING_PAGE));
+  await assert.rejects(tracksFor({ kind: 'playlist', id: ID }), (err: Error) => err instanceof SpotifyError && /may be private/.test(err.message));
+  t.mock.restoreAll();
+  fakeSpotify(t, {});
+  await assert.rejects(tracksFor({ kind: 'playlist', id: ID }), /may be private/);
+
+  // A change to Spotify's page fails with the same message, and is logged, unlike a missing playlist
+  t.mock.restoreAll();
+  const logged = t.mock.method(console, 'error', () => {});
+  let page = '<html><script id="__NEXT_DATA__" type="application/json">{"props":{"pageProps":{"state":{"data":{}}}}}</script></html>';
+  fakeSpotify(t, embedRoute(() => page));
+  await assert.rejects(tracksFor({ kind: 'playlist', id: ID }), /may be private/);
+  assert.equal(logged.mock.callCount(), 1);
+  page = '<html>no data</html>';
+  await assert.rejects(tracksFor({ kind: 'playlist', id: ID }), /may be private/);
+  assert.equal(logged.mock.callCount(), 2);
+  page = MISSING_PAGE;
+  await assert.rejects(tracksFor({ kind: 'playlist', id: ID }), /may be private/);
+  assert.equal(logged.mock.callCount(), 2);
+  t.mock.restoreAll();
+  fakeSpotify(t, embedRoute(() => new Response('', { status: 429 })));
+  await assert.rejects(tracksFor({ kind: 'playlist', id: ID }), /Try again in a minute/);
 });
 
 test('a link is added to the queue with what it was, and words add the top result', async (t) => {
@@ -197,7 +258,7 @@ test('the owner’s own playlists are listed, and a new sign-in from Spotify is 
   assert.equal(spotify.refreshedWith.at(-1), 'signed in again', 'a new setting wins over the one kept');
 });
 
-test('playlists are read as the owner, picked at random from the whole list when shuffled, and others’ say why they can’t be', async (t) => {
+test('playlists are read as the owner, picked at random from the whole list when shuffled, and others’ come from the embed player', async (t) => {
   config.spotifyRefreshToken = 'first';
   const spotify = fakeSpotify(t, playlistRoutes(350));
   const inOrder = await tracksFor({ kind: 'playlist', id: ID });
@@ -216,8 +277,11 @@ test('playlists are read as the owner, picked at random from the whole list when
   assert.notDeepEqual(numbers, [...numbers].sort((a, b) => a - b));
 
   t.mock.restoreAll();
-  fakeSpotify(t, { ...playlistRoutes(5, 'Their Mix'), [`/v1/playlists/${ID}/items`]: () => new Response('{}', { status: 403 }) });
-  await assert.rejects(tracksFor({ kind: 'playlist', id: ID }), /made by the Spotify account it’s signed in as, and \*\*Their Mix\*\* isn’t one/);
+  fakeSpotify(t, { ...playlistRoutes(5, 'Their Mix'), [`/v1/playlists/${ID}/items`]: () => new Response('{}', { status: 403 }), ...embedRoute(() => embedPage(3, 'Their Mix')) });
+  assert.deepEqual((await tracksFor({ kind: 'playlist', id: ID })).tracks.map((s) => s.title), ['Hit 0', 'Hit 1', 'Hit 2'], 'someone else’s playlist');
+  t.mock.restoreAll();
+  fakeSpotify(t, embedRoute(() => embedPage(2, 'Top 50')));
+  assert.equal((await tracksFor({ kind: 'playlist', id: ID })).name, 'Top 50', 'Spotify’s own, which the Web API can’t find');
 
   t.mock.restoreAll();
   resetSpotify();
@@ -234,6 +298,18 @@ test('shuffling a playlist into the queue says so, and a long one in order says 
   t.mock.restoreAll();
   fakeSpotify(t, playlistRoutes(20));
   assert.equal(await queueFrom('short', `spotify:playlist:${ID}`, 'u1', false, true), 'Added 20 random songs from **Road Trip**.');
+
+  config.spotifyRefreshToken = null;
+  t.mock.restoreAll();
+  fakeSpotify(t, embedRoute(() => embedPage(150, 'All Out 80s')));
+  assert.equal(await queueFrom('embed', `https://open.spotify.com/playlist/${ID}?si=abc`, 'u1', false), `Added ${MOST_FROM_LINK} songs from **All Out 80s** (the first ${MOST_FROM_LINK} Spotify shows).`);
+  assert.equal(await queueFrom('embed shuffled', `spotify:playlist:${ID}`, 'u1', false, true), `Added ${MOST_FROM_LINK} random songs from **All Out 80s** (the first ${MOST_FROM_LINK} Spotify shows).`);
+  const shuffled = queueOf('embed shuffled').map((r) => r.title);
+  assert.equal(new Set(shuffled).size, MOST_FROM_LINK);
+  assert.notDeepEqual(shuffled, queueOf('embed').map((r) => r.title));
+  t.mock.restoreAll();
+  fakeSpotify(t, embedRoute(() => embedPage(12, 'Short One')));
+  assert.equal(await queueFrom('embed short', `spotify:playlist:${ID}`, 'u1', false), 'Added 12 songs from **Short One**.');
 });
 
 test('/music play suggests the owner’s matching playlists first, then songs', async (t) => {

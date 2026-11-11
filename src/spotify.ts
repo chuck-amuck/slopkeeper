@@ -70,6 +70,8 @@ async function accessToken(as: As): Promise<string> {
   return body.access_token;
 }
 
+const NOT_FOUND = 'Spotify couldn’t find that.';
+
 async function get<T>(pathAndQuery: string, as: As = 'app', retried = false): Promise<T> {
   const res = await fetch(`${API}${pathAndQuery}`, { headers: { authorization: `Bearer ${await accessToken(as)}` }, signal: requestTimeout() });
   if (res.status === 401 && !retried) {
@@ -77,7 +79,7 @@ async function get<T>(pathAndQuery: string, as: As = 'app', retried = false): Pr
     return get(pathAndQuery, as, true);
   }
   if (res.status === 429) throw new SpotifyError(`Spotify is limiting searches right now. Try again in ${Number(res.headers.get('retry-after')) || 30} seconds.`);
-  if (res.status === 404) throw new SpotifyError('Spotify couldn’t find that. Spotify’s own playlists, like Daily Mixes, can’t be read by apps.');
+  if (res.status === 404) throw new SpotifyError(NOT_FOUND);
   if (!res.ok) throw new SpotifyError(`Spotify didn’t answer (HTTP ${res.status}). Try again in a moment.`);
   return (await res.json()) as T;
 }
@@ -141,8 +143,11 @@ export function parseLink(input: string): { kind: LinkKind; id: string } | null 
 /** Short links that only Spotify's app hands out, and which need following to know what they are */
 export const isShortLink = (input: string) => /^https?:\/\/spotify\.link\//i.test(input.trim());
 
-/** Everything a link points to, up to MOST_FROM_LINK songs, with a name for it. `shuffle` picks them at random from the whole album or playlist */
-export async function tracksFor(link: { kind: LinkKind; id: string }, shuffle = false): Promise<{ name: string; tracks: Track[] }> {
+/**
+ * Everything a link points to, up to MOST_FROM_LINK songs, with a name for it. `shuffle` picks them at random from the whole album or playlist.
+ * `capped` means Spotify showed only the first MOST_FROM_LINK songs of a playlist, so shuffling can't reach further either
+ */
+export async function tracksFor(link: { kind: LinkKind; id: string }, shuffle = false): Promise<{ name: string; tracks: Track[]; capped?: boolean }> {
   const market = `market=${config.spotifyMarket}`;
   if (link.kind === 'track') {
     const t = await get<ApiTrack>(`/tracks/${link.id}?${market}`);
@@ -154,19 +159,59 @@ export async function tracksFor(link: { kind: LinkKind; id: string }, shuffle = 
     const items = await rest(album.tracks, 'app', shuffle);
     return { name: album.name, tracks: pick(items.filter(playable).map((t) => toTrack(t, album)), shuffle) };
   }
-  // Spotify only shows what's in a playlist to an app acting for someone who's signed in, and then only their own
-  const as: As = playlistsReady() ? 'owner' : 'app';
-  const list = await get<{ name: string }>(`/playlists/${link.id}?${market}&fields=name`, as);
-  const first = await get<Page<{ track?: ApiTrack | null; item?: ApiTrack | null }>>(`/playlists/${link.id}/items?${market}&limit=100`, as).catch((err: unknown) => {
-    if (!(err instanceof SpotifyError && /HTTP 40[13]/.test(err.message))) throw err;
-    throw new SpotifyError(
-      as === 'owner'
-        ? `Spotify only lets the bot see what’s in playlists made by the Spotify account it’s signed in as, and **${list.name}** isn’t one. Add its songs or albums instead.`
-        : `Spotify doesn’t let the bot see what’s in **${list.name}**, as it only shows playlists to apps someone has signed in to. Add its songs or albums instead.`,
-    );
-  });
-  const entries = await rest(first, as, shuffle);
+  // Spotify's Web API only shows what's in a playlist to an app signed in as the playlist's owner. Other playlists are read from Spotify's
+  // public embed player, which shows any public playlist's first 100 songs
+  if (!playlistsReady()) return fromEmbed(link.id, shuffle);
+  // Spotify's own playlists aren't found, and other people's are refused
+  const refused = (err: unknown) => {
+    if (err instanceof SpotifyError && (/HTTP 40[13]/.test(err.message) || err.message === NOT_FOUND)) return null;
+    throw err;
+  };
+  const list = await get<{ name: string }>(`/playlists/${link.id}?${market}&fields=name`, 'owner').catch(refused);
+  const first = list && (await get<Page<{ track?: ApiTrack | null; item?: ApiTrack | null }>>(`/playlists/${link.id}/items?${market}&limit=100`, 'owner').catch(refused));
+  if (!list || !first) return fromEmbed(link.id, shuffle);
+  const entries = await rest(first, 'owner', shuffle);
   return { name: list.name, tracks: pick(entries.map((e) => e.item ?? e.track).filter(playable).map((t) => toTrack(t)), shuffle) };
+}
+
+interface EmbedTrack {
+  uri?: string;
+  title?: string;
+  subtitle?: string;
+  duration?: number;
+  isPlayable?: boolean;
+}
+
+const NOT_SHOWN = 'Spotify won’t show what’s in that playlist. It may be private, or no longer exist.';
+
+/** A public playlist's first songs, as Spotify's embed player lists them, with no album or cover as the player doesn't give them */
+async function fromEmbed(id: string, shuffle: boolean): Promise<{ name: string; tracks: Track[]; capped: boolean }> {
+  let res: Response;
+  try {
+    res = await fetch(`https://open.spotify.com/embed/playlist/${id}`, { headers: { 'user-agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36' }, signal: requestTimeout() });
+  } catch (err) {
+    console.error('Spotify: couldn’t open a playlist’s embed page:', (err as Error).message);
+    throw new SpotifyError('Spotify didn’t answer. Try again in a moment.');
+  }
+  if (res.status === 404) throw new SpotifyError(NOT_SHOWN);
+  if (res.status === 429) throw new SpotifyError('Spotify is limiting the bot right now. Try again in a minute.');
+  if (!res.ok) throw new SpotifyError(`Spotify didn’t answer (HTTP ${res.status}). Try again in a moment.`);
+  const json = /<script id="__NEXT_DATA__" type="application\/json"[^>]*>([\s\S]*?)<\/script>/.exec(await res.text())?.[1];
+  let entity: { name?: string; trackList?: EmbedTrack[] } | undefined;
+  try {
+    entity = json ? JSON.parse(json)?.props?.pageProps?.state?.data?.entity : undefined;
+  } catch {
+    entity = undefined;
+  }
+  if (!entity || !Array.isArray(entity.trackList)) {
+    // A missing or private playlist has a page with no entity, so this is also how a change to Spotify's page would show
+    if (!json || !/"status":\s*404/.test(json)) console.error(`Spotify: playlist ${id}'s embed page didn’t have the expected song list`);
+    throw new SpotifyError(NOT_SHOWN);
+  }
+  const songs = entity.trackList
+    .filter((t) => typeof t?.uri === 'string' && t.uri.startsWith('spotify:track:') && t.isPlayable !== false)
+    .map((t): Track => ({ uri: t.uri!, title: String(t.title ?? 'Untitled').slice(0, 300), artist: String(t.subtitle ?? '').slice(0, 300), album: '', cover: null, durationMs: Number(t.duration) || 0 }));
+  return { name: String(entity.name ?? 'Spotify playlist').slice(0, 300), tracks: pick(songs, shuffle), capped: entity.trackList.length >= MOST_FROM_LINK };
 }
 
 /** The first MOST_FROM_LINK, or that many at random */

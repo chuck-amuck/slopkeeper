@@ -702,7 +702,7 @@ export function stopFile(guildId: string): boolean {
 // ---------- adding by search or link ----------
 
 /** Songs for whatever was typed: a Spotify link to a song, album or playlist, a YouTube or SoundCloud link, or words to search for. The name says what was found */
-export async function resolve(input: string, shuffle = false): Promise<{ name: string; tracks: Track[] }> {
+export async function resolve(input: string, shuffle = false): Promise<{ name: string; tracks: Track[]; capped?: boolean }> {
   if (isShortLink(input)) throw new SpotifyError('Short spotify.link links can’t be read. Open it and copy the open.spotify.com link instead.');
   const link = parseLink(input);
   if (link) return tracksFor(link, shuffle);
@@ -740,7 +740,14 @@ export async function queueFrom(guildId: string, input: string, who: string, nex
   const songs = `${added}${shuffle && found.tracks.length > 1 ? ' random' : ''} song${added === 1 ? '' : 's'}`;
   const what = found.tracks.length === 1 ? `**${found.name}**` : `${songs} from **${found.name}**`;
   logActivity(guildId, who, `Added ${what} to the music queue${next ? ' to play next' : ''}`);
-  const cut = found.tracks.length > added ? ` (only ${added} fitted)` : !shuffle && found.tracks.length >= MOST_FROM_LINK ? ` (the first ${MOST_FROM_LINK}; shuffle picks from all of it)` : '';
+  const cut =
+    found.tracks.length > added
+      ? ` (only ${added} fitted)`
+      : found.capped
+        ? ` (the first ${MOST_FROM_LINK} Spotify shows)`
+        : !shuffle && found.tracks.length >= MOST_FROM_LINK
+          ? ` (the first ${MOST_FROM_LINK}; shuffle picks from all of it)`
+          : '';
   return `Added ${what}${cut}.`;
 }
 
