@@ -12,6 +12,7 @@
   --warn-bg: #fdf1dc;
   --bad: #c62f33;
   --bad-bg: #fce8e8;
+  --on-bad: #ffffff;
   --wave: #b9bec7;
   --radius: 10px;
   color-scheme: light dark;
@@ -31,6 +32,7 @@
     --warn-bg: #3a2d14;
     --bad: #f27a7d;
     --bad-bg: #3d2021;
+    --on-bad: #17181c;
     --wave: #565c68;
   }
 }
@@ -109,6 +111,27 @@ button.primary:hover:not(:disabled) {
 button.danger {
   border-color: var(--bad);
   color: var(--bad);
+}
+
+/* Stops everything the bot is playing, from any page */
+button.stop-all {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 10;
+  min-height: 48px;
+  padding-inline: 20px;
+  border-color: var(--bad);
+  border-radius: 999px;
+  background: var(--bad);
+  color: var(--on-bad);
+  font-weight: 600;
+  box-shadow: 0 4px 16px rgb(0 0 0 / 25%);
+}
+
+button.stop-all:hover:not(:disabled) {
+  filter: brightness(1.08);
+  background: var(--bad);
 }
 
 button.quiet {
@@ -239,7 +262,7 @@ nav button[aria-current='page'] {
 main {
   width: min(900px, 100%);
   margin: 0 auto;
-  padding: 16px;
+  padding: 16px 16px 80px;
   display: grid;
   gap: 16px;
 }
@@ -1522,7 +1545,7 @@ textarea {
 #toasts {
   position: fixed;
   right: 16px;
-  bottom: 16px;
+  bottom: 76px;
   left: 16px;
   z-index: 20;
   display: grid;

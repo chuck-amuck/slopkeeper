@@ -414,7 +414,7 @@ Sounds from before this existed are measured when the bot starts. Copies on Disc
 
 ### Soundboard volume
 
-**Soundboard volume** turns every sound up or down at once, including join sounds and the looping sound, and changes sounds that are already playing. It's the slider next to **Stop** on the web UI, in Settings, and `volume` in `/setup sounds`. Speech has its own volume.
+**Soundboard volume** turns every sound up or down at once, including join sounds and the looping sound, and changes sounds that are already playing. It's the slider next to **Play in** on the web UI, in Settings, and `volume` in `/setup sounds`. Speech has its own volume.
 
 ### Looping sound room
 
@@ -609,6 +609,7 @@ One running bot can serve several servers. Each server gets its own:
 
 A page in [`web/`](web) that runs as a second container next to the bot, for your home network or behind a sign-in proxy like [Pangolin](#signing-in-through-pangolin):
 
+- **Stop:** the red button in the bottom corner of every page does what the panel's ⏹ **Stop** does: it silences every sound and line of speech and pauses the music.
 - **Soundboard:** big buttons that play in voice, with favourites first and then whatever gets played most, and a box for having the bot say something.
 - **Music:** what's playing, Spotify search, and the queue to add to, reorder and clear. See [Music](#music).
 - **Library:** upload files or whole folders, preview, rename and delete sounds, set a sound's volume, trim it with a way back to the original, and choose what's on Discord's soundboard, with a waveform for picking part of a long sound. **Recently deleted** restores a sound or erases it for good.

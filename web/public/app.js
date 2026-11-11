@@ -180,6 +180,21 @@ function renderFrame() {
       ),
     ),
     main,
+    // In the corner of every page, so it's always in reach
+    guild &&
+      el(
+        'button',
+        {
+          className: 'stop-all',
+          title: 'Stops every sound and line of speech, and pauses the music',
+          onclick: () =>
+            attempt(async () => {
+              await request(api('/stop'), { method: 'POST' });
+              toast('Stopped.');
+            }),
+        },
+        '■ Stop',
+      ),
   );
 
   player.stop();
