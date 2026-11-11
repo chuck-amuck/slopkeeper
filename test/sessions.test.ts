@@ -36,6 +36,29 @@ test('a weekly post that fails is tried again, and doesn’t hold up other serve
   assert.deepEqual(sent, ['b', 'a'], 'each server gets one post');
 });
 
+test('a server that turned the weekly leaderboard off gets no post', async () => {
+  const now = zonedParts(Date.now(), 'America/Chicago');
+  setSetting('quiet', 'announceChannel', 'channel-quiet');
+  setSetting('quiet', 'timezone', 'America/Chicago');
+  setSetting('quiet', 'weeklyPostDay', now.weekday);
+  setSetting('quiet', 'weeklyPostHour', 0);
+  setSetting('quiet', 'weeklyLeaderboard', false);
+  const { lastInsertRowid } = db
+    .prepare(`INSERT INTO sessions (guild_id, channel_id, started_at, ended_at) VALUES ('quiet', 'voice', ?, ?)`)
+    .run(Date.now() - 7_200_000, Date.now() - 3_600_000);
+  db.prepare(`INSERT INTO session_members (session_id, user_id, seconds) VALUES (?, 'u', 3600)`).run(lastInsertRowid);
+
+  const sent: string[] = [];
+  const client = fakeClient([{ id: 'quiet', name: 'Quiet' }], async (guildId) => {
+    sent.push(guildId);
+  });
+  await maybePostWeekly(client);
+  assert.deepEqual(sent, []);
+  setSetting('quiet', 'weeklyLeaderboard', true);
+  await maybePostWeekly(client);
+  assert.deepEqual(sent, ['quiet'], 'it posts again once it’s back on');
+});
+
 const voice = (guildId: string, id: string) => ({ id, guild: { id: guildId, afkChannelId: null } }) as never;
 const person = (id: string) => ({ id, presence: null }) as never;
 const seconds = (guildId: string) =>

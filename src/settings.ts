@@ -14,6 +14,7 @@ export const DEFAULTS = {
   timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
   weeklyPostDay: num('WEEKLY_POST_DAY', 0), // Sunday
   weeklyPostHour: num('WEEKLY_POST_HOUR', 20),
+  weeklyLeaderboard: process.env.WEEKLY_LEADERBOARD !== 'false',
   hopOnMinPeople: num('HOPON_MIN_PEOPLE', 2),
   hopOnCooldownMin: num('HOPON_COOLDOWN_MIN', 120),
   recapMinMinutes: num('RECAP_MIN_MINUTES', 15),
@@ -94,6 +95,7 @@ export const DEFAULT_ENV: Partial<Record<SettingKey, string>> = {
   timezone: 'TZ',
   weeklyPostDay: 'WEEKLY_POST_DAY',
   weeklyPostHour: 'WEEKLY_POST_HOUR',
+  weeklyLeaderboard: 'WEEKLY_LEADERBOARD',
   hopOnMinPeople: 'HOPON_MIN_PEOPLE',
   hopOnCooldownMin: 'HOPON_COOLDOWN_MIN',
   recapMinMinutes: 'RECAP_MIN_MINUTES',

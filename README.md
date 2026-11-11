@@ -146,7 +146,7 @@ Steam doesn't tell the bot who's in a Steam family, so you say. A family holds u
 
 ### Patch notes
 
-`/setup patch-notes` posts patch notes for games with a Steam ID that were played in the server in the last 30 days. **Each one** posts them as they're found, and **weekly digest** posts them together with the weekly leaderboard. They go to the announce channel, or the channel you pick, and never ping anyone. It's off by default.
+`/setup patch-notes` posts patch notes for games with a Steam ID that were played in the server in the last 30 days. **Each one** posts them as they're found, and **weekly digest** posts them together on the weekly leaderboard's day and hour, even if the leaderboard post is off. They go to the announce channel, or the channel you pick, and never ping anyone. It's off by default.
 
 It starts from the latest notes, so turning it on doesn't post a backlog. Steam only marks a post as patch notes if the developer tags it, so some games will be missed.
 
@@ -284,7 +284,7 @@ A session of at least 15 minutes is recorded, even with one person in it, so tim
 | --- | --- |
 | `/stats [period]` | Voice leaderboard for the past week (default), past month or all time. Shows the top 10 by time in voice, how many nights each person showed up, and the most-played games by game time, as `/gamestats` does. |
 
-Every Sunday at 8 PM, in the server's time zone, the bot posts the past week's leaderboard to the announce channel. Change the day and hour with `/setup leaderboard`.
+Every Sunday at 8 PM, in the server's time zone, the bot posts the past week's leaderboard to the announce channel. Change the day and hour with `/setup leaderboard`, or turn the post off with `/setup leaderboard enabled:false`. `/stats` still works when it's off.
 
 ### Game stats
 
@@ -498,7 +498,7 @@ Every setting has a sensible default, so only the announce channel needs setting
 | `/setup hopon-role [role]` | Sets the role that hop-on pings ping, which `/notify` hands out. Leave `role` empty to post hop-on pings without pinging that role. It warns you if its own role is below this one, since Discord then won't let it hand the role out. |
 | `/setup hopon [min_people] [cooldown_minutes]` | How many people a voice channel needs before a hop-on ping, and how long to wait before the next one. |
 | `/setup sessions [recap_min_minutes] [grace_minutes]` | The shortest session that gets a recap, and how long a channel stays empty before its session ends. |
-| `/setup leaderboard [day] [hour]` | When the weekly voice leaderboard is posted. |
+| `/setup leaderboard [enabled] [day] [hour]` | Whether and when the weekly voice leaderboard is posted. |
 | `/setup timezone zone` | The server's time zone, used for the weekly post, counting "nights" on leaderboards, and reading game night times. Autocompletes, e.g. `America/Chicago`, `Europe/London`. |
 | `/setup steam-region country` | Steam store region for sale prices, as a two-letter country code. |
 | `/setup free-game-filters [min_rating] [like_what_we_play] [multiplayer_only] [not_on_steam]` | Chooses which free games are worth posting. See [Free games](#free-games). |
@@ -542,6 +542,7 @@ So the host can change a default for every server at once, and each server can s
 | Minutes between hop-on pings | `hopon` | `HOPON_COOLDOWN_MIN` | 120 |
 | Shortest recapped session (minutes) | `sessions` | `RECAP_MIN_MINUTES` | 15 |
 | Minutes empty before a session ends | `sessions` | `SESSION_GRACE_MIN` | 5 |
+| Weekly leaderboard | `leaderboard` | `WEEKLY_LEADERBOARD` (`false` to turn off) | on |
 | Weekly leaderboard day (0 = Sunday) | `leaderboard` | `WEEKLY_POST_DAY` | 0 |
 | Weekly leaderboard hour | `leaderboard` | `WEEKLY_POST_HOUR` | 20 |
 | Time zone | `timezone` | `TZ` | UTC |

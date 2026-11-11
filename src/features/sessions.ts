@@ -166,6 +166,7 @@ function leaderboard(guildId: string, sinceMs: number, title: string): EmbedBuil
 
 export async function maybePostWeekly(client: Client<true>) {
   await eachGuild(client, 'Weekly leaderboard', async (guild) => {
+    if (!setting(guild.id, 'weeklyLeaderboard')) return;
     // Each server's own day, hour and time zone
     const now = zonedParts(Date.now(), setting(guild.id, 'timezone'));
     if (now.weekday !== setting(guild.id, 'weeklyPostDay') || now.hour < setting(guild.id, 'weeklyPostHour')) return;

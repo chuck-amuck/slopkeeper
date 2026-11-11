@@ -68,6 +68,7 @@ export const LABELS: Record<SettingKey, string> = {
   timezone: 'Time zone',
   weeklyPostDay: 'Weekly leaderboard day',
   weeklyPostHour: 'Weekly leaderboard hour',
+  weeklyLeaderboard: 'Weekly leaderboard',
   hopOnMinPeople: 'Hop-on ping at',
   hopOnCooldownMin: 'Hop-on cooldown',
   recapMinMinutes: 'Shortest recapped session',
@@ -161,6 +162,7 @@ export function show(key: SettingKey, value: unknown): string {
     case 'saleSteamWishlists':
     case 'steamStatus':
     case 'monthlyRecap':
+    case 'weeklyLeaderboard':
     case 'evenVolume':
     case 'joinSounds':
     case 'tts':
@@ -386,7 +388,8 @@ export const setup: Feature = {
         .addSubcommand((s) =>
           s
             .setName('leaderboard')
-            .setDescription('When the weekly voice leaderboard is posted')
+            .setDescription('Whether and when the weekly voice leaderboard is posted')
+            .addBooleanOption((o) => o.setName('enabled').setDescription('Post the leaderboard each week'))
             .addIntegerOption((o) =>
               o
                 .setName('day')
@@ -654,6 +657,7 @@ export const setup: Feature = {
         }
         if (sub === 'leaderboard') {
           return apply(i, [
+            ['weeklyLeaderboard', i.options.getBoolean('enabled')],
             ['weeklyPostDay', i.options.getInteger('day')],
             ['weeklyPostHour', i.options.getInteger('hour')],
           ]);
