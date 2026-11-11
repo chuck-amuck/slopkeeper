@@ -3,6 +3,8 @@ name: Build image
 on:
   push:
     branches: [main]
+    # Docs-only pushes don't rebuild (a new image restarts the app at the next poll)
+    paths-ignore: ['**.md']
   workflow_dispatch:
 
 permissions:
