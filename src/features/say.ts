@@ -14,19 +14,14 @@ import { humansIn } from '../util.ts';
 import { plural } from './gamestats.ts';
 import { onPlaybackStop, play, setGreeter, setLoopSpeaker } from './soundboard.ts';
 
-/** Speakers in the voice container's model, numbered as they were when they were picked */
-export const VOICES = [
-  { id: '1', name: 'Voice 1', speaker: 0 },
-  { id: '2', name: 'Voice 2', speaker: 100 },
-  { id: '5', name: 'Voice 5', speaker: 400 },
-  { id: '9', name: 'Voice 9', speaker: 800 },
-];
+/** How much longer speech gets, paired with the length_scale that gives it, from fastest to slowest */
+type Stretches = readonly (readonly [number, number])[];
 
 /**
- * How much longer speech takes at each of Piper's length_scale values, measured across VOICES. It's far from proportional,
- * as each sound's length gets rounded: asking for 18% longer only gives about 5%
+ * How much longer speech takes at each of Piper's length_scale values, measured across the default model's voices. It's far
+ * from proportional, as each sound's length gets rounded: asking for 18% longer only gives about 5%
  */
-const STRETCHES = [
+const STRETCHES: Stretches = [
   [0.68, 0.5],
   [0.78, 0.7],
   [0.9, 0.8],
@@ -41,6 +36,50 @@ const STRETCHES = [
   [1.73, 2.2],
   [2, 2.5],
 ] as const;
+
+/** The same, measured across the GLaDOS and HAL models, which stretch more evenly */
+const CHARACTER_STRETCHES: Stretches = [
+  [0.61, 0.5],
+  [0.78, 0.7],
+  [0.86, 0.8],
+  [1, 1],
+  [1.14, 1.2],
+  [1.21, 1.3],
+  [1.3, 1.4],
+  [1.38, 1.5],
+  [1.47, 1.6],
+  [1.61, 1.8],
+  [1.79, 2],
+  [1.95, 2.2],
+  [2.19, 2.5],
+] as const;
+
+/** A small, loud alien: pitched up with its formants, a little faster, gritty and squashed flat */
+const RACER_EFFECT = 'rubberband=pitch=1.35:tempo=1.08,aexciter=amount=2:drive=6,acompressor=threshold=0.05:ratio=8:attack=3:release=50:makeup=4,asoftclip=type=tanh';
+
+interface Voice {
+  id: string;
+  name: string;
+  /** A model the voice container keeps besides its default one (see voice/start.sh) */
+  model?: string;
+  /** For a model with several speakers, numbered as they were when they were picked */
+  speaker?: number;
+  /** Piper's noise_scale and noise_w_scale, for a livelier delivery than the model's own */
+  noise?: readonly [number, number];
+  /** ffmpeg filters the speech goes through before it's levelled */
+  effect?: string;
+  stretches?: Stretches;
+}
+
+export const VOICES: readonly Voice[] = [
+  { id: '1', name: 'Voice 1', speaker: 0 },
+  { id: '2', name: 'Voice 2', speaker: 100 },
+  { id: '5', name: 'Voice 5', speaker: 400 },
+  { id: '9', name: 'Voice 9', speaker: 800 },
+  { id: 'racer', name: 'Racer', speaker: 632, noise: [0.667, 0.6], effect: RACER_EFFECT },
+  { id: 'glados', name: 'GLaDOS', model: 'glados', stretches: CHARACTER_STRETCHES },
+  { id: 'hal', name: 'HAL 9000', model: 'hal', stretches: CHARACTER_STRETCHES },
+];
 
 const SPEAK_TIMEOUT_MS = 15_000;
 /** Lines waiting behind the one being said */
@@ -57,7 +96,7 @@ const STOPPED = 'Stopped before that was said.';
 interface Line {
   channel: VoiceBasedChannel;
   text: string;
-  speaker: number;
+  voice: Voice;
   /** Runs once the line starts playing, or with why it never will */
   started: (problem: string | null) => void;
 }
@@ -103,37 +142,45 @@ async function speakToFile(guild: Guild, typed: string, voiceId: string, file: s
   const voice = VOICES.find((v) => v.id === voiceId) ?? VOICES[0];
   const raw = `${file}.raw.wav`;
   try {
-    writeFileSync(raw, await speech(text, voice.speaker, setting(guild.id, 'ttsSpeed'), new AbortController().signal).catch(() => {
+    writeFileSync(raw, await speech(text, voice, setting(guild.id, 'ttsSpeed'), new AbortController().signal).catch(() => {
       throw new Error('The voice container isn’t answering, so the looping speech can’t be made.');
     }));
-    await levelSpeech(raw, file);
+    await levelSpeech(raw, file, voice.effect);
   } finally {
     rmSync(raw, { force: true });
   }
 }
 
 /** The length_scale that gives a speed, as a percentage of the voice's natural speed */
-export function lengthFor(speed: number) {
+export function lengthFor(speed: number, stretches = STRETCHES) {
   const stretch = 100 / speed;
-  const next = STRETCHES.findIndex(([longer]) => longer >= stretch);
-  if (next === -1) return STRETCHES.at(-1)![1];
-  if (next === 0) return STRETCHES[0][1];
-  const [[fromStretch, fromLength], [toStretch, toLength]] = [STRETCHES[next - 1], STRETCHES[next]];
+  const next = stretches.findIndex(([longer]) => longer >= stretch);
+  if (next === -1) return stretches.at(-1)![1];
+  if (next === 0) return stretches[0][1];
+  const [[fromStretch, fromLength], [toStretch, toLength]] = [stretches[next - 1], stretches[next]];
   return Math.round((fromLength + ((toLength - fromLength) * (stretch - fromStretch)) / (toStretch - fromStretch)) * 100) / 100;
 }
 
-async function speech(text: string, speaker: number, speed: number, signal: AbortSignal) {
+async function speech(text: string, voice: Voice, speed: number, signal: AbortSignal) {
+  // A model the container doesn't have gets its default one instead, with no error, so voice/start.sh fetches every model named here
   const res = await fetch(`${config.voiceUrl}/synthesize`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ text, speaker_id: speaker, length_scale: lengthFor(speed) }),
+    body: JSON.stringify({
+      text,
+      voice: voice.model,
+      speaker_id: voice.speaker,
+      length_scale: lengthFor(speed, voice.stretches),
+      noise_scale: voice.noise?.[0],
+      noise_w_scale: voice.noise?.[1],
+    }),
     signal: AbortSignal.any([signal, AbortSignal.timeout(SPEAK_TIMEOUT_MS)]),
   });
   if (!res.ok) throw new Error(`Voice container said HTTP ${res.status}`);
   return Buffer.from(await res.arrayBuffer());
 }
 
-async function sayLine(queue: Queue, { channel, text, speaker, started }: Line) {
+async function sayLine(queue: Queue, { channel, text, voice, started }: Line) {
   const guildId = channel.guild.id;
   const cancel = (queue.cancel = new AbortController());
   folder ??= mkdtempSync(path.join(tmpdir(), 'slopkeeper-say-'));
@@ -141,8 +188,8 @@ async function sayLine(queue: Queue, { channel, text, speaker, started }: Line) 
   const file = path.join(folder, `${randomUUID()}.wav`);
   const unlevelled = `${file}.raw.wav`;
   try {
-    writeFileSync(unlevelled, await speech(text, speaker, setting(guildId, 'ttsSpeed'), cancel.signal));
-    await levelSpeech(unlevelled, file);
+    writeFileSync(unlevelled, await speech(text, voice, setting(guildId, 'ttsSpeed'), cancel.signal));
+    await levelSpeech(unlevelled, file, voice.effect);
     cancel.signal.throwIfAborted();
     const gain = setting(guildId, 'ttsVolume') / 100;
     await new Promise<void>((finished, failed) => {
@@ -201,7 +248,7 @@ export async function say(channel: VoiceBasedChannel, typed: string, voiceId: st
   if (problem) return problem;
   lastLine.set(`${guild.id}:${who}`, Date.now());
 
-  const failed = await queueLine(channel, text, voice.speaker);
+  const failed = await queueLine(channel, text, voice);
   if (!failed) logActivity(guild.id, who, `Said “${text}” in <#${channel.id}>`);
   return failed;
 }
@@ -213,7 +260,7 @@ export function sayOut(channel: VoiceBasedChannel, line: string): Promise<string
   const voice = VOICES.find((v) => v.id === setting(guild.id, 'ttsVoice'));
   if (!config.voiceUrl || !setting(guild.id, 'tts') || !voice || !hasWords(text)) return Promise.resolve('Nothing to say.');
   if (queueFor(guild.id).lines.length >= MOST_WAITING) return Promise.resolve('Too many lines waiting.');
-  return queueLine(channel, text, voice.speaker);
+  return queueLine(channel, text, voice);
 }
 
 /** Says an announcement to the people in a channel, unless that means leaving people in another */
@@ -259,10 +306,10 @@ export function savePhrase(guild: Guild, typed: string, voiceId: string): string
 
 export const removePhrase = (guildId: string, id: number) => db.prepare('DELETE FROM saved_phrases WHERE guild_id = ? AND id = ?').run(guildId, id).changes > 0;
 
-function queueLine(channel: VoiceBasedChannel, text: string, speaker: number) {
+function queueLine(channel: VoiceBasedChannel, text: string, voice: Voice) {
   const queue = queueFor(channel.guild.id);
   const { promise, resolve } = Promise.withResolvers<string | null>();
-  queue.lines.push({ channel, text, speaker, started: resolve });
+  queue.lines.push({ channel, text, voice, started: resolve });
   void run(queue);
   return promise;
 }
@@ -299,7 +346,7 @@ export async function readMessage(message: Message) {
   const last = lastReader.get(guild.id);
   const sameSpeaker = last?.id === author.id && Date.now() - last.at < SAME_SPEAKER_MS;
   lastReader.set(guild.id, { id: author.id, at: Date.now() });
-  const problem = await queueLine(channel, sameSpeaker ? text : `${speechFor(guild, member?.displayName ?? author.displayName)} says, ${text}`, voice.speaker);
+  const problem = await queueLine(channel, sameSpeaker ? text : `${speechFor(guild, member?.displayName ?? author.displayName)} says, ${text}`, voice);
   if (problem && problem !== STOPPED) console.error(`Couldn’t read a message out in server ${guild.id}: ${problem}`);
 }
 

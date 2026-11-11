@@ -22,7 +22,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 512M
+          memory: 768M
 
   loop:
     build: . # the loop bot, optional: a second bot that plays the looping room. Needs LOOP_BOT_URL=http://loop:8788 and LOOP_TOKEN in .env
