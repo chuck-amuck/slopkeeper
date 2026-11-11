@@ -8,7 +8,7 @@ import { logActivity } from '../activity.ts';
 import { config } from '../config.ts';
 import { db } from '../db.ts';
 import { levelSpeech } from '../loudness.ts';
-import { idSetting, setting } from '../settings.ts';
+import { DEFAULTS, idSetting, setting } from '../settings.ts';
 import type { Feature } from '../types.ts';
 import { humansIn } from '../util.ts';
 import { plural } from './gamestats.ts';
@@ -37,7 +37,7 @@ const STRETCHES: Stretches = [
   [2, 2.5],
 ] as const;
 
-/** The same, measured across the GLaDOS and HAL models, which stretch more evenly */
+/** The same, measured across the GLaDOS and HAL models, which stretch more evenly. Bender, Optimus Prime and TikTok match it within 3% */
 const CHARACTER_STRETCHES: Stretches = [
   [0.61, 0.5],
   [0.78, 0.7],
@@ -54,10 +54,6 @@ const CHARACTER_STRETCHES: Stretches = [
   [2.19, 2.5],
 ] as const;
 
-/** A small, loud alien: pitched up with its formants, faster, gritty, squashed flat and clipped */
-const RACER_EFFECT =
-  'rubberband=pitch=1.5:tempo=1.12,aexciter=amount=3:drive=8,acompressor=threshold=0.03:ratio=12:attack=2:release=40:makeup=6,asoftclip=type=hard:threshold=0.6';
-
 interface Voice {
   id: string;
   name: string;
@@ -65,10 +61,8 @@ interface Voice {
   model?: string;
   /** For a model with several speakers, numbered as they were when they were picked */
   speaker?: number;
-  /** Piper's noise_scale and noise_w_scale, for a livelier delivery than the model's own */
+  /** Piper's noise_scale and noise_w_scale, to change how much the sound and timing vary from the model's own */
   noise?: readonly [number, number];
-  /** ffmpeg filters the speech goes through before it's levelled */
-  effect?: string;
   stretches?: Stretches;
 }
 
@@ -77,10 +71,20 @@ export const VOICES: readonly Voice[] = [
   { id: '2', name: 'Voice 2', speaker: 100 },
   { id: '5', name: 'Voice 5', speaker: 400 },
   { id: '9', name: 'Voice 9', speaker: 800 },
-  { id: 'racer', name: 'Racer', speaker: 482, noise: [0.667, 0.6], effect: RACER_EFFECT },
-  { id: 'glados', name: 'GLaDOS', model: 'glados', stretches: CHARACTER_STRETCHES },
+  // Calmer than the model's own 0.667 and 0.8, which wobble in longer lines
+  { id: 'glados', name: 'GLaDOS', model: 'glados', noise: [0.333, 0.333], stretches: CHARACTER_STRETCHES },
   { id: 'hal', name: 'HAL 9000', model: 'hal', stretches: CHARACTER_STRETCHES },
+  { id: 'bender', name: 'Bender', model: 'bender', stretches: CHARACTER_STRETCHES },
+  { id: 'optimus', name: 'Optimus Prime', model: 'optimus', stretches: CHARACTER_STRETCHES },
+  // Kronk stretches like the default model's voices
+  { id: 'kronk', name: 'Kronk', model: 'kronk' },
+  { id: 'tiktok', name: 'TikTok', model: 'tiktok', stretches: CHARACTER_STRETCHES },
 ];
+
+/** The voice a server uses when nobody picks one. A stored voice that's since been removed falls back to the bot's default, then Voice 5 */
+export function serverVoice(guildId: string, id: string | null = setting(guildId, 'ttsVoice')): Voice {
+  return VOICES.find((v) => v.id === id) ?? VOICES.find((v) => v.id === DEFAULTS.ttsVoice) ?? VOICES.find((v) => v.id === '5')!;
+}
 
 const SPEAK_TIMEOUT_MS = 15_000;
 /** Lines waiting behind the one being said */
@@ -140,13 +144,13 @@ async function speakToFile(guild: Guild, typed: string, voiceId: string, file: s
   if (!config.voiceUrl) throw new Error('Text to speech isn’t set up on this bot. It needs VOICE_URL.');
   const text = speechFor(guild, typed);
   if (!hasWords(text)) throw new Error('There’s nothing in that to say.');
-  const voice = VOICES.find((v) => v.id === voiceId) ?? VOICES[0];
+  const voice = serverVoice(guild.id, voiceId);
   const raw = `${file}.raw.wav`;
   try {
     writeFileSync(raw, await speech(text, voice, setting(guild.id, 'ttsSpeed'), new AbortController().signal).catch(() => {
       throw new Error('The voice container isn’t answering, so the looping speech can’t be made.');
     }));
-    await levelSpeech(raw, file, voice.effect);
+    await levelSpeech(raw, file);
   } finally {
     rmSync(raw, { force: true });
   }
@@ -190,7 +194,7 @@ async function sayLine(queue: Queue, { channel, text, voice, started }: Line) {
   const unlevelled = `${file}.raw.wav`;
   try {
     writeFileSync(unlevelled, await speech(text, voice, setting(guildId, 'ttsSpeed'), cancel.signal));
-    await levelSpeech(unlevelled, file, voice.effect);
+    await levelSpeech(unlevelled, file);
     cancel.signal.throwIfAborted();
     const gain = setting(guildId, 'ttsVolume') / 100;
     await new Promise<void>((finished, failed) => {
@@ -242,7 +246,7 @@ function sayProblem(guild: Guild, text: string, who: string): string | null {
 /** Says something in a channel, after any lines ahead of it. Returns null once it's started, or why it couldn't. `who` is a user id, or who on the web UI (see activity.ts) */
 export async function say(channel: VoiceBasedChannel, typed: string, voiceId: string | undefined, who: string): Promise<string | null> {
   const { guild } = channel;
-  const voice = VOICES.find((v) => v.id === (voiceId ?? setting(guild.id, 'ttsVoice')));
+  const voice = voiceId === undefined ? serverVoice(guild.id) : VOICES.find((v) => v.id === voiceId);
   if (!voice) return 'Pick a voice from the list.';
   const text = speechFor(guild, typed);
   const problem = sayProblem(guild, text, who);
@@ -258,8 +262,8 @@ export async function say(channel: VoiceBasedChannel, typed: string, voiceId: st
 export function sayOut(channel: VoiceBasedChannel, line: string): Promise<string | null> {
   const { guild } = channel;
   const text = speechFor(guild, line);
-  const voice = VOICES.find((v) => v.id === setting(guild.id, 'ttsVoice'));
-  if (!config.voiceUrl || !setting(guild.id, 'tts') || !voice || !hasWords(text)) return Promise.resolve('Nothing to say.');
+  const voice = serverVoice(guild.id);
+  if (!config.voiceUrl || !setting(guild.id, 'tts') || !hasWords(text)) return Promise.resolve('Nothing to say.');
   if (queueFor(guild.id).lines.length >= MOST_WAITING) return Promise.resolve('Too many lines waiting.');
   return queueLine(channel, text, voice);
 }
@@ -341,8 +345,8 @@ export async function readMessage(message: Message) {
   const text = speechFor(guild, shown);
   if (!hasWords(speechFor(guild, shown.replace(LINK, ' '))) || text.length > setting(guild.id, 'ttsMaxChars')) return;
   const channel = listeningChannel(message);
-  const voice = VOICES.find((v) => v.id === setting(guild.id, 'ttsVoice'));
-  if (!channel || !voice || queueFor(guild.id).lines.length >= MOST_WAITING) return;
+  const voice = serverVoice(guild.id);
+  if (!channel || queueFor(guild.id).lines.length >= MOST_WAITING) return;
 
   const last = lastReader.get(guild.id);
   const sameSpeaker = last?.id === author.id && Date.now() - last.at < SAME_SPEAKER_MS;

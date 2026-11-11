@@ -13,7 +13,7 @@ import { logActivity } from '../activity.ts';
 import { DEFAULT_ENV, DEFAULTS, setSetting, setting, storedSetting, type SettingKey } from '../settings.ts';
 import type { Feature } from '../types.ts';
 import { isTimeZone, pingWarning } from '../util.ts';
-import { VOICES } from './say.ts';
+import { serverVoice, VOICES } from './say.ts';
 import { affectsLoopRoom, applyLevels, applyMusicVolume, applySoundVolume, cantJoin, findSound, listSounds, loopSpeechProblem, refreshLoopRoom } from './soundboard.ts';
 
 const ANNOUNCE_PERMISSIONS = [
@@ -192,7 +192,7 @@ export function show(key: SettingKey, value: unknown): string {
     case 'ttsCooldownSec':
       return `${value} seconds`;
     case 'ttsVoice':
-      return VOICES.find((v) => v.id === value)?.name ?? String(value);
+      return serverVoice('', String(value)).name;
     case 'freeGamesUnlisted':
       return value ? 'shown' : 'hidden';
     case 'freeGamesMinRating':

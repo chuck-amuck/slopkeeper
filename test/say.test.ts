@@ -92,24 +92,40 @@ test('reads out a line in the server’s voice, or the one asked for, and logs w
   assert.deepEqual(leftovers(), []);
 });
 
-test('the racer, GLaDOS and HAL ask for their own model, delivery and speed, and the racer’s effect runs', { skip: !hasFfmpeg }, async (t) => {
+test('the character voices ask for their own model, delivery and speed', { skip: !hasFfmpeg }, async (t) => {
   const bodies: unknown[] = [];
   t.mock.method(globalThis, 'fetch', async (_url: string, init: RequestInit) => {
     bodies.push(JSON.parse(init.body as string));
     return new Response(readFileSync(speechFile));
   });
   const voice = channel();
-  for (const id of ['racer', 'glados', 'hal']) {
-    assert.equal(await say(voice, 'scrib doon', id, id), null);
+  for (const id of ['glados', 'hal', 'bender', 'optimus', 'kronk', 'tiktok']) {
+    assert.equal(await say(voice, 'good news everyone', id, id), null);
     await sleep(300);
   }
   assert.deepEqual(bodies, [
-    { text: 'scrib doon', speaker_id: 482, length_scale: lengthFor(85), noise_scale: 0.667, noise_w_scale: 0.6 },
     // Their own curve: 85% speed takes 18% longer, which these models give at 1.25
-    { text: 'scrib doon', voice: 'glados', length_scale: 1.25 },
-    { text: 'scrib doon', voice: 'hal', length_scale: 1.25 },
+    { text: 'good news everyone', voice: 'glados', length_scale: 1.25, noise_scale: 0.333, noise_w_scale: 0.333 },
+    { text: 'good news everyone', voice: 'hal', length_scale: 1.25 },
+    { text: 'good news everyone', voice: 'bender', length_scale: 1.25 },
+    { text: 'good news everyone', voice: 'optimus', length_scale: 1.25 },
+    // Kronk stretches like the default model
+    { text: 'good news everyone', voice: 'kronk', length_scale: lengthFor(85) },
+    { text: 'good news everyone', voice: 'tiktok', length_scale: 1.25 },
   ]);
   assert.deepEqual(leftovers(), []);
+});
+
+test('a server whose voice was removed talks in the default voice, but asking for an unknown one is refused', { skip: !hasFfmpeg }, async (t) => {
+  const asked = fakeVoice(t);
+  const voice = channel();
+  setSetting(voice.guild.id, 'ttsVoice', 'racer');
+  assert.equal(await say(voice, 'still here', undefined, 'a'), null);
+  await sleep(300);
+  assert.equal(await sayOut(voice, 'and here'), null);
+  await sleep(300);
+  assert.equal(await say(voice, 'not this', 'racer', 'b'), 'Pick a voice from the list.');
+  assert.deepEqual(asked.map((a) => [a.text, a.speaker]), [['still here', 400], ['and here', 400]]);
 });
 
 test('a server’s speed setting changes how long speech takes', { skip: !hasFfmpeg }, async (t) => {

@@ -388,7 +388,7 @@ The web UI's Library page also shows everything on Discord's soundboard, includi
 - Lines wait their turn, while sounds still layer on top. **Stop** ends the line and clears anything waiting.
 - Mentions are read as names, custom emoji as their name, and links as "link".
 - Every line goes in the Activity tab with who said it.
-- The voices are **Voice 1**, **2**, **5** and **9**, **Racer** (a small, loud alien), **GLaDOS** and **HAL 9000**. Each talks at the server's speed.
+- The voices are **Voice 1**, **2**, **5** and **9**, plus characters: **GLaDOS**, **HAL 9000**, **Bender**, **Optimus Prime**, **Kronk** and **TikTok** (the TikTok text-to-speech lady). Each talks at the server's speed. A server whose default voice has been removed talks in the bot's default voice.
 - `/setup speech` sets whether it's on, the default voice, how fast and how loud it talks, the longest line and how long each person waits between lines. `/setup speech-role` limits it to a role, plus people with **Manage Server**. The web UI isn't limited by the role, and counts as one person for the wait.
 
 It needs the [voice container](#the-voice-container).
@@ -582,7 +582,7 @@ So the host can change a default for every server at once, and each server can s
 | Music volume, as a percentage | `music` | `MUSIC_VOLUME` | 40 |
 | Who can control music | `music` | | everyone |
 | Text to speech | `speech` | `TTS` (`false` to turn off) | on |
-| Default voice | `speech` | `TTS_VOICE` (`1`, `2`, `5`, `9`, `racer`, `glados` or `hal`) | 5 |
+| Default voice | `speech` | `TTS_VOICE` (`1`, `2`, `5`, `9`, `glados`, `hal`, `bender`, `optimus`, `kronk` or `tiktok`) | 5 |
 | Speech speed, as a percentage of the voice's natural speed | `speech` | `TTS_SPEED` | 85 |
 | Speech volume, where 100 is about as loud as a sound with even volume on | `speech` | `TTS_VOLUME` | 100 |
 | Longest spoken line, in characters | `speech` | `TTS_MAX_CHARS` | 200 |
@@ -800,17 +800,23 @@ voice:
   deploy:
     resources:
       limits:
-        memory: 768M
+        memory: 1280M
   volumes:
     - slopkeeper-voice:/voices
 ```
 
-Set `VOICE_URL=http://voice:5000` on the bot, and don't publish the port. On first start it downloads three models into its volume, and after that it needs no internet:
+Set `VOICE_URL=http://voice:5000` on the bot, and don't publish the port. On first start it downloads seven models into its volume, and after that it needs no internet:
 
-- `en_US-libritts_r-medium` (79 MB, CC BY 4.0) holds 904 voices. Voices 1, 2, 5 and 9 are four of them, and **Racer** is another, pitched up and roughened by the bot.
-- [GLaDOS](https://huggingface.co/NullPoExc/piper-glados) (64 MB, no license given) and [HAL 9000](https://huggingface.co/OccultAI/HAL-9000-Piper-TTS) (64 MB, Apache 2.0) are community models of those characters, each fetched at a fixed version and checked against its hash. If one can't be fetched, its voice talks with the first model until the container restarts.
+- `en_US-libritts_r-medium` (79 MB, CC BY 4.0) holds 904 voices. Voices 1, 2, 5 and 9 are four of them.
+- The character voices are community models, 64 MB each, fetched at a fixed version and checked against their hashes. If one can't be fetched, its voice talks with the first model until the container restarts.
+  - [GLaDOS](https://huggingface.co/NullPoExc/piper-glados) (no license given)
+  - [HAL 9000](https://huggingface.co/OccultAI/HAL-9000-Piper-TTS) (Apache 2.0)
+  - [Bender](https://huggingface.co/Schmalvis/bender-tts-model) (no license given)
+  - [Optimus Prime](https://huggingface.co/crazygiscool/optimus-piper-voice) by crazygiscool (CC BY-NC 4.0: non-commercial use only)
+  - [Kronk](https://huggingface.co/russdill/kronk) (no license given)
+  - TikTok, from cosycove's BeefStew, which is no longer online, via a copy in [fox3000foxy/piper-voices-collection](https://huggingface.co/fox3000foxy/piper-voices-collection) (no license given)
 
-`VOICES` in `src/features/say.ts` lists the voices offered. Each model loads the first time it's used. With all three loaded it uses about 300 to 450 MB, and a long line at a slow speed briefly takes it past 700 MB. It makes a short line in about a second on two CPU cores.
+`VOICES` in `src/features/say.ts` lists the voices offered. Each model loads the first time it's used. With all seven loaded it uses about 700 to 800 MB, and a long line at a slow speed briefly takes it near 1 GB. It makes a short line in about a second on two CPU cores.
 
 ### The music container
 

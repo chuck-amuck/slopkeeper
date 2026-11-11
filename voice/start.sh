@@ -30,6 +30,19 @@ fetch glados NullPoExc/piper-glados b5eea11fb38bc8705b54102437fb6a553a54ec4d \
 fetch hal OccultAI/HAL-9000-Piper-TTS 22f9ba2c6229614a4c186a08578d9cc80e2c653b \
   hal.onnx 0e08c82dc027bc72b8b839324801709e205e8c201ccae171b92e37a664d94361 \
   hal.onnx.json cb6f82c03fc9e6db1f3b6978b9601bab9854f92c40d3a0681501944b8c26745e
+fetch bender Schmalvis/bender-tts-model c35c0bbdd6cd2eb0fe8c1b1d0b1d87e7cca6ed33 \
+  bender-v2.onnx 6167fe149434dfa5937da41d27209ae8fbc21d7f6e28f522dec2d137afc79424 \
+  bender-v2.onnx.json 6d131604279f4ee08004583e4cbd05864aa6e15df2c8f0fc667c8757072fb704
+fetch optimus crazygiscool/optimus-piper-voice cbd038a6ddd21a58bd50b0e7cd1c4e14b40c77c0 \
+  optimus-final.onnx 0f52de2f01bac922dcd5815f6c367681766457cbb2f07a83bf2129aef5917585 \
+  optimus-final.onnx.json a08cf76c01428751a15b5db0f9303af04ca7bbf08317123c6241ed06d8beb328
+fetch kronk russdill/kronk 9403433305b256e73bc0fe1c685a80dbd88a1f87 \
+  en/en_US/kronk/medium/kronk-medium.onnx 957a7ee834fc34664868ae93412b46046e8bf708ceff851fa791d2ab27fd9820 \
+  en/en_US/kronk/medium/kronk-medium.onnx.json 500dfed0cc937b002b09ee8d7eea059b0250504addf7ad73fbff959c00282cb9
+# The TikTok voice's own repo is gone, so it comes from a collection that kept a copy
+fetch tiktok fox3000foxy/piper-voices-collection 0ce0fe21f3dfc87a8e318030b28b753cacfbbcf3 \
+  cosycove--BeefStew/src_data_tts_voices_tiktok_lady.onnx.onnx 8f329dc194051481ff141153444098975c052dfef6fa39f376fbcf0748c7a32c \
+  cosycove--BeefStew/src_data_tts_voices_tiktok_lady.onnx.onnx.json 108c16883ad72e74f8c1894dd75b045fc955d4c3b338e4a501737cf6c85ce99e
 
 # serve.py is piper.http_server with less memory kept between lines
 exec python3 /serve.py --host 0.0.0.0 --port 5000 --data-dir /voices -m "$MODEL"

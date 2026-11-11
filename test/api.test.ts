@@ -2558,7 +2558,7 @@ test('tells the page what text to speech offers', async () => {
   config.voiceUrl = 'http://voice.test';
   try {
     const data = await ok(`/guilds/${GUILD}/say`);
-    assert.deepEqual(data.voices.map((v: { name: string }) => v.name), ['Voice 1', 'Voice 2', 'Voice 5', 'Voice 9', 'Racer', 'GLaDOS', 'HAL 9000']);
+    assert.deepEqual(data.voices.map((v: { name: string }) => v.name), ['Voice 1', 'Voice 2', 'Voice 5', 'Voice 9', 'GLaDOS', 'HAL 9000', 'Bender', 'Optimus Prime', 'Kronk', 'TikTok']);
     assert.deepEqual(Object.keys(data.voices[0]), ['id', 'name']);
     assert.deepEqual([data.on, data.voice, data.longest], [true, '5', 200]);
     setSetting(GUILD, 'tts', false);
