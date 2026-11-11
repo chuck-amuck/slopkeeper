@@ -104,7 +104,7 @@ test('the racer, GLaDOS and HAL ask for their own model, delivery and speed, and
     await sleep(300);
   }
   assert.deepEqual(bodies, [
-    { text: 'scrib doon', speaker_id: 632, length_scale: lengthFor(85), noise_scale: 0.667, noise_w_scale: 0.6 },
+    { text: 'scrib doon', speaker_id: 482, length_scale: lengthFor(85), noise_scale: 0.667, noise_w_scale: 0.6 },
     // Their own curve: 85% speed takes 18% longer, which these models give at 1.25
     { text: 'scrib doon', voice: 'glados', length_scale: 1.25 },
     { text: 'scrib doon', voice: 'hal', length_scale: 1.25 },

@@ -54,8 +54,9 @@ const CHARACTER_STRETCHES: Stretches = [
   [2.19, 2.5],
 ] as const;
 
-/** A small, loud alien: pitched up with its formants, a little faster, gritty and squashed flat */
-const RACER_EFFECT = 'rubberband=pitch=1.35:tempo=1.08,aexciter=amount=2:drive=6,acompressor=threshold=0.05:ratio=8:attack=3:release=50:makeup=4,asoftclip=type=tanh';
+/** A small, loud alien: pitched up with its formants, faster, gritty, squashed flat and clipped */
+const RACER_EFFECT =
+  'rubberband=pitch=1.5:tempo=1.12,aexciter=amount=3:drive=8,acompressor=threshold=0.03:ratio=12:attack=2:release=40:makeup=6,asoftclip=type=hard:threshold=0.6';
 
 interface Voice {
   id: string;
@@ -76,7 +77,7 @@ export const VOICES: readonly Voice[] = [
   { id: '2', name: 'Voice 2', speaker: 100 },
   { id: '5', name: 'Voice 5', speaker: 400 },
   { id: '9', name: 'Voice 9', speaker: 800 },
-  { id: 'racer', name: 'Racer', speaker: 632, noise: [0.667, 0.6], effect: RACER_EFFECT },
+  { id: 'racer', name: 'Racer', speaker: 482, noise: [0.667, 0.6], effect: RACER_EFFECT },
   { id: 'glados', name: 'GLaDOS', model: 'glados', stretches: CHARACTER_STRETCHES },
   { id: 'hal', name: 'HAL 9000', model: 'hal', stretches: CHARACTER_STRETCHES },
 ];
