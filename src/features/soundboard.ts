@@ -42,7 +42,6 @@ import { createHash, randomUUID } from 'node:crypto';
 import { copyFileSync, existsSync, mkdirSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import type { Readable } from 'node:stream';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { promisify } from 'node:util';
 import { logActivity } from '../activity.ts';
@@ -651,21 +650,6 @@ function mixInto(guildId: string, add: (mixer: Mixer) => void) {
 /** Plays a sound, or restarts it if it's already playing */
 function mixIn(guildId: string, file: string, gain: number, onEnd?: (byItself: boolean) => void, options: VoiceOptions = {}) {
   mixInto(guildId, (mixer) => mixer.add(file, gain, onEnd, options));
-}
-
-/**
- * Mixes live audio, like music, into a channel until it's stopped or ends, which runs `onEnd`.
- * Returns a way to stop it, or the reason it couldn't play, for the user
- */
-export async function playStream(channel: VoiceBasedChannel, pcm: Readable, onEnd: () => void): Promise<(() => void) | string> {
-  const problem = await connect(channel);
-  if (problem) {
-    pcm.destroy();
-    return problem;
-  }
-  let stop!: () => void;
-  mixInto(channel.guild.id, (mixer) => (stop = mixer.addStream(pcm, 1, onEnd, { group: 'music' })));
-  return stop;
 }
 
 /**

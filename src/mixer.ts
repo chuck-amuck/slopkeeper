@@ -8,9 +8,6 @@ const FRAME_BYTES = (48_000 * 2 * 2 * FRAME_MS) / 1000;
 const MAX_LEAD_MS = 60;
 // Audio a new sound buffers before it's mixed in, enough to cover the lead
 const START_BYTES = FRAME_BYTES * 4;
-// A stream arrives over the network, so it keeps a little more in hand, and skips ahead rather than fall further behind
-const STREAM_START_BYTES = FRAME_BYTES * 5;
-const STREAM_MAX_BYTES = FRAME_BYTES * 25;
 // Music drops to this while someone's line is spoken, easing down and back up over a few frames
 const DUCKED = 0.3;
 const DUCK_STEP = 0.05;
@@ -127,9 +124,6 @@ class Voice implements Source {
   }
 }
 
-/** Whether a stream has had all it will get, though some may still be unread. Node keeps this to itself, but it has for years */
-const sourceEnded = (pcm: Readable) => (pcm as unknown as { _readableState?: { ended?: boolean } })._readableState?.ended === true;
-
 /**
  * A sound started afresh every `everyMs`, each copy playing out on top of those before it, until stopped. The copies are
  * timed by the frames mixed, so they land exactly on the beat, and the oldest fades out once there are too many
@@ -213,64 +207,6 @@ class LayeredVoice implements Source {
   }
 }
 
-/** Raw PCM that's already playing somewhere else, like music, mixed in as it arrives */
-class StreamVoice implements Source {
-  private static count = 0;
-  readonly file = `stream:${++StreamVoice.count}`;
-  readonly gain: number;
-  readonly loop = false;
-  readonly lasting = true;
-  readonly group: string;
-  readonly pcm: Readable;
-  ended = false;
-  heard = false;
-  replaces: Source[] = [];
-  /** Waiting to have enough in hand again, after running dry */
-  private buffering = true;
-  private onEnd: (() => void) | undefined;
-
-  constructor(pcm: Readable, gain: number, onEnd?: () => void, options: VoiceOptions = {}) {
-    this.pcm = pcm;
-    this.gain = gain;
-    this.onEnd = onEnd;
-    this.group = options.group ?? 'sound';
-    // A stream that ends while it's still filling up is never read again, so what's left, too little to play, is dropped for its end to be noticed
-    this.pcm.on('readable', () => {
-      if (this.pcm.readableLength < STREAM_START_BYTES && sourceEnded(this.pcm)) this.pcm.read();
-    });
-    this.pcm.once('close', () => this.finish());
-    this.pcm.once('error', (err) => {
-      console.error('Audio stream error:', err.message);
-      this.finish();
-    });
-  }
-
-  private finish() {
-    this.ended = true;
-    this.onEnd?.();
-    this.onEnd = undefined;
-  }
-
-  ready(): boolean {
-    return this.pcm.readableLength >= STREAM_START_BYTES;
-  }
-
-  read(): Buffer | null {
-    if (this.pcm.readableLength > STREAM_MAX_BYTES) this.pcm.read(this.pcm.readableLength - STREAM_START_BYTES);
-    if (this.buffering && this.pcm.readableLength < STREAM_START_BYTES) return null;
-    this.buffering = false;
-    const frame = this.pcm.read(FRAME_BYTES) as Buffer | null;
-    // A gap mid-stream is silence while it catches up, rather than a stutter of every frame as it trickles in
-    if (!frame) this.buffering = true;
-    return frame;
-  }
-
-  stop() {
-    this.finish();
-    this.pcm.destroy();
-  }
-}
-
 /**
  * Raw PCM stream that sums every sound added to it, so different sounds layer like Discord's soundboard.
  * Adding a sound that's already playing restarts it instead. Ends once all of its sounds have finished.
@@ -310,16 +246,6 @@ export class Mixer extends Readable {
         old.stop();
       }
     }
-    this.include(voice);
-    return () => {
-      voice.stop();
-      this.voices = this.voices.filter((v) => v !== voice);
-    };
-  }
-
-  /** Mixes in raw 48 kHz stereo PCM as it arrives, until the stream ends or it's stopped. Returns a way to stop it */
-  addStream(pcm: Readable, gain = 1, onEnd?: () => void, options: VoiceOptions = {}): () => void {
-    const voice = new StreamVoice(pcm, gain, onEnd, options);
     this.include(voice);
     return () => {
       voice.stop();

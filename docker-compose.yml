@@ -47,11 +47,6 @@ services:
     environment:
       MUSIC_TOKEN: ${MUSIC_TOKEN}
       MUSIC_CACHE_MB: ${MUSIC_CACHE_MB:-1024}
-      # Deprecated in favour of YouTube streaming: songs YouTube doesn't have play through Spotify instead, once Soloist is set up
-      SPOTIFY_PLAYBACK: ${SPOTIFY_PLAYBACK:-false}
-      SOLOIST_API_KEY: ${SOLOIST_API_KEY}
-      SOLOIST_ACCEPT_TERMS: ${SOLOIST_ACCEPT_TERMS}
-      SOLOIST_SESSION: ${SOLOIST_SESSION}
     volumes:
       - slopkeeper-music:/data
     deploy:

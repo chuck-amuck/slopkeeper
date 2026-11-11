@@ -9,7 +9,7 @@ const LINK = /^(https?:\/\/|spotify:)/i;
 const FILE_TYPES = ['.mp3', '.ogg', '.wav', '.m4a', '.opus', '.webm', '.flac'];
 const MOST_FILE_MB = 60;
 
-const SOURCES = { youtube: 'YouTube', soundcloud: 'SoundCloud', spotify: 'Spotify' };
+const SOURCES = { youtube: 'YouTube', soundcloud: 'SoundCloud' };
 /** What follows the artist while a song plays: paused, being found, or where it's from and where it's playing */
 const whereFrom = (data) =>
   data.phase === 'paused' ? ['Paused'] : data.phase === 'starting' ? ['Finding it…'] : [SOURCES[data.via] && `from ${SOURCES[data.via]}`, data.channelName && `in ${data.channelName}`].filter(Boolean);
@@ -140,7 +140,6 @@ export function renderMusic(main) {
     onSave: (value) => void attempt(() => request(api('/settings/musicVolume'), { method: 'PUT', json: { value } })),
   });
   const volumeLabel = el('span', { className: 'voice-volume', hidden: true }, el('span', { className: 'voice-label' }, 'Volume'), volume.node);
-  const account = el('div', { className: 'card-note music-account', hidden: true });
 
   const now = el(
     'section',
@@ -156,7 +155,6 @@ export function renderMusic(main) {
       stopButton,
       volumeLabel,
     ),
-    account,
   );
 
   async function playOrPause() {
@@ -535,8 +533,6 @@ export function renderMusic(main) {
       volume.set(data.volume);
       volumeLabel.hidden = false;
     }
-    account.textContent = data.account ? `Songs YouTube doesn’t have play through Spotify, as ${data.account}. While one does, that account’s music stops everywhere else.` : '';
-    account.hidden = !data.account;
 
     const song = data.phase !== 'stopped' ? data.queue[0] : null;
     nowCover.replaceChildren(cover(song?.cover, 96));

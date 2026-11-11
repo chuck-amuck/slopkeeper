@@ -1,8 +1,7 @@
-# Soloist needs a newer C library than bookworm's
 FROM node:24-trixie-slim
 
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends pulseaudio libatomic1 ca-certificates python3 python3-venv \
+  && apt-get install -y --no-install-recommends ca-certificates python3 python3-venv \
   && rm -rf /var/lib/apt/lists/*
 
 # yt-dlp, with Deno for YouTube's player checks, in an environment the node user owns, so it can update itself as YouTube changes

@@ -110,7 +110,6 @@ jobs:
           cache-from: type=gha,scope=voice
           cache-to: type=gha,mode=max,scope=voice
 
-  # Spotify Soloist isn't in this image: the container downloads it from Spotify when it starts
   build-music:
     needs: test-music
     runs-on: ubuntu-latest

@@ -1218,10 +1218,6 @@ textarea {
   min-width: 0;
 }
 
-.music-account {
-  padding-bottom: 12px;
-}
-
 .music-search {
   display: grid;
   gap: 10px;
