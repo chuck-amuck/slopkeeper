@@ -1,4 +1,4 @@
-import { api, attempt, confirmButton, el, RequestError, request, session, state, toast, volumeControl } from './lib.js';
+import { api, attempt, confirmButton, el, pickedVoice, poll, RequestError, request, session, state, toast, volumeControl } from './lib.js';
 
 const REFRESH_MS = 3000;
 // A playlist adds this many songs, the first or at random
@@ -106,7 +106,7 @@ export function renderMusic(main) {
   let data = null;
   let fetchedAt = 0;
   let channels = null;
-  let chosen = null;
+  let chosen = pickedVoice.get();
   let dragging = null;
   let shownQueue = '';
 
@@ -129,17 +129,26 @@ export function renderMusic(main) {
   });
   const progress = songBar.node;
 
-  const picker = el('select', { ariaLabel: 'Voice channel', onchange: (e) => (chosen = e.target.value) });
+  const picker = el('select', { ariaLabel: 'Voice channel', onchange: (e) => pickedVoice.set((chosen = e.target.value)) });
   const playButton = el('button', { className: 'primary', onclick: () => void act(playOrPause) }, 'Play');
   const skipButton = el('button', { onclick: () => void act(() => request(api('/music/skip'), { method: 'POST' })) }, 'Skip');
-  const stopButton = confirmButton({}, 'Stop', 'Clear the queue?', async () => show(await request(api('/music/stop'), { method: 'POST' })));
+  const stopButton = confirmButton({ title: 'Stops the music and empties the queue' }, 'Stop and clear', 'Clear the queue?', async () => show(await request(api('/music/stop'), { method: 'POST' })));
   const volume = volumeControl({
     min: 0,
     max: 200,
     label: 'Music volume',
-    onSave: (value) => void attempt(() => request(api('/settings/musicVolume'), { method: 'PUT', json: { value } })),
+    onSave: (value) =>
+      void attempt(async () => {
+        await request(api('/settings/musicVolume'), { method: 'PUT', json: { value } });
+        toast(`Music plays at ${value}% for everyone now.`);
+      }),
   });
-  const volumeLabel = el('span', { className: 'voice-volume', hidden: true }, el('span', { className: 'voice-label' }, 'Volume'), volume.node);
+  const volumeLabel = el(
+    'span',
+    { className: 'voice-volume', hidden: true, title: 'How loud music plays for everyone in the server. It’s the Music volume in Settings.' },
+    el('span', { className: 'voice-label' }, 'Volume'),
+    volume.node,
+  );
 
   const now = el(
     'section',
@@ -574,10 +583,6 @@ export function renderMusic(main) {
     await refresh();
     await loadChannels();
   });
-  const timer = setInterval(() => {
-    if (!main.isConnected) return clearInterval(timer);
-    void refresh().catch(() => {});
-    void loadChannels().catch(() => {});
-  }, REFRESH_MS);
+  poll(main, REFRESH_MS, () => Promise.all([refresh(), loadChannels()]));
   const ticker = setInterval(() => (main.isConnected ? paintProgress() : clearInterval(ticker)), 500);
 }

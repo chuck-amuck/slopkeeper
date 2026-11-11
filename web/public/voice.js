@@ -1,4 +1,4 @@
-import { api, attempt, el, request, soundPath, state, volumeControl } from './lib.js';
+import { api, attempt, el, pickedVoice, poll, request, soundPath, state, toast, volumeControl } from './lib.js';
 
 const REFRESH_MS = 5000;
 
@@ -7,12 +7,13 @@ export function voiceBar(main, onChange) {
   const guildId = state.guildId;
   // Null until it's first loaded, so an empty list still gets drawn
   let channels = null;
-  let chosen = null;
+  let chosen = pickedVoice.get();
 
   const picker = el('select', {
     ariaLabel: 'Voice channel',
     onchange: (e) => {
       chosen = e.target.value;
+      pickedVoice.set(chosen);
       onChange();
     },
   });
@@ -21,9 +22,19 @@ export function voiceBar(main, onChange) {
     min: 0,
     max: 200,
     label: 'Soundboard volume',
-    onSave: (value) => void attempt(() => request(api('/settings/soundVolume'), { method: 'PUT', json: { value } })),
+    // It's the server's setting, not this page's, so saying so is worth a toast
+    onSave: (value) =>
+      void attempt(async () => {
+        await request(api('/settings/soundVolume'), { method: 'PUT', json: { value } });
+        toast(`Sounds play at ${value}% for everyone now.`);
+      }),
   });
-  const volumeLabel = el('span', { className: 'voice-volume', hidden: true }, el('span', { className: 'voice-label' }, 'Volume'), volume.node);
+  const volumeLabel = el(
+    'span',
+    { className: 'voice-volume', hidden: true, title: 'How loud sounds play for everyone in the server. It’s the Soundboard volume in Settings.' },
+    el('span', { className: 'voice-label' }, 'Volume'),
+    volume.node,
+  );
 
   async function load() {
     const data = await request(api('/voice'));
@@ -49,10 +60,7 @@ export function voiceBar(main, onChange) {
 
   void attempt(load);
   // People come and go while the page is open
-  const timer = setInterval(() => {
-    if (main.isConnected) void load().catch(() => {});
-    else clearInterval(timer);
-  }, REFRESH_MS);
+  poll(main, REFRESH_MS, load);
 
   return {
     node: el(

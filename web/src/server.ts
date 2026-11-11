@@ -1,5 +1,5 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { Readable, Transform } from 'node:stream';
 
@@ -20,7 +20,8 @@ const CONTENT_TYPES = { html: 'text/html; charset=utf-8', js: 'text/javascript; 
 const asset = (file: string, type: keyof typeof CONTENT_TYPES) => ({ body: readFileSync(new URL(`../public/${file}`, import.meta.url)), type: CONTENT_TYPES[type] });
 const ASSETS: Record<string, ReturnType<typeof asset>> = {
   '/': asset('index.html', 'html'),
-  ...Object.fromEntries(['achievements', 'activity', 'app', 'board', 'clip', 'emoji', 'emojipicker', 'games', 'lib', 'music', 'pick', 'library', 'nights', 'settings', 'stats', 'trim', 'voice'].map((name) => [`/${name}.js`, asset(`${name}.js`, 'js')])),
+  // Every script in the folder, so a new page's script is served without being added here
+  ...Object.fromEntries(readdirSync(new URL('../public/', import.meta.url)).filter((f) => f.endsWith('.js')).map((file) => [`/${file}`, asset(file, 'js')])),
   '/style.css': asset('style.css', 'css'),
   '/icon.svg': asset('icon.svg', 'svg'),
 };

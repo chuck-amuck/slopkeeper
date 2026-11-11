@@ -6,6 +6,8 @@
   --text: #1e2024;
   --muted: #5e6470;
   --accent: #5865f2;
+  /* Behind white text, where the dark theme's lighter accent would be too faint */
+  --accent-fill: #5865f2;
   --accent-text: #ffffff;
   --good: #1a7f4b;
   --warn: #8f5a00;
@@ -27,6 +29,7 @@
     --text: #eceef1;
     --muted: #a0a6b2;
     --accent: #6d78f5;
+    --accent-fill: #5561e8;
     --good: #43c384;
     --warn: #f0b95c;
     --warn-bg: #3a2d14;
@@ -98,19 +101,59 @@ button:disabled {
 }
 
 button.primary {
-  border-color: var(--accent);
-  background: var(--accent);
+  border-color: var(--accent-fill);
+  background: var(--accent-fill);
   color: var(--accent-text);
 }
 
 button.primary:hover:not(:disabled) {
   filter: brightness(1.08);
-  background: var(--accent);
+  background: var(--accent-fill);
 }
 
 button.danger {
   border-color: var(--bad);
   color: var(--bad);
+}
+
+/* confirmButton: both labels share one cell, and only the one for its state shows */
+button.confirm {
+  display: inline-grid;
+  place-items: center;
+}
+
+button.confirm > span {
+  grid-area: 1 / 1;
+}
+
+button.confirm > span:last-child,
+button.confirm.danger > span:first-child {
+  visibility: hidden;
+}
+
+button.confirm.danger > span:last-child {
+  visibility: visible;
+}
+
+/* An icon keeps its size, and its question opens to the left over the buttons beside it */
+button.confirm.icon {
+  position: relative;
+}
+
+button.confirm.icon > span:last-child {
+  position: absolute;
+  top: -1px;
+  right: -1px;
+  bottom: -1px;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  padding: 0 12px;
+  border: 1px solid var(--bad);
+  border-radius: inherit;
+  background: var(--bad-bg);
+  color: var(--bad);
+  white-space: nowrap;
 }
 
 /* Stops everything the bot is playing, from any page */
@@ -782,8 +825,8 @@ dialog .actions {
 
 @keyframes hit {
   from {
-    border-color: var(--accent);
-    background: var(--accent);
+    border-color: var(--accent-fill);
+    background: var(--accent-fill);
     color: var(--accent-text);
   }
 }
@@ -974,6 +1017,7 @@ dialog .actions button:first-child:not(.primary):has(+ button) {
 .rsvp-label {
   display: inline-block;
   min-width: 80px;
+  margin-right: 6px;
   color: var(--muted);
   font-size: 13px;
 }
@@ -1593,10 +1637,6 @@ textarea {
   color: var(--bad);
 }
 
-.good-text {
-  color: var(--good);
-}
-
 @media (max-width: 640px) {
   .grip,
   .song-time,
@@ -1626,8 +1666,8 @@ textarea {
     grid-column: 1;
   }
 
+  /* Sticks with only the tab row showing: app.js sets top to minus the height above it */
   header {
-    position: static;
     flex-wrap: wrap;
     padding: 8px 16px;
   }
@@ -1745,6 +1785,36 @@ textarea {
 
 .board-body {
   padding: 0 12px 12px;
+}
+
+/* A flex summary loses the browser's triangle, so these draw their own chevron, pointing down once open */
+.discord-board summary,
+.pick-game summary {
+  list-style: none;
+}
+
+.discord-board summary::-webkit-details-marker,
+.pick-game summary::-webkit-details-marker {
+  display: none;
+}
+
+.discord-board summary > span:first-child::before,
+.pick-game summary > .pick-name::before {
+  content: '';
+  display: inline-block;
+  flex: none;
+  width: 7px;
+  height: 7px;
+  margin-right: 10px;
+  border-right: 2px solid var(--muted);
+  border-bottom: 2px solid var(--muted);
+  transform: translateY(-2px) rotate(-45deg);
+  transition: transform 0.15s;
+}
+
+.discord-board[open] summary > span:first-child::before,
+.pick-game[open] summary > .pick-name::before {
+  transform: translateY(-3px) rotate(45deg);
 }
 
 .discord-row {

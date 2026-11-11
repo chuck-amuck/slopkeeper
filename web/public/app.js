@@ -116,6 +116,21 @@ function meDialog(main) {
   });
 }
 
+/**
+ * On a phone the tabs sit on a row of their own under the server picker. The header sticks with only that row showing,
+ * and the row scrolls to the tab that's open, which may be past the edge of the screen
+ */
+function fitNav() {
+  const header = app.querySelector('header');
+  const nav = header?.querySelector('nav');
+  if (!nav) return;
+  const phone = matchMedia('(max-width: 640px)').matches;
+  header.style.top = phone ? `${-nav.offsetTop}px` : '';
+  const current = nav.querySelector('[aria-current]');
+  if (current) nav.scrollLeft = current.offsetLeft - nav.offsetLeft - (nav.clientWidth - current.offsetWidth) / 2;
+}
+addEventListener('resize', fitNav);
+
 function renderFrame() {
   const main = el('main');
   const guild = state.guilds.find((g) => g.id === state.guildId);
@@ -197,6 +212,7 @@ function renderFrame() {
       ),
   );
 
+  fitNav();
   player.stop();
   if (!guild) main.append(el('div', { className: 'empty' }, 'The bot isn’t in any servers yet.'));
   else TABS.find(([id]) => id === tab)[2](main);

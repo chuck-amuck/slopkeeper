@@ -34,7 +34,7 @@ const FIELDS = {
   joinSoundDelayMs: { kind: 'number', unit: 'ms', hint: 'How long the bot waits after connecting before it plays a join sound, so it clears Discord’s joining noises. 500 is half a second.' },
   soundManagerRole: { kind: 'role', none: 'Everyone', hint: 'Who can change sounds in Discord, along with people with Manage Server. Anyone can still play them. This page isn’t limited by it: it only asks for the password.' },
   tts: { kind: 'boolean', hint: 'Lets people have the bot read out what they type, with /say or on the Soundboard tab.' },
-  ttsVoice: { kind: 'choice', options: [['1', 'Voice 1'], ['2', 'Voice 2'], ['5', 'Voice 5'], ['9', 'Voice 9'], ['glados', 'GLaDOS'], ['hal', 'HAL 9000'], ['bender', 'Bender'], ['optimus', 'Optimus Prime'], ['kronk', 'Kronk'], ['tiktok', 'TikTok']], hint: 'Used when nobody picks one.' },
+  ttsVoice: { kind: 'speaker', hint: 'Used when nobody picks one.' },
   ttsSpeed: { kind: 'number', unit: '%', hint: 'How fast it talks. 100 is the voice’s natural speed, and lower is slower.' },
   ttsVolume: { kind: 'number', unit: '%', hint: 'How loud it talks. 100 is about as loud as a sound with even volume on.' },
   ttsChannel: { kind: 'channel', none: 'Off', hint: 'The bot reads out what people type here, in the voice channel they’re in, or else where the bot is or where most people are.' },
@@ -49,7 +49,7 @@ const FIELDS = {
   loopSoundDelayMs: { kind: 'number', unit: 'ms', hint: 'How long the looping sound waits after the intro ends, or after the loop starts with no intro. 1000 is a second.' },
   loopTextDelayMs: { kind: 'number', unit: 'ms', hint: 'How long the looping speech waits after the intro ends, or after the loop starts with no intro. 1000 is a second.' },
   loopText: { hint: 'Words said over and over in the room, on top of the sound, up to 500 characters. Leave it empty for none.' },
-  loopVoice: { kind: 'choice', options: [['', 'Same as the default voice'], ['1', 'Voice 1'], ['2', 'Voice 2'], ['5', 'Voice 5'], ['9', 'Voice 9'], ['glados', 'GLaDOS'], ['hal', 'HAL 9000'], ['bender', 'Bender'], ['optimus', 'Optimus Prime'], ['kronk', 'Kronk'], ['tiktok', 'TikTok']], hint: 'Who says the looping speech.' },
+  loopVoice: { kind: 'speaker', none: 'Same as the default voice', hint: 'Who says the looping speech.' },
   loopTextEvery: { kind: 'number', unit: 'seconds', hint: 'Starts the speech again this often, layered over the last if it’s still talking. 0 says it again straight away.' },
   loopIntro: { kind: 'sound', none: 'Off', hint: 'Played once, at its own level, before the loop starts. Someone else coming in stops the loop and starts again from the intro.' },
   loopIntroDelayMs: { kind: 'number', unit: 'ms', hint: 'How long after someone comes in the intro plays. 250 is a quarter of a second.' },
@@ -108,6 +108,9 @@ export function renderSettings(main) {
         return select([['', spec.none], ...data.voiceChannels.map((c) => [c.id, `🔊 ${c.name}`])]);
       case 'sound':
         return select([['', spec.none], ...data.sounds.map((name) => [name, name])]);
+      case 'speaker':
+        // The bot's list, so a voice added or removed there shows here without a change to this page
+        return select([...(spec.none ? [['', spec.none]] : []), ...data.voices.map((v) => [v.id, v.name])]);
       case 'choice':
         return select(spec.options);
       case 'day':
@@ -179,10 +182,18 @@ export function renderSettings(main) {
         await refresh();
       });
 
+    // What the control was last drawn from, so a refresh only redraws fields that changed
+    let drawn;
     const update = (current, fresh) => {
-      const nodes = [control(current, spec, fresh, save)];
-      if (spec.unit) nodes.push(el('span', { className: 'unit' }, spec.unit));
-      box.replaceChildren(...nodes);
+      const choices = { channel: fresh.channels, role: fresh.roles, voice: fresh.voiceChannels, sound: fresh.sounds, speaker: fresh.voices }[spec.kind];
+      const from = JSON.stringify([current.value, current.limits, choices]);
+      // A field someone is in keeps its control, so what they're typing or picking isn't thrown away
+      if (from !== drawn && !(drawn && box.contains(document.activeElement))) {
+        const nodes = [control(current, spec, fresh, save)];
+        if (spec.unit) nodes.push(el('span', { className: 'unit' }, spec.unit));
+        box.replaceChildren(...nodes);
+        drawn = from;
+      }
       status.replaceChildren(el('span', {}, current.source === 'set here' ? 'Set for this server' : current.source === 'default' ? 'Default' : `From ${current.source}`));
       if (current.source === 'set here') status.append(el('button', { className: 'link', onclick: reset }, 'Reset'));
     };

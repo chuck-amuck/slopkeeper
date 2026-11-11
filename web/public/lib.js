@@ -80,6 +80,27 @@ export function ago(ms) {
 
 // me: who Pangolin signed in, with the Discord member they said they are in this server. Null from the home network
 export const state = { guilds: [], guildId: null, me: null };
+
+/** Runs `load` every `ms` while `main` is on the page. A hidden tab skips it, and catches up as soon as it's shown again */
+export function poll(main, ms, load) {
+  const run = () => {
+    if (!main.isConnected) return stop();
+    if (!document.hidden) void load().catch(() => {});
+  };
+  const timer = setInterval(run, ms);
+  const stop = () => {
+    clearInterval(timer);
+    document.removeEventListener('visibilitychange', run);
+  };
+  document.addEventListener('visibilitychange', run);
+}
+
+/** The voice channel someone picked on the Soundboard or Music tab, per server, kept across tabs so a sound doesn't go somewhere else */
+const pickedVoices = new Map();
+export const pickedVoice = {
+  get: () => pickedVoices.get(state.guildId) ?? null,
+  set: (id) => pickedVoices.set(state.guildId, id),
+};
 export const api = (path) => `/api/guilds/${state.guildId}${path}`;
 export const soundPath = (name, part = '') => api(`/sounds/${encodeURIComponent(name)}${part}`);
 
@@ -205,23 +226,26 @@ export function postDialog(parent, title, text, post) {
   });
 }
 
-/** A button that asks once more before acting, and goes back to normal if it isn't pressed again */
+/**
+ * A button that asks once more before acting, and goes back to normal if it isn't pressed again. Both labels are in
+ * it, one hidden, so it's the same size either way and doesn't push the rest of the row about
+ */
 export function confirmButton(props, label, armedLabel, action) {
   let armed = false;
   let timer;
+  const plain = `${props.className ?? ''} confirm`.trim();
   const button = el(
     'button',
     {
       ...props,
+      className: plain,
       onclick: () => {
         if (!armed) {
           armed = true;
-          button.textContent = armedLabel;
-          button.className = 'danger';
+          button.className = `${plain} danger`;
           timer = setTimeout(() => {
             armed = false;
-            button.textContent = label;
-            button.className = props.className ?? '';
+            button.className = plain;
           }, 3000);
           return;
         }
@@ -232,7 +256,8 @@ export function confirmButton(props, label, armedLabel, action) {
         });
       },
     },
-    label,
+    el('span', {}, label),
+    el('span', {}, armedLabel),
   );
   return button;
 }
