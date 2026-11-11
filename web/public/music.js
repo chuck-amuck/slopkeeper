@@ -1,4 +1,4 @@
-import { api, attempt, confirmButton, el, RequestError, request, session, state, toast } from './lib.js';
+import { api, attempt, confirmButton, el, RequestError, request, session, state, toast, volumeControl } from './lib.js';
 
 const REFRESH_MS = 3000;
 // A playlist adds this many songs, the first or at random
@@ -133,16 +133,13 @@ export function renderMusic(main) {
   const playButton = el('button', { className: 'primary', onclick: () => void act(playOrPause) }, 'Play');
   const skipButton = el('button', { onclick: () => void act(() => request(api('/music/skip'), { method: 'POST' })) }, 'Skip');
   const stopButton = confirmButton({}, 'Stop', 'Clear the queue?', async () => show(await request(api('/music/stop'), { method: 'POST' })));
-  const volume = el('input', {
-    type: 'range',
+  const volume = volumeControl({
     min: 0,
     max: 200,
-    step: 5,
-    ariaLabel: 'Music volume',
-    hidden: true,
-    oninput: () => (volume.title = `Music at ${volume.value}%`),
-    onchange: () => void attempt(() => request(api('/settings/musicVolume'), { method: 'PUT', json: { value: Number(volume.value) } })),
+    label: 'Music volume',
+    onSave: (value) => void attempt(() => request(api('/settings/musicVolume'), { method: 'PUT', json: { value } })),
   });
+  const volumeLabel = el('span', { className: 'voice-volume', hidden: true }, el('span', { className: 'voice-label' }, 'Volume'), volume.node);
   const account = el('div', { className: 'card-note music-account', hidden: true });
 
   const now = el(
@@ -157,7 +154,7 @@ export function renderMusic(main) {
       playButton,
       skipButton,
       stopButton,
-      el('label', { className: 'voice-volume' }, el('span', { className: 'voice-label' }, 'Volume'), volume),
+      volumeLabel,
     ),
     account,
   );
@@ -532,10 +529,9 @@ export function renderMusic(main) {
     modes.hidden = !data.playlistsReady;
     if (!data.playlistsReady && mode === 'playlists') setMode('songs');
     query.disabled = searchButton.disabled = !data.searchReady;
-    if (volume.hidden) {
-      volume.value = data.volume;
-      volume.title = `Music at ${data.volume}%`;
-      volume.hidden = false;
+    if (volumeLabel.hidden) {
+      volume.set(data.volume);
+      volumeLabel.hidden = false;
     }
     account.textContent = data.account ? `Songs YouTube doesn’t have play through Spotify, as ${data.account}. While one does, that account’s music stops everywhere else.` : '';
     account.hidden = !data.account;

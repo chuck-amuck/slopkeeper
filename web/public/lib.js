@@ -83,6 +83,69 @@ export const state = { guilds: [], guildId: null, me: null };
 export const api = (path) => `/api/guilds/${state.guildId}${path}`;
 export const soundPath = (name, part = '') => api(`/sounds/${encodeURIComponent(name)}${part}`);
 
+// Volume sliders follow a loudness curve rather than the percentage itself, which piles most of the change into the
+// bottom quarter: the percentage goes with the square of how far along the slider is, so 100% of 200 sits at 71%
+const SLIDER_STEPS = 1000;
+let volumeControls = 0;
+
+/**
+ * A volume slider with a box for typing the exact percentage. onInput runs while it's being moved, and onSave once a
+ * value is settled on. set() shows a value without saving it
+ */
+export function volumeControl({ min, max, label, onInput, onSave }) {
+  const toPercent = (position) => Math.min(max, Math.max(min, Math.round(max * (position / SLIDER_STEPS) ** 2)));
+  const toPosition = (percent) => Math.round(SLIDER_STEPS * Math.sqrt(percent / max));
+  const marks = `volume-marks-${++volumeControls}`;
+  let percent = min;
+
+  const slider = el('input', {
+    type: 'range',
+    min: toPosition(min),
+    max: SLIDER_STEPS,
+    step: 1,
+    list: marks,
+    ariaLabel: label,
+    oninput: () => {
+      percent = toPercent(Number(slider.value));
+      box.value = percent;
+      onInput?.(percent);
+    },
+    onchange: () => onSave(percent),
+  });
+  const box = el('input', {
+    type: 'number',
+    min,
+    max,
+    step: 1,
+    ariaLabel: `${label}, in percent`,
+    // Enter or leaving the box saves it
+    onchange: () => {
+      if (!Number.isFinite(box.valueAsNumber)) return set(percent);
+      set(Math.min(max, Math.max(min, Math.round(box.valueAsNumber))));
+      onInput?.(percent);
+      onSave(percent);
+    },
+  });
+
+  function set(value) {
+    percent = value;
+    slider.value = toPosition(value);
+    box.value = value;
+  }
+
+  return {
+    node: el(
+      'span',
+      { className: 'volume-control' },
+      slider,
+      el('datalist', { id: marks }, el('option', { value: toPosition(100) })),
+      el('span', { className: 'volume-box' }, box, '%'),
+    ),
+    set,
+    value: () => percent,
+  };
+}
+
 export const CUSTOM_EMOJI = /^<(a?):\w+:(\d+)>$/;
 
 export function emojiNode(code, label) {

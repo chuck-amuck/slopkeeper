@@ -357,8 +357,8 @@ main {
   gap: 8px;
 }
 
-.voice-volume input {
-  width: 110px;
+.voice-volume input[type='range'] {
+  width: 160px;
 }
 
 .voice-label {
@@ -1060,8 +1060,15 @@ textarea {
   gap: 12px;
 }
 
-.volume input {
-  flex: 1;
+/* A volume slider and the box for typing its percentage */
+.volume-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.volume-control input[type='range'] {
   min-width: 0;
   padding: 0;
   border: 0;
@@ -1069,10 +1076,26 @@ textarea {
   accent-color: var(--accent);
 }
 
-.volume-value {
-  width: 48px;
+.volume-box {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--muted);
+}
+
+.volume-box input {
+  width: 68px;
+  color: var(--text);
   text-align: right;
   font-variant-numeric: tabular-nums;
+}
+
+.volume .volume-control {
+  flex: 1;
+}
+
+.volume .volume-control input[type='range'] {
+  flex: 1;
 }
 
 .check {

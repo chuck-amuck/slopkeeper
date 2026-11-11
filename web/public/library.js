@@ -1,6 +1,6 @@
 import { pickClip } from './clip.js';
 import { emojiPicker } from './emojipicker.js';
-import { api, attempt, confirmButton, el, emojiNode, openDialog, player, recall, remember, request, soundPath, state, toast } from './lib.js';
+import { api, attempt, confirmButton, el, emojiNode, openDialog, player, recall, remember, request, soundPath, state, toast, volumeControl } from './lib.js';
 import { pickTrim } from './trim.js';
 import { voiceBar } from './voice.js';
 
@@ -504,29 +504,25 @@ export function renderLibrary(main) {
         note.textContent = levelNote(sound);
       });
     // From the slider, since saving takes a moment and preview shouldn't play the old level until it's done
-    const loudness = () => (sound.loudness * Number(slider.value)) / sound.percent;
-    const show = (percent) => {
-      slider.value = percent;
-      label.textContent = `${percent}%`;
-      player.setLoudness(sound.name, loudness());
-    };
+    const loudness = () => (sound.loudness * control.value()) / sound.percent;
     const note = el('p', {}, levelNote(sound));
-    const label = el('output', { className: 'volume-value' });
-    const slider = el('input', {
-      type: 'range',
+    const control = volumeControl({
       min: 25,
       max: 200,
-      step: 5,
-      ariaLabel: `Volume for ${sound.name}`,
-      oninput: (e) => show(Number(e.target.value)),
-      onchange: (e) => save(Number(e.target.value)),
+      label: `Volume for ${sound.name}`,
+      onInput: () => player.setLoudness(sound.name, loudness()),
+      onSave: save,
     });
+    const show = (percent) => {
+      control.set(percent);
+      player.setLoudness(sound.name, loudness());
+    };
     show(sound.percent);
     const node = openDialog(
       main,
       el('h2', {}, `Volume for ${sound.name}`),
       note,
-      el('div', { className: 'volume' }, slider, label),
+      el('div', { className: 'volume' }, control.node),
       el(
         'div',
         { className: 'actions' },

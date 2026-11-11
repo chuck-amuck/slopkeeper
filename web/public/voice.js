@@ -1,4 +1,4 @@
-import { api, attempt, el, request, soundPath, state } from './lib.js';
+import { api, attempt, el, request, soundPath, state, volumeControl } from './lib.js';
 
 const REFRESH_MS = 5000;
 
@@ -17,26 +17,22 @@ export function voiceBar(main, onChange) {
     },
   });
 
-  const volume = el('input', {
-    type: 'range',
+  const volume = volumeControl({
     min: 0,
     max: 200,
-    step: 5,
-    ariaLabel: 'Soundboard volume',
-    hidden: true,
-    oninput: () => (volume.title = `Sounds at ${volume.value}%`),
-    onchange: () => void attempt(() => request(api('/settings/soundVolume'), { method: 'PUT', json: { value: Number(volume.value) } })),
+    label: 'Soundboard volume',
+    onSave: (value) => void attempt(() => request(api('/settings/soundVolume'), { method: 'PUT', json: { value } })),
   });
+  const volumeLabel = el('span', { className: 'voice-volume', hidden: true }, el('span', { className: 'voice-label' }, 'Volume'), volume.node);
 
   async function load() {
     const data = await request(api('/voice'));
     const fresh = data.channels;
     if (guildId !== state.guildId || !main.isConnected) return;
     // Only the first time, so it never jumps while being dragged
-    if (volume.hidden) {
-      volume.value = data.soundVolume;
-      volume.title = `Sounds at ${data.soundVolume}%`;
-      volume.hidden = false;
+    if (volumeLabel.hidden) {
+      volume.set(data.soundVolume);
+      volumeLabel.hidden = false;
     }
     // Rebuilding the picker would close it if it's open
     if (JSON.stringify(fresh) === JSON.stringify(channels)) return;
@@ -64,7 +60,7 @@ export function voiceBar(main, onChange) {
       { className: 'toolbar voice' },
       el('span', { className: 'voice-label' }, 'Play in'),
       picker,
-      el('label', { className: 'voice-volume' }, el('span', { className: 'voice-label' }, 'Volume'), volume),
+      volumeLabel,
     ),
     channel: () => channels?.find((c) => c.id === chosen),
     play: (name) => request(soundPath(name, '/play'), { method: 'POST', json: { channelId: chosen } }),
