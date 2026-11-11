@@ -16,7 +16,7 @@ import { loopSpeechProblem, playJoinSound, saveUpload, setJoinSound, soundboard,
 import { setSetting } from '../src/settings.ts';
 
 const hasFfmpeg = spawnSync('ffmpeg', ['-version']).status === 0;
-const dir = mkdtempSync(path.join(tmpdir(), 'slopkeeper-speech-'));
+const dir = mkdtempSync(path.join(process.env.DATA_DIR!, 'speech-'));
 const speechFile = path.join(dir, 'line.wav');
 if (hasFfmpeg) execFileSync('ffmpeg', ['-loglevel', 'error', '-y', '-f', 'lavfi', '-i', 'sine=frequency=440:duration=0.15', speechFile]);
 

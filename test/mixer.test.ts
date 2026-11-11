@@ -2,14 +2,13 @@ import './helpers.ts';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdtempSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { Mixer } from '../src/mixer.ts';
 
 const hasFfmpeg = spawnSync('ffmpeg', ['-version']).status === 0;
-const dir = mkdtempSync(path.join(tmpdir(), 'slopkeeper-mixer-'));
+const dir = mkdtempSync(path.join(process.env.DATA_DIR!, 'mixer-'));
 
 function tone(name: string, frequency: number, seconds: number) {
   const file = path.join(dir, name);

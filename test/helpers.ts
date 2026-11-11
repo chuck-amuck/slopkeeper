@@ -1,4 +1,4 @@
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -6,6 +6,8 @@ import path from 'node:path';
 process.env.DISCORD_TOKEN = 'test-token';
 process.env.DATA_DIR = mkdtempSync(path.join(tmpdir(), 'slopkeeper-test-'));
 process.env.TZ = 'America/Chicago';
+// Each test file's data goes when it's done, rather than piling up in the temp folder
+process.on('exit', () => rmSync(process.env.DATA_DIR!, { recursive: true, force: true }));
 
 export interface FakeGuild {
   id: string;

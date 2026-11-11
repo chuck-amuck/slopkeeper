@@ -2,13 +2,12 @@ import './helpers.ts';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdtempSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import { levelGain, levelSpeech, measureGain } from '../src/loudness.ts';
 
 const hasFfmpeg = spawnSync('ffmpeg', ['-version']).status === 0;
-const dir = mkdtempSync(path.join(tmpdir(), 'slopkeeper-loudness-'));
+const dir = mkdtempSync(path.join(process.env.DATA_DIR!, 'loudness-'));
 
 function tone(name: string, seconds: number, db: number) {
   const file = path.join(dir, name);
