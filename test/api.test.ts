@@ -2960,6 +2960,9 @@ test('the music queue can be filled, reordered and emptied from the page', async
   assert.deepEqual(music.queue.map((r: any) => r.title), ['Song 3', 'Song 1', 'Song 2']);
   assert.equal((await call(`/guilds/${GUILD}/music/queue/99999`, { method: 'DELETE' })).status, 404);
   assert.equal((await call(`/guilds/${GUILD}/music/queue/${music.queue[0].id}/move`, { method: 'POST', json: { to: 'top' } })).status, 400);
+  music = await ok(`/guilds/${GUILD}/music/queue/shuffle`, { method: 'POST' });
+  assert.deepEqual(music.queue.map((r: any) => r.title).sort(), ['Song 1', 'Song 2', 'Song 3']);
+  assert.equal(recentActivity(GUILD, 1)[0].action, 'Shuffled the music queue');
 
   const bad = await call(`/guilds/${GUILD}/music/queue`, { method: 'POST', json: { track: { ...track(5), uri: 'spotify:album:aaaaaaaaaaaaaaaaaaaaaa' } } });
   assert.equal(bad.status, 400);
@@ -2973,6 +2976,7 @@ test('the music queue can be filled, reordered and emptied from the page', async
   music = await ok(`/guilds/${GUILD}/music/queue`, { method: 'DELETE' });
   assert.deepEqual(music.queue, []);
   assert.equal(recentActivity(GUILD, 1)[0].action, 'Cleared the music queue');
+  assert.equal((await call(`/guilds/${GUILD}/music/queue/shuffle`, { method: 'POST' })).status, 409, 'nothing to shuffle');
 });
 
 test('the page lists the Spotify account’s own playlists, and can shuffle one into the queue', async (t) => {

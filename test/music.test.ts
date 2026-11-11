@@ -23,6 +23,7 @@ import {
   queueOf,
   removeTrack,
   resetMusic,
+  shuffleQueue,
   seekFile,
   seekMusic,
   skipMusic,
@@ -195,6 +196,26 @@ test('the queue reorders around the song playing, which stays first', async () =
   assert.deepEqual(titles(id), ['Song 2', 'Song 1', 'Song 4', 'Song 3'], 'nothing goes above the song playing');
   assert.ok(moveTrack(id, first.id, 99));
   assert.deepEqual(titles(id), ['Song 2', 'Song 4', 'Song 3', 'Song 1']);
+  stopMusic(id, 'u1');
+});
+
+test('shuffling mixes up the songs waiting and leaves the one playing first', async () => {
+  const { id, guild, channel } = server();
+  assert.equal(shuffleQueue(id, 'u1'), 0, 'nothing to shuffle');
+  const songs = Array.from({ length: 12 }, (_, n) => song(n + 1));
+  addTracks(id, songs, 'u1');
+  await startMusic(guild, channel);
+  const before = titles(id);
+  let shuffled = before;
+  // 11 songs waiting come back in the same order once in 40 million shuffles, so a few tries is plenty
+  for (let tries = 0; tries < 3 && JSON.stringify(shuffled) === JSON.stringify(before); tries++) {
+    assert.equal(shuffleQueue(id, 'u1'), 11);
+    shuffled = titles(id);
+  }
+  assert.notDeepEqual(shuffled, before);
+  assert.equal(shuffled[0], 'Song 1', 'the song playing stays first');
+  assert.deepEqual([...shuffled].sort(), [...before].sort(), 'the same songs, none lost or doubled');
+  assert.equal(recentActivity(id, 1)[0].action, 'Shuffled the music queue');
   stopMusic(id, 'u1');
 });
 

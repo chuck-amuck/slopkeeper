@@ -471,7 +471,8 @@ The bot plays music in voice, from a queue everyone shares. Songs are found on S
 - `/music play [song] [next] [shuffle]` adds a song, album or playlist by search or Spotify link, or a song by YouTube or SoundCloud link, and starts the music in your voice channel. `next` puts it after the song playing instead of at the end, and `shuffle` adds 100 of an album's or playlist's songs at random instead of the first 100. With no song, it carries on where it paused. Its suggestions list the Spotify account's matching playlists first.
 - `/music pause`, `/music skip` and `/music stop` are said in the channel, so everyone can see who did it. **Stop** clears the queue too.
 - `/music queue` shows what's playing and the next 10 songs.
-- The web UI's **Music** tab has the same, plus search results to pick from, a progress bar you can click or drag to jump within the song (or move 10 seconds with the arrow keys), and a volume slider. Its **My playlists** switch lists the account's playlists to add, in order or shuffled. **Play a file** plays an audio file once in the chosen channel, up to 60 MB and 20 minutes, pausing the music meanwhile. Its progress bar jumps within it the same way. It isn't kept: it's deleted once it ends or is stopped, and pressing Resume stops it. Drag songs to reorder them, or use the arrows on a phone.
+- `/music shuffle` puts the songs waiting in a random order, leaving the one playing alone. It's said in the channel too.
+- The web UI's **Music** tab has the same, plus search results to pick from, a progress bar you can click or drag to jump within the song (or move 10 seconds with the arrow keys), a volume slider, and **Shuffle** on **Up next**. Its **My playlists** switch lists the account's playlists to add, in order or shuffled. **Play a file** plays an audio file once in the chosen channel, up to 60 MB and 20 minutes, pausing the music meanwhile. Its progress bar jumps within it the same way. It isn't kept: it's deleted once it ends or is stopped, and pressing Resume stops it. Drag songs to reorder them, or use the arrows on a phone.
 
 How it plays:
 
@@ -482,7 +483,7 @@ How it plays:
 - **Sounds and speech** play on top. Music drops to under a third while the bot talks.
 - **Stop on the soundboard**, or everyone leaving, pauses the music and keeps the queue. Music counts as the bot being busy, so it doesn't leave for being idle and the looping room waits.
 - **Spotify playback (deprecated, off by default):** YouTube streaming replaces it, and it will be removed. With `SPOTIFY_PLAYBACK=true` on the music container and Soloist set up, songs YouTube doesn't have play through the Spotify account instead, in one server at a time. While one does, that account's music stops on its phones and speakers, and picking something else in its Spotify app pauses the bot.
-- **Who can control it:** everyone, until `/setup music dj_role:` sets a role. Then only that role and people with **Manage Server** can add, pause, skip and stop. Anyone can see the queue. The web UI isn't limited by the role.
+- **Who can control it:** everyone, until `/setup music dj_role:` sets a role. Then only that role and people with **Manage Server** can add, pause, skip, shuffle and stop. Anyone can see the queue. The web UI isn't limited by the role.
 - **Activity** shows what was added, removed and skipped, and by whom.
 
 ## Server settings

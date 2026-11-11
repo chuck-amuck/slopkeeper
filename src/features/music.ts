@@ -152,6 +152,23 @@ export function moveTrack(guildId: string, id: number, to: number): boolean {
   return true;
 }
 
+/** Puts the queue in a random order, leaving the song playing where it is. Returns how many songs were shuffled */
+export function shuffleQueue(guildId: string, who: string): number {
+  const rows = queueOf(guildId);
+  const first = holdsFirst(guildId) ? 1 : 0;
+  const rest = rows.slice(first);
+  if (rest.length < 2) return 0;
+  for (let n = rest.length - 1; n > 0; n--) {
+    const k = Math.floor(Math.random() * (n + 1));
+    [rest[n], rest[k]] = [rest[k], rest[n]];
+  }
+  const update = db.prepare('UPDATE music_queue SET pos = ? WHERE id = ?');
+  [...rows.slice(0, first), ...rest].forEach((r, i) => update.run(i, r.id));
+  fetchNext(guildId);
+  logActivity(guildId, who, 'Shuffled the music queue');
+  return rest.length;
+}
+
 /** Takes a song out of the queue. Taking out the one playing skips it */
 export async function removeTrack(guildId: string, id: number, who: string): Promise<QueueRow | null> {
   const row = queueOf(guildId).find((r) => r.id === id);
@@ -840,6 +857,10 @@ async function run(i: ChatInputCommandInteraction<'cached'>) {
     const problem = await skipMusic(i.guildId, i.user.id);
     return problem ? reply(problem) : announce(`Skipped **${title}**.`);
   }
+  if (sub === 'shuffle') {
+    const shuffled = shuffleQueue(i.guildId, i.user.id);
+    return shuffled ? announce(`Shuffled the ${shuffled} songs in the queue.`) : reply('There’s nothing to shuffle. It takes two songs waiting.');
+  }
   if (sub === 'stop') {
     stopMusic(i.guildId, i.user.id);
     return announce('Stopped the music and cleared the queue.');
@@ -865,6 +886,7 @@ export const music: Feature = {
         .addSubcommand((s) => s.setName('pause').setDescription('Pause the music, keeping the queue'))
         .addSubcommand((s) => s.setName('skip').setDescription('Skip to the next song'))
         .addSubcommand((s) => s.setName('queue').setDescription('Show what’s playing and what’s next'))
+        .addSubcommand((s) => s.setName('shuffle').setDescription('Put the songs waiting in a random order'))
         .addSubcommand((s) => s.setName('stop').setDescription('Stop the music and clear the queue')),
       run: (i) => (i.inCachedGuild() ? run(i) : i.reply({ content: 'Music only works in a server.', flags: MessageFlags.Ephemeral })),
       autocomplete: suggest,

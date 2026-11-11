@@ -19,7 +19,7 @@ import { activity, checkpoint, comparison, PERIODS, pickFor, sessionCount, stats
 import { postVote } from './features/gamevote.ts';
 import { recapFor } from './features/recap.ts';
 import { gameName, gameSpellings, mergeGames, separateGame } from './gameNames.ts';
-import { addTracks, clearQueue, fileProblem, fileUploadPath, MOST_FILE_BYTES, moveTrack, musicChannelFor, musicState, pauseMusic, playFile, queueFrom, queueOf, removeTrack, seekFile, seekMusic, skipMusic, startMusic, stopFile, stopMusic } from './features/music.ts';
+import { addTracks, clearQueue, fileProblem, fileUploadPath, MOST_FILE_BYTES, moveTrack, musicChannelFor, musicState, pauseMusic, playFile, queueFrom, queueOf, removeTrack, seekFile, seekMusic, shuffleQueue, skipMusic, startMusic, stopFile, stopMusic } from './features/music.ts';
 import { phrases, removePhrase, savePhrase, say, VOICES } from './features/say.ts';
 import { voiceTotals } from './features/sessions.ts';
 import { checkSetting, LABELS, LIMITS, show, source, STEPS } from './features/setup.ts';
@@ -1026,6 +1026,10 @@ async function handleMusic(guild: Guild, req: IncomingMessage, url: URL, rest: s
   }
   if (key === 'DELETE queue') {
     clearQueue(guild.id, by());
+    return musicList(guild);
+  }
+  if (key === 'POST queue/shuffle') {
+    if (!shuffleQueue(guild.id, by())) throw new Refused(409, 'There’s nothing to shuffle. It takes two songs waiting.');
     return musicList(guild);
   }
   if (rest[0] === 'queue' && rest.length >= 2) {

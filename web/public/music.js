@@ -422,7 +422,8 @@ export function renderMusic(main) {
   const list = el('ol', { className: 'music-queue' });
   const queueCount = el('span', { className: 'voice-label' });
   const clearButton = confirmButton({}, 'Clear', 'Clear the queue?', async () => show(await request(api('/music/queue'), { method: 'DELETE' })));
-  const queueCard = el('section', { className: 'card music' }, el('div', { className: 'card-head' }, el('h2', {}, 'Up next'), el('div', { className: 'toolbar' }, queueCount, clearButton)), list);
+  const shuffleButton = el('button', { title: 'Put the songs waiting in a random order', onclick: () => void act(() => request(api('/music/queue/shuffle'), { method: 'POST' })) }, '🔀 Shuffle');
+  const queueCard = el('section', { className: 'card music' }, el('div', { className: 'card-head' }, el('h2', {}, 'Up next'), el('div', { className: 'toolbar' }, queueCount, shuffleButton, clearButton)), list);
 
   /** The first song stays put while it's playing or paused, so the list starts after it */
   const held = () => (data && data.phase !== 'stopped' ? 1 : 0);
@@ -491,6 +492,7 @@ export function renderMusic(main) {
     shownQueue = key;
     queueCount.textContent = rows.length ? `${rows.length} song${rows.length === 1 ? '' : 's'}` : '';
     clearButton.hidden = !rows.length;
+    shuffleButton.hidden = rows.length < 2;
     list.replaceChildren(...(rows.length ? rows.map((row, n) => queueRow(row, n + held())) : [el('li', { className: 'empty-note' }, 'Nothing queued. Search for a song above.')]));
   }
 
