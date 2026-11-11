@@ -4,6 +4,7 @@ import {
   SlashCommandBuilder,
   type AutocompleteInteraction,
   type ChatInputCommandInteraction,
+  type Client,
   type Guild,
   type GuildMember,
   type VoiceBasedChannel,
@@ -16,11 +17,12 @@ import type { ReadableStream } from 'node:stream/web';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { logActivity } from '../activity.ts';
 import { config } from '../config.ts';
-import { db } from '../db.ts';
+import { db, getKv, setKv } from '../db.ts';
 import { durationOf, hasAudio } from '../discordSounds.ts';
 import { idSetting } from '../settings.ts';
 import { isShortLink, MOST_FROM_LINK, myPlaylists, parseLink, playlistsReady, search, searchReady, SpotifyError, tracksFor, type Track } from '../spotify.ts';
 import type { Feature } from '../types.ts';
+import { humansIn } from '../util.ts';
 import { botChannelId, EXTENSIONS, onPlaybackStop, playLong, playStream } from './soundboard.ts';
 
 // Spotify moving on this close to a song's end is the song finishing, not someone choosing something else
@@ -40,6 +42,14 @@ const LONGEST_FILE_MS = 20 * 60_000;
 const AUDIO_BUFFER = 48_000 * 4;
 const SAFE_FILE = /^[\w.-]+$/;
 const OTHER_LINK = /^https?:\/\/((www|m|music)\.)?(youtube\.com|youtu\.be|soundcloud\.com)\//i;
+// Where the music was, kept so a restart or redeploy carries on from there
+const SAVED_KEY = 'musicSessions';
+const SAVE_EVERY_MS = 5_000;
+// After longer than this, carrying on would surprise whoever's still around
+const RESUME_WITHIN_MS = 10 * 60_000;
+// The music container restarts alongside the bot, and the music waits this long for it
+const READY_WAIT_MS = 3 * 60_000;
+const READY_CHECK_MS = 1_000;
 
 export interface QueueRow {
   id: number;
@@ -103,6 +113,7 @@ let status: PlayerStatus | null = null;
 /** Why the music container can't be reached, while it can't */
 let unreachable: string | null = null;
 let listening: AbortController | undefined;
+let saver: NodeJS.Timeout | undefined;
 
 // ---------- the queue ----------
 
@@ -276,7 +287,8 @@ async function listen(signal: AbortSignal) {
   }
 }
 
-function onStatus(next: PlayerStatus) {
+/** The music container's status changed. Exported for tests, which have no container to follow */
+export function onStatus(next: PlayerStatus) {
   status = next;
   const s = onSpotifyNow();
   if (s?.phase === 'playing' && !spotifyReady()) pauseHere(s, 'Spotify signed out, so the music paused.');
@@ -366,6 +378,7 @@ async function playCurrent(s: Session, fromMs = 0): Promise<string | null> {
     return stop;
   }
   Object.assign(s, { stopAudio: stop, via: found.source, phase: 'playing', position: { ms: fromMs, at: Date.now(), speed: 1 } });
+  saveSessions();
   fetchNext(s.guild.id);
   return null;
 }
@@ -419,6 +432,7 @@ async function playOnSpotify(s: Session, turn: number, carryOn: boolean, fromMs 
     return 'The music player didn’t start. Try again in a moment.';
   }
   s.phase = 'playing';
+  saveSessions();
   fetchNext(s.guild.id);
   return null;
 }
@@ -456,6 +470,7 @@ function pauseHere(s: Session, note: string | null, tellSpotify = true) {
     s.pausing = true;
     void quietly({ command: 'pause' });
   }
+  saveSessions();
 }
 
 export function pauseMusic(guildId: string): string | null {
@@ -538,6 +553,88 @@ function endSession(s: Session) {
     void quietly({ command: 'pause' });
   }
   if (sessions.get(s.guild.id) === s) sessions.delete(s.guild.id);
+  saveSessions();
+}
+
+// ---------- carrying on after a restart ----------
+
+interface SavedSession {
+  guildId: string;
+  channelId: string;
+  /** The queue row playing, which has to still be first for the music to carry on */
+  songId: number;
+  positionMs: number;
+  playing: boolean;
+  at: number;
+}
+
+/** Once the bot is exiting, the place it saved last is the one to keep, rather than the pauses that leaving voice causes */
+let exiting = false;
+let wroteNone = false;
+
+/** Keeps where the music is in each server, so a restart carries on from there. Skips writing while nothing has been playing */
+function saveSessions() {
+  if (exiting) return;
+  const saved: SavedSession[] = [...sessions.values()].map((s) => ({
+    guildId: s.guild.id,
+    channelId: s.channelId,
+    songId: s.current.id,
+    positionMs: Math.round(Math.max(0, Math.min(positionOf(s), s.current.duration_ms))),
+    playing: s.phase !== 'paused',
+    at: Date.now(),
+  }));
+  if (!saved.length && wroteNone) return;
+  wroteNone = !saved.length;
+  setKv(SAVED_KEY, JSON.stringify(saved));
+}
+
+/** Carries the music on where it was before the bot restarted: playing again if it was playing and someone's still listening, or paused at the same place */
+export async function resumeAfterRestart(client: Client): Promise<void> {
+  const raw = getKv(SAVED_KEY);
+  if (!raw) return;
+  setKv(SAVED_KEY, '[]');
+  let saved: SavedSession[];
+  try {
+    saved = JSON.parse(raw) as SavedSession[];
+  } catch {
+    return;
+  }
+  if (!Array.isArray(saved)) return;
+  await Promise.all(saved.map((entry) => resumeOne(client, entry)));
+}
+
+async function resumeOne(client: Client, saved: SavedSession) {
+  const guild = client.guilds?.cache.get(saved.guildId);
+  const didnt = (why: string) => console.log(`Music: didn’t carry on in ${guild?.name ?? saved.guildId} after the restart: ${why}`);
+  if (!guild) return didnt('the bot isn’t in that server');
+  if (Date.now() - saved.at > RESUME_WITHIN_MS) return didnt('the music stopped too long ago');
+  if (sessions.has(guild.id)) return;
+  const first = queueOf(guild.id)[0];
+  if (!first || first.id !== saved.songId) return didnt('its song isn’t first in the queue any more');
+  const channel = guild.channels.cache.get(saved.channelId);
+  if (!channel?.isVoiceBased()) return didnt('its voice channel is gone');
+  const positionMs = Math.min(Math.max(0, Number(saved.positionMs) || 0), first.duration_ms);
+  // Paused at the same place, so pressing play carries on from there
+  const s: Session = { guild, channelId: channel.id, phase: 'paused', current: first, via: null, turn: 0, position: { ms: positionMs, at: Date.now(), speed: 0 }, note: null, loaded: null, requestedAt: 0, pausing: false };
+  sessions.set(guild.id, s);
+  saveSessions();
+  if (!saved.playing) return;
+  const until = Date.now() + READY_WAIT_MS;
+  while (unavailable() && Date.now() < until) await sleep(READY_CHECK_MS);
+  // Someone pressed play, skipped or stopped meanwhile
+  if (sessions.get(guild.id) !== s || s.turn !== 0 || s.phase !== 'paused') return;
+  const problem = unavailable();
+  if (problem) {
+    s.note = 'The bot restarted and the music player didn’t come back in time, so the music paused.';
+    return didnt(problem);
+  }
+  if (!humansIn(channel).length) {
+    s.note = `The bot restarted while nobody was in ${channel.name}, so the music paused.`;
+    return didnt(`nobody is in #${channel.name}`);
+  }
+  const failed = await startMusic(guild, channel);
+  if (failed) return didnt(failed);
+  console.log(`Music: carried on ${first.title} in #${channel.name} from ${time(positionMs)} after the restart`);
 }
 
 interface SpotifyMessage {
@@ -899,10 +996,15 @@ export const music: Feature = {
       autocomplete: suggest,
     },
   ],
-  setup() {
+  setup(client) {
     // Files left from before a restart, which nothing will play now
     rmSync(filesDir(), { recursive: true, force: true });
     if (!config.musicUrl || !config.musicToken) return;
+    exiting = false;
+    saver = setInterval(() => {
+      if (sessions.size || !wroteNone) saveSessions();
+    }, SAVE_EVERY_MS).unref();
+    void resumeAfterRestart(client).catch((err: unknown) => console.error('Music: couldn’t carry on after the restart:', err));
     // Stop, and everyone leaving, pause the music rather than lose the queue
     onPlaybackStop((guildId) => {
       const s = sessions.get(guildId);
@@ -911,7 +1013,13 @@ export const music: Feature = {
     listening = new AbortController();
     void listen(listening.signal);
   },
+  saveForRestart() {
+    if (!config.musicUrl || !config.musicToken) return;
+    saveSessions();
+    exiting = true;
+  },
   shutdown() {
+    clearInterval(saver);
     for (const guildId of files.keys()) stopFile(guildId);
     listening?.abort();
     for (const s of [...sessions.values()]) endSession(s);
@@ -928,5 +1036,6 @@ export function resetMusic(next: PlayerStatus | null = null) {
   sessions.clear();
   status = next;
   unreachable = null;
+  exiting = false;
 }
 

@@ -24,6 +24,8 @@ export interface Feature {
   onSelect?(interaction: StringSelectMenuInteraction): Promise<unknown>;
   onModal?(interaction: ModalSubmitInteraction): Promise<unknown>;
   setup?(client: Client<true>): void | Promise<void>;
+  /** Runs first when the bot is exiting, before any feature's shutdown, to keep state that shutting down would change */
+  saveForRestart?(): void;
   /** Runs before the bot exits */
   shutdown?(): void;
 }

@@ -7,6 +7,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { getVoiceConnection, VoiceConnectionStatus } from '@discordjs/voice';
 import { recentActivity } from '../src/activity.ts';
 import { config } from '../src/config.ts';
+import { db, getKv } from '../src/db.ts';
 import { Mixer, type VoiceOptions } from '../src/mixer.ts';
 import {
   addTracks,
@@ -17,12 +18,14 @@ import {
   music,
   musicState,
   onSpotify,
+  onStatus,
   pauseMusic,
   playFile,
   queueFrom,
   queueOf,
   removeTrack,
   resetMusic,
+  resumeAfterRestart,
   shuffleQueue,
   seekFile,
   seekMusic,
@@ -115,7 +118,7 @@ let nextGuild = 0;
 function server() {
   const id = `music-${nextGuild++}`;
   accepting.add(id);
-  const channel = { id: 'voice', name: 'General', joinable: true, isVoiceBased: () => true, toString: () => '#General', permissionsFor: () => ({ has: () => true }), guild: undefined as unknown };
+  const channel = { id: 'voice', name: 'General', joinable: true, members: new Map<string, unknown>(), isVoiceBased: () => true, toString: () => '#General', permissionsFor: () => ({ has: () => true }), guild: undefined as unknown };
   const guild = {
     id,
     name: 'Server',
@@ -125,7 +128,9 @@ function server() {
     voiceAdapterCreator: () => ({ sendPayload: () => true, destroy() {} }),
   };
   channel.guild = guild;
-  return { id, guild: guild as never as import('discord.js').Guild, channel: channel as never as import('discord.js').VoiceBasedChannel };
+  /** Someone joins the channel, which a restart checks for before carrying the music on */
+  const join = () => channel.members.set(`member-${channel.members.size}`, { user: { bot: false } });
+  return { id, guild: guild as never as import('discord.js').Guild, channel: channel as never as import('discord.js').VoiceBasedChannel, join };
 }
 
 const song = (n: number, durationMs = 200_000): Track => ({ uri: `spotify:track:${String(n).padStart(22, '0')}`, title: `Song ${n}`, artist: 'Band', album: 'Album', cover: null, durationMs });
@@ -702,5 +707,109 @@ test('a file played from the page pauses the music, and the music takes over fro
   execFileSync('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', 'anullsrc=r=8000:cl=mono', '-t', '1201', '-c:a', 'libvorbis', '-q:a', '0', long]);
   assert.match((await playFile(guild, channel, long, 'Long', 'u1'))!, /over 20 minutes/);
   assert.ok(!existsSync(long));
+  stopMusic(id, 'u1');
+});
+
+// ---------- carrying on after a restart ----------
+
+/** The bot restarting: it saves where the music was, exits, and starts again knowing only the database */
+async function restart(guild: import('discord.js').Guild, next: PlayerStatus | null = RUNNING, beforeStarting = () => {}) {
+  music.saveForRestart!();
+  resetMusic(next);
+  beforeStarting();
+  return resumeAfterRestart({ guilds: { cache: new Map([[guild.id, guild]]) } } as never);
+}
+const savedPlace = () => JSON.parse(getKv('musicSessions') ?? '[]') as { songId: number; positionMs: number; playing: boolean }[];
+
+test('a restart carries the music on from the same second, in the same channel', async (t) => {
+  const tick = clock(t);
+  const logged = t.mock.method(console, 'log', () => {});
+  const { id, guild, channel, join } = server();
+  join();
+  addTracks(id, [song(1), song(2)], 'u1');
+  assert.equal(await startMusic(guild, channel), null);
+  assert.deepEqual(savedPlace().map((p) => [p.positionMs, p.playing]), [[0, true]], 'saved as soon as it plays, in case the bot crashes');
+  tick(83_000);
+  const before = played.length;
+  await restart(guild);
+  assert.equal(played.length, before + 1);
+  assert.deepEqual([lastPlayed().file, lastPlayed().options], [audioFile(1), { group: 'music', lasting: true, startMs: 83_000 }]);
+  assert.equal(musicState(id).phase, 'playing');
+  assert.deepEqual(titles(id), ['Song 1', 'Song 2'], 'the queue is untouched');
+  assert.ok(logged.mock.calls.some((c) => /carried on Song 1 in #General from 1:23/.test(String(c.arguments[0]))));
+  stopMusic(id, 'u1');
+  assert.deepEqual(savedPlace(), [], 'stopping forgets it');
+});
+
+test('paused music stays paused through a restart, and carries on from where it paused', async (t) => {
+  const tick = clock(t);
+  const { id, guild, channel, join } = server();
+  join();
+  addTracks(id, [song(1)], 'u1');
+  await startMusic(guild, channel);
+  tick(30_000);
+  assert.equal(pauseMusic(id), null);
+  assert.deepEqual(savedPlace().map((p) => [p.positionMs, p.playing]), [[30_000, false]]);
+  tick(60_000);
+  const before = played.length;
+  await restart(guild);
+  assert.equal(played.length, before, 'nothing plays by itself');
+  assert.equal(musicState(id).phase, 'paused');
+  assert.equal(musicState(id).positionMs, 30_000);
+  assert.equal(await startMusic(guild, channel), null);
+  assert.equal(lastPlayed().options.startMs, 30_000);
+  stopMusic(id, 'u1');
+});
+
+test('the music doesn’t carry on after a long gap, without its song, or to an empty channel, and the queue is kept', async (t) => {
+  const tick = clock(t);
+  t.mock.method(console, 'log', () => {});
+  const { id, guild, channel, join } = server();
+  addTracks(id, [song(1), song(2)], 'u1');
+  await startMusic(guild, channel);
+  tick(20_000);
+
+  const before = played.length;
+  await restart(guild);
+  assert.equal(played.length, before, 'nobody is listening');
+  assert.equal(musicState(id).phase, 'paused');
+  assert.equal(musicState(id).positionMs, 20_000, 'but play carries on from there');
+  assert.match(musicState(id).note!, /nobody was in General/);
+
+  join();
+  await startMusic(guild, channel);
+  await restart(guild, RUNNING, () => tick(11 * 60_000));
+  assert.equal(played.length, before + 1, 'only the start above');
+  assert.equal(musicState(id).phase, 'stopped', 'too long ago');
+
+  await startMusic(guild, channel);
+  await restart(guild, RUNNING, () => db.prepare('DELETE FROM music_queue WHERE guild_id = ? AND title = ?').run(id, 'Song 1'));
+  assert.equal(musicState(id).phase, 'stopped', 'its song went');
+  assert.deepEqual(titles(id), ['Song 2']);
+  stopMusic(id, 'u1');
+});
+
+test('after a restart the music waits for the music player to start, and someone pressing play first wins', async (t) => {
+  t.mock.method(console, 'log', () => {});
+  const { id, guild, channel, join } = server();
+  join();
+  addTracks(id, [song(1)], 'u1');
+  await startMusic(guild, channel);
+  const before = played.length;
+  const resuming = restart(guild, null);
+  await sleep(50);
+  assert.equal(played.length, before, 'the player isn’t up yet');
+  assert.equal(musicState(id).phase, 'paused');
+  onStatus(RUNNING);
+  await resuming;
+  assert.equal(played.length, before + 1);
+  assert.equal(musicState(id).phase, 'playing');
+
+  const again = restart(guild, null);
+  await sleep(50);
+  onStatus(RUNNING);
+  assert.equal(await startMusic(guild, channel), null, 'someone pressed play');
+  await again;
+  assert.equal(played.length, before + 2, 'played once, not twice');
   stopMusic(id, 'u1');
 });

@@ -95,6 +95,7 @@ client.on(Events.InteractionCreate, async (i) => {
 
 for (const signal of ['SIGINT', 'SIGTERM']) {
   process.on(signal, async () => {
+    for (const feature of features) feature.saveForRestart?.();
     for (const feature of features) feature.shutdown?.();
     // Leaving voice is queued on the gateway connection, so it needs a moment before that closes
     await sleep(250);
