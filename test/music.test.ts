@@ -13,6 +13,8 @@ import {
   addTracks,
   clearQueue,
   fileUploadPath,
+  coversFilled,
+  fillCovers,
   MOST_QUEUED,
   moveTrack,
   music,
@@ -47,7 +49,27 @@ config.musicAudioDir = '/audio';
 // The music container. Songs are "downloaded" unless `youtube` says a song is missing, fails, or waits until the test lets it go on
 const fetched: string[] = [];
 const youtube = new Map<string, 'missing' | 'fail' | Promise<void>>();
+// Spotify's oEmbed, for album covers. Every song has one, unless `covers` says it has none, Spotify is limiting or down once, or the test holds it
+const looked: string[] = [];
+const covers = new Map<string, 'none' | 'limited' | 'down' | Promise<void>>();
+const coverOf = (n: number) => `https://i.scdn.co/image/ab67616d00001e02${String(n).padStart(22, '0')}`;
 mock.method(globalThis, 'fetch', async (url: string, init: RequestInit = {}) => {
+  if (url.startsWith('https://open.spotify.com/oembed?')) {
+    const id = new URL(url).searchParams.get('url')!.replace('https://open.spotify.com/track/', '');
+    looked.push(id);
+    const how = covers.get(id);
+    if (how instanceof Promise) await how;
+    if (how === 'none') return new Response('{}', { status: 404 });
+    if (how === 'down') {
+      covers.delete(id);
+      return new Response('', { status: 502 });
+    }
+    if (how === 'limited') {
+      covers.delete(id);
+      return new Response('', { status: 429, headers: { 'retry-after': '1' } });
+    }
+    return Response.json({ type: 'rich', thumbnail_url: `https://image-cdn-fa.spotifycdn.com/image/ab67616d00001e02${id}` });
+  }
   assert.ok(url.startsWith('http://music.test/'), `only the music container is asked, not ${url}`);
   assert.equal((init.headers as Record<string, string>).authorization, 'Bearer music-token');
   const where = url.slice('http://music.test'.length);
@@ -134,6 +156,7 @@ beforeEach(() => {
   fetched.length = 0;
   played.length = 0;
   youtube.clear();
+  covers.clear();
 });
 after(() => {
   clearInterval(discord);
@@ -211,6 +234,74 @@ test('removing and clearing keep the song playing, unless it’s the one removed
   assert.deepEqual(titles(id), ['Song 2']);
   assert.equal(await removeTrack(id, 12345, 'u2'), null);
   stopMusic(id, 'u1');
+});
+
+test('songs added without a cover get one from Spotify, the next song first, and a song with none isn’t asked about again', async () => {
+  await fillCovers();
+  looked.length = 0;
+  const { id } = server();
+  let hold!: () => void;
+  covers.set(song(90).uri.slice(-22), new Promise<void>((resolve) => (hold = resolve)));
+  addTracks(id, [song(90)], 'u1');
+  addTracks(id, [song(1), song(2), song(3), song(5)], 'u1');
+  addTracks(id, [{ ...song(6), cover: 'https://i.scdn.co/image/chosen' }], 'u1');
+  addTracks(id, [song(4)], 'u1', true);
+  covers.set(song(5).uri.slice(-22), 'none');
+  hold();
+  await coversFilled();
+  assert.deepEqual(
+    looked.map((uri) => Number(uri)),
+    [90, 4, 1, 2, 3, 5],
+    'one at a time while busy, then from the front of the queue',
+  );
+  const coverByTitle = Object.fromEntries(queueOf(id).map((r) => [r.title, r.cover]));
+  assert.deepEqual(coverByTitle, {
+    'Song 4': coverOf(4),
+    'Song 90': coverOf(90),
+    'Song 1': coverOf(1),
+    'Song 2': coverOf(2),
+    'Song 3': coverOf(3),
+    'Song 5': null,
+    'Song 6': 'https://i.scdn.co/image/chosen',
+  });
+
+  // The same song in another server gets its cover too, and the one with none isn't looked up again
+  const other = server();
+  looked.length = 0;
+  addTracks(other.id, [song(5), song(7)], 'u2');
+  await coversFilled();
+  assert.deepEqual(looked.map(Number), [7]);
+  assert.deepEqual(
+    queueOf(other.id).map((r) => r.cover),
+    [null, coverOf(7)],
+  );
+
+  // Spotify being down isn't the same as no cover, so the song is tried again when more are added
+  covers.set(song(9).uri.slice(-22), 'down');
+  looked.length = 0;
+  addTracks(other.id, [song(9)], 'u2');
+  await coversFilled();
+  assert.equal(queueOf(other.id)[2]!.cover, null);
+  addTracks(other.id, [song(10)], 'u2');
+  await coversFilled();
+  assert.deepEqual(looked.map(Number), [9, 9, 10]);
+  assert.deepEqual(
+    queueOf(other.id).map((r) => r.cover),
+    [null, coverOf(7), coverOf(9), coverOf(10)],
+  );
+});
+
+test('when Spotify limits cover lookups, they wait as long as it asks and then carry on', async () => {
+  await fillCovers();
+  looked.length = 0;
+  const { id } = server();
+  covers.set(song(8).uri.slice(-22), 'limited');
+  const started = Date.now();
+  addTracks(id, [song(8)], 'u1');
+  await coversFilled();
+  assert.ok(Date.now() - started >= 1000, 'waited the second Spotify asked for');
+  assert.deepEqual(looked.map(Number), [8, 8]);
+  assert.equal(queueOf(id)[0]!.cover, coverOf(8));
 });
 
 test('the queue stops filling at its limit', () => {

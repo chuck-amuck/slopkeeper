@@ -214,6 +214,31 @@ async function fromEmbed(id: string, shuffle: boolean): Promise<{ name: string; 
   return { name: String(entity.name ?? 'Spotify playlist').slice(0, 300), tracks: pick(songs, shuffle), capped: entity.trackList.length >= MOST_FROM_LINK };
 }
 
+/**
+ * A song's album cover, from Spotify's public oEmbed, which needs no sign-in. The image is served from i.scdn.co too, which is where the
+ * web page takes images from, so only its id is kept. Null when Spotify has none; throws when Spotify is limiting or down
+ */
+export async function coverFor(uri: string): Promise<string | null> {
+  const id = /^spotify:track:([A-Za-z0-9]{22})$/.exec(uri)?.[1];
+  if (!id) return null;
+  const res = await fetch(`https://open.spotify.com/oembed?url=${encodeURIComponent(`https://open.spotify.com/track/${id}`)}`, { signal: requestTimeout() });
+  if (res.status === 429) throw new RateLimited(Number(res.headers.get('retry-after')) || 60);
+  if (res.status >= 500) throw new SpotifyError('Spotify’s covers are down right now.');
+  if (!res.ok) return null;
+  const thumbnail = ((await res.json().catch(() => ({}))) as { thumbnail_url?: unknown }).thumbnail_url;
+  const image = typeof thumbnail === 'string' ? /^https:\/\/[a-z0-9.-]+\.(?:spotifycdn\.com|scdn\.co)\/image\/([0-9a-f]{16,64})$/.exec(thumbnail)?.[1] : undefined;
+  return image ? `https://i.scdn.co/image/${image}` : null;
+}
+
+/** Spotify asking the bot to wait, with how many seconds */
+export class RateLimited extends SpotifyError {
+  readonly retryAfterSeconds: number;
+  constructor(retryAfterSeconds: number) {
+    super(`Spotify is limiting the bot right now. Try again in ${retryAfterSeconds} seconds.`);
+    this.retryAfterSeconds = retryAfterSeconds;
+  }
+}
+
 /** The first MOST_FROM_LINK, or that many at random */
 function pick<T>(items: T[], shuffle: boolean): T[] {
   if (!shuffle) return items.slice(0, MOST_FROM_LINK);

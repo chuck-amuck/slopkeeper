@@ -18,7 +18,7 @@ import { config } from '../config.ts';
 import { db, getKv, setKv } from '../db.ts';
 import { durationOf, hasAudio } from '../discordSounds.ts';
 import { idSetting } from '../settings.ts';
-import { isShortLink, MOST_FROM_LINK, myPlaylists, parseLink, playlistsReady, search, searchReady, SpotifyError, tracksFor, type Track } from '../spotify.ts';
+import { coverFor, isShortLink, MOST_FROM_LINK, myPlaylists, parseLink, playlistsReady, RateLimited, search, searchReady, SpotifyError, tracksFor, type Track } from '../spotify.ts';
 import type { Feature } from '../types.ts';
 import { humansIn } from '../util.ts';
 import { botChannelId, EXTENSIONS, onPlaybackStop, playLong } from './soundboard.ts';
@@ -28,6 +28,8 @@ const END_SLACK_MS = 6_000;
 // Finding a song and downloading it takes seconds; this is for when YouTube is struggling
 const FETCH_TIMEOUT_MS = 3 * 60_000;
 export const MOST_QUEUED = 500;
+/** Album covers looked up at once, for songs added without one */
+const COVER_LOOKUPS = 4;
 const SHOWN_IN_DISCORD = 10;
 // A file played once from the web page, which can be a whole song or a mix
 export const MOST_FILE_BYTES = 60 * 1024 * 1024;
@@ -120,7 +122,69 @@ export function addTracks(guildId: string, tracks: Track[], who: string, next = 
   adding.forEach((t, i) => insert.run(guildId, before + step * (i + 1), t.uri, t.title, t.artist, t.album, t.cover, t.durationMs, who, Date.now()));
   renumber(guildId);
   fetchNext(guildId);
+  if (adding.some((t) => !t.cover)) void fillCovers();
   return adding.length;
+}
+
+// ---------- album covers ----------
+
+/** Songs Spotify says have no cover, which aren't asked about again until a restart */
+const coverless = new Set<string>();
+let filling: Promise<void> | undefined;
+let lookAgain = false;
+
+/**
+ * Fills in covers for queued Spotify songs without one, such as those from a playlist link, the front of each queue first. One run at a
+ * time across all servers; a call during a run makes it look again afterwards. Resolves when nothing is left to fill
+ */
+export function fillCovers(): Promise<void> {
+  if (!config.musicUrl || !config.musicToken) return Promise.resolve();
+  if (filling) {
+    lookAgain = true;
+    return filling;
+  }
+  filling = (async () => {
+    do {
+      lookAgain = false;
+      const waitSeconds = await fillSome();
+      if (waitSeconds) {
+        await sleep(Math.min(waitSeconds, 600) * 1000, undefined, { ref: false });
+        lookAgain = true;
+      }
+    } while (lookAgain && !exiting);
+  })()
+    .catch((err: unknown) => console.error('Music: couldn’t fill in album covers:', err))
+    .finally(() => (filling = undefined));
+  return filling;
+}
+
+/** Waits for covers being filled in, without asking for another look */
+export const coversFilled = () => filling ?? Promise.resolve();
+
+/** One pass over the songs missing a cover. Returns how long Spotify asked to wait, or 0 */
+async function fillSome(): Promise<number> {
+  const rows = db
+    .prepare("SELECT uri FROM music_queue WHERE cover IS NULL AND uri LIKE 'spotify:track:%' GROUP BY uri ORDER BY MIN(pos), MIN(id)")
+    .all() as unknown as { uri: string }[];
+  const uris = rows.map((r) => r.uri).filter((uri) => !coverless.has(uri));
+  const update = db.prepare('UPDATE music_queue SET cover = ? WHERE uri = ? AND cover IS NULL');
+  let next = 0;
+  let waitSeconds = 0;
+  const worker = async () => {
+    while (next < uris.length && !waitSeconds && !exiting) {
+      const uri = uris[next++]!;
+      try {
+        const cover = await coverFor(uri);
+        if (cover) update.run(cover, uri);
+        else coverless.add(uri);
+      } catch (err) {
+        // Anything else (a timeout, Spotify down) is tried again the next time songs are added
+        if (err instanceof RateLimited) waitSeconds = Math.max(waitSeconds, err.retryAfterSeconds);
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: COVER_LOOKUPS }, worker));
+  return waitSeconds;
 }
 
 /** Spreads positions out again, so there's always room between two rows */
@@ -807,6 +871,8 @@ export const music: Feature = {
       if (sessions.size || !wroteNone) saveSessions();
     }, SAVE_EVERY_MS).unref();
     void resumeAfterRestart(client).catch((err: unknown) => console.error('Music: couldn’t carry on after the restart:', err));
+    // Songs left in the queue from before without a cover
+    void fillCovers();
     // Stop, and everyone leaving, pause the music rather than lose the queue
     onPlaybackStop((guildId) => {
       const s = sessions.get(guildId);
@@ -839,5 +905,6 @@ export function resetMusic(next: PlayerStatus | null = null) {
   status = next;
   unreachable = null;
   exiting = false;
+  coverless.clear();
 }
 

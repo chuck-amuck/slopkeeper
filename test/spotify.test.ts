@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { beforeEach, test, type TestContext } from 'node:test';
 import { config } from '../src/config.ts';
 import { getKv } from '../src/db.ts';
-import { isShortLink, MOST_FROM_LINK, myPlaylists, parseLink, resetSpotify, search, SpotifyError, tracksFor } from '../src/spotify.ts';
+import { coverFor, isShortLink, MOST_FROM_LINK, myPlaylists, parseLink, RateLimited, resetSpotify, search, SpotifyError, tracksFor } from '../src/spotify.ts';
 import { music, queueFrom, queueOf } from '../src/features/music.ts';
 import { codeFrom, REDIRECT, signInLink } from '../src/spotify-sign-in.ts';
 
@@ -343,4 +343,38 @@ test('signing in once asks only to read playlists, and takes the code only from 
   assert.throws(() => codeFrom(`${REDIRECT}?error=access_denied&state=abc`, 'abc'), /access_denied/);
   assert.throws(() => codeFrom(link.href, 'abc'), /no code/);
   assert.throws(() => codeFrom('xyz', 'abc'), /whole address/);
+});
+
+test('a song’s album cover comes from Spotify’s oEmbed, as an i.scdn.co image', async (t) => {
+  const thumbnails: Record<string, unknown> = {
+    [ID]: 'https://image-cdn-fa.spotifycdn.com/image/ab67616d00001e02ff9ca10b55ce82ae553c8228',
+    '0000000000000000000001': 'https://i.scdn.co/image/ab67616d00001e02aaaa',
+    '0000000000000000000002': 'https://evil.example/image/ab67616d00001e02ff9ca10b55ce82ae',
+    '0000000000000000000003': 'https://image-cdn-fa.spotifycdn.com/image/../../x',
+    '0000000000000000000004': undefined,
+    '0000000000000000000005': 404,
+  };
+  const spotify = fakeSpotify(t, {
+    '/oembed': (url) => {
+      const id = url.searchParams.get('url')!.replace('https://open.spotify.com/track/', '');
+      const thumbnail = thumbnails[id];
+      if (typeof thumbnail === 'number') return new Response('{}', { status: thumbnail });
+      return Response.json({ type: 'rich', title: 'Song', thumbnail_url: thumbnail });
+    },
+  });
+  assert.equal(await coverFor(`spotify:track:${ID}`), 'https://i.scdn.co/image/ab67616d00001e02ff9ca10b55ce82ae553c8228');
+  assert.equal(spotify.asked[0], `https://open.spotify.com/oembed?url=${encodeURIComponent(`https://open.spotify.com/track/${ID}`)}`, 'no sign-in needed');
+  assert.equal(await coverFor('spotify:track:0000000000000000000001'), 'https://i.scdn.co/image/ab67616d00001e02aaaa');
+  for (const n of [2, 3, 4, 5]) assert.equal(await coverFor(`spotify:track:000000000000000000000${n}`), null, `song ${n}`);
+  assert.equal(await coverFor('https://www.youtube.com/watch?v=abc'), null, 'only Spotify songs have one');
+  assert.equal(await coverFor(`spotify:album:${ID}`), null);
+  assert.equal(spotify.asked.length, 6, 'links that aren’t Spotify songs aren’t looked up');
+});
+
+test('Spotify limiting oEmbed says how long to wait, and Spotify being down isn’t taken as no cover', async (t) => {
+  let status = 429;
+  fakeSpotify(t, { '/oembed': () => new Response('', { status, headers: { 'retry-after': '7' } }) });
+  await assert.rejects(coverFor(`spotify:track:${ID}`), (err) => err instanceof RateLimited && err.retryAfterSeconds === 7);
+  status = 503;
+  await assert.rejects(coverFor(`spotify:track:${ID}`), (err) => err instanceof SpotifyError && !(err instanceof RateLimited), 'down isn’t the same as no cover');
 });
