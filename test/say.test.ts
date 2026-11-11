@@ -698,30 +698,29 @@ test('a line nobody typed still needs the voice to be on, and can’t pile up', 
 test('lines can be saved, with limits, separately for each server', () => {
   const { guild } = channel();
   const other = channel().guild;
-  assert.equal(savePhrase(guild, '  good   game  ', '2'), null);
-  assert.deepEqual(phrases(guild.id).map(({ text, voice }) => [text, voice]), [['good game', '2']]);
-  assert.equal(savePhrase(guild, 'good game', '9'), null);
+  assert.equal(savePhrase(guild, '  good   game  '), null);
+  assert.deepEqual(phrases(guild.id).map(({ text }) => text), ['good game']);
+  assert.equal(savePhrase(guild, 'good game'), null);
   assert.equal(phrases(guild.id).length, 1, 'saving it twice does nothing');
   assert.equal(phrases(other.id).length, 0);
-  assert.match(savePhrase(guild, '🎉', '2')!, /nothing in that/);
-  assert.match(savePhrase(guild, 'x'.repeat(201), '2')!, /201 characters/);
-  assert.match(savePhrase(guild, 'hello', 'nope')!, /Pick a voice/);
-  for (let n = 1; n < 25; n++) assert.equal(savePhrase(guild, `line ${n}`, '2'), null);
-  assert.match(savePhrase(guild, 'one too many', '2')!, /keep 25 lines/);
-  assert.equal(savePhrase(guild, 'good game', '2'), null, 'one already saved isn’t refused for being over');
+  assert.match(savePhrase(guild, '🎉')!, /nothing in that/);
+  assert.match(savePhrase(guild, 'x'.repeat(201))!, /201 characters/);
+  for (let n = 1; n < 25; n++) assert.equal(savePhrase(guild, `line ${n}`), null);
+  assert.match(savePhrase(guild, 'one too many')!, /keep 25 lines/);
+  assert.equal(savePhrase(guild, 'good game'), null, 'one already saved isn’t refused for being over');
   const [first] = phrases(guild.id);
   assert.equal(removePhrase(other.id, first.id), false, 'not from another server');
   assert.equal(removePhrase(guild.id, first.id), true);
   assert.equal(removePhrase(guild.id, first.id), false);
   assert.equal(phrases(guild.id).length, 24);
-  assert.equal(savePhrase(guild, 'room again', '2'), null);
+  assert.equal(savePhrase(guild, 'room again'), null);
 });
 
-test('/say picks a saved line, with its own voice, under the usual rules', { skip: !hasFfmpeg }, async (t) => {
+test('/say picks a saved line, in the voice picked or the server’s, under the usual rules', { skip: !hasFfmpeg }, async (t) => {
   const asked = fakeVoice(t);
   t.mock.method(Mixer.prototype, 'add', (_file: string, _gain?: number, onEnd?: () => void) => onEnd?.());
   const voice = channel();
-  savePhrase(voice.guild, 'good game', '2');
+  savePhrase(voice.guild, 'good game');
   const saved = String(phrases(voice.guild.id)[0].id);
   assert.equal(await run(t, voice, { text: null }), 'Type something to say, or pick a saved line.');
   assert.equal(await run(t, voice, { text: null, saved: 'something typed' }), 'Pick a saved line from the list.');
@@ -729,7 +728,7 @@ test('/say picks a saved line, with its own voice, under the usual rules', { ski
   assert.equal(await run(t, voice, { text: null, saved, pick: '9' }), 'Said it.');
   assert.equal(await run(t, voice, { text: 'typed wins', saved }), 'Said it.');
   await sleep(200);
-  assert.deepEqual(asked.map((a) => [a.text, a.speaker]), [['good game', 100], ['good game', 800], ['typed wins', 400]]);
+  assert.deepEqual(asked.map((a) => [a.text, a.speaker]), [['good game', 400], ['good game', 800], ['typed wins', 400]]);
   setSetting(voice.guild.id, 'ttsCooldownSec', 3600);
   await run(t, voice, { text: null, saved });
   assert.match(await run(t, voice, { text: null, saved }), /^Wait /);
@@ -738,9 +737,9 @@ test('/say picks a saved line, with its own voice, under the usual rules', { ski
 
 test('/say suggests saved lines as you type', async () => {
   const voice = channel();
-  savePhrase(voice.guild, 'Good game', '2');
-  savePhrase(voice.guild, 'gotta go', '2');
-  savePhrase(voice.guild, 'y'.repeat(150), '2');
+  savePhrase(voice.guild, 'Good game');
+  savePhrase(voice.guild, 'gotta go');
+  savePhrase(voice.guild, 'y'.repeat(150));
   const suggest = async (typed: string, guildId: string | null = voice.guild.id) => {
     let answer: { name: string; value: string }[] = [];
     await speak.commands![0].autocomplete!({ guildId, options: { getFocused: () => typed }, respond: async (a: typeof answer) => (answer = a) } as never);

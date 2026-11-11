@@ -27,7 +27,7 @@ function sayBox(voice) {
         el(
           'span',
           { className: 'phrase' },
-          el('button', { className: 'phrase-say', onclick: () => void attempt(() => voice.say(phrase.text, phrase.voice)) }, phrase.text),
+          el('button', { className: 'phrase-say', onclick: () => void attempt(() => voice.say(phrase.text, picker.value)) }, phrase.text),
           el(
             'button',
             {
@@ -50,7 +50,7 @@ function sayBox(voice) {
       onclick: () => {
         if (!text.value.trim()) return;
         void attempt(async () => {
-          remember((await request(api('/phrases'), { method: 'POST', json: { text: text.value, voice: picker.value } })).phrases);
+          remember((await request(api('/phrases'), { method: 'POST', json: { text: text.value } })).phrases);
           text.value = '';
           toast('Saved.');
         });

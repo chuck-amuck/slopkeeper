@@ -2603,11 +2603,10 @@ test('the page’s lines go through the voice container and show as coming from 
 test('the page saves lines and removes them', async () => {
   const start = (await ok(`/guilds/${GUILD}/say`)).phrases as unknown[];
   assert.deepEqual(start, []);
-  const { phrases } = (await ok(`/guilds/${GUILD}/phrases`, { method: 'POST', json: { text: 'good game', voice: '2' } })) as { phrases: { id: number; text: string; voice: string }[] };
-  assert.deepEqual(phrases.map(({ text, voice }) => [text, voice]), [['good game', '2']]);
+  const { phrases } = (await ok(`/guilds/${GUILD}/phrases`, { method: 'POST', json: { text: 'good game' } })) as { phrases: { id: number; text: string }[] };
+  assert.deepEqual(phrases, [{ id: phrases[0].id, text: 'good game' }]);
   assert.deepEqual((await ok(`/guilds/${GUILD}/say`)).phrases, phrases);
   assert.equal(await refused(400, `/guilds/${GUILD}/phrases`, { method: 'POST', json: { text: 5 } }), 'Type something to save.');
-  assert.equal(await refused(400, `/guilds/${GUILD}/phrases`, { method: 'POST', json: { text: 'hi', voice: 'nope' } }), 'Pick a voice from the list.');
   assert.deepEqual(((await ok(`/guilds/${GUILD}/phrases/${phrases[0].id}`, { method: 'DELETE' })) as { phrases: unknown[] }).phrases, []);
   assert.equal(await refused(404, `/guilds/${GUILD}/phrases/${phrases[0].id}`, { method: 'DELETE' }), 'That saved line is gone.');
   const log = recentActivity(GUILD, 5).map((r) => r.action);

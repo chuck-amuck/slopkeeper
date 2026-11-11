@@ -1245,10 +1245,10 @@ async function handle(client: Client<true>, req: IncomingMessage, res: ServerRes
     return {};
   }
   if (section === 'phrases' && !rest.length && req.method === 'POST') {
-    const { text, voice } = await readJson(req);
+    const { text } = await readJson(req);
     if (typeof text !== 'string') throw new Refused(400, 'Type something to save.');
     const known = phrases(guild.id).length;
-    refuse(guild, savePhrase(guild, text, String(voice)));
+    refuse(guild, savePhrase(guild, text));
     const saved = phrases(guild.id);
     if (saved.length > known) logActivity(guild.id, by(), `Saved the line “${saved.at(-1)!.text}”`);
     return { phrases: saved };

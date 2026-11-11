@@ -282,26 +282,26 @@ function greetingFor(member: GuildMember): string | null {
   return name ? setting(guild.id, 'ttsGreeting').replaceAll('{name}', () => name) : null;
 }
 
+/** A line to say again, in whichever voice is picked when it's said */
 export interface Phrase {
   id: number;
   text: string;
-  voice: string;
 }
 
-export const phrases = (guildId: string) => db.prepare('SELECT id, text, voice FROM saved_phrases WHERE guild_id = ? ORDER BY id').all(guildId) as unknown as Phrase[];
+export const phrases = (guildId: string) => db.prepare('SELECT id, text FROM saved_phrases WHERE guild_id = ? ORDER BY id').all(guildId) as unknown as Phrase[];
 
 /** Keeps a line to say again. Returns null on success or the reason it couldn't */
-export function savePhrase(guild: Guild, typed: string, voiceId: string): string | null {
+export function savePhrase(guild: Guild, typed: string): string | null {
   const text = typed.trim().replace(/\s+/g, ' ');
   const spoken = speechFor(guild, text);
   if (!hasWords(spoken)) return 'There’s nothing in that to read out.';
   const longest = setting(guild.id, 'ttsMaxChars');
   if (spoken.length > longest) return `That’s ${spoken.length} characters, and the limit here is ${longest}.`;
-  if (!VOICES.some((v) => v.id === voiceId)) return 'Pick a voice from the list.';
   const saved = phrases(guild.id);
   if (saved.some((p) => p.text === text)) return null;
   if (saved.length >= MOST_PHRASES) return `You can keep ${MOST_PHRASES} lines. Remove one first.`;
-  db.prepare('INSERT INTO saved_phrases (guild_id, text, voice) VALUES (?, ?, ?)').run(guild.id, text, voiceId);
+  // Lines used to keep the voice they were saved in. The column stays, as the table can't change shape, but nothing reads it
+  db.prepare("INSERT INTO saved_phrases (guild_id, text, voice) VALUES (?, ?, '')").run(guild.id, text);
   return null;
 }
 
@@ -385,7 +385,7 @@ export const speak: Feature = {
         const text = typed ?? phrase?.text;
         if (!text) return i.reply({ content: saved ? 'Pick a saved line from the list.' : 'Type something to say, or pick a saved line.', flags: MessageFlags.Ephemeral });
         await i.deferReply({ flags: MessageFlags.Ephemeral });
-        const problem = await say(channel, text, i.options.getString('voice') ?? (typed ? undefined : phrase?.voice), i.user.id);
+        const problem = await say(channel, text, i.options.getString('voice') ?? undefined, i.user.id);
         return i.editReply(problem ?? 'Said it.');
       },
       async autocomplete(i) {

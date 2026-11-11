@@ -383,7 +383,7 @@ The web UI's Library page also shows everything on Discord's soundboard, includi
 
 ### Text to speech
 
-`/say text [voice]` has the bot read something out in your voice channel, joining it first if it has to. There's a **Say something** box on the web UI's Soundboard tab too. **Save** there keeps a line and its voice as a one-click button, up to 25 per server, and `/say saved:` picks one in Discord. Saved lines follow the same rules as typed ones.
+`/say text [voice]` has the bot read something out in your voice channel, joining it first if it has to. There's a **Say something** box on the web UI's Soundboard tab too. **Save** there keeps a line as a one-click button, up to 25 per server, and `/say saved:` picks one in Discord. A saved line is said in the voice picked next to the box, or in Discord in `voice` or else the server's default voice. Saved lines follow the same rules as typed ones.
 
 - Lines wait their turn, while sounds still layer on top. **Stop** ends the line and clears anything waiting.
 - Mentions are read as names, custom emoji as their name, and links as "link".
@@ -733,7 +733,7 @@ It applies the same rules as `/sound` and `/setup`, and every request needs an `
 | `POST /guilds/:id/stop` | Stops whatever is playing, and any spoken lines waiting |
 | `GET /guilds/:id/say` | Whether text to speech is `on`, the `voices`, the default `voice`, the `longest` line and the saved `phrases` |
 | `POST /guilds/:id/say` | Reads out `text` in `channelId`, with an optional `voice`. Answers once the line starts |
-| `POST /guilds/:id/phrases` | Saves `text` with its `voice`, and answers with the `phrases` |
+| `POST /guilds/:id/phrases` | Saves `text`, and answers with the `phrases` |
 | `DELETE /guilds/:id/phrases/:id` | Removes a saved line, and answers with the `phrases` |
 | `GET /guilds/:id/music` | What's playing, how far in, the queue, the music volume and why music can't play, if it can't |
 | `GET /guilds/:id/music/search?q=<words>` | Up to 10 songs from Spotify |
