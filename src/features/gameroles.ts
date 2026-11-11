@@ -11,12 +11,14 @@ import {
   type GuildMember,
   type Role,
 } from 'discord.js';
+import { logActivity } from '../activity.ts';
 import { db } from '../db.ts';
 import { gameKey, gameName } from '../gameNames.ts';
 import { idSetting, isAllowed } from '../settings.ts';
 import type { Feature } from '../types.ts';
 import { listNames, pingWarning } from '../util.ts';
 import { allGames } from './games.ts';
+import { commandMention } from '../commandIds.ts';
 
 interface GameRole {
   role_id: string;
@@ -87,32 +89,33 @@ export function pingChoices(guild: Guild) {
 
 const heldBy = (member: GuildMember) => new Set(member.roles.cache.keys());
 
-/** Up to five select menus of 25 games each, with the roles in `held` ticked */
+/** Up to five select menus of 25 pings each, hop-on pings first, with the roles in `held` ticked */
 function pickers(guild: Guild, held: Set<string>) {
-  const roles = gameRoles(guild.id).filter((r) => guild.roles.cache.has(r.role_id));
+  const roles = pingChoices(guild);
   const rows: ActionRowBuilder<StringSelectMenuBuilder>[] = [];
   for (let n = 0; n * 25 < roles.length && n < 5; n++) {
     const chunk = roles.slice(n * 25, n * 25 + 25);
     const menu = new StringSelectMenuBuilder()
       .setCustomId(`gr:pick:${n}`)
-      .setPlaceholder(roles.length > 25 ? `Games ${n * 25 + 1}–${n * 25 + chunk.length}` : 'Games you want pings for')
+      .setPlaceholder(roles.length > 25 ? `Pings ${n * 25 + 1}–${n * 25 + chunk.length}` : 'Pings you want')
       .setMinValues(0)
       .setMaxValues(chunk.length)
-      .addOptions(chunk.map((r) => ({ label: r.name.slice(0, 100), value: r.role_id, default: held.has(r.role_id) })));
+      .addOptions(chunk.map((r) => ({ label: r.label.slice(0, 100), value: r.id, default: held.has(r.id) })));
     rows.push(new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu));
   }
   return rows;
 }
 
 function pingSummary(guild: Guild, held: Set<string>): string {
-  const mine = gameRoles(guild.id).filter((r) => held.has(r.role_id));
-  return mine.length ? `🔔 You get pings for ${listNames(mine.map((r) => `**${r.name}**`))}.` : '🔕 You don’t get any game pings.';
+  const hopOn = idSetting(guild.id, 'hopOnRole');
+  const mine = pingChoices(guild).filter((r) => held.has(r.id));
+  return mine.length ? `🔔 You get pings for ${listNames(mine.map((r) => (r.id === hopOn ? 'people hopping on' : `**${r.label}**`)))}.` : '🔕 You don’t get any pings.';
 }
 
 function pickerReply(guild: Guild, held: Set<string>) {
   const components = pickers(guild, held);
-  if (!components.length) return { content: 'This server has no game pings yet. A server admin can add some with `/gamerole add`.' };
-  return { content: `${pingSummary(guild, held)}\nPick the games you want to be pinged for:`, components };
+  if (!components.length) return { content: `This server has no pings yet. A server admin can add some with ${commandMention(guild.id, 'gamerole add')} or ${commandMention(guild.id, 'setup hopon-role')}.` };
+  return { content: `${pingSummary(guild, held)}\nPick what you want to be pinged for:`, components };
 }
 
 export const gamePings: Feature = {
@@ -120,7 +123,7 @@ export const gamePings: Feature = {
   componentPrefix: 'gr',
   commands: [
     {
-      data: new SlashCommandBuilder().setName('pings').setDescription('Choose which games you get pinged for'),
+      data: new SlashCommandBuilder().setName('pings').setDescription('Choose what you get pinged for: people hopping on, and each game'),
       async run(i) {
         if (!i.inCachedGuild()) return i.reply({ content: 'Use this in a server.', flags: MessageFlags.Ephemeral });
         return i.reply({ ...pickerReply(i.guild, heldBy(i.member)), flags: MessageFlags.Ephemeral });
@@ -170,13 +173,15 @@ export const gamePings: Feature = {
           const row = db.prepare('SELECT role_id, name, created FROM game_roles WHERE guild_id = ? AND name = ?').get(i.guildId, game) as GameRole | undefined;
           if (!row) return i.reply({ content: `**${game}** has no ping role.`, flags: MessageFlags.Ephemeral });
           await removeGameRole(i.guild, row, i.user.tag);
+          logActivity(i.guildId, i.user.id, `Removed game pings for **${row.name}**`);
           return i.reply({ content: `🗑️ Removed pings for **${row.name}**.`, flags: MessageFlags.Ephemeral });
         }
 
         const result = await addGameRole(i.guild, game, i.options.getRole('role'), i.user.tag);
         if (typeof result === 'string') return i.reply({ content: result, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
+        logActivity(i.guildId, i.user.id, `Added game pings for **${game}**`);
         return i.reply({
-          content: `✅ ${result.created ? 'Made' : 'Using'} ${result.role} for **${game}**. People pick it with \`/pings\`.${pingWarning(result.role)}`,
+          content: `✅ ${result.created ? 'Made' : 'Using'} ${result.role} for **${game}**. People pick it with ${commandMention(i.guildId, 'pings')}.${pingWarning(result.role)}`,
           flags: MessageFlags.Ephemeral,
           allowedMentions: { parse: [] },
         });
@@ -192,7 +197,7 @@ export const gamePings: Feature = {
     await i.deferUpdate();
     // The cached member lags behind role changes, so a quick second pick would otherwise work from old roles
     const member = await i.guild.members.fetch({ user: i.user.id, force: true });
-    // Each menu only covers its own games, so only those are added or removed
+    // Each menu only covers its own pings, so only those are added or removed
     const offered = i.component.options.map((o) => o.value);
     const chosen = new Set(i.values);
     const held = heldBy(member);
@@ -209,7 +214,7 @@ export const gamePings: Feature = {
         held.delete(id);
       }
     } catch {
-      return i.editReply({ content: 'I couldn’t change your roles. My role needs **Manage Roles** and has to be above the game roles.', components: [] });
+      return i.editReply({ content: 'I couldn’t change your roles. My role needs **Manage Roles** and has to be above those roles.', components: [] });
     }
     return i.editReply(pickerReply(i.guild, held));
   },

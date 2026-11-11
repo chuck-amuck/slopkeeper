@@ -719,6 +719,7 @@ async function runWant(s: ReturnType<typeof server>, user: string, name: string)
     guildId: s.id,
     guild: s.guild,
     user: { id: user },
+    member: { displayName: user },
     options: { getSubcommand: () => 'want', getString: () => name },
     deferReply: async () => {},
     editReply: async (r: typeof reply) => (reply = r),

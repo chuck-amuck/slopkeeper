@@ -16,10 +16,11 @@ function run(guildId: string, sub: string, values: Record<string, unknown>) {
     guild: { id: guildId, members: { me: {} }, channels: { cache: new Map(Object.values(values).flatMap((v) => (v && typeof v === 'object' && 'type' in v ? [[(v as unknown as { id: string }).id, v]] : []))) } },
     user: { id: 'admin' },
     options: { getSubcommand: () => sub, getInteger: pick, getNumber: pick, getBoolean: pick, getString: pick, getRole: pick, getChannel: pick },
-    reply: async () => {},
+    reply: async (r: { content: string }) => void (replies[guildId] = r.content),
     followUp: async () => {},
   } as never);
 }
+const replies: Record<string, string> = {};
 
 const log = (guildId: string) => recentActivity(guildId, 10).map((r) => r.action);
 
@@ -157,6 +158,9 @@ test('/setup speech-channel sets, keeps and clears the channel', async () => {
   assert.equal(setting('reading', 'ttsChannel'), 'general', 'choosing who alone keeps the channel');
   assert.equal(setting('reading', 'ttsChannelWho'), 'voice');
   await run('reading', 'speech-channel', {});
+  assert.equal(setting('reading', 'ttsChannel'), 'general', 'giving nothing changes nothing');
+  assert.equal(replies.reading, '**Read chat aloud:** <#general>\n**Whose messages are read:** only people in voice\n-# Give an option to change one.');
+  await run('reading', 'speech-channel', { off: true });
   assert.equal(setting('reading', 'ttsChannel'), '');
 });
 
@@ -184,6 +188,9 @@ test('/setup loop-room sets, keeps and clears the room', async () => {
   assert.equal(setting('loop-setup', 'loopRoom'), 'therapy', 'changing only the volume keeps the room');
   assert.equal(setting('loop-setup', 'loopVolume'), 80);
   await run('loop-setup', 'loop-room', {});
+  assert.equal(setting('loop-setup', 'loopRoom'), 'therapy', 'giving nothing changes nothing');
+  assert.match(replies['loop-setup'], /^\*\*Looping sound room:\*\* <#therapy>\n.*\*\*Loop volume:\*\* 80%/s);
+  await run('loop-setup', 'loop-room', { off: true });
   assert.equal(setting('loop-setup', 'loopRoom'), '');
 });
 

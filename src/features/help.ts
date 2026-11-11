@@ -1,5 +1,6 @@
 import { ApplicationCommandOptionType, EmbedBuilder, MessageFlags, PermissionsBitField, SlashCommandBuilder } from 'discord.js';
 import type { Feature } from '../types.ts';
+import { commandMention } from '../commandIds.ts';
 
 const GUIDE = 'https://github.com/chuck-amuck/slopkeeper#readme';
 
@@ -45,7 +46,7 @@ export function help(features: Feature[]): Feature {
           const embed = new EmbedBuilder()
             .setTitle('🧹 Slopkeeper')
             .setColor(0x5865f2)
-            .setDescription(`Pick a command with \`/help command\` for details, or read the [full guide](${GUIDE}).`);
+            .setDescription(`Give ${commandMention(i.guildId, 'help')} a command for its details, or read the [full guide](${GUIDE}).`);
           for (const section of sections) {
             const lines = section.commands
               .filter((c) => canUse(c.default_member_permissions))

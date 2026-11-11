@@ -9,6 +9,7 @@ import { factsFor } from './gamefacts.ts';
 import { allGames, groupMembers, ownersOfApp } from './games.ts';
 import { checkpoint, plural, short, stats } from './gamestats.ts';
 import { appInfo, ensureAppInfo, linkFor, refreshStale, refreshWishlists } from './steam.ts';
+import { commandMention } from '../commandIds.ts';
 
 const PLAYED_DAYS = 180;
 // A sale that only gets a little deeper isn't worth another post
@@ -271,7 +272,7 @@ async function checkGuild(client: Client<true>, guild: Guild, prices: Prices) {
   const info = appInfo();
   const lines: string[] = [];
   for (const g of due.slice(0, POSTED_GAMES)) lines.push(saleLine(g, saleName(g, info), await priceHistory(g.appid, g.final, country)));
-  if (due.length > POSTED_GAMES) lines.push(`and ${due.length - POSTED_GAMES} more: \`/sales\``);
+  if (due.length > POSTED_GAMES) lines.push(`and ${due.length - POSTED_GAMES} more: ${commandMention(guild.id, 'sales')}`);
 
   const pings = [...new Set(due.flatMap((g) => [...g.wanted, ...g.wishlisted, ...g.others]))].slice(0, MAX_PINGS);
   await out.send({

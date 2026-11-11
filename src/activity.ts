@@ -14,8 +14,10 @@ export interface WebUser {
   userId: string | null;
 }
 
-/** Keeps the name Pangolin gives for someone current, so old activity shows it after a change */
+/** Keeps the name Pangolin gives for someone current, so old activity shows it after a change. Writes only when it's new or changed, as it runs on every request */
 export function seeWebUser(email: string, name: string) {
+  const known = db.prepare('SELECT name FROM web_users WHERE email = ?').get(email) as { name: string } | undefined;
+  if (known?.name === name) return;
   db.prepare('INSERT INTO web_users (email, name, seen_at) VALUES (?, ?, ?) ON CONFLICT (email) DO UPDATE SET name = excluded.name, seen_at = excluded.seen_at').run(email, name, Date.now());
 }
 

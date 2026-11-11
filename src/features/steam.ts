@@ -1,10 +1,12 @@
 import { EmbedBuilder, MessageFlags, SlashCommandBuilder, type Client, type Guild } from 'discord.js';
+import { logActivity } from '../activity.ts';
 import { config } from '../config.ts';
-import { db } from '../db.ts';
+import { db, transaction } from '../db.ts';
 import { DEFAULTS, setting } from '../settings.ts';
 import { setSteamGames, type SteamGame } from '../steamStatus.ts';
 import type { Feature } from '../types.ts';
 import { humansIn, listNames, requestTimeout, servedGuilds } from '../util.ts';
+import { commandMention } from '../commandIds.ts';
 
 // Steam category ids: 1 Multi-player, 36 Online PvP, 38 Online Co-op
 const MULTIPLAYER_CATEGORIES = new Set([1, 36, 38]);
@@ -68,6 +70,14 @@ function apiKey(): string {
   return config.steamApiKey;
 }
 
+/** Adds an answer to a cache, first dropping ones too old to be used once there are enough to be worth a look */
+function keep<K, V extends { at: number }>(known: Map<K, V>, lastsMs: number, key: K, value: V) {
+  if (known.size >= 100) {
+    for (const [k, v] of known) if (Date.now() - v.at >= lastsMs) known.delete(k);
+  }
+  known.set(key, value);
+}
+
 /** Keeps answers that change slowly, so pages and commands don't ask Steam every time. A failure isn't kept */
 function cached<K, V>(lastsMs: number, read: (key: K) => Promise<V>) {
   const known = new Map<K, { value: V; at: number }>();
@@ -75,7 +85,7 @@ function cached<K, V>(lastsMs: number, read: (key: K) => Promise<V>) {
     const hit = known.get(key);
     if (hit && Date.now() - hit.at < lastsMs) return hit.value;
     const value = await read(key);
-    known.set(key, { value, at: Date.now() });
+    keep(known, lastsMs, key, { value, at: Date.now() });
     return value;
   };
 }
@@ -176,19 +186,14 @@ async function refreshUser(userId: string): Promise<number | null> {
   const link = linkFor(userId);
   if (!link) return null;
   const games = await fetchOwned(link.steam_id);
-  db.exec('BEGIN');
-  try {
+  transaction(() => {
     if (games) {
       db.prepare('DELETE FROM steam_owned WHERE steam_id = ?').run(link.steam_id);
       const insert = db.prepare('INSERT INTO steam_owned (steam_id, appid, name, playtime, recent) VALUES (?, ?, ?, ?, ?)');
       for (const g of games) insert.run(link.steam_id, g.appid, g.name ?? null, g.playtime_forever, g.playtime_2weeks ?? 0);
     }
     db.prepare('UPDATE steam_links SET private = ?, refreshed_at = ? WHERE user_id = ?').run(games ? 0 : 1, Date.now(), userId);
-    db.exec('COMMIT');
-  } catch (err) {
-    db.exec('ROLLBACK');
-    throw err;
-  }
+  });
   return games?.length ?? null;
 }
 
@@ -299,16 +304,11 @@ export async function refreshWishlists() {
     // One that couldn't be read keeps the games it had
     if (!appids) continue;
     if (appids.length) visible++;
-    db.exec('BEGIN');
-    try {
+    transaction(() => {
       db.prepare('DELETE FROM steam_wishlist WHERE steam_id = ?').run(steam_id);
       const insert = db.prepare('INSERT OR IGNORE INTO steam_wishlist (steam_id, appid) VALUES (?, ?)');
       for (const appid of appids) insert.run(steam_id, appid);
-      db.exec('COMMIT');
-    } catch (err) {
-      db.exec('ROLLBACK');
-      throw err;
-    }
+    });
   }
   if (links.length) console.log(`Steam wishlists: games on ${visible} of ${links.length}`);
 }
@@ -356,19 +356,19 @@ async function readFacts(appids: number[]) {
       }),
     });
     const found = new Map((body.response.store_items ?? []).map((item) => [item.appid ?? item.id, item]));
-    db.exec('BEGIN');
-    for (const appid of chunk) {
-      const item = found.get(appid);
-      if (item?.success !== 1) {
-        unlisted.run(appid, Date.now());
-        continue;
+    transaction(() => {
+      for (const appid of chunk) {
+        const item = found.get(appid);
+        if (item?.success !== 1) {
+          unlisted.run(appid, Date.now());
+          continue;
+        }
+        const cats = item.categories?.supported_player_categoryids ?? [];
+        const any = (wanted: Set<number>) => (cats.some((c) => wanted.has(c)) ? 1 : 0);
+        const shareable = item.categories?.feature_categoryids?.includes(FAMILY_SHARING_CATEGORY) ? 1 : 0;
+        save.run(appid, item.name ?? null, any(MULTIPLAYER_CATEGORIES), any(COOP_CATEGORIES), any(PVP_CATEGORIES), item.platforms?.steam_deck_compat_category ?? 0, shareable, Date.now());
       }
-      const cats = item.categories?.supported_player_categoryids ?? [];
-      const any = (wanted: Set<number>) => (cats.some((c) => wanted.has(c)) ? 1 : 0);
-      const shareable = item.categories?.feature_categoryids?.includes(FAMILY_SHARING_CATEGORY) ? 1 : 0;
-      save.run(appid, item.name ?? null, any(MULTIPLAYER_CATEGORIES), any(COOP_CATEGORIES), any(PVP_CATEGORIES), item.platforms?.steam_deck_compat_category ?? 0, shareable, Date.now());
-    }
-    db.exec('COMMIT');
+    });
   }
 }
 
@@ -383,6 +383,11 @@ export function appInfo(): Map<number, { name: string | null; multiplayer: boole
     shareable: number;
   }[];
   return new Map(rows.map((r) => [r.appid, { name: r.name, multiplayer: r.multiplayer === 1, coop: r.coop === 1, pvp: r.pvp === 1, deck: r.deck, shareable: r.shareable === 1 }]));
+}
+
+/** Whether Steam says a game can be lent through Family Sharing, without reading every game's facts */
+export function isShareable(appid: number): boolean {
+  return db.prepare('SELECT 1 FROM app_info WHERE appid = ? AND shareable = 1').get(appid) !== undefined;
 }
 
 /** What these people are playing on Steam right now, for those whose profile shows it */
@@ -458,14 +463,14 @@ async function friendsOf(steamId: string) {
   try {
     const body = await steamGet<{ friendslist?: { friends?: { steamid: string }[] } }>('/ISteamUser/GetFriendList/v1/', { key: apiKey(), steamid: steamId, relationship: 'friend' });
     const friends = new Set((body.friendslist?.friends ?? []).map((f) => f.steamid));
-    friendLists.set(steamId, { friends, at: Date.now() });
+    keep(friendLists, FRIENDS_LAST_MS, steamId, { friends, at: Date.now() });
     return friends;
   } catch (err) {
     if (!isHidden(err)) {
       console.error(err);
       return null;
     }
-    friendLists.set(steamId, { friends: null, at: Date.now() });
+    keep(friendLists, FRIENDS_LAST_MS, steamId, { friends: null, at: Date.now() });
     return null;
   }
 }
@@ -497,7 +502,7 @@ export async function currentPlayers(appid: number) {
   const count = await steamGet<{ response: { player_count?: number } }>('/ISteamUserStats/GetNumberOfCurrentPlayers/v1/', { appid: String(appid) })
     .then((body) => body.response.player_count ?? null)
     .catch((err) => (console.error(err), null));
-  playerCounts.set(appid, { count, at: Date.now() });
+  keep(playerCounts, PLAYER_COUNT_LASTS_MS, appid, { count, at: Date.now() });
   return count;
 }
 
@@ -545,11 +550,15 @@ export const steam: Feature = {
         if (!config.steamApiKey) return i.reply({ content: 'Steam is not configured (STEAM_API_KEY).', flags: MessageFlags.Ephemeral });
         const sub = i.options.getSubcommand();
         const user = i.options.getUser('user') ?? i.user;
+        // Links are shared between servers, but the change shows in the Activity of the server it was made in
+        const name = (id: string) => (i.inCachedGuild() && i.guild.members.cache.get(id)?.displayName) || i.client.users.cache.get(id)?.username || id;
+        const note = (action: string) => i.guildId && logActivity(i.guildId, i.user.id, action);
 
         if (sub === 'link') {
           await i.deferReply();
           const linked = await linkSteam(user.id, i.options.getString('profile', true));
           if (!linked) return i.editReply("Couldn't find that Steam profile. Paste the full profile URL.");
+          note(`Linked ${name(user.id)}’s Steam account`);
           return i.editReply({
             content: linked.games === null ? `🔗 Linked ${user}, but: ${PRIVACY_HELP}` : `🔗 Linked ${user} (${linked.games} games).`,
             allowedMentions: { parse: [] },
@@ -557,7 +566,7 @@ export const steam: Feature = {
         }
 
         if (sub === 'unlink') {
-          unlinkSteam(user.id);
+          if (unlinkSteam(user.id)) note(`Unlinked ${name(user.id)}’s Steam account`);
           return i.reply({ content: `Unlinked ${user}.`, allowedMentions: { parse: [] } });
         }
 
@@ -565,12 +574,14 @@ export const steam: Feature = {
           const other = i.options.getUser('with', true);
           const problem = other.bot || user.bot ? 'Bots don’t have Steam families.' : joinFamily(user.id, other.id);
           if (problem) return i.reply({ content: problem, flags: MessageFlags.Ephemeral });
+          note(`Put ${name(user.id)} in a Steam family with ${name(other.id)}`);
           const family = familyOf(user.id).map((id) => `<@${id}>`);
           return i.reply({ content: `👪 Sharing a Steam library: ${listNames(family)}. Shareable games one of them owns now count for the others, with one person playing per copy.`, allowedMentions: { parse: [] } });
         }
 
         if (sub === 'unfamily') {
           if (!leaveFamily(user.id)) return i.reply({ content: `${user} isn’t in a Steam family.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
+          note(`Took ${name(user.id)} out of their Steam family`);
           return i.reply({ content: `Took ${user} out of their Steam family.`, allowedMentions: { parse: [] } });
         }
 
@@ -605,7 +616,7 @@ export const steam: Feature = {
 
         // Links are shared between servers; only list this server's members
         const links = i.inCachedGuild() ? steamLinks().filter((l) => i.guild.members.cache.has(l.user_id)) : [];
-        if (!links.length) return i.reply('Nobody here has linked Steam yet. Use `/steam link`.');
+        if (!links.length) return i.reply(`Nobody here has linked Steam yet. Use ${commandMention(i.guildId, 'steam link')}.`);
         const lines = links.map((l) => {
           const family = familyOf(l.user_id).filter((id) => id !== l.user_id);
           const shares = family.length ? ` · 👪 ${listNames(family.map((id) => `<@${id}>`))}` : '';

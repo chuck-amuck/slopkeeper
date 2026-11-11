@@ -47,9 +47,8 @@ Everything happens through slash commands (type `/` in any channel, or run `/hel
 ## Getting started (for everyone in the server)
 
 1. **`/steam link profile:<your Steam profile URL>`** so the picker knows your games. In Steam, set **Profile → Edit Profile → Privacy Settings → Game details** to **Public**; otherwise the bot can't see your library.
-2. **`/notify`** if you want a ping when people hop in voice.
-3. **`/pings`** to pick the games you want pings for (when people play them, or plan a game night for them).
-4. That's it. The rest works on its own or when someone runs a command. `/help` lists every command.
+2. **`/pings`** to pick what you get pinged for: people hopping in voice, and each game you play (when people play it, or plan a game night for it). `/notify` turns just the hop-on pings on or off.
+3. That's it. The rest works on its own or when someone runs a command. `/help` lists every command.
 
 ---
 
@@ -75,7 +74,7 @@ They can be added and removed on the web UI's Settings page too. That page only 
 
 | Command | What it does |
 | --- | --- |
-| `/pings` | Opens a menu of the server's game roles with yours ticked. Tick or untick games to change your pings. Only you see it. |
+| `/pings` | Opens a menu of the hop-on role and the server's game roles, with yours ticked. Tick or untick them to change your pings. Only you see it. |
 | `/gamerole add game [role]` | **Manage Roles only.** Makes a mentionable role for a game. The name autocompletes from the game library and from games people have played. Use `role` to reuse a role you already have. The name should match what Discord shows under "Playing", so hop-on pings can match it. |
 | `/gamerole remove game` | **Manage Roles only.** Stops offering pings for a game. Deletes the role too, if the bot made it. |
 | `/gamerole menu` | **Manage Roles only.** Posts a **Choose games** button in the current channel that opens the `/pings` menu for whoever clicks it. Pin it in a roles channel. |
@@ -97,11 +96,11 @@ What happens after that:
 - The game's [ping role](#game-pings) is pinged when the night is planned.
 - 15 minutes before the start, the bot posts in the same channel, with a link to the card, and pings everyone who's **In** or **Maybe**. Change or turn this off with `/setup gamenight-reminder`.
 - At the start time, the Discord event goes live. It ends 3 hours later, or once its voice channel empties, whichever is later.
-- **Cancel night** (host, or anyone with Manage Events) greys out the card, deletes the event and lets the people who were in know.
+- **Cancel night** (host, or anyone with Manage Events) asks first, privately, then greys out the card, deletes the event and lets the people who were in know.
 
 **Repeating nights:** add `repeat` to plan a night every week or every 2 weeks. The bot posts each new card, with its own Discord event and game role ping, 6 days before that night, so a weekly night's next card goes up the day after the last one. It stays at the same local time when the clocks change.
 
-**Cancel night** only skips that night. To end the whole series, press **Stop repeating** on any of its cards (host, or anyone with Manage Events).
+**Cancel night** only skips that night. To end the whole series, press **Stop repeating** on any of its cards (host, or anyone with Manage Events), and confirm.
 
 | Command | What it does |
 | --- | --- |
@@ -178,7 +177,7 @@ The reply also shows:
 Buttons:
 - **🎲 Reroll** picks again from the games that qualify. It's greyed out when only one game qualifies.
 - **🗳️ Vote** starts a 1-minute `/gamevote`. It's greyed out when only one game qualifies.
-- **Never suggest this** hides a game from future picks. Undo it with `/game unhide`, or on the web UI's Games page.
+- **Never suggest this** hides a game from future picks, and tells whoever pressed it how to undo it: `/game unhide`, or the web UI's Games page.
 
 **🎲 Reroll** keeps to the `type` and `deck` you chose. **🗳️ Vote** covers every game that qualifies.
 
@@ -243,7 +242,7 @@ The "group" here is the server's members who have linked Steam or marked at leas
 
 | Command | What it does |
 | --- | --- |
-| `/sales` | Shows everything this server plays or wants that was on sale at the last check, including sales too small to post. |
+| `/sales` | Shows what this server plays or wants that was on sale at the last check, including sales too small to post. A long list stops at what fits in one message and says how many more there are. |
 
 ### Free games
 
@@ -351,7 +350,7 @@ The bot holds a library of uploaded sounds and plays them in your voice channel.
 | --- | --- |
 | `/sound panel` | Posts a button grid in the current channel: 20 sounds per page, ◀ ▶ to flip pages, ⏹ **Stop** to silence everything. The bot keeps every panel it posts up to date as sounds change, so post one in a handy channel and pin it. |
 | `/sound play name` | Plays one sound in your voice channel. The name autocompletes. |
-| `/sound stop` | Stops everything and makes the bot leave voice. |
+| `/sound stop` | Stops everything and makes the bot leave voice. The reply is in the channel, so people can see who stopped it. |
 | `/sound join [name]` | Picks a sound that plays when you join voice. Leave `name` empty to stop having one. |
 
 You have to be in a voice channel to play a sound. The bot joins whichever channel you're in.
@@ -421,7 +420,7 @@ The web UI's volume sliders, for the soundboard, music and each sound, follow lo
 
 ### Looping sound room
 
-Pick a voice channel and a sound with `/setup loop-room` or in Settings, and the bot plays that sound over and over, without a gap, while anyone's in the channel. It leaves when the last person does. It's off until the channel and a sound or speech are set.
+Pick a voice channel and a sound with `/setup loop-room` or in Settings, and the bot plays that sound over and over, without a gap, while anyone's in the channel. It leaves when the last person does. It's off until the channel and a sound or speech are set. `/setup loop-room` with no options shows how it's set, and `off:True` turns it off.
 
 Discord lets a bot be in one voice channel per server, so the room shares the bot with everything else, and the points about Stop and giving way below are about that. With the [loop bot](#the-loop-bot) set up, a second bot plays the room instead: both play at once, the room never gives way, and the soundboard's **Stop** leaves the room alone. Settings shows the loop bot's state at the top of the room's settings.
 
@@ -498,7 +497,7 @@ Every setting has a sensible default, so only the announce channel needs setting
 | `/setup announce-channel channel` | Sets where hop-on pings, session recaps, the weekly leaderboard, the monthly recap and sale alerts are posted, and free games unless they have their own channel. Until it's set, the bot works but posts nothing. It checks that it can post in the channel and tells you which permission is missing if not. |
 | `/setup hopon-role [role]` | Sets the role that hop-on pings ping, which `/notify` hands out. Leave `role` empty to post hop-on pings without pinging that role. It warns you if its own role is below this one, since Discord then won't let it hand the role out. |
 | `/setup hopon [min_people] [cooldown_minutes]` | How many people a voice channel needs before a hop-on ping, and how long to wait before the next one. |
-| `/setup sessions [recap_min_minutes] [grace_minutes]` | The shortest session that gets a recap, and how long a channel stays empty before its session ends. |
+| `/setup sessions [recap_min_minutes] [grace_minutes]` | The shortest session that counts: shorter ones get no recap and aren't in stats or leaderboards. Also how long a channel stays empty before its session ends. |
 | `/setup leaderboard [enabled] [day] [hour]` | Whether and when the weekly voice leaderboard is posted. |
 | `/setup timezone zone` | The server's time zone, used for the weekly post, counting "nights" on leaderboards, and reading game night times. Autocompletes, e.g. `America/Chicago`, `Europe/London`. |
 | `/setup steam-region country` | Steam store region for sale prices, as a two-letter country code. |
@@ -507,13 +506,18 @@ Every setting has a sensible default, so only the announce channel needs setting
 | `/setup free-games enabled [channel]` | Turns free game posts on or off. `channel` gives them their own channel; without it they go to the announce channel. To move them back to the announce channel, use `/setup reset setting:Free games channel`. |
 | `/setup gamenight-reminder minutes` | How long before a game night to remind the people who are in. `0` turns reminders off. |
 | `/setup monthly-recap enabled` | Turns the post on the 1st of each month on or off. |
+| `/setup patch-notes [mode] [channel]` | Posts patch notes for games played here: `each` as they come out, `digest` once a week, or `off`. `channel` gives them their own channel. |
+| `/setup steam-status enabled` | Whether what linked members in voice are playing on Steam counts when Discord doesn't show it. |
 | `/setup sounds [even_volume] [join_sounds] [join_cooldown_minutes] [join_delay_ms] [volume]` | Turns [even volume](#even-volume) and join sounds on or off, and sets how often one person's join sound can play and how long the bot waits after connecting before it plays. `volume` sets how loud every sound plays. |
-| `/setup loop-room [channel] [sound] [volume]` | Plays a sound nonstop while anyone's in a voice channel. Giving nothing turns it off. See [looping sound room](#looping-sound-room). |
+| `/setup loop-room [channel] [off] [sound] [volume] …` | Plays a sound, and speech if you like, nonstop while anyone's in a voice channel. `off:True` turns it off and keeps the rest of its settings. See [looping sound room](#looping-sound-room). |
 | `/setup music [volume] [dj_role] [everyone]` | How loud music plays, and who can control it. `everyone:True` takes the role limit off. See [Music](#music). |
 | `/setup sound-managers [role]` | Limits changing sounds to a role, plus people with **Manage Server**. Leave `role` empty to let everyone change them, which is the default. See [who can change sounds](#who-can-change-sounds). |
+| `/setup speech [enabled] [voice] [speed] [volume] …` | Text to speech: on or off, the default voice and speed, the limits on `/say`, and what the bot says aloud by itself. See [Text to speech](#text-to-speech). |
+| `/setup speech-role [role]` | Limits `/say` and having messages read out to a role, plus people with **Manage Server**. Leave `role` empty to let everyone. |
+| `/setup speech-channel [channel] [off] [who]` | Reads out what people type in a channel. `off:True` stops it. |
 | `/setup reset setting` | Puts one setting back to its default. |
 
-For the commands with several options, only the options you fill in change.
+For the commands with several options, only the options you fill in change. Give none and the reply shows how those settings are now.
 
 Examples:
 ```
@@ -535,64 +539,67 @@ Each setting comes from the first of these that's set:
 
 So the host can change a default for every server at once, and each server can still override it.
 
+Each setting goes by the name `/setup show` and `/setup reset` use.
+
 | Setting | `/setup` command | Host default variable | Built-in default |
 | --- | --- | --- | --- |
 | Announce channel | `announce-channel` | | none, nothing is posted |
 | Hop-on role | `hopon-role` | | none |
-| People before a hop-on ping | `hopon` | `HOPON_MIN_PEOPLE` | 2 |
-| Minutes between hop-on pings | `hopon` | `HOPON_COOLDOWN_MIN` | 120 |
-| Shortest recapped session (minutes) | `sessions` | `RECAP_MIN_MINUTES` | 15 |
-| Minutes empty before a session ends | `sessions` | `SESSION_GRACE_MIN` | 5 |
+| Hop-on ping at | `hopon` | `HOPON_MIN_PEOPLE` | 2 people |
+| Hop-on cooldown | `hopon` | `HOPON_COOLDOWN_MIN` | 120 minutes |
+| Shortest session counted | `sessions` | `RECAP_MIN_MINUTES` | 15 minutes |
+| Session ends after empty for | `sessions` | `SESSION_GRACE_MIN` | 5 minutes |
 | Weekly leaderboard | `leaderboard` | `WEEKLY_LEADERBOARD` (`false` to turn off) | on |
-| Weekly leaderboard day (0 = Sunday) | `leaderboard` | `WEEKLY_POST_DAY` | 0 |
-| Weekly leaderboard hour | `leaderboard` | `WEEKLY_POST_HOUR` | 20 |
+| Weekly leaderboard day | `leaderboard` | `WEEKLY_POST_DAY` (0 is Sunday) | Sunday |
+| Weekly leaderboard hour | `leaderboard` | `WEEKLY_POST_HOUR` | 20:00 |
 | Time zone | `timezone` | `TZ` | UTC |
-| Steam store region | `steam-region` | `STEAM_CC` | `us` |
-| Free game posts | `free-games` | `FREE_GAMES` (`true` to turn on) | off |
+| Steam price region | `steam-region` | `STEAM_CC` | `us` |
+| Free game alerts | `free-games` | `FREE_GAMES` (`true` to turn on) | off |
 | Free games channel | `free-games` | | the announce channel |
-| Lowest Steam rating | `free-game-filters` | `FREE_GAMES_MIN_RATING` | 70 |
+| Lowest Steam rating | `free-game-filters` | `FREE_GAMES_MIN_RATING` | 70% positive |
 | Only games like what you play | `free-game-filters` | `FREE_GAMES_TASTE` (`false` to turn off) | on |
 | Only multiplayer games | `free-game-filters` | `FREE_GAMES_MULTIPLAYER` (`true` to turn on) | off |
 | Games not on Steam | `free-game-filters` | `FREE_GAMES_UNLISTED` (`true` to show them) | hidden |
-| Smallest sale worth posting | `sale-alerts` | `SALE_MIN_DISCOUNT` | 25 |
+| Smallest sale worth posting | `sale-alerts` | `SALE_MIN_DISCOUNT` | 25% off |
 | Steam wishlists in sale alerts | `sale-alerts` | `SALE_STEAM_WISHLISTS` (`false` to turn off) | on |
 | Sale alerts channel | `sale-alerts` | | announce channel |
 | Games from Steam status | `steam-status` | `STEAM_STATUS` (`false` to turn off) | on |
 | Patch notes | `patch-notes` | `PATCH_NOTES` (`off`, `each` or `digest`) | off |
 | Patch notes channel | `patch-notes` | | announce channel |
-| Game night reminder (minutes before) | `gamenight-reminder` | `GAMENIGHT_REMINDER_MIN` | 15 |
+| Game night reminder | `gamenight-reminder` | `GAMENIGHT_REMINDER_MIN` | 15 minutes before |
 | Monthly recap | `monthly-recap` | `MONTHLY_RECAP` (`false` to turn off) | on |
 | Even volume | `sounds` | `EVEN_VOLUME` (`false` to turn off) | on |
 | Join sounds | `sounds` | `JOIN_SOUNDS` (`false` to turn off) | on |
-| Minutes between one person's join sounds | `sounds` | `JOIN_SOUND_COOLDOWN_MIN` | 10 |
-| Milliseconds the bot waits after connecting before a join sound | `sounds` | `JOIN_SOUND_DELAY_MS` | 500 |
-| Soundboard volume, as a percentage | `sounds` | `SOUND_VOLUME` | 100 |
+| Join sound cooldown | `sounds` | `JOIN_SOUND_COOLDOWN_MIN` | 10 minutes |
+| Join sound delay | `sounds` | `JOIN_SOUND_DELAY_MS` | 500 ms after the bot connects |
+| Soundboard volume | `sounds` | `SOUND_VOLUME` | 100% |
+| Sound managers | `sound-managers` | | everyone |
 | Looping sound room | `loop-room` | | off |
 | Looping sound | `loop-room` | | not set |
-| Loop volume, the sound's, as a percentage | `loop-room` | `LOOP_VOLUME` | 50 |
-| Loop every, in seconds (0 loops without a gap) | `loop-room` | `LOOP_EVERY` | 0 |
+| Loop volume | `loop-room` | `LOOP_VOLUME` | 50% |
+| Loop every | `loop-room` | `LOOP_EVERY` | 0 seconds, looping without a gap |
 | Looping speech | `loop-room` | | off |
 | Looping speech voice | `loop-room` | | the default voice |
-| Speech every, in seconds (0 says it again straight away) | `loop-room` | `LOOP_TEXT_EVERY` | 0 |
+| Speech every | `loop-room` | `LOOP_TEXT_EVERY` | 0 seconds, saying it again straight away |
 | Intro sound | `loop-room` | | off |
-| Intro delay, in milliseconds | `loop-room` | `LOOP_INTRO_DELAY_MS` | 250 |
-| Looping speech volume, as a percentage | `loop-room` | `LOOP_TEXT_VOLUME` | 50 |
-| Sound delay after intro, in milliseconds | `loop-room` | `LOOP_SOUND_DELAY_MS` | 0 |
-| Speech delay after intro, in milliseconds | `loop-room` | `LOOP_TEXT_DELAY_MS` | 0 |
-| Music volume, as a percentage | `music` | `MUSIC_VOLUME` | 40 |
+| Intro delay | `loop-room` | `LOOP_INTRO_DELAY_MS` | 250 ms |
+| Looping speech volume | `loop-room` | `LOOP_TEXT_VOLUME` | 50% |
+| Sound delay after intro | `loop-room` | `LOOP_SOUND_DELAY_MS` | 0 ms |
+| Speech delay after intro | `loop-room` | `LOOP_TEXT_DELAY_MS` | 0 ms |
+| Music volume | `music` | `MUSIC_VOLUME` | 40% |
 | Who can control music | `music` | | everyone |
 | Text to speech | `speech` | `TTS` (`false` to turn off) | on |
 | Default voice | `speech` | `TTS_VOICE` (`1`, `2`, `5`, `9`, `glados`, `hal`, `bender`, `optimus`, `kronk` or `tiktok`) | 5 |
-| Speech speed, as a percentage of the voice's natural speed | `speech` | `TTS_SPEED` | 85 |
-| Speech volume, where 100 is about as loud as a sound with even volume on | `speech` | `TTS_VOLUME` | 100 |
-| Longest spoken line, in characters | `speech` | `TTS_MAX_CHARS` | 200 |
-| Seconds between one person's spoken lines | `speech` | `TTS_COOLDOWN_SEC` | 5 |
-| Who can use `/say` | `speech-role` | | everyone |
-| Say who joined voice | `speech` | `TTS_GREET` | off |
+| Speech speed | `speech` | `TTS_SPEED` | 85% of the voice's natural speed |
+| Speech volume | `speech` | `TTS_VOLUME` | 100%, about as loud as a sound with even volume on |
+| Longest spoken line | `speech` | `TTS_MAX_CHARS` | 200 characters |
+| Wait between spoken lines | `speech` | `TTS_COOLDOWN_SEC` | 5 seconds |
+| Who can use text to speech | `speech-role` | | everyone |
+| Say who joined | `speech` | `TTS_GREET` | off |
 | Greeting | `speech` | `TTS_GREETING` | `{name} joined` |
 | Say game night reminders | `speech` | `TTS_NIGHT_REMINDERS` | off |
 | Say hop-on pings | `speech` | `TTS_HOP_ON` | off |
-| Channel read aloud | `speech-channel` | | off |
+| Read chat aloud | `speech-channel` | | off |
 | Whose messages are read | `speech-channel` | `TTS_CHANNEL_WHO` (`everyone` or `voice`) | everyone |
 
 ## Multiple servers
@@ -623,7 +630,7 @@ A page in [`web/`](web) that runs as a second container next to the bot, for you
 - **Stats:** **Overview** has game and voice time, overall or for one person or game, with sessions, rank and when it was last played. **Compare** is `/compare` with every game two people both own and their achievements in any of them, and **Monthly recap** is `/recap`.
 - **Discord's soundboard:** on Library, see what fills the slots, play or save any sound, and swap sounds between Discord and the library.
 - **Merging games:** on Stats, Merge games puts different spellings of a game together, and Separate on a clicked game takes one back out.
-- **Activity:** a history of changes to sounds, games, settings and game nights, and who made them.
+- **Activity:** a history of changes to sounds, games, pings, Steam accounts, music, settings and game nights, made here or in Discord, and who made them.
 - **Settings:** everything in `/setup`, for each server, game ping roles, everyone's join sounds, which free games are being posted or hidden and why, and what's on sale now. **Who gets pinged** changes anyone's hop-on and game pings, as `/notify` and `/pings` do.
 - **Posting to Discord:** **Post panel** on Soundboard is `/sound panel`, and **Post Choose games button** on Settings is `/gamerole menu`.
 

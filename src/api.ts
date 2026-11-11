@@ -23,7 +23,7 @@ import { addTracks, clearQueue, fileProblem, fileUploadPath, MOST_FILE_BYTES, mo
 import { phrases, removePhrase, savePhrase, say, VOICES } from './features/say.ts';
 import { voiceTotals } from './features/sessions.ts';
 import { checkSetting, LABELS, LIMITS, show, source, STEPS } from './features/setup.ts';
-import { addSound, addToDiscord, affectsLoopRoom, applyLevels, applyMusicVolume, applySoundVolume, BIN_DAYS, changeEmoji, deletedSounds, discordVolume, eraseDeleted, expiresAt, favourites, findSound, isTrimmed, joinSounds, listSounds, loopBotStatus, loopSpeechProblem, parseEmoji, playCounts, playDiscordSound, playFromWeb, postPanel, refreshLoopRoom, refreshPanels, removeSound, renameSound, restoreDeleted, restoreSound, saveFromDiscord, setFavourite, setJoinSound, setSoundVolume, type Sound, soundLevels, stopPlayback, swapOnDiscord, syncToDiscord, takeOffDiscord, trimProblem, trimSound, uploadProblem, voiceVolume, volumeProblem } from './features/soundboard.ts';
+import { addSound, addToDiscord, afterSettingsChanged, BIN_DAYS, changeEmoji, deletedSounds, eraseDeleted, expiresAt, favourites, findSound, joinSounds, listSounds, loopBotStatus, loopSpeechProblem, parseEmoji, playCounts, playDiscordSound, playFromWeb, postPanel, refreshPanels, removeSound, renameSound, restoreDeleted, restoreSound, saveFromDiscord, setFavourite, setJoinSound, setSoundVolume, type Sound, soundLevels, soundVolumes, stopPlayback, swapOnDiscord, syncToDiscord, takeOffDiscord, trimmedSounds, trimProblem, trimSound, uploadProblem, volumeProblem } from './features/soundboard.ts';
 import { DEFAULTS, idSetting, isAllowed, setSetting, setting, type SettingKey } from './settings.ts';
 import { myPlaylists, playlistsReady, search, SpotifyError, type Track } from './spotify.ts';
 import type { Feature } from './types.ts';
@@ -160,9 +160,19 @@ async function soundList(guild: Guild) {
   const starred = favourites(guild.id);
   const plays = playCounts(guild.id);
   const levels = soundLevels(guild.id);
-  for (const sound of listSounds(guild.id)) {
-    const { size, mtimeMs } = statSync(sound.file);
-    const seconds = await durationOf(sound.file, mtimeMs);
+  const volumes = soundVolumes(guild.id);
+  const trimmed = trimmedSounds(guild.id);
+  const listed = listSounds(guild.id);
+  // ffprobe is the slow part, so a few run at once
+  const stats = listed.map((s) => statSync(s.file));
+  const lengths: (number | null)[] = [];
+  for (let n = 0; n < listed.length; n += 8) {
+    lengths.push(...(await Promise.all(listed.slice(n, n + 8).map((s, k) => durationOf(s.file, stats[n + k].mtimeMs)))));
+  }
+  for (const [n, sound] of listed.entries()) {
+    const { size } = stats[n];
+    const seconds = lengths[n];
+    const { volume, loudness } = volumes(sound.name);
     sounds.push({
       name: sound.name,
       emoji: sound.emoji ?? null,
@@ -174,9 +184,9 @@ async function soundList(guild: Guild) {
       plays: plays.get(sound.name) ?? 0,
       gainDb: levels.get(sound.name)?.gainDb ?? null,
       percent: levels.get(sound.name)?.percent ?? 100,
-      volume: discordVolume(guild.id, sound.name),
-      loudness: voiceVolume(guild.id, sound.name),
-      trimmed: isTrimmed(guild.id, sound.name),
+      volume,
+      loudness,
+      trimmed: trimmed.has(sound.name),
     });
   }
   return {
@@ -218,6 +228,7 @@ function settingList(guild: Guild) {
       .sort((a, b) => b.position - a.position)
       .map((r) => ({ id: r.id, name: r.name })),
     timeZones: TIME_ZONES,
+    voices: VOICES.map(({ id, name }) => ({ id, name })),
   };
 }
 
@@ -1101,13 +1112,7 @@ async function handleSettings(guild: Guild, req: IncomingMessage, key?: string) 
   }
   if (!Object.hasOwn(DEFAULTS, key)) throw new Refused(404, 'No such setting.');
   const settingKey = key as SettingKey;
-  // Discord's copies have their own volume, so they don't follow this by themselves
-  const settled = async () => {
-    if (settingKey === 'evenVolume') await applyLevels(guild);
-    if (settingKey === 'soundVolume') applySoundVolume(guild.id);
-    if (settingKey === 'musicVolume') applyMusicVolume(guild.id);
-    if (affectsLoopRoom(settingKey)) await refreshLoopRoom(guild);
-  };
+  const settled = () => afterSettingsChanged(guild, [settingKey]);
   if (req.method === 'DELETE') {
     setSetting(guild.id, settingKey, undefined);
     logActivity(guild.id, by(), `Put ${LABELS[settingKey]} back to the default`);

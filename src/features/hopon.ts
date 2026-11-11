@@ -6,6 +6,7 @@ import { announceChannel, humansIn, listNames, playingGames } from '../util.ts';
 import { rolesForGames } from './gameroles.ts';
 import { announceAloud } from './say.ts';
 import { checkSteamStatusOf } from './steam.ts';
+import { commandMention } from '../commandIds.ts';
 
 /** Server id → when it was last pinged */
 const lastPingAt = new Map<string, number>();
@@ -47,7 +48,7 @@ export const hopOn: Feature = {
         if (!i.inCachedGuild()) return i.reply({ content: 'Use this in a server.', flags: MessageFlags.Ephemeral });
         const roleId = idSetting(i.guildId, 'hopOnRole');
         if (!roleId) {
-          return i.reply({ content: 'This server has no hop-on role. A server admin can set one with `/setup hopon-role`.', flags: MessageFlags.Ephemeral });
+          return i.reply({ content: `This server has no hop-on role. A server admin can set one with ${commandMention(i.guildId, 'setup hopon-role')}.`, flags: MessageFlags.Ephemeral });
         }
         try {
           if (i.member.roles.cache.has(roleId)) {

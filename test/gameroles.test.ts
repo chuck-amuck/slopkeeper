@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { db } from '../src/db.ts';
 import { gamePings, rolesForGames } from '../src/features/gameroles.ts';
+import { setSetting } from '../src/settings.ts';
 
 for (const [role, name] of [['r1', 'Valheim'], ['r2', 'Lethal Company'], ['r3', 'Deep Rock']]) {
   db.prepare(`INSERT INTO game_roles (role_id, guild_id, name) VALUES (?, 'g', ?)`).run(role, name);
@@ -54,6 +55,22 @@ test('the menu shows what was just picked', async () => {
   assert.deepEqual(ticked, ['r2']);
 });
 
+test('/pings offers hop-on pings first, beside the games', async () => {
+  db.prepare(`INSERT INTO game_roles (role_id, guild_id, name) VALUES ('r4', 'hop', 'Halo')`).run();
+  setSetting('hop', 'hopOnRole', 'hop-role');
+  let reply: { content: string; components: { toJSON(): { components: { options: { label: string; value: string; default: boolean }[] }[] } }[] } | undefined;
+  await gamePings.commands![0].run({
+    inCachedGuild: () => true,
+    guildId: 'hop',
+    guild: { id: 'hop', roles: { cache: new Map([['hop-role', {}], ['r4', {}]]) } },
+    member: { roles: { cache: new Map([['hop-role', {}]]) } },
+    reply: async (r: never) => void (reply = r),
+  } as never);
+  assert.equal(reply!.content, '🔔 You get pings for people hopping on.\nPick what you want to be pinged for:');
+  const options = reply!.components[0].toJSON().components[0].options;
+  assert.deepEqual(options.map((o) => [o.label, o.default]), [['Hop-on pings', true], ['Halo', false]]);
+});
+
 test('says so when the bot can’t change roles', async () => {
   const pick = click([], ['r1'], { failOn: 'r1' });
   await pick.run();
@@ -86,7 +103,7 @@ async function gamerole(sub: string, game: string, role: object | null = null, g
     inCachedGuild: () => true,
     guildId,
     guild,
-    user: { tag: 'ana' },
+    user: { id: 'ana', tag: 'ana' },
     options: { getSubcommand: () => sub, getString: () => game, getRole: () => role },
     reply: async (r: { content: string }) => (reply = r),
   } as never);

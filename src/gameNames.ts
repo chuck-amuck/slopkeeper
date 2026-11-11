@@ -1,4 +1,4 @@
-import { db } from './db.ts';
+import { db, transaction } from './db.ts';
 
 interface Alias {
   raw: string;
@@ -87,15 +87,8 @@ function fillAliases() {
        ) GROUP BY guild_id, game ORDER BY ms DESC`,
     )
     .all() as { guildId: string; raw: string }[];
-  db.exec('BEGIN');
-  try {
-    const matched = seen.filter((s) => noteGame(s.guildId, s.raw)).length;
-    db.exec('COMMIT');
-    if (matched) console.log(`Matched ${matched} game spellings to the same game`);
-  } catch (err) {
-    db.exec('ROLLBACK');
-    throw err;
-  }
+  const matched = transaction(() => seen.filter((s) => noteGame(s.guildId, s.raw)).length);
+  if (matched) console.log(`Matched ${matched} game spellings to the same game`);
 }
 
 /** Matching can improve after spellings are recorded, so ones that now match join up, leaving hand-picked names alone */
@@ -103,19 +96,14 @@ function refreshKeys() {
   const rows = db.prepare('SELECT guild_id AS guildId, raw, key FROM game_aliases').all() as { guildId: string; raw: string; key: string }[];
   const stale = rows.filter((r) => r.key !== gameKey(r.raw));
   if (!stale.length) return;
-  db.exec('BEGIN');
-  try {
+  transaction(() => {
     for (const { guildId, raw } of stale) {
       const key = gameKey(raw);
       db.prepare('UPDATE game_aliases SET key = ? WHERE guild_id = ? AND raw = ?').run(key, guildId, raw);
       const names = inGroup(guildId, key).filter((m) => !m.manual).map((m) => m.name);
       if (names.length) db.prepare('UPDATE game_aliases SET name = ? WHERE guild_id = ? AND key = ? AND manual = 0').run(best(names), guildId, key);
     }
-    db.exec('COMMIT');
-  } catch (err) {
-    db.exec('ROLLBACK');
-    throw err;
-  }
+  });
 }
 
 refreshKeys();

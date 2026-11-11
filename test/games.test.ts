@@ -1,6 +1,7 @@
 import './helpers.ts';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { recentActivity } from '../src/activity.ts';
 import { choose, games, hiddenGames } from '../src/features/games.ts';
 import { hopOn } from '../src/features/hopon.ts';
 import { setup } from '../src/features/setup.ts';
@@ -78,6 +79,7 @@ test('/setup show lists sources without stray markdown', async () => {
 test('Never suggest this hides a game, and /game unhide lets it back', async () => {
   const guild = { id: 'hide', members: { cache: new Map() } };
   let shown: { content?: string } | undefined;
+  let told: { content: string } | undefined;
   await games.onButton!({
     customId: 'wdp:hide:620',
     inCachedGuild: () => true,
@@ -88,9 +90,12 @@ test('Never suggest this hides a game, and /game unhide lets it back', async () 
     message: { embeds: [{ title: '🎲 Portal 2' }] },
     deferUpdate: async () => {},
     editReply: async (r: typeof shown) => (shown = r),
+    followUp: async (r: typeof told) => (told = r),
   } as never);
   assert.ok(shown, 'the card is redrawn');
   assert.deepEqual(hiddenGames('hide').map((g) => ({ ...g })), [{ appid: 620, name: 'Portal 2' }]);
+  assert.equal(told!.content, '🙈 **Portal 2** won’t be suggested again. `/game unhide` brings it back.', 'the person who pressed it is told how to undo it');
+  assert.equal(recentActivity('hide', 1)[0].action, 'Hid **Portal 2** from suggestions');
 
   const unhide = async (name: string) => {
     let reply: string | { content: string } | undefined;
@@ -98,6 +103,7 @@ test('Never suggest this hides a game, and /game unhide lets it back', async () 
       inCachedGuild: () => true,
       guildId: 'hide',
       guild,
+      user: { id: 'u1' },
       options: { getSubcommand: () => 'unhide', getString: () => name },
       reply: async (r: typeof reply) => (reply = r),
     } as never);

@@ -1,5 +1,5 @@
 import { EmbedBuilder, Events, MessageFlags, SlashCommandBuilder, type Client, type GuildMember, type VoiceBasedChannel } from 'discord.js';
-import { db, getKv, setKv } from '../db.ts';
+import { db, getKv, setKv, transaction } from '../db.ts';
 import { gameName } from '../gameNames.ts';
 import { isAllowed, setting } from '../settings.ts';
 import { onSteamChange } from '../steamStatus.ts';
@@ -76,8 +76,7 @@ async function finish(client: Client<true>, channelId: string) {
 function save(s: LiveSession, channelId: string, endedAt: number): boolean {
   if (endedAt - s.startedAt < setting(s.guildId, 'recapMinMinutes') * 60_000) return false;
 
-  db.exec('BEGIN');
-  try {
+  transaction(() => {
     const { lastInsertRowid: id } = db
       .prepare('INSERT INTO sessions (guild_id, channel_id, started_at, ended_at) VALUES (?, ?, ?, ?)')
       .run(s.guildId, channelId, s.startedAt, endedAt);
@@ -85,11 +84,7 @@ function save(s: LiveSession, channelId: string, endedAt: number): boolean {
     for (const [userId, ms] of s.totals) addMember.run(id, userId, Math.round(ms / 1000));
     const addGame = db.prepare('INSERT INTO session_games (session_id, game) VALUES (?, ?)');
     for (const game of s.games) addGame.run(id, game);
-    db.exec('COMMIT');
-  } catch (err) {
-    db.exec('ROLLBACK');
-    throw err;
-  }
+  });
   return true;
 }
 

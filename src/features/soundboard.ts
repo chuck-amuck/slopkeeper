@@ -56,6 +56,7 @@ import { cutAudio } from '../trim.ts';
 import type { Feature } from '../types.ts';
 import type { DiscordSound } from '../discordSounds.ts';
 import { humansIn, requestTimeout, servedGuilds } from '../util.ts';
+import { commandMention } from '../commandIds.ts';
 
 export const EXTENSIONS = ['.mp3', '.ogg', '.wav', '.m4a', '.opus', '.webm', '.flac'];
 const MAX_BYTES = 5 * 1024 * 1024;
@@ -108,6 +109,12 @@ function originalOf(guildId: string, name: string): string | undefined {
 }
 
 export const isTrimmed = (guildId: string, name: string) => originalOf(guildId, name) !== undefined;
+
+/** Every trimmed sound's name, from one look at the folder */
+export function trimmedSounds(guildId: string): Set<string> {
+  const dir = originalsDir(guildId);
+  return new Set(existsSync(dir) ? readdirSync(dir).map((f) => path.parse(f).name) : []);
+}
 
 function dropOriginal(guildId: string, name: string) {
   const original = originalOf(guildId, name);
@@ -201,18 +208,28 @@ export function soundLevels(guildId: string): Map<string, { gainDb: number | nul
   return new Map(rows.map((r) => [r.name, { gainDb: r.gain_db, percent: r.percent }]));
 }
 
+const gainOf = (level: { gainDb: number | null; percent: number } | undefined, even: boolean) => 10 ** ((even ? (level?.gainDb ?? 0) : 0) / 20) * ((level?.percent ?? 100) / 100);
+
 /** What a sound's samples get multiplied by. The file itself is never changed, so all of this can be undone */
 export function soundGain(guildId: string, name: string): number {
-  const level = soundLevels(guildId).get(name);
-  const levelled = setting(guildId, 'evenVolume') ? (level?.gainDb ?? 0) : 0;
-  return 10 ** (levelled / 20) * ((level?.percent ?? 100) / 100);
+  return gainOf(soundLevels(guildId).get(name), setting(guildId, 'evenVolume'));
 }
 
 /** How loud a sound plays in voice, where 1 is the file as it is */
 export const voiceVolume = (guildId: string, name: string) => VOLUME * soundGain(guildId, name);
 
+/** voiceVolume and discordVolume for any of a server's sounds, reading the levels once rather than once per sound */
+export function soundVolumes(guildId: string) {
+  const levels = soundLevels(guildId);
+  const even = setting(guildId, 'evenVolume');
+  return (name: string) => {
+    const loudness = VOLUME * gainOf(levels.get(name), even);
+    return { loudness, volume: Math.min(1, Math.round(loudness * 100) / 100) };
+  };
+}
+
 /** Discord's own volume for a sound's copy. It can't go over 1, so that's as far as it can be turned up there */
-export const discordVolume = (guildId: string, name: string) => Math.min(1, Math.round(voiceVolume(guildId, name) * 100) / 100);
+export const discordVolume = (guildId: string, name: string) => soundVolumes(guildId)(name).volume;
 
 /** Measures a sound, starting from its picked volume being reset, since that was for the audio it had before */
 async function levelSound(guildId: string, sound: Sound, keepPercent = false) {
@@ -859,6 +876,15 @@ async function loopable(guildId: string, file: string): Promise<string> {
 /** Whether a setting changes what the looping room plays: its own, or the speech voice and speed its speech can follow */
 export const affectsLoopRoom = (key: string) => key.startsWith('loop') || key === 'ttsVoice' || key === 'ttsSpeed' || (!!config.loopBotUrl && key === 'soundVolume');
 
+/** Puts changed settings into effect where they don't follow by themselves, from /setup and the web UI alike */
+export async function afterSettingsChanged(guild: Guild, keys: string[]) {
+  // Discord's copies of the sounds, and audio already playing, have their own volume
+  if (keys.includes('evenVolume')) await applyLevels(guild);
+  if (keys.includes('soundVolume')) applySoundVolume(guild.id);
+  if (keys.includes('musicVolume')) applyMusicVolume(guild.id);
+  if (keys.some(affectsLoopRoom)) await refreshLoopRoom(guild);
+}
+
 /** After the looping settings change: stops the loop as it was, then starts it again if it should be playing */
 export function refreshLoopRoom(guild: Guild) {
   // The loop bot takes up a change itself, as the run stays the same
@@ -1094,7 +1120,7 @@ const pageCount = (sounds: Sound[]) => Math.max(1, Math.ceil(sounds.length / PAG
 
 function panel(guildId: string, page: number) {
   const sounds = listSounds(guildId);
-  if (!sounds.length) return { content: '🔊 No sounds yet. Add one with `/sound add`.', components: [] };
+  if (!sounds.length) return { content: `🔊 No sounds yet. Add one with ${commandMention(guildId, 'sound add')}.`, components: [] };
   const pages = pageCount(sounds);
   page = Math.min(Math.max(page, 0), pages - 1);
 
@@ -1185,7 +1211,7 @@ function settingsMenu(i: BaseInteraction<'cached'>, page: number, note?: string)
     );
   }
   const prompt = canChangeSounds(i) ? '⚙️ Pick a sound to change.' : `⚙️ Pick a sound to test. ${managersOnly(guildId)}`;
-  return { content: [note, shown.length ? prompt : '🔊 No sounds yet. Add one with `/sound add`.'].filter(Boolean).join('\n'), components: rows };
+  return { content: [note, shown.length ? prompt : `🔊 No sounds yet. Add one with ${commandMention(guildId, 'sound add')}.`].filter(Boolean).join('\n'), components: rows };
 }
 
 /** Everything that can be changed about one sound, for those allowed to */
@@ -1262,7 +1288,7 @@ async function onSetting(i: ButtonInteraction<'cached'>) {
   if (action === 'rename') return i.showModal(askFor(settingId('rename', page, sound.name), `Rename ${sound.name}`, 'New name', sound.name, true));
   if (action === 'delete') {
     return i.update({
-      content: `Delete **${sound.name}**? You can get it back for ${BIN_DAYS} days with \`/sound restore\`.`,
+      content: `Delete **${sound.name}**? You can get it back for ${BIN_DAYS} days with ${commandMention(i.guildId, 'sound restore')}.`,
       components: [
         new ActionRowBuilder<ButtonBuilder>().addComponents(
           actionButton('confirm', page, sound.name, 'Yes, delete it', '🗑️', ButtonStyle.Danger),
@@ -1277,7 +1303,7 @@ async function onSetting(i: ButtonInteraction<'cached'>) {
     const problem = await removeSound(i.guild, sound);
     logActivity(i.guildId, i.user.id, `Removed sound **${sound.name}**`);
     await notify();
-    const removed = `🗑️ Removed **${sound.name}**. Bring it back within ${BIN_DAYS} days with \`/sound restore\`.${problem ? ` Couldn’t remove it from Discord’s soundboard: ${problem}.` : ''}`;
+    const removed = `🗑️ Removed **${sound.name}**. Bring it back within ${BIN_DAYS} days with ${commandMention(i.guildId, 'sound restore')}.${problem ? ` Couldn’t remove it from Discord’s soundboard: ${problem}.` : ''}`;
     return i.editReply(settingsMenu(i, page, removed));
   }
   if (action === 'test') {
@@ -1490,7 +1516,7 @@ export const soundboard: Feature = {
           if (!sound) return i.reply({ content: 'No sound by that name.', ...ephemeral });
           const problem = await removeSound(i.guild, sound);
           logActivity(i.guildId, i.user.id, `Removed sound **${sound.name}**`);
-          await i.reply(`🗑️ Removed sound **${sound.name}**. Bring it back within ${BIN_DAYS} days with \`/sound restore\`.${problem ? `\nCouldn’t remove it from Discord’s soundboard: ${problem}.` : ''}`);
+          await i.reply(`🗑️ Removed sound **${sound.name}**. Bring it back within ${BIN_DAYS} days with ${commandMention(i.guildId, 'sound restore')}.${problem ? `\nCouldn’t remove it from Discord’s soundboard: ${problem}.` : ''}`);
           return refreshPanels(i.client, i.guildId);
         }
 
@@ -1571,7 +1597,8 @@ export const soundboard: Feature = {
 
         if (sub === 'stop') {
           leaveVoice(i.guildId);
-          return i.reply({ content: '⏹️ Stopped.', ...ephemeral });
+          // Said in the channel, like /music stop, so people in voice can see who stopped it
+          return i.reply({ content: '⏹️ Stopped the sounds.', allowedMentions: { parse: [] } });
         }
 
         const reply = await i.reply({ ...panel(i.guildId, 0), withResponse: true });

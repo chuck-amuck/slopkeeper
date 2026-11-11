@@ -10,7 +10,22 @@ const DB_FILE = path.join(config.dataDir, 'bot.db');
 const SCHEMA_VERSION = 3;
 
 export const db = new DatabaseSync(DB_FILE);
-db.exec('PRAGMA journal_mode = WAL;');
+// With WAL, NORMAL only risks the last moments of writes if the machine itself loses power, and makes each commit far cheaper
+db.exec('PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL;');
+
+/** Runs `fn` in one transaction, undone if it throws. Inside another transaction it's simply part of that one. Not for async work */
+export function transaction<T>(fn: () => T): T {
+  if (db.isTransaction) return fn();
+  db.exec('BEGIN');
+  try {
+    const result = fn();
+    db.exec('COMMIT');
+    return result;
+  } catch (err) {
+    db.exec('ROLLBACK');
+    throw err;
+  }
+}
 
 const version = (db.prepare('PRAGMA user_version').get() as { user_version: number }).user_version;
 const hasTable = (name: string) => db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(name) !== undefined;
@@ -272,6 +287,7 @@ db.exec(`
     channel_id TEXT
   );
   CREATE INDEX IF NOT EXISTS game_plays_by_guild ON game_plays (guild_id, started_at);
+  CREATE INDEX IF NOT EXISTS game_plays_by_user ON game_plays (guild_id, user_id, started_at);
 
   -- Every spelling Discord has shown for a game and the name it goes by. manual: someone chose this
   CREATE TABLE IF NOT EXISTS game_aliases (
@@ -357,19 +373,14 @@ db.exec(`
 
 // Alerts used to be kept per library game. Moved over so sales already announced aren't announced again
 if (db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'sale_state'").get()) {
-  db.exec('BEGIN');
-  try {
+  transaction(() =>
     db.exec(`
       INSERT OR IGNORE INTO sale_alerts (guild_id, appid, discount)
       SELECT g.guild_id, g.steam_appid, s.discount FROM sale_state s JOIN games g ON g.id = s.game_id
       WHERE g.steam_appid IS NOT NULL AND s.discount > 0;
       DROP TABLE sale_state;
-    `);
-    db.exec('COMMIT');
-  } catch (err) {
-    db.exec('ROLLBACK');
-    throw err;
-  }
+    `),
+  );
 }
 
 // Added after schema 3 came out, so a database from then won't have it yet
@@ -431,15 +442,10 @@ function keepVoicePlays() {
 
 // Added after schema 3 came out too. In one transaction, so a failed start can run it again from the top
 if (!db.prepare("SELECT 1 FROM pragma_table_info('game_plays') WHERE name = 'channel_id'").get()) {
-  db.exec('BEGIN');
-  try {
+  transaction(() => {
     db.exec('ALTER TABLE game_plays ADD COLUMN channel_id TEXT');
     keepVoicePlays();
-    db.exec('COMMIT');
-  } catch (err) {
-    db.exec('ROLLBACK');
-    throw err;
-  }
+  });
 }
 
 export function getKv(key: string): string | undefined {

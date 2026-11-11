@@ -160,18 +160,28 @@ async function plan(guildId: string, repeat: number | null) {
 /** Presses a card's button */
 async function press(customId: string, user: string, manageEvents = false) {
   let update: Parameters<typeof buttonIds>[0] | undefined;
-  let reply: { content: string } | undefined;
+  let reply: (Parameters<typeof buttonIds>[0] & { content: string }) | undefined;
+  // The card itself, redrawn when a private confirmation is pressed
+  let card: Parameters<typeof buttonIds>[0] | undefined;
   await gameNights.onButton!({
     customId,
     inCachedGuild: () => true,
     user: { id: user },
     guild: { scheduledEvents: { delete: async () => {} } },
+    client: { channels: { fetch: async () => ({ isTextBased: () => true, messages: { edit: async (_id: string, r: typeof card) => (card = r) } }) } },
     memberPermissions: { has: () => manageEvents },
     update: async (r: typeof update) => (update = r),
     reply: async (r: typeof reply) => (reply = r),
     followUp: async () => {},
   } as never);
-  return { update, reply };
+  return { update, reply, card };
+}
+
+/** Presses a card's Cancel night or Stop repeating, then the confirmation it asks for */
+async function confirm(action: 'cancel' | 'stop', id: number, user: string, manageEvents = false) {
+  const asked = await press(`gn:${action}:${id}`, user, manageEvents);
+  assert.deepEqual(buttonIds(asked.reply!), [`gn:${action}-yes:${id}`], 'asks before doing it');
+  return press(`gn:${action}-yes:${id}`, user, manageEvents);
 }
 
 const makeDue = (guildId: string) => db.prepare('UPDATE game_night_series SET post_at = ? WHERE guild_id = ?').run(Date.now() - 1, guildId);
@@ -249,19 +259,23 @@ test('a card that can’t be posted leaves nothing behind and is tried again in 
 test('cancelling one night keeps the series, and the card can still stop it', async () => {
   await plan('skip', 7);
   const { id } = allNights('skip')[0];
-  const { update } = await press(`gn:cancel:${id}`, 'host');
+  const asked = await press(`gn:cancel:${id}`, 'host');
+  assert.equal(allNights('skip')[0].cancelled, 0, 'nothing happens until it’s confirmed');
+  assert.match(asked.reply!.content, /Cancel \*\*Valheim\*\* night\?/);
+  const { card } = await confirm('cancel', id, 'host');
   assert.ok(seriesIn('skip'));
-  assert.deepEqual(buttonIds(update!), [`gn:stop:${id}`]);
+  assert.deepEqual(buttonIds(card!), [`gn:stop:${id}`]);
 
-  const stopped = await press(`gn:stop:${id}`, 'host');
+  const stopped = await confirm('stop', id, 'host');
   assert.equal(seriesIn('skip'), undefined);
-  assert.deepEqual(buttonIds(stopped.update!), []);
+  assert.deepEqual(buttonIds(stopped.card!), []);
+  assert.deepEqual(stopped.update, { content: '🛑 **Valheim** night won’t repeat.', components: [] });
 });
 
 test('an RSVP button left on a cancelled night does nothing', async () => {
   await plan('late', null);
   const { id } = allNights('late')[0];
-  await press(`gn:cancel:${id}`, 'host');
+  await confirm('cancel', id, 'host');
   const { update } = await press(`gn:in:${id}`, 'latecomer');
   assert.deepEqual(update, { components: [] });
   assert.equal(db.prepare(`SELECT 1 FROM game_night_rsvps WHERE night_id = ? AND user_id = 'latecomer'`).get(id), undefined);
@@ -270,8 +284,8 @@ test('an RSVP button left on a cancelled night does nothing', async () => {
 test('buttons record who cancelled and who stopped repeating', async () => {
   await plan('activity-log', 7);
   const { id } = db.prepare("SELECT id FROM game_nights WHERE guild_id = 'activity-log'").get() as { id: number };
-  await press(`gn:stop:${id}`, 'host');
-  await press(`gn:cancel:${id}`, 'mod', true);
+  await confirm('stop', id, 'host');
+  await confirm('cancel', id, 'mod', true);
   assert.deepEqual(recentActivity('activity-log', 10).map((r) => [r.actor, r.action.replace(/ for .*/, '')]), [
     ['mod', 'Cancelled **Valheim** night'],
     ['host', 'Stopped **Valheim** night repeating'],
@@ -283,8 +297,9 @@ test('only the host or Manage Events can stop a series', async () => {
   await plan('perms', 14);
   const { id } = allNights('perms')[0];
   assert.match((await press(`gn:stop:${id}`, 'stranger')).reply!.content, /host/);
+  assert.match((await press(`gn:stop-yes:${id}`, 'stranger')).reply!.content, /host/, 'the confirmation checks too');
   assert.ok(seriesIn('perms'));
-  await press(`gn:stop:${id}`, 'admin', true);
+  await confirm('stop', id, 'admin', true);
   assert.equal(seriesIn('perms'), undefined);
   makeDue('perms');
   const sent: unknown[] = [];

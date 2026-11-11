@@ -22,6 +22,7 @@ import { allGames } from './games.ts';
 import { rolesForGames } from './gameroles.ts';
 import { plural } from './gamestats.ts';
 import { announceAloud } from './say.ts';
+import { commandMention } from '../commandIds.ts';
 
 const HOUR = 3_600_000;
 const DAY = 24 * HOUR;
@@ -336,13 +337,13 @@ async function advance(client: Client<true>, guild: Guild, night: Night, now: nu
 
   if (!night.event_id) return;
   if (night.event_stage === 0 && now >= night.starts_at) {
-    await guild.scheduledEvents.edit(night.event_id, { status: GuildScheduledEventStatus.Active }).catch(() => {});
+    await guild.scheduledEvents.edit(night.event_id, { status: GuildScheduledEventStatus.Active }).catch((err) => console.error(`Game night ${night.id} event start:`, err.message));
     db.prepare('UPDATE game_nights SET event_stage = 1 WHERE id = ?').run(night.id);
   } else if (night.event_stage === 1 && now >= night.starts_at + EVENT_LENGTH) {
     // Leave the event running while people are still in its channel
     const voice = night.voice_channel_id ? guild.channels.cache.get(night.voice_channel_id) : undefined;
     if (voice?.isVoiceBased() && humansIn(voice).length) return;
-    await guild.scheduledEvents.edit(night.event_id, { status: GuildScheduledEventStatus.Completed }).catch(() => {});
+    await guild.scheduledEvents.edit(night.event_id, { status: GuildScheduledEventStatus.Completed }).catch((err) => console.error(`Game night ${night.id} event end:`, err.message));
     db.prepare('UPDATE game_nights SET event_stage = 2 WHERE id = ?').run(night.id);
   }
 }
@@ -484,7 +485,7 @@ export const gameNights: Feature = {
           const nights = db
             .prepare('SELECT * FROM game_nights WHERE guild_id = ? AND cancelled = 0 AND starts_at > ? ORDER BY starts_at LIMIT 15')
             .all(i.guildId, Date.now() - 3 * HOUR) as unknown as Night[];
-          if (!nights.length) return i.reply({ content: 'No game nights planned. Start one with `/gamenight plan`.', flags: MessageFlags.Ephemeral });
+          if (!nights.length) return i.reply({ content: `No game nights planned. Start one with ${commandMention(i.guildId, 'gamenight plan')}.`, flags: MessageFlags.Ephemeral });
           const lines = nights.map((n) => {
             const link = n.message_id ? ` · [RSVP](https://discord.com/channels/${n.guild_id}/${n.channel_id}/${n.message_id})` : '';
             const repeats = getSeries(n.series_id) ? ' · 🔁' : '';
@@ -525,24 +526,35 @@ export const gameNights: Feature = {
     const night = getNight(Number(idText));
     if (!night) return i.update({ components: [] });
     const canManage = i.user.id === night.created_by || i.memberPermissions.has(PermissionFlagsBits.ManageEvents);
+    const [what, sure] = action.split('-');
 
-    if (action === 'stop') {
-      if (!canManage) return i.reply({ content: 'Only the host or someone with Manage Events can stop this.', flags: MessageFlags.Ephemeral });
-      db.prepare('DELETE FROM game_night_series WHERE id = ?').run(night.series_id);
-      logActivity(night.guild_id, i.user.id, `Stopped **${night.game}** night repeating`);
-      return i.update(view(night));
-    }
-    if (night.cancelled) return i.update({ components: [] });
-
-    if (action === 'cancel') {
-      if (!canManage) return i.reply({ content: 'Only the host or someone with Manage Events can cancel this.', flags: MessageFlags.Ephemeral });
+    if (what === 'stop' || what === 'cancel') {
+      if (!canManage) return i.reply({ content: `Only the host or someone with Manage Events can ${what} this.`, flags: MessageFlags.Ephemeral });
+      // Asked first, privately, as neither can be undone from the card
+      if (!sure) {
+        const yes = new ButtonBuilder().setCustomId(`gn:${what}-yes:${night.id}`).setLabel(what === 'cancel' ? 'Cancel the night' : 'Stop repeating').setStyle(ButtonStyle.Danger);
+        return i.reply({
+          content: what === 'cancel' ? `Cancel **${night.game}** night? Everyone who said they’re in is told it’s off.` : `Stop **${night.game}** night repeating? This one stays on, and no more get posted.`,
+          components: [new ActionRowBuilder<ButtonBuilder>().addComponents(yes)],
+          flags: MessageFlags.Ephemeral,
+        });
+      }
+      if (what === 'stop') {
+        db.prepare('DELETE FROM game_night_series WHERE id = ?').run(night.series_id);
+        logActivity(night.guild_id, i.user.id, `Stopped **${night.game}** night repeating`);
+        await i.update({ content: `🛑 **${night.game}** night won’t repeat.`, components: [] });
+        return refreshCard(i.client, night);
+      }
+      if (night.cancelled) return i.update({ content: `**${night.game}** night was already cancelled.`, components: [] });
       await markCancelled(i.guild, night);
       logActivity(night.guild_id, i.user.id, `Cancelled **${night.game}** night`);
-      await i.update(view(getNight(night.id)!));
+      await i.update({ content: `❌ Cancelled **${night.game}** night.`, components: [] });
+      await refreshCard(i.client, getNight(night.id)!);
       const going = rsvps(night.id).in.filter((id) => id !== i.user.id);
       if (night.starts_at > Date.now() && going.length) await i.followUp(offNotice(night, going));
       return;
     }
+    if (night.cancelled) return i.update({ components: [] });
 
     if (!(action in RSVP)) return;
     if (night.starts_at < Date.now() - 12 * HOUR) return i.reply({ content: 'This game night is over.', flags: MessageFlags.Ephemeral });

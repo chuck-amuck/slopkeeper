@@ -15,7 +15,7 @@ import path from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { logActivity } from '../activity.ts';
 import { config } from '../config.ts';
-import { db, getKv, setKv } from '../db.ts';
+import { db, getKv, setKv, transaction } from '../db.ts';
 import { durationOf, hasAudio } from '../discordSounds.ts';
 import { idSetting } from '../settings.ts';
 import { coverFor, isShortLink, MOST_FROM_LINK, myPlaylists, parseLink, playlistsReady, RateLimited, search, searchReady, SpotifyError, tracksFor, type Track } from '../spotify.ts';
@@ -119,8 +119,10 @@ export function addTracks(guildId: string, tracks: Track[], who: string, next = 
   const insert = db.prepare(
     'INSERT INTO music_queue (guild_id, pos, uri, title, artist, album, cover, duration_ms, added_by, added_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
   );
-  adding.forEach((t, i) => insert.run(guildId, before + step * (i + 1), t.uri, t.title, t.artist, t.album, t.cover, t.durationMs, who, Date.now()));
-  renumber(guildId);
+  transaction(() => {
+    adding.forEach((t, i) => insert.run(guildId, before + step * (i + 1), t.uri, t.title, t.artist, t.album, t.cover, t.durationMs, who, Date.now()));
+    renumber(guildId);
+  });
   fetchNext(guildId);
   if (adding.some((t) => !t.cover)) void fillCovers();
   return adding.length;
@@ -190,7 +192,7 @@ async function fillSome(): Promise<number> {
 /** Spreads positions out again, so there's always room between two rows */
 function renumber(guildId: string) {
   const update = db.prepare('UPDATE music_queue SET pos = ? WHERE id = ?');
-  queueOf(guildId).forEach((row, i) => update.run(i, row.id));
+  transaction(() => queueOf(guildId).forEach((row, i) => update.run(i, row.id)));
 }
 
 /** Moves a song to a place in the queue. The song playing stays first */
@@ -202,7 +204,7 @@ export function moveTrack(guildId: string, id: number, to: number): boolean {
   const [row] = rows.splice(from, 1);
   rows.splice(Math.max(first, Math.min(rows.length, Math.trunc(to))), 0, row);
   const update = db.prepare('UPDATE music_queue SET pos = ? WHERE id = ?');
-  rows.forEach((r, i) => update.run(i, r.id));
+  transaction(() => rows.forEach((r, i) => update.run(i, r.id)));
   fetchNext(guildId);
   return true;
 }
@@ -218,7 +220,7 @@ export function shuffleQueue(guildId: string, who: string): number {
     [rest[n], rest[k]] = [rest[k], rest[n]];
   }
   const update = db.prepare('UPDATE music_queue SET pos = ? WHERE id = ?');
-  [...rows.slice(0, first), ...rest].forEach((r, i) => update.run(i, r.id));
+  transaction(() => [...rows.slice(0, first), ...rest].forEach((r, i) => update.run(i, r.id)));
   fetchNext(guildId);
   logActivity(guildId, who, 'Shuffled the music queue');
   return rest.length;
@@ -813,8 +815,15 @@ async function run(i: ChatInputCommandInteraction<'cached'>) {
     if (playing) return say(added || 'The music is already playing.');
     const channel = i.member.voice.channel;
     if (!channel) return say(`${added ? `${added} ` : ''}Join a voice channel and use /music play to start it.`.trim());
+    // Getting the song can take longer than the 3 s Discord waits for an answer
+    if (!i.deferred) await i.deferReply();
     const problem = await startMusic(i.guild, channel);
-    if (problem) return say(`${added ? `${added} ` : ''}${problem}`);
+    if (problem && !added) {
+      // Only the person who asked needs to see why it didn't start
+      await i.deleteReply();
+      return i.followUp({ content: problem, flags: MessageFlags.Ephemeral });
+    }
+    if (problem) return say(`${added} ${problem}`);
     const now = queueOf(i.guildId)[0];
     return say(`${added ? `${added} ` : ''}Playing **${now.title}** in ${channel}.`.trim());
   }
@@ -823,9 +832,16 @@ async function run(i: ChatInputCommandInteraction<'cached'>) {
     return problem ? reply(problem) : announce('Paused the music. Use /music play to carry on.');
   }
   if (sub === 'skip') {
-    const title = sessions.get(i.guildId)?.current.title ?? null;
+    const title = sessions.get(i.guildId)?.current.title;
+    if (!title) return reply('Nothing is playing.');
+    // Starting the next song can take longer than the 3 s Discord waits for an answer
+    await i.deferReply();
     const problem = await skipMusic(i.guildId, i.user.id);
-    return problem ? reply(problem) : announce(`Skipped **${title}**.`);
+    if (problem) {
+      await i.deleteReply();
+      return i.followUp({ content: problem, flags: MessageFlags.Ephemeral });
+    }
+    return i.editReply({ content: `Skipped **${title}**.`, allowedMentions: { parse: [] } });
   }
   if (sub === 'shuffle') {
     const shuffled = shuffleQueue(i.guildId, i.user.id);

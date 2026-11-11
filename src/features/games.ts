@@ -12,7 +12,9 @@ import { db } from '../db.ts';
 import type { Feature } from '../types.ts';
 import { humansIn, paginate } from '../util.ts';
 import { findOnSteam } from './gamefacts.ts';
-import { appInfo, DECK_PLAYABLE, DECK_VERIFIED, ensureAppInfo, familiesOf, familyOf, linkFor, ownedSteamGames, refreshStale, type OwnedGame } from './steam.ts';
+import { appInfo, DECK_PLAYABLE, DECK_VERIFIED, ensureAppInfo, familiesOf, familyOf, isShareable, linkFor, ownedSteamGames, refreshStale, type OwnedGame } from './steam.ts';
+import { commandMention } from '../commandIds.ts';
+import { logActivity } from '../activity.ts';
 
 export interface GameRow {
   id: number;
@@ -67,7 +69,7 @@ export function steamOwnersOf(game: GameRow): Set<string> {
 
 /** Those in a server who don't own a game but could play it on a family member's copy, leaving aside who else wants that copy */
 export function familyPlayersOf(game: GameRow, guild: Guild, owners: Set<string>): Set<string> {
-  if (game.steam_appid === null || !appInfo().get(game.steam_appid)?.shareable) return new Set();
+  if (game.steam_appid === null || !isShareable(game.steam_appid)) return new Set();
   const family = [...steamOwnersOf(game)].flatMap(familyOf);
   return new Set(family.filter((id) => guild.members.cache.has(id) && !owners.has(id)));
 }
@@ -400,7 +402,7 @@ export function wantedBy(game: GameRow, guild: Guild) {
 
 function libraryPage(guild: Guild, wanted: number) {
   const rows = allGames(guild.id);
-  if (!rows.length) return { content: 'Library is empty. Add something with `/game add`.', embeds: [], components: [] };
+  if (!rows.length) return { content: `Library is empty. Add something with ${commandMention(guild.id, 'game add')}.`, embeds: [], components: [] };
   const group = groupMembers(guild);
   const lines = rows.map((g) => {
     const owners = ownersOf(g, guild);
@@ -489,6 +491,7 @@ export const games: Feature = {
             i.options.getInteger('max_players'),
             i.user.id,
           );
+          logActivity(i.guildId, i.user.id, `Added **${name}** to the game library`);
           return i.reply(`➕ Added **${name}**${appid ? ' (sale alerts on, Steam ownership detected automatically)' : ''}.`);
         }
 
@@ -497,6 +500,7 @@ export const games: Feature = {
           const hidden = hiddenGames(i.guildId).find((g) => g.name === name);
           if (!hidden) return i.reply({ content: 'That game is not hidden.', flags: MessageFlags.Ephemeral });
           unhideGame(i.guildId, hidden.appid);
+          logActivity(i.guildId, i.user.id, `Let **${name}** be suggested again`);
           return i.reply(`👀 **${name}** can be suggested again.`);
         }
 
@@ -508,6 +512,7 @@ export const games: Feature = {
           if (!wanted) return i.editReply({ content: `Couldn’t find **${input}** on Steam. Paste its store link instead.`, allowedMentions: { parse: [] } });
           if (ownersOf(wanted, i.guild).has(i.user.id)) return i.editReply(`You already own **${wanted.name}**.`);
           const { changes } = db.prepare('DELETE FROM game_wants WHERE game_id = ? AND user_id = ?').run(wanted.id, i.user.id);
+          logActivity(i.guildId, i.user.id, `Marked ${i.member.displayName} as ${changes ? 'not wanting' : 'wanting'} **${wanted.name}**`);
           if (changes) return i.editReply(`➖ You’ll no longer hear about **${wanted.name}**.`);
           db.prepare('INSERT INTO game_wants (game_id, user_id) VALUES (?, ?)').run(wanted.id, i.user.id);
           return i.editReply(`🛒 You’ll be pinged when **${wanted.name}** goes on sale.`);
@@ -523,6 +528,7 @@ export const games: Feature = {
           }
           const owned = manualGameIds(user.id, i.guildId).has(game.id);
           setOwned(game, user.id, !owned);
+          logActivity(i.guildId, i.user.id, `Marked ${i.guild.members.cache.get(user.id)?.displayName ?? user.username} as ${owned ? 'not owning' : 'owning'} **${game.name}**`);
           return i.reply({
             content: `${owned ? '➖' : '✅'} ${user} ${owned ? 'no longer owns' : 'owns'} **${game.name}**.`,
             allowedMentions: { parse: [] },
@@ -531,6 +537,7 @@ export const games: Feature = {
 
         if (sub === 'remove' && game) {
           removeGame(game);
+          logActivity(i.guildId, i.user.id, `Removed **${game.name}** from the game library`);
           return i.reply(`🗑️ Removed **${game.name}**.`);
         }
 
@@ -564,13 +571,18 @@ export const games: Feature = {
       return i.reply({ content: 'Join a voice channel first.', flags: MessageFlags.Ephemeral });
     }
     const shown = i.message.embeds[0]?.title?.replace(/^🎲 /, '');
+    const title = shown ?? `App ${target}`;
     if (action === 'hide') {
-      hideGame(i.guildId, Number(target), shown ?? `App ${target}`, i.user.id);
+      hideGame(i.guildId, Number(target), title, i.user.id);
+      logActivity(i.guildId, i.user.id, `Hid **${title}** from suggestions`);
     }
     // Buttons posted before filters existed have nothing here
     const [type, deck] = action === 'hide' ? rest.slice(1) : rest;
     const filter = { type: (type || undefined) as PickFilter['type'], deck: Number(deck ?? 0) };
     await i.deferUpdate();
-    return i.editReply(await buildPick(i.guild, humansIn(i.member.voice.channel).map((m) => m.id), filter, shown));
+    await i.editReply(await buildPick(i.guild, humansIn(i.member.voice.channel).map((m) => m.id), filter, shown));
+    if (action === 'hide') {
+      await i.followUp({ content: `🙈 **${title}** won’t be suggested again. ${commandMention(i.guildId, 'game unhide')} brings it back.`, flags: MessageFlags.Ephemeral });
+    }
   },
 };

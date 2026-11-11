@@ -3,6 +3,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { webApi } from './api.ts';
 import { backups } from './backup.ts';
 import { client } from './client.ts';
+import { commandMention, rememberCommands } from './commandIds.ts';
 import { config } from './config.ts';
 import { db } from './db.ts';
 import { freeGames } from './features/freegames.ts';
@@ -40,14 +41,16 @@ async function join(guild: Guild, isNew: boolean) {
   }
   await guild.members.fetch();
   // Guild-scoped commands update instantly, unlike global ones
-  await guild.commands.set([...commands.values()].map((cmd) => cmd.data.toJSON()));
+  rememberCommands(guild.id, (await guild.commands.set([...commands.values()].map((cmd) => cmd.data.toJSON()))).values());
   console.log(`${commands.size} commands registered in ${guild.name} (${guild.id})`);
   if (idSetting(guild.id, 'announceChannel')) return;
   console.log(`${guild.name} has no announce channel yet; a server admin needs to run /setup announce-channel`);
   // Nothing gets announced until an admin picks a channel, so tell a newly joined server where it'll see it
   if (isNew) {
     await guild.systemChannel
-      ?.send('👋 Slopkeeper is here. A server admin needs to run `/setup announce-channel` to finish setting up, and then `/setup show` lists everything else. `/help` shows what the bot does.')
+      ?.send(
+        `👋 Slopkeeper is here. A server admin needs to run ${commandMention(guild.id, 'setup announce-channel')} to finish setting up, and ${commandMention(guild.id, 'setup hopon-role')} before anyone can use ${commandMention(guild.id, 'notify')}. ${commandMention(guild.id, 'setup show')} lists everything else, and ${commandMention(guild.id, 'help')} shows what the bot does.`,
+      )
       .catch(() => {});
   }
 }
@@ -88,7 +91,7 @@ client.on(Events.InteractionCreate, async (i) => {
   } catch (err) {
     console.error(`${describe(i)} failed:`, err);
     if (!i.isRepliable()) return;
-    const msg = { content: 'Something broke. Check the bot logs.', flags: MessageFlags.Ephemeral } as const;
+    const msg = { content: 'Something went wrong on the bot’s side. Try again, and if it keeps happening, tell whoever runs the bot.', flags: MessageFlags.Ephemeral } as const;
     await (i.replied || i.deferred ? i.followUp(msg) : i.reply(msg)).catch(() => {});
   }
 });

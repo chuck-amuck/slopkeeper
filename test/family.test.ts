@@ -307,6 +307,9 @@ async function runSteam(t: TestContext, sub: string, options: Record<string, { i
   let reply: { content: string; flags?: number } | undefined;
   await steam.commands![0].run({
     options: { getSubcommand: () => sub, getUser: (name: string) => options[name] ?? null },
+    inCachedGuild: () => false,
+    guildId: null,
+    client: { users: { cache: new Map() } },
     user: { id: 'me' },
     reply: async (r: typeof reply) => (reply = r),
   } as never);
@@ -333,7 +336,7 @@ test('/steam family refuses bots and yourself', async (t) => {
 async function pickCard(customId: string | null, type: string | null = null, deck: number | null = null) {
   const voice = { members: new Map(['a', 'c'].map((id) => [id, { id, user: { bot: false } }])) };
   let card: { embeds: { toJSON(): { title: string } }[]; components: { toJSON(): { components: { custom_id: string }[] } }[] } | undefined;
-  const shared = { inCachedGuild: () => true, guildId: 'g', guild, user: { id: 'a' }, member: { voice: { channel: voice } }, deferReply: async () => {}, deferUpdate: async () => {}, editReply: async (r: typeof card) => (card = r) };
+  const shared = { inCachedGuild: () => true, guildId: 'g', guild, user: { id: 'a' }, member: { voice: { channel: voice } }, deferReply: async () => {}, deferUpdate: async () => {}, editReply: async (r: typeof card) => (card = r), followUp: async () => {} };
   if (customId) await games.onButton!({ ...shared, customId, message: { embeds: [] } } as never);
   else await games.commands![1].run({ ...shared, options: { getString: () => type, getInteger: () => deck } } as never);
   return { title: card!.embeds[0].toJSON().title, ids: card!.components[0].toJSON().components.map((b) => b.custom_id) };

@@ -14,7 +14,8 @@ import { DEFAULT_ENV, DEFAULTS, setSetting, setting, storedSetting, type Setting
 import type { Feature } from '../types.ts';
 import { isTimeZone, pingWarning } from '../util.ts';
 import { serverVoice, VOICES } from './say.ts';
-import { affectsLoopRoom, applyLevels, applyMusicVolume, applySoundVolume, cantJoin, findSound, listSounds, loopSpeechProblem, refreshLoopRoom } from './soundboard.ts';
+import { afterSettingsChanged, cantJoin, findSound, listSounds, loopSpeechProblem } from './soundboard.ts';
+import { commandMention } from '../commandIds.ts';
 
 const ANNOUNCE_PERMISSIONS = [
   [PermissionFlagsBits.ViewChannel, 'View Channel'],
@@ -71,7 +72,7 @@ export const LABELS: Record<SettingKey, string> = {
   weeklyLeaderboard: 'Weekly leaderboard',
   hopOnMinPeople: 'Hop-on ping at',
   hopOnCooldownMin: 'Hop-on cooldown',
-  recapMinMinutes: 'Shortest recapped session',
+  recapMinMinutes: 'Shortest session counted',
   sessionGraceMin: 'Session ends after empty for',
   steamCountry: 'Steam price region',
   freeGames: 'Free game alerts',
@@ -330,19 +331,29 @@ export function source(guildId: string, key: SettingKey): string {
   return env && process.env[env] ? `host default (${env})` : 'default';
 }
 
-/** Applies the given settings and replies with what changed; options left out stay as they are */
-function apply(i: ChatInputCommandInteraction<'cached'>, changes: [SettingKey, string | number | boolean | null][]) {
+/**
+ * Applies the given settings and replies with what changed; options left out stay as they are. Given no options, it
+ * shows what those settings are now
+ */
+async function apply(i: ChatInputCommandInteraction<'cached'>, changes: [SettingKey, string | number | boolean | null][]) {
   const given = changes.filter(([, value]) => value !== null);
-  if (!given.length) return i.reply({ content: 'Nothing to change. Pick at least one option.', flags: MessageFlags.Ephemeral });
+  if (!given.length) {
+    return i.reply({
+      content: [...changes.map(([key]) => `**${LABELS[key]}:** ${show(key, setting(i.guildId, key))}`), '-# Give an option to change one.'].join('\n'),
+      flags: MessageFlags.Ephemeral,
+      allowedMentions: { parse: [] },
+    });
+  }
   for (const [key, value] of given) {
     setSetting(i.guildId, key, value);
     logActivity(i.guildId, i.user.id, `Set ${LABELS[key]} to ${show(key, value === '' ? null : setting(i.guildId, key))}`);
   }
-  return i.reply({
+  await i.reply({
     content: given.map(([key]) => `✅ ${LABELS[key]}: ${show(key, setting(i.guildId, key))}`).join('\n'),
     flags: MessageFlags.Ephemeral,
     allowedMentions: { parse: [] },
   });
+  await afterSettingsChanged(i.guild, given.map(([key]) => key));
 }
 
 export const setup: Feature = {
@@ -380,7 +391,7 @@ export const setup: Feature = {
           s
             .setName('sessions')
             .setDescription('Voice session recaps')
-            .addIntegerOption((o) => o.setName('recap_min_minutes').setDescription('Shortest session that gets a recap').setMinValue(LIMITS.recapMinMinutes[0]).setMaxValue(LIMITS.recapMinMinutes[1]))
+            .addIntegerOption((o) => o.setName('recap_min_minutes').setDescription('Shorter sessions get no recap and don’t count in stats').setMinValue(LIMITS.recapMinMinutes[0]).setMaxValue(LIMITS.recapMinMinutes[1]))
             .addIntegerOption((o) =>
               o.setName('grace_minutes').setDescription('Minutes a channel stays empty before its session ends').setMinValue(LIMITS.sessionGraceMin[0]).setMaxValue(LIMITS.sessionGraceMin[1]),
             ),
@@ -500,8 +511,9 @@ export const setup: Feature = {
         .addSubcommand((s) =>
           s
             .setName('loop-room')
-            .setDescription('Play a sound nonstop while anyone’s in a voice channel. Give nothing to turn it off')
+            .setDescription('Play a sound nonstop while anyone’s in a voice channel. Give nothing to see how it’s set')
             .addChannelOption((o) => o.setName('channel').setDescription('The voice channel').addChannelTypes(ChannelType.GuildVoice))
+            .addBooleanOption((o) => o.setName('off').setDescription('Turn the looping room off, keeping its other settings'))
             .addStringOption((o) => o.setName('sound').setDescription('The sound to loop').setAutocomplete(true))
             .addIntegerOption((o) => o.setName('volume').setDescription('How loud the sound is, as a percentage (50 by default)').setMinValue(LIMITS.loopVolume[0]).setMaxValue(LIMITS.loopVolume[1]))
             .addNumberOption((o) =>
@@ -563,8 +575,9 @@ export const setup: Feature = {
         .addSubcommand((s) =>
           s
             .setName('speech-channel')
-            .setDescription('Have the bot read out what people type in a channel')
-            .addChannelOption((o) => o.setName('channel').setDescription('Leave empty to stop').addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement))
+            .setDescription('Have the bot read out what people type in a channel. Give nothing to see how it’s set')
+            .addChannelOption((o) => o.setName('channel').setDescription('The channel to read').addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement))
+            .addBooleanOption((o) => o.setName('off').setDescription('Stop reading the channel out'))
             .addStringOption((o) =>
               o
                 .setName('who')
@@ -637,7 +650,7 @@ export const setup: Feature = {
           setSetting(i.guildId, 'hopOnRole', role.id);
           logActivity(i.guildId, i.user.id, `Set ${LABELS.hopOnRole} to ${role}`);
           return i.reply({
-            content: `✅ Hop-on pings now ping ${role}; people opt in with \`/notify\`.${roleWarning(i.guild, role as Role)}`,
+            content: `✅ Hop-on pings now ping ${role}; people opt in with ${commandMention(i.guildId, 'notify')}.${roleWarning(i.guild, role as Role)}`,
             flags: MessageFlags.Ephemeral,
             allowedMentions: { parse: [] },
           });
@@ -710,17 +723,13 @@ export const setup: Feature = {
         }
         if (sub === 'steam-status') return apply(i, [['steamStatus', i.options.getBoolean('enabled', true)]]);
         if (sub === 'sounds') {
-          const evenVolume = i.options.getBoolean('even_volume');
-          await apply(i, [
-            ['evenVolume', evenVolume],
+          return apply(i, [
+            ['evenVolume', i.options.getBoolean('even_volume')],
             ['soundVolume', i.options.getInteger('volume')],
             ['joinSounds', i.options.getBoolean('join_sounds')],
             ['joinSoundCooldownMin', i.options.getInteger('join_cooldown_minutes')],
             ['joinSoundDelayMs', i.options.getInteger('join_delay_ms')],
           ]);
-          if (evenVolume !== null) await applyLevels(i.guild);
-          applySoundVolume(i.guildId);
-          return;
         }
 
         if (sub === 'loop-room') {
@@ -749,10 +758,8 @@ export const setup: Feature = {
             if ('error' in result) return i.reply({ content: result.error, flags: MessageFlags.Ephemeral });
             checked[key] = result.value as string | number;
           }
-          // Changing only how it sounds leaves the room as it is
-          const tweaked = sound || volume !== null || Object.keys(checked).length || noSpeech || intro || introDelay !== null || noIntro || speechVolume !== null || soundDelay !== null || speechDelay !== null;
           await apply(i, [
-            ['loopRoom', channel?.id ?? (tweaked ? null : '')],
+            ['loopRoom', i.options.getBoolean('off') ? '' : (channel?.id ?? null)],
             ['loopSound', sound],
             ['loopVolume', volume],
             ['loopEvery', checked.loopEvery ?? null],
@@ -765,7 +772,6 @@ export const setup: Feature = {
             ['loopSoundDelayMs', soundDelay],
             ['loopTextDelayMs', speechDelay],
           ]);
-          await refreshLoopRoom(i.guild);
           const speechProblem = checked.loopText || checked.loopVoice ? await loopSpeechProblem(i.guild) : null;
           if (speechProblem) await i.followUp({ content: `⚠️ ${speechProblem}`, flags: MessageFlags.Ephemeral });
           return;
@@ -776,8 +782,6 @@ export const setup: Feature = {
             ['musicVolume', i.options.getInteger('volume')],
             ['musicDjRole', i.options.getRole('dj_role')?.id ?? (i.options.getBoolean('everyone') ? '' : null)],
           ]);
-          applyMusicVolume(i.guildId);
-          return;
         }
         if (sub === 'sound-managers') return apply(i, [['soundManagerRole', i.options.getRole('role')?.id ?? '']]);
         if (sub === 'speech-role') return apply(i, [['ttsRole', i.options.getRole('role')?.id ?? '']]);
@@ -785,34 +789,27 @@ export const setup: Feature = {
           const channel = i.options.getChannel('channel', false, [ChannelType.GuildText, ChannelType.GuildAnnouncement]);
           const problem = channel && cantSee(i.guild, channel);
           if (problem) return i.reply({ content: problem.error, flags: MessageFlags.Ephemeral });
-          const who = i.options.getString('who');
-          // Choosing who alone leaves the channel as it is
           return apply(i, [
-            ['ttsChannel', channel?.id ?? (who ? null : '')],
-            ['ttsChannelWho', who],
+            ['ttsChannel', i.options.getBoolean('off') ? '' : (channel?.id ?? null)],
+            ['ttsChannelWho', i.options.getString('who')],
           ]);
         }
         if (sub === 'speech') {
           const greeting = i.options.getString('greeting');
           const problem = greeting && greetingProblem(greeting);
           if (problem) return i.reply({ content: problem, flags: MessageFlags.Ephemeral });
-          const voice = i.options.getString('voice');
-          const speed = i.options.getInteger('speed');
-          await apply(i, [
+          return apply(i, [
             ['ttsGreet', i.options.getBoolean('greet')],
             ['ttsGreeting', greeting && greeting.trim()],
             ['ttsNightReminders', i.options.getBoolean('night_reminders')],
             ['ttsHopOn', i.options.getBoolean('hop_on')],
             ['tts', i.options.getBoolean('enabled')],
-            ['ttsVoice', voice],
-            ['ttsSpeed', speed],
+            ['ttsVoice', i.options.getString('voice')],
+            ['ttsSpeed', i.options.getInteger('speed')],
             ['ttsVolume', i.options.getInteger('volume')],
             ['ttsMaxChars', i.options.getInteger('max_characters')],
             ['ttsCooldownSec', i.options.getInteger('wait_seconds')],
           ]);
-          // The looping room's speech may be in this voice, or at this speed
-          if (voice !== null || speed !== null) await refreshLoopRoom(i.guild);
-          return;
         }
 
         if (sub === 'reset') {
@@ -820,15 +817,12 @@ export const setup: Feature = {
           if (!Object.hasOwn(LABELS, key)) return i.reply({ content: 'Pick a setting from the list.', flags: MessageFlags.Ephemeral });
           setSetting(i.guildId, key, undefined);
           logActivity(i.guildId, i.user.id, `Put ${LABELS[key]} back to the default`);
-          if (key === 'evenVolume') await applyLevels(i.guild);
-          if (key === 'soundVolume') applySoundVolume(i.guildId);
-          if (key === 'musicVolume') applyMusicVolume(i.guildId);
-          if (affectsLoopRoom(key)) await refreshLoopRoom(i.guild);
-          return i.reply({
+          await i.reply({
             content: `↩️ ${LABELS[key]} is back to the default: ${show(key, setting(i.guildId, key))}.`,
             flags: MessageFlags.Ephemeral,
             allowedMentions: { parse: [] },
           });
+          return afterSettingsChanged(i.guild, [key]);
         }
 
         const embed = new EmbedBuilder()
