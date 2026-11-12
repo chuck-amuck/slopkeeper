@@ -711,6 +711,26 @@ test('/sales mine shows only what you want or wishlisted', async () => {
   assert.match((await mine('b')).content, /Nothing you want/);
 });
 
+test('a sale post’s buttons show each person everything on sale, or just theirs, privately', async () => {
+  const s = server(['a', 'b']);
+  linkSteam('a');
+  world.wishlists.set(STEAM_ID('a'), [62]);
+  world.prices.set(62, { discount: 50 });
+  await checkSales(s.client);
+  const ids = (s.posts.at(-1) as unknown as { components: { toJSON(): { components: { custom_id: string }[] } }[] }).components[0].toJSON().components.map((b) => b.custom_id);
+  assert.deepEqual(ids, ['sales:show:all', 'sales:show:mine']);
+  const press = async (customId: string, user: string) => {
+    let reply: { content: string; embeds: { toJSON(): { title: string } }[] } | undefined;
+    let flags: unknown;
+    await sales.onButton!({ inCachedGuild: () => true, guild: s.guild, user: { id: user }, customId, deferReply: async (o: { flags: unknown }) => void (flags = o.flags), editReply: async (r: typeof reply) => (reply = r) } as never);
+    assert.ok(flags, 'only for whoever pressed it');
+    return reply!;
+  };
+  assert.match((await press('sales:show:mine', 'a')).embeds[0].toJSON().title, /that you want/);
+  assert.match((await press('sales:show:mine', 'b')).content, /Nothing you want/);
+  assert.match((await press('sales:show:all', 'b')).embeds[0].toJSON().title, /^💸 \d+ games? on sale$/);
+});
+
 test('a wishlisted game with no name yet shows its Steam name, or its number if Steam has none', async () => {
   const s = server(['a']);
   linkSteam('a');

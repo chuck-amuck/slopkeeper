@@ -278,6 +278,13 @@ async function checkGuild(client: Client<true>, guild: Guild, prices: Prices) {
   await out.send({
     content: pings.map((id) => `<@${id}>`).join(' ') || undefined,
     embeds: [new EmbedBuilder().setTitle(`💸 ${plural(due.length, 'game')} on sale`).setDescription(lines.join('\n')).setColor(0x57f287)],
+    // Each person sees the full list, or only theirs, without posting it again for everyone
+    components: [
+      new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder().setCustomId('sales:show:all').setLabel('Everything on sale').setEmoji('💸').setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId('sales:show:mine').setLabel('Just mine').setEmoji('🛒').setStyle(ButtonStyle.Secondary),
+      ),
+    ],
     allowedMentions: { users: pings },
   });
   // Afterwards, so a post that fails is tried again on the next check
@@ -327,6 +334,10 @@ export const sales: Feature = {
   async onButton(i) {
     if (!i.inCachedGuild()) return;
     const [, action, page, mine] = i.customId.split(':');
+    if (action === 'show') {
+      await i.deferReply({ flags: MessageFlags.Ephemeral });
+      return i.editReply({ ...(await salesPage(i.guild, 0, page === 'mine' ? i.user.id : null)), allowedMentions: { parse: [] } });
+    }
     if (action !== 'page') return;
     // Working out the list again can take a moment
     await i.deferUpdate();

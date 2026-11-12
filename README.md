@@ -228,6 +228,8 @@ It posts once per check in the announce channel, or the channel from `/setup sal
 > **Deep Rock Galactic**: 60% off, $11.99, was $29.99. Lowest price yet. Played 14h · Needs it: @Sam, @Alex
 > **Hades**: 50% off, $12.49, was $24.99. Lowest ever $6.24. Wanted by @Jo
 
+Under the post, **Everything on sale** and **Just mine** show whoever presses them the full list, or only what they want or wishlisted, without posting it for everyone.
+
 A game is posted at 25% off or more by default, then again only if the same sale gets at least 10 points deeper. The lowest price comes from [CheapShark](https://www.cheapshark.com), covers all stores, is in US dollars, and so only appears for servers using the `us` region.
 
 Only the people a sale matters to are pinged:
