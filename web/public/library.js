@@ -279,7 +279,7 @@ export function renderLibrary(main) {
     });
     boardPreviews.set(key, { name: label, button: preview });
     paintPreview(label, preview, key);
-    const play = el('button', { className: 'primary icon', onclick: () => attempt(() => voice.playDiscord(sound.id)) }, '▶');
+    const play = el('button', { className: 'icon', onclick: () => attempt(() => voice.playDiscord(sound.id)) }, '▶');
     boardPlayers.set(label, play);
     paintPlay(label, play);
     const whyNot = sound.removable ? undefined : 'The bot needs Manage Expressions to change sounds it didn’t add';
@@ -472,7 +472,7 @@ export function renderLibrary(main) {
     previews.set(sound.name, preview);
     paintPreview(sound.name, preview);
     // Not disabled while a request is out, so spamming a sound works as it does on a panel
-    const play = el('button', { className: 'primary icon', onclick: () => attempt(() => voice.play(sound.name)) }, '▶');
+    const play = el('button', { className: 'icon', onclick: () => attempt(() => voice.play(sound.name)) }, '▶');
     players.set(sound.name, play);
     paintPlay(sound.name, play);
 

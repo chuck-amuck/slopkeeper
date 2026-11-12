@@ -156,17 +156,10 @@ export function renderMusic(main) {
     'section',
     { className: 'card music now' },
     el('div', { className: 'now-main' }, nowCover, el('div', { className: 'now-text' }, nowTitle, nowArtist, nowNote), progress),
-    el(
-      'div',
-      { className: 'toolbar now-controls' },
-      el('span', { className: 'voice-label' }, 'Play in'),
-      picker,
-      playButton,
-      skipButton,
-      stopButton,
-      volumeLabel,
-    ),
+    el('div', { className: 'toolbar now-controls' }, playButton, skipButton, stopButton),
   );
+  // Where and how loud, at the top as on the Soundboard
+  const voiceRow = el('div', { className: 'toolbar voice' }, el('span', { className: 'voice-label' }, 'Play in'), picker, volumeLabel);
 
   async function playOrPause() {
     if (data?.phase === 'playing') return request(api('/music/pause'), { method: 'POST' });
@@ -616,7 +609,7 @@ export function renderMusic(main) {
 
   const refresh = async () => show(await request(api('/music')));
 
-  main.append(problem, now, searchCard, fileCard, queueCard);
+  main.append(problem, voiceRow, now, searchCard, fileCard, queueCard);
   list.append(notice('loading', 'Loading the queue…', { compact: true, tag: 'li' }));
   void attempt(async () => {
     await refresh();

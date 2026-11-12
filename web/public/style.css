@@ -2,10 +2,14 @@
   --bg: #f4f5f7;
   --surface: #ffffff;
   --raised: #eceef1;
+  /* Dividers and card edges, which only group things */
   --line: #dcdfe4;
+  /* The edge of something to type in or press, at least 3:1 against the page and cards */
+  --control-line: #868c98;
   --text: #1e2024;
   --muted: #5e6470;
-  --accent: #5865f2;
+  /* Text, edges and marks: 4.5:1 or more on every background */
+  --accent: #4f5ce6;
   /* Behind white text, where the dark theme's lighter accent would be too faint */
   --accent-fill: #5865f2;
   --accent-text: #ffffff;
@@ -16,7 +20,23 @@
   --bad-bg: #fce8e8;
   --on-bad: #ffffff;
   --wave: #b9bec7;
+  /* Spacing, type and shape, so repeated values change in one place */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --text-xs: 12px;
+  --text-sm: 13px;
+  --text-md: 14px;
+  --text-base: 15px;
+  --text-lg: 18px;
+  --text-xl: 20px;
+  --radius-sm: 6px;
+  --radius-md: 8px;
   --radius: 10px;
+  --radius-pill: 999px;
+  --control-h: 38px;
   color-scheme: light dark;
 }
 
@@ -26,9 +46,10 @@
     --surface: #202227;
     --raised: #2b2e34;
     --line: #363a42;
+    --control-line: #727885;
     --text: #eceef1;
     --muted: #a0a6b2;
-    --accent: #6d78f5;
+    --accent: #858ef7;
     --accent-fill: #5561e8;
     --good: #43c384;
     --warn: #f0b95c;
@@ -53,6 +74,13 @@ html {
   display: none !important;
 }
 
+/* The browser's blue and purple ignore the theme */
+a,
+a:visited {
+  color: var(--accent);
+  text-underline-offset: 2px;
+}
+
 body {
   margin: 0;
   background: var(--bg);
@@ -71,10 +99,10 @@ textarea {
 input,
 select,
 textarea {
-  min-height: 38px;
+  min-height: var(--control-h);
   padding: 6px 10px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
+  border: 1px solid var(--control-line);
+  border-radius: var(--radius-md);
   background: var(--surface);
 }
 
@@ -88,10 +116,10 @@ button:focus-visible,
 }
 
 button {
-  min-height: 38px;
+  min-height: var(--control-h);
   padding: 6px 14px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
+  border: 1px solid var(--control-line);
+  border-radius: var(--radius-md);
   background: var(--surface);
   cursor: pointer;
 }
@@ -141,6 +169,16 @@ button.confirm.danger > span:last-child {
   visibility: visible;
 }
 
+/* A text button fits its own label, and widens to the question when pressed */
+button.confirm:not(.icon) > span:last-child,
+button.confirm.danger:not(.icon) > span:first-child {
+  display: none;
+}
+
+button.confirm.danger:not(.icon) > span:last-child {
+  display: inline;
+}
+
 /* An icon keeps its size, and its question opens to the left over the buttons beside it */
 button.confirm.icon {
   position: relative;
@@ -170,7 +208,7 @@ button.confirm.icon > span:last-child {
   z-index: 10;
   display: grid;
   justify-items: end;
-  gap: 8px;
+  gap: var(--space-2);
   max-width: calc(100vw - 32px);
 }
 
@@ -192,13 +230,14 @@ button.confirm.icon > span:last-child {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  max-width: min(320px, 100%);
+  /* From the screen's width: a percentage of the list, which sizes itself to its chips, never shrinks them */
+  max-width: min(320px, calc(100vw - 32px));
   min-height: 32px;
   padding: 4px 12px;
   border: 1px solid var(--line);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--surface);
-  font-size: 14px;
+  font-size: var(--text-md);
   box-shadow: 0 2px 8px rgb(0 0 0 / 15%);
 }
 
@@ -221,7 +260,7 @@ button.confirm.icon > span:last-child {
 .now-x {
   flex: none;
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--text-xs);
 }
 
 .now-x {
@@ -243,7 +282,7 @@ button.stop-all {
   min-height: 48px;
   padding-inline: 20px;
   border-color: var(--bad);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--bad);
   color: var(--on-bad);
   font-weight: 600;
@@ -294,7 +333,7 @@ button.link:hover:not(:disabled) {
 .login form {
   width: min(340px, 100%);
   display: grid;
-  gap: 12px;
+  gap: var(--space-3);
   padding: 24px;
   background: var(--surface);
   border: 1px solid var(--line);
@@ -306,7 +345,7 @@ button.link:hover:not(:disabled) {
   display: flex;
   align-items: center;
   gap: 10px;
-  font-size: 20px;
+  font-size: var(--text-xl);
 }
 
 .login img {
@@ -323,7 +362,7 @@ header {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px 16px;
+  gap: var(--space-2) var(--space-4);
   padding: 10px 16px;
   background: var(--surface);
   border-bottom: 1px solid var(--line);
@@ -332,7 +371,7 @@ header {
 .brand {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-2);
   font-weight: 600;
 }
 
@@ -344,7 +383,7 @@ header {
 .guild {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-2);
   min-width: 0;
 }
 
@@ -361,7 +400,7 @@ header {
 nav {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px;
+  gap: var(--space-1);
 }
 
 nav button {
@@ -387,7 +426,7 @@ main {
   display: grid;
   /* A long channel name in a picker shrinks to fit rather than widening the page */
   grid-template-columns: minmax(0, 1fr);
-  gap: 16px;
+  gap: var(--space-4);
 }
 
 /* Keeps Log out on the top row on a small window */
@@ -412,7 +451,7 @@ main {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px 12px;
+  gap: var(--space-2) var(--space-3);
 }
 
 .toolbar input[type='search'] {
@@ -432,7 +471,7 @@ main {
 
 .say-box {
   display: grid;
-  gap: 8px;
+  gap: var(--space-2);
   min-width: 0;
 }
 
@@ -443,7 +482,7 @@ main {
 .phrases {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: var(--space-2);
   min-width: 0;
 }
 
@@ -477,7 +516,7 @@ main {
 .voice-volume {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-2);
   min-width: 0;
   max-width: 100%;
 }
@@ -495,15 +534,15 @@ main {
 
 .voice-label {
   color: var(--muted);
-  font-size: 13px;
+  font-size: var(--text-sm);
 }
 
 .slots {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-2);
   color: var(--muted);
-  font-size: 13px;
+  font-size: var(--text-sm);
   white-space: nowrap;
 }
 
@@ -537,7 +576,7 @@ main {
 
 .queue {
   display: grid;
-  gap: 8px;
+  gap: var(--space-2);
   padding: 12px;
   background: var(--surface);
   border: 1px solid var(--line);
@@ -548,7 +587,7 @@ main {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 4px 8px;
+  gap: var(--space-1) var(--space-2);
 }
 
 .queue-row input {
@@ -560,7 +599,7 @@ main {
   flex: 1 1 160px;
   min-width: 0;
   color: var(--muted);
-  font-size: 13px;
+  font-size: var(--text-sm);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -568,7 +607,7 @@ main {
 
 .queue-row .note {
   flex-basis: 100%;
-  font-size: 13px;
+  font-size: var(--text-sm);
 }
 
 /* A taken name: what it is, then Replace or Keep both */
@@ -576,7 +615,7 @@ main {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 4px 8px;
+  gap: var(--space-1) var(--space-2);
 }
 
 .queue-row .note.choice span {
@@ -591,7 +630,7 @@ main {
 .queue-actions {
   display: flex;
   justify-content: flex-end;
-  gap: 8px;
+  gap: var(--space-2);
 }
 
 .list {
@@ -605,7 +644,7 @@ main {
 .discord-row {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-2);
   padding: 8px 12px;
   border-top: 1px solid var(--line);
   min-width: 0;
@@ -617,7 +656,7 @@ main {
 }
 
 .sound .emoji {
-  font-size: 18px;
+  font-size: var(--text-lg);
 }
 
 .sound .emoji img {
@@ -628,7 +667,7 @@ main {
 
 .sound .emoji .none {
   color: var(--muted);
-  font-size: 15px;
+  font-size: var(--text-base);
 }
 
 .sound .name,
@@ -660,14 +699,14 @@ main {
 .sound .meta,
 .discord-row .meta {
   color: var(--muted);
-  font-size: 13px;
+  font-size: var(--text-sm);
 }
 
 .toggle {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  font-size: 13px;
+  gap: var(--space-2);
+  font-size: var(--text-sm);
   color: var(--muted);
   white-space: nowrap;
   cursor: pointer;
@@ -683,7 +722,7 @@ main {
   padding: 0;
   border: 0;
   border-radius: 10px;
-  background: var(--line);
+  background: var(--control-line);
   cursor: pointer;
   flex: none;
 }
@@ -731,7 +770,7 @@ main {
 /* Inside a card or list, under its heading */
 .notice.compact {
   padding: 10px 16px 14px;
-  font-size: 13px;
+  font-size: var(--text-sm);
   text-align: left;
 }
 
@@ -752,7 +791,7 @@ main {
   left: 8px;
   z-index: 30;
   padding: 8px 14px;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   background: var(--surface);
   color: var(--text);
   box-shadow: 0 4px 16px rgb(0 0 0 / 25%);
@@ -784,7 +823,7 @@ dialog h2 {
 dialog p {
   margin: 0 0 12px;
   color: var(--muted);
-  font-size: 14px;
+  font-size: var(--text-md);
 }
 
 dialog input {
@@ -794,13 +833,13 @@ dialog input {
 dialog .actions {
   display: flex;
   justify-content: flex-end;
-  gap: 8px;
+  gap: var(--space-2);
   margin-top: 16px;
 }
 
 .emoji-tabs {
   display: flex;
-  gap: 4px;
+  gap: var(--space-1);
   margin-top: 12px;
   overflow-x: auto;
 }
@@ -808,7 +847,7 @@ dialog .actions {
 .emoji-tabs button {
   flex: none;
   padding: 4px 8px;
-  font-size: 13px;
+  font-size: var(--text-sm);
 }
 
 .emoji-picker {
@@ -820,7 +859,7 @@ dialog .actions {
 .emoji-picker h3 {
   margin: 8px 0 4px;
   color: var(--muted);
-  font-size: 13px;
+  font-size: var(--text-sm);
   font-weight: 500;
 }
 
@@ -831,7 +870,7 @@ dialog .actions {
 .emoji-grid {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px;
+  gap: var(--space-1);
 }
 
 .emoji-grid button {
@@ -858,15 +897,17 @@ dialog .actions {
 
 .card h2 {
   margin: 0;
+  /* As tall as a header with buttons in it, so every card's header matches */
+  min-height: 47px;
   padding: 12px 16px;
-  font-size: 15px;
+  font-size: var(--text-base);
   border-bottom: 1px solid var(--line);
 }
 
 .field {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 240px);
-  gap: 4px 16px;
+  gap: var(--space-1) var(--space-4);
   align-items: center;
   padding: 12px 16px;
   border-top: 1px solid var(--line);
@@ -883,13 +924,13 @@ dialog .actions {
 .field .hint {
   margin: 2px 0 0;
   color: var(--muted);
-  font-size: 13px;
+  font-size: var(--text-sm);
 }
 
 .field .control {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-2);
   min-width: 0;
 }
 
@@ -901,8 +942,11 @@ dialog .actions {
 }
 
 .field .unit {
+  /* One width for every unit, so the boxes beside them line up down the page */
+  flex: none;
+  width: 6.5em;
   color: var(--muted);
-  font-size: 13px;
+  font-size: var(--text-sm);
   white-space: nowrap;
 }
 
@@ -912,15 +956,15 @@ dialog .actions {
   flex-wrap: wrap;
   gap: 2px 8px;
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--text-xs);
 }
 
 .field .message {
   grid-column: 1 / -1;
   margin-top: 6px;
   padding: 6px 10px;
-  border-radius: 6px;
-  font-size: 13px;
+  border-radius: var(--radius-sm);
+  font-size: var(--text-sm);
   background: var(--warn-bg);
   color: var(--warn);
 }
@@ -935,7 +979,7 @@ dialog .actions {
 .board h2 {
   margin: 8px 0;
   color: var(--muted);
-  font-size: 13px;
+  font-size: var(--text-sm);
   font-weight: 600;
 }
 
@@ -946,7 +990,7 @@ dialog .actions {
 .tiles {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(128px, 1fr));
-  gap: 8px;
+  gap: var(--space-2);
 }
 
 .tile-box {
@@ -955,6 +999,8 @@ dialog .actions {
 
 .tile {
   width: 100%;
+  /* Its name says it's a button, and a grid of dark edges is heavy */
+  border-color: var(--line);
   height: 104px;
   padding: 10px 8px;
   display: flex;
@@ -1055,7 +1101,7 @@ dialog .actions {
   width: 100%;
   height: 96px;
   margin-bottom: 12px;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: var(--raised);
   cursor: ew-resize;
   touch-action: none;
@@ -1073,9 +1119,9 @@ dialog:has(.wave) {
 .start {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-2);
   color: var(--muted);
-  font-size: 14px;
+  font-size: var(--text-md);
 }
 
 dialog .start input {
@@ -1092,12 +1138,14 @@ dialog .actions button:first-child:not(.primary):has(+ button) {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  padding: 6px 12px 6px 16px;
+  gap: var(--space-3);
+  min-height: 47px;
+  padding: 4px 12px 4px 16px;
   border-bottom: 1px solid var(--line);
 }
 
 .card-head h2 {
+  min-height: 0;
   padding: 0;
   border-bottom: 0;
 }
@@ -1114,7 +1162,7 @@ dialog .actions button:first-child:not(.primary):has(+ button) {
   align-items: center;
   gap: 2px 10px;
   padding: 8px 4px;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
 }
 
 .merge-row:hover {
@@ -1143,7 +1191,7 @@ dialog .actions button:first-child:not(.primary):has(+ button) {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: var(--space-3);
   padding: 4px 0;
   overflow-wrap: anywhere;
 }
@@ -1154,13 +1202,13 @@ dialog .actions button:first-child:not(.primary):has(+ button) {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 12px 16px;
+  gap: var(--space-3) var(--space-4);
 }
 
 .trim-times output {
   margin-left: auto;
   color: var(--muted);
-  font-size: 14px;
+  font-size: var(--text-md);
   font-variant-numeric: tabular-nums;
 }
 
@@ -1168,13 +1216,13 @@ dialog .actions button:first-child:not(.primary):has(+ button) {
 
 .stack {
   display: grid;
-  gap: 16px;
+  gap: var(--space-4);
   min-width: 0;
 }
 
 .night-body {
   display: grid;
-  gap: 4px;
+  gap: var(--space-1);
   padding: 12px 16px;
 }
 
@@ -1188,11 +1236,11 @@ dialog .actions button:first-child:not(.primary):has(+ button) {
 
 .hint {
   color: var(--muted);
-  font-size: 13px;
+  font-size: var(--text-sm);
 }
 
 .rsvp {
-  font-size: 14px;
+  font-size: var(--text-md);
 }
 
 .rsvp-label {
@@ -1200,7 +1248,7 @@ dialog .actions button:first-child:not(.primary):has(+ button) {
   min-width: 80px;
   margin-right: 6px;
   color: var(--muted);
-  font-size: 13px;
+  font-size: var(--text-sm);
 }
 
 .night-actions {
@@ -1213,7 +1261,7 @@ dialog .actions button:first-child:not(.primary):has(+ button) {
   margin: 0;
   padding: 10px 16px 0;
   color: var(--muted);
-  font-size: 13px;
+  font-size: var(--text-sm);
 }
 
 .card-note + .field {
@@ -1224,7 +1272,7 @@ dialog .actions button:first-child:not(.primary):has(+ button) {
 .card-note.warning {
   margin: 10px 16px 0;
   padding: 6px 10px;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: var(--warn-bg);
   color: var(--warn);
 }
@@ -1255,7 +1303,7 @@ dialog textarea {
 .form-row {
   display: grid;
   gap: 3px;
-  font-size: 14px;
+  font-size: var(--text-md);
 }
 
 .form-row > span:first-child {
@@ -1264,7 +1312,7 @@ dialog textarea {
 
 .form-note {
   color: var(--muted);
-  font-size: 13px;
+  font-size: var(--text-sm);
 }
 
 .form-note.bad-text {
@@ -1282,14 +1330,14 @@ textarea {
 .volume {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: var(--space-3);
 }
 
 /* A volume slider and the box for typing its percentage */
 .volume-control {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-2);
   min-width: 0;
 }
 
@@ -1304,7 +1352,7 @@ textarea {
 .volume-box {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--space-1);
   color: var(--muted);
 }
 
@@ -1326,9 +1374,9 @@ textarea {
 .check {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-2);
   margin-right: auto;
-  font-size: 14px;
+  font-size: var(--text-md);
 }
 
 .check input {
@@ -1354,7 +1402,7 @@ textarea {
 .now-main {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
-  gap: 12px 16px;
+  gap: var(--space-3) var(--space-4);
   align-items: center;
   padding: 16px;
 }
@@ -1365,7 +1413,7 @@ textarea {
 }
 
 .now-title {
-  font-size: 18px;
+  font-size: var(--text-lg);
   font-weight: 600;
   overflow-wrap: anywhere;
 }
@@ -1378,7 +1426,7 @@ textarea {
 .now-note {
   margin-top: 6px;
   color: var(--warn);
-  font-size: 13px;
+  font-size: var(--text-sm);
 }
 
 .now-progress {
@@ -1425,18 +1473,13 @@ textarea {
 
 .now-time {
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--text-xs);
   font-variant-numeric: tabular-nums;
 }
 
 .now-controls {
   padding: 12px 16px;
   border-top: 1px solid var(--line);
-}
-
-.now-controls select {
-  flex: 1 1 200px;
-  min-width: 0;
 }
 
 .music-search {
@@ -1455,7 +1498,7 @@ textarea {
 
 .file-now {
   display: grid;
-  gap: 4px;
+  gap: var(--space-1);
 }
 
 .dropzone.busy {
@@ -1480,7 +1523,7 @@ textarea {
 .cover {
   display: block;
   flex: none;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   object-fit: cover;
   background: var(--raised);
 }
@@ -1542,7 +1585,7 @@ textarea {
   flex: none;
   min-width: 20px;
   color: var(--muted);
-  font-size: 13px;
+  font-size: var(--text-sm);
   text-align: right;
   font-variant-numeric: tabular-nums;
 }
@@ -1561,13 +1604,13 @@ textarea {
 
 .song-sub {
   color: var(--muted);
-  font-size: 13px;
+  font-size: var(--text-sm);
 }
 
 .song-time {
   flex: none;
   color: var(--muted);
-  font-size: 13px;
+  font-size: var(--text-sm);
   font-variant-numeric: tabular-nums;
 }
 
@@ -1587,16 +1630,16 @@ textarea {
 .page-note {
   margin: 0;
   color: var(--muted);
-  font-size: 13px;
+  font-size: var(--text-sm);
 }
 
 .event {
   display: grid;
   grid-template-columns: 130px minmax(0, 150px) minmax(0, 1fr);
-  gap: 12px;
+  gap: var(--space-3);
   padding: 8px 12px;
   border-top: 1px solid var(--line);
-  font-size: 14px;
+  font-size: var(--text-md);
 }
 
 .event:first-child {
@@ -1605,7 +1648,7 @@ textarea {
 
 .event time {
   color: var(--muted);
-  font-size: 13px;
+  font-size: var(--text-sm);
   font-variant-numeric: tabular-nums;
 }
 
@@ -1621,7 +1664,7 @@ textarea {
 .chips {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: var(--space-2);
 }
 
 .chip {
@@ -1634,7 +1677,7 @@ textarea {
 .stats {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-  gap: 8px;
+  gap: var(--space-2);
 }
 
 .stat {
@@ -1652,7 +1695,7 @@ textarea {
 
 .stat-label {
   color: var(--muted);
-  font-size: 13px;
+  font-size: var(--text-sm);
 }
 
 .card-body {
@@ -1663,7 +1706,7 @@ textarea {
 .axis-top,
 .axis-x {
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--text-xs);
 }
 
 .plot {
@@ -1703,10 +1746,10 @@ textarea {
   top: 4px;
   z-index: 2;
   padding: 4px 8px;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: var(--text);
   color: var(--bg);
-  font-size: 12px;
+  font-size: var(--text-xs);
   white-space: nowrap;
   pointer-events: none;
 }
@@ -1720,11 +1763,34 @@ textarea {
 .chart details {
   margin-top: 8px;
   color: var(--muted);
-  font-size: 13px;
+  font-size: var(--text-sm);
 }
 
 .chart summary {
+  display: inline-flex;
+  align-items: center;
+  list-style: none;
   cursor: pointer;
+}
+
+.chart summary::-webkit-details-marker {
+  display: none;
+}
+
+/* The same chevron as the other sections that open */
+.chart summary::before {
+  content: '';
+  width: 7px;
+  height: 7px;
+  margin-right: 10px;
+  border-right: 2px solid var(--muted);
+  border-bottom: 2px solid var(--muted);
+  transform: translateY(-2px) rotate(-45deg);
+  transition: transform 0.15s;
+}
+
+.chart details[open] summary::before {
+  transform: translateY(-3px) rotate(45deg);
 }
 
 .chart table {
@@ -1749,9 +1815,9 @@ textarea {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr) 64px minmax(64px, auto);
   align-items: center;
-  gap: 12px;
+  gap: var(--space-3);
   border: 0;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: none;
   text-align: left;
 }
@@ -1776,7 +1842,7 @@ textarea {
 
 .rank-note {
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--text-xs);
   white-space: nowrap;
 }
 
@@ -1791,17 +1857,17 @@ textarea {
   z-index: 20;
   display: grid;
   justify-items: end;
-  gap: 8px;
+  gap: var(--space-2);
   pointer-events: none;
 }
 
 .toast {
   max-width: min(440px, 100%);
   padding: 10px 14px;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   background: var(--text);
   color: var(--bg);
-  font-size: 14px;
+  font-size: var(--text-md);
   box-shadow: 0 4px 16px rgb(0 0 0 / 25%);
   white-space: pre-line;
 }
@@ -1814,7 +1880,7 @@ textarea {
 .toast.with-action {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: var(--space-3);
   pointer-events: auto;
 }
 
@@ -1959,7 +2025,7 @@ textarea {
   }
 
   header {
-    gap: 8px;
+    gap: var(--space-2);
     padding: 8px 16px;
   }
 
@@ -2051,7 +2117,7 @@ textarea {
     flex-basis: 100%;
     flex-direction: row;
     align-items: baseline;
-    gap: 8px;
+    gap: var(--space-2);
   }
 
   .sound .name > :first-child {
@@ -2080,7 +2146,7 @@ textarea {
   flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 8px 16px;
+  gap: var(--space-2) var(--space-4);
   padding: 12px 16px;
   font-weight: 500;
   cursor: pointer;
@@ -2132,7 +2198,7 @@ textarea {
 .discord-row .tile-emoji {
   flex: none;
   width: 26px;
-  font-size: 20px;
+  font-size: var(--text-xl);
   text-align: center;
 }
 
@@ -2156,7 +2222,7 @@ textarea {
 }
 
 .swap-row .tile-emoji {
-  font-size: 18px;
+  font-size: var(--text-lg);
 }
 
 .swap-row .tile-emoji img {
@@ -2191,14 +2257,14 @@ textarea {
 }
 
 .free-reason {
-  font-size: 13px;
+  font-size: var(--text-sm);
 }
 
 .sale-why {
   flex-basis: 100%;
   overflow-wrap: anywhere;
   color: var(--muted);
-  font-size: 13px;
+  font-size: var(--text-sm);
 }
 
 .free-reason.hidden-game {
@@ -2225,7 +2291,7 @@ textarea {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 12px;
+  gap: var(--space-3);
   padding: 12px 16px;
   border-top: 1px solid var(--line);
 }
@@ -2236,7 +2302,7 @@ textarea {
 
 .game-body {
   display: grid;
-  gap: 4px;
+  gap: var(--space-1);
   min-width: 0;
 }
 
@@ -2255,7 +2321,7 @@ textarea {
 
 .game-sale {
   color: var(--good);
-  font-size: 13px;
+  font-size: var(--text-sm);
 }
 
 .game-sale s {
@@ -2269,7 +2335,7 @@ textarea {
   align-items: center;
   gap: 2px 12px;
   padding: 8px 4px;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
 }
 
 .game-member:hover {
@@ -2286,7 +2352,7 @@ textarea {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  font-size: 13px;
+  font-size: var(--text-sm);
 }
 
 .game-mark input {
@@ -2302,7 +2368,7 @@ textarea {
   justify-content: space-between;
   gap: 2px 12px;
   padding: 6px 4px;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
 }
 
 .owned-game:hover {
@@ -2330,9 +2396,9 @@ textarea {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 4px 12px;
+  gap: var(--space-1) var(--space-3);
   padding: 8px 4px;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
 }
 
 .steam-account:hover {
@@ -2347,32 +2413,32 @@ textarea {
 
 .steam-status {
   color: var(--muted);
-  font-size: 13px;
+  font-size: var(--text-sm);
 }
 
 .steam-actions {
   display: flex;
-  gap: 8px;
+  gap: var(--space-2);
 }
 
 .steam-family {
   flex-basis: 100%;
   color: var(--muted);
-  font-size: 13px;
+  font-size: var(--text-sm);
 }
 
 span.steam-family {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 4px 12px;
+  gap: var(--space-1) var(--space-3);
 }
 
 .steam-form {
   display: flex;
   flex-wrap: wrap;
   flex-basis: 100%;
-  gap: 8px;
+  gap: var(--space-2);
 }
 
 .steam-form input {
@@ -2385,14 +2451,14 @@ span.steam-family {
 .views {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: var(--space-2);
 }
 
 /* The Soundboard tab's Play or Manage, laid out as main is */
 .view {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  gap: 16px;
+  gap: var(--space-4);
 }
 
 .views button[aria-current='page'] {
@@ -2442,12 +2508,12 @@ span.steam-family {
 .achiever {
   display: flex;
   justify-content: space-between;
-  gap: 12px;
+  gap: var(--space-3);
 }
 
 .achievements h3 {
   margin: 8px 0 0;
-  font-size: 14px;
+  font-size: var(--text-md);
 }
 
 .goal {
@@ -2461,14 +2527,14 @@ span.steam-family {
 .joinable {
   display: flex;
   justify-content: space-between;
-  gap: 12px;
+  gap: var(--space-3);
   padding: 10px 16px;
   overflow-wrap: anywhere;
 }
 
 .pick-facts {
   color: var(--muted);
-  font-size: 13px;
+  font-size: var(--text-sm);
 }
 
 .pick-detail {
@@ -2486,7 +2552,7 @@ span.steam-family {
 .pick-detail td {
   padding: 2px 12px 2px 0;
   text-align: left;
-  font-size: 13px;
+  font-size: var(--text-sm);
 }
 
 .pick-detail th {
@@ -2499,7 +2565,7 @@ span.steam-family {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-2);
 }
 
 .card-actions {
@@ -2508,14 +2574,14 @@ span.steam-family {
 }
 
 .pick-result h2 {
-  font-size: 18px;
+  font-size: var(--text-lg);
 }
 
 .pick-result p {
   margin: 0;
   padding: 0 16px 14px;
   color: var(--muted);
-  font-size: 13px;
+  font-size: var(--text-sm);
 }
 
 .shared-games {
@@ -2531,7 +2597,7 @@ span.steam-family {
 .recap-value {
   margin-top: 2px;
   color: var(--muted);
-  font-size: 14px;
+  font-size: var(--text-md);
   white-space: pre-line;
   overflow-wrap: anywhere;
 }
