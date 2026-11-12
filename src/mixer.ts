@@ -1,4 +1,5 @@
 import { spawn, type ChildProcess } from 'node:child_process';
+import path from 'node:path';
 import { Readable } from 'node:stream';
 
 // 20 ms of 48 kHz 16-bit stereo PCM, the frame size @discordjs/voice encodes
@@ -29,7 +30,25 @@ export interface VoiceOptions {
   everyMs?: number;
   /** Sounds, speech and music each have a volume that can change while they play */
   group?: 'sound' | 'speech' | 'music';
+  /** What it's called in the list of what's playing: the file's name if not given, which is a library sound's name */
+  label?: string;
+  /** Shows as speech in that list, for speech that plays at the sound volume, like the looping room's */
+  spoken?: boolean;
 }
+
+/** A sound or line of speech playing, for showing what's on and stopping one of them */
+export interface Playing {
+  id: number;
+  name: string;
+  kind: 'sound' | 'speech';
+  loop: boolean;
+  /** Whether it's being heard yet, rather than waiting for ffmpeg to start */
+  started: boolean;
+  /** How long ago it started, or was asked for if it hasn't yet */
+  elapsedMs: number;
+}
+
+let playingIds = 0;
 
 interface Source {
   readonly file: string;
@@ -222,6 +241,7 @@ export class Mixer extends Readable {
   private readonly groupGains = new Map<string, number>();
   /** How far music is turned down under speech right now */
   private duck = 1;
+  private readonly labels = new WeakMap<Source, { id: number; name: string; startedAt: number; loop: boolean; spoken: boolean }>();
 
   constructor(volume: number, maxVoices: number) {
     super();
@@ -233,9 +253,19 @@ export class Mixer extends Readable {
     return this.done || this.destroyed;
   }
 
-  /** `onEnd` runs once the sound is over, however that came about. Returns a way to stop it */
+  /**
+   * `onEnd` runs once the sound is over, however that came about. Returns a way to stop it. The mixer emits 'playing'
+   * whenever a sound starts or ends, so what's playing can be shown as it changes
+   */
   add(file: string, gain = 1, onEnd?: (byItself: boolean) => void, options: VoiceOptions = {}): () => void {
-    const voice = options.loop && options.everyMs ? new LayeredVoice(file, gain, options.everyMs, onEnd, options) : new Voice(file, gain, onEnd, options);
+    // Music isn't in what's playing, so its comings and goings don't count as a change
+    const shown = options.group !== 'music';
+    const ended = (byItself: boolean) => {
+      onEnd?.(byItself);
+      if (shown) this.emit('playing');
+    };
+    const voice = options.loop && options.everyMs ? new LayeredVoice(file, gain, options.everyMs, ended, options) : new Voice(file, gain, ended, options);
+    this.labels.set(voice, { id: ++playingIds, name: options.label ?? path.parse(file).name, startedAt: Date.now(), loop: options.loop ?? false, spoken: options.spoken ?? options.group === 'speech' });
     // A restart keeps the playing copy going until the new one has audio, so spamming leaves no gap while ffmpeg starts.
     // A copy from an earlier click that hasn't started yet is dropped, since this one supersedes it. A loop is never restarted by a click
     for (const old of this.voices) {
@@ -247,6 +277,7 @@ export class Mixer extends Readable {
       }
     }
     this.include(voice);
+    if (shown) this.emit('playing');
     return () => {
       voice.stop();
       this.voices = this.voices.filter((v) => v !== voice);
@@ -261,6 +292,30 @@ export class Mixer extends Readable {
       this.voices.splice(oldest, 1)[0].stop();
     }
     this.voices.push(voice);
+  }
+
+  /**
+   * The sounds and speech playing, oldest first, leaving out music, which has its own controls. A sound restarted while
+   * its earlier copy is still fading out shows once
+   */
+  playing(): Playing[] {
+    const replaced = new Set(this.voices.flatMap((v) => v.replaces));
+    const now = Date.now();
+    return this.voices.flatMap((voice) => {
+      const label = this.labels.get(voice);
+      if (voice.ended || voice.group === 'music' || replaced.has(voice) || !label) return [];
+      return [{ id: label.id, name: label.name, kind: label.spoken ? 'speech' : 'sound', loop: label.loop, started: voice.heard, elapsedMs: now - label.startedAt }];
+    });
+  }
+
+  /** Stops one sound from playing(), along with any earlier copy of it still fading out. Returns whether it was playing */
+  stopPlaying(id: number): boolean {
+    const voice = this.voices.find((v) => !v.ended && this.labels.get(v)?.id === id);
+    if (!voice) return false;
+    for (const old of voice.replaces) old.stop();
+    voice.stop();
+    this.voices = this.voices.filter((v) => !v.ended);
+    return true;
   }
 
   /** Changes the volume of a group, including what's already playing */
@@ -326,6 +381,10 @@ export class Mixer extends Readable {
       const chunk = voice.read();
       if (!chunk) continue;
       voice.heard = true;
+      // Timed from when it's first heard, after ffmpeg has started, so a page's progress bar keeps pace with the sound
+      const label = this.labels.get(voice);
+      if (label) label.startedAt = Date.now();
+      if (voice.group !== 'music') this.emit('playing');
       starting.add(voice);
       mix(chunk, voice);
       for (const old of voice.replaces) {

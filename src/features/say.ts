@@ -200,7 +200,7 @@ async function sayLine(queue: Queue, { channel, text, voice, started }: Line) {
     cancel.signal.throwIfAborted();
     const gain = setting(guildId, 'ttsVolume') / 100;
     await new Promise<void>((finished, failed) => {
-      play(channel, file, gain, finished, { group: 'speech' })
+      play(channel, file, gain, finished, { group: 'speech', label: text })
         .then((problem) => {
           started(problem);
           if (problem) finished();

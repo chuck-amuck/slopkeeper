@@ -622,6 +622,7 @@ One running bot can serve several servers. Each server gets its own:
 A page in [`web/`](web) that runs as a second container next to the bot, for your home network or behind a sign-in proxy like [Pangolin](#signing-in-through-pangolin):
 
 - **Stop sounds:** the red button in the bottom corner of every page silences every sound and line of speech. The music carries on: it has its own controls on the Music tab, and while it plays the toast after Stop offers **Pause music**.
+- **What's playing:** above the red button, every page lists the sounds and speech playing as they start and end, including join sounds and the looping room's, and marks them on the Soundboard with how far through they are. Tap one to stop just that one; stopping the room's loop keeps it quiet until someone else joins, as Stop does. Sounds played from Discord's own soundboard, and the loop bot's, don't show, as they don't go through the bot.
 - **Undo:** removing a song from the queue, deleting a sound or a saved phrase, taking a sound off Discord, **Never suggest this** and a setting's **Reset** each show a toast with **Undo** for 8 seconds, longer while the pointer or focus is on it.
 - **Soundboard:** **Play** has big buttons that play in voice, with favourites first and then whatever gets played most, and a box for having the bot say something. **Manage** uploads files or whole folders, previews, renames and deletes sounds, sets a sound's volume, trims it with a way back to the original, and chooses what's on Discord's soundboard, with a waveform for picking part of a long sound. A file named like an existing sound waits until you choose **Replace it** or **Keep both**. **Recently deleted** restores a deleted or replaced sound, or erases it for good. The tab opens on whichever was used last on that device.
 - **Music:** what's playing, Spotify search, and the queue to add to, reorder and clear. See [Music](#music).
@@ -739,6 +740,8 @@ It applies the same rules as `/sound` and `/setup`, and every request needs an `
 | `GET /guilds/:id/free-games` | Lists what's free right now, with whether each game is posted and why |
 | `GET /guilds/:id/voice` | Lists voice channels with people in them, busiest first |
 | `POST /guilds/:id/stop` | Stops every sound and any spoken lines waiting, leaving the music playing. Returns `musicPlaying` |
+| `GET /guilds/:id/playing` | The sounds and speech playing, not the music: `version` and `playing` (`id`, `name`, `kind` sound or speech, `loop`, `started` once it's heard, `elapsedMs`). With `?after=<version>` it waits up to 25 s for a change |
+| `POST /guilds/:id/playing/:playingId/stop` | Stops one of them. 404 if it's already finished |
 | `GET /guilds/:id/say` | Whether text to speech is `on`, the `voices`, the default `voice`, the `longest` line and the saved `phrases` |
 | `POST /guilds/:id/say` | Reads out `text` in `channelId`, with an optional `voice`. Answers once the line starts |
 | `POST /guilds/:id/phrases` | Saves `text`, and answers with the `phrases` |

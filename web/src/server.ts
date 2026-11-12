@@ -155,6 +155,9 @@ export function createWeb({ password, apiToken, botUrl, proxySecret }: WebOption
         : undefined;
     if (body === null) return json(res, 413, { error: 'File is over 5 MB.' }, { connection: 'close' });
     const type = req.headers['content-type'];
+    // A page that's gone stops waiting on the bot, as a request for what's playing can wait for a change
+    const gone = new AbortController();
+    res.once('close', () => gone.abort());
     let answer: Response;
     try {
       answer = await fetch(botUrl + req.url!.slice('/api'.length), {
@@ -166,9 +169,10 @@ export function createWeb({ password, apiToken, botUrl, proxySecret }: WebOption
         },
         body: body as BodyInit | undefined,
         ...(streamed && { duplex: 'half' }),
-        signal: AbortSignal.timeout(BOT_TIMEOUT_MS),
+        signal: AbortSignal.any([AbortSignal.timeout(BOT_TIMEOUT_MS), gone.signal]),
       } as RequestInit);
     } catch (err) {
+      if (gone.signal.aborted) return;
       if (over) return json(res, 413, { error: TOO_BIG }, { connection: 'close' });
       console.error('Bot request failed:', err instanceof Error ? err.message : err);
       return json(res, 502, { error: 'The bot isn’t answering. It may be restarting.' });
@@ -179,7 +183,8 @@ export function createWeb({ password, apiToken, botUrl, proxySecret }: WebOption
       if (value) headers[name] = value;
     }
     res.writeHead(answer.status, headers);
-    if (answer.body) Readable.fromWeb(answer.body as never).pipe(res);
+    // A body cut off part way, by the page leaving or the bot stopping, ends the response rather than the process
+    if (answer.body) Readable.fromWeb(answer.body as never).once('error', () => res.destroy()).pipe(res);
     else res.end();
   }
 

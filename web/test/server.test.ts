@@ -16,11 +16,17 @@ interface Seen {
 }
 
 let seen: Seen[] = [];
+/** Settles once the web UI lets go of a request the bot is holding, like one waiting for what's playing to change */
+let held: Promise<void> | null = null;
 const bot = createServer((req, res) => {
   const chunks: Buffer[] = [];
   req.on('data', (c: Buffer) => chunks.push(c));
   req.on('end', () => {
     seen.push({ method: req.method, url: req.url, headers: req.headers, body: Buffer.concat(chunks) });
+    if (req.url === '/held') {
+      held = new Promise((resolve) => res.once('close', () => resolve()));
+      return;
+    }
     if (req.url === '/refused') return res.writeHead(400, { 'content-type': 'application/json' }).end('{"error":"No."}');
     if (req.url === '/audio') return res.writeHead(200, { 'content-type': 'audio/wav', 'cache-control': 'no-store', 'x-private': 'leak' }).end('RIFF');
     res.writeHead(200, { 'content-type': 'application/json' }).end('{"ok":true}');
@@ -174,6 +180,17 @@ test('passes audio back with its type, and nothing else from the bot', async () 
   assert.equal(res.headers.get('cache-control'), 'no-store');
   assert.equal(res.headers.get('x-private'), null);
   assert.equal(await res.text(), 'RIFF');
+});
+
+test('stops waiting on the bot once the page has gone', async () => {
+  const cookie = await login();
+  const leave = new AbortController();
+  const asking = fetch(`${base}/api/held`, { headers: { cookie }, signal: leave.signal }).catch(() => 'left');
+  while (!held) await new Promise((resolve) => setTimeout(resolve, 10));
+  leave.abort();
+  assert.equal(await asking, 'left');
+  const gaveUp = new Promise<boolean>((resolve) => setTimeout(resolve, 2000, false).unref());
+  assert.equal(await Promise.race([held.then(() => true), gaveUp]), true);
 });
 
 test('passes the bot’s refusals on', async () => {

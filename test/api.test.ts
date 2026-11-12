@@ -570,6 +570,41 @@ test('plays a sound in a voice channel and counts it, with nobody credited', asy
   assert.deepEqual(plays(), ['web:horn']);
 });
 
+test('says what’s playing as it changes, and stops one sound', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  await upload('horn');
+  permitted.push(PermissionFlagsBits.Connect, PermissionFlagsBits.Speak);
+  const connection = joinVoiceChannel({ channelId: '702', guildId: GUILD, adapterCreator: guild.voiceAdapterCreator as never });
+  Object.assign(connection, { state: { ...connection.state, status: VoiceConnectionStatus.Ready } });
+  t.after(async () => {
+    await ok(`/guilds/${GUILD}/stop`, { method: 'POST' });
+    soundboard.shutdown!();
+  });
+
+  const quiet = await ok(`/guilds/${GUILD}/playing`);
+  assert.deepEqual(quiet.playing, []);
+  // Waits at the bot until something starts
+  const waiting = ok(`/guilds/${GUILD}/playing?after=${encodeURIComponent(quiet.version)}`);
+  const { url, init } = play('horn', '702');
+  await ok(url, init);
+  const now = await waiting;
+  assert.notEqual(now.version, quiet.version);
+  assert.deepEqual(
+    now.playing.map((p: { name: string; kind: string; loop: boolean }) => [p.name, p.kind, p.loop]),
+    [['horn', 'sound', false]],
+  );
+  // A version from before answers straight away
+  const again = await ok(`/guilds/${GUILD}/playing?after=${encodeURIComponent(quiet.version)}`);
+  assert.deepEqual(
+    again.playing.map((p: { id: number }) => p.id),
+    now.playing.map((p: { id: number }) => p.id),
+  );
+
+  const id = now.playing[0].id;
+  assert.deepEqual(await ok(`/guilds/${GUILD}/playing/${id}/stop`, { method: 'POST' }), { playing: [] });
+  assert.match(await refused(404, `/guilds/${GUILD}/playing/${id}/stop`, { method: 'POST' }), /already finished/);
+});
+
 test('won’t play somewhere it can’t', async () => {
   await upload('horn');
   const attempts = [

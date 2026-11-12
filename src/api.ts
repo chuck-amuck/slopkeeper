@@ -23,7 +23,7 @@ import { addTracks, clearQueue, fileProblem, fileUploadPath, MOST_FILE_BYTES, mo
 import { phrases, removePhrase, savePhrase, say, VOICES } from './features/say.ts';
 import { voiceTotals } from './features/sessions.ts';
 import { checkSetting, LABELS, LIMITS, show, source, STEPS } from './features/setup.ts';
-import { addSound, addToDiscord, afterSettingsChanged, BIN_DAYS, changeEmoji, deletedSounds, eraseDeleted, expiresAt, favourites, findSound, joinSounds, listSounds, loopBotStatus, loopSpeechProblem, parseEmoji, playCounts, playDiscordSound, playFromWeb, postPanel, refreshPanels, removeSound, renameSound, restoreDeleted, restoreSound, saveFromDiscord, setFavourite, setJoinSound, setSoundVolume, type Sound, soundLevels, soundVolumes, stopPlayback, swapOnDiscord, syncToDiscord, takeOffDiscord, trimmedSounds, trimProblem, trimSound, untaken, uploadProblem, volumeProblem } from './features/soundboard.ts';
+import { addSound, addToDiscord, afterSettingsChanged, BIN_DAYS, changeEmoji, deletedSounds, eraseDeleted, expiresAt, favourites, findSound, joinSounds, listSounds, loopBotStatus, loopSpeechProblem, parseEmoji, playCounts, playDiscordSound, playFromWeb, playingChange, playingNow, playingVersion, postPanel, refreshPanels, removeSound, renameSound, restoreDeleted, restoreSound, saveFromDiscord, setFavourite, setJoinSound, setSoundVolume, type Sound, soundLevels, soundVolumes, stopPlayback, stopPlayingOne, swapOnDiscord, syncToDiscord, takeOffDiscord, trimmedSounds, trimProblem, trimSound, untaken, uploadProblem, volumeProblem } from './features/soundboard.ts';
 import { DEFAULTS, idSetting, isAllowed, setSetting, setting, type SettingKey } from './settings.ts';
 import { myPlaylists, playlistsReady, search, SpotifyError, type Track } from './spotify.ts';
 import type { Feature } from './types.ts';
@@ -43,6 +43,8 @@ const AUDIO_TYPES: Record<string, string> = {
 const TIME_ZONES = Intl.supportedValuesOf('timeZone');
 const MAX_RANKED = 15;
 const ACTIVITY_PAGE = 50;
+/** How long a request for what's playing waits for a change before answering anyway, well inside a proxy's timeout */
+const PLAYING_WAIT_MS = 25_000;
 const REPEATS = [7, 14];
 
 class Refused extends Error {
@@ -1283,6 +1285,23 @@ async function handle(client: Client<true>, req: IncomingMessage, res: ServerRes
     // Sounds and speech only: the music has its own controls
     stopPlayback(guild.id, true);
     return { musicPlaying: musicState(guild.id).phase === 'playing' };
+  }
+  if (section === 'playing' && !rest.length && req.method === 'GET') {
+    // With ?after=<version>, waits for a change, so the page hears of a one-second sound as it plays rather than polling for it
+    const after = url.searchParams.get('after');
+    if (after !== null) {
+      const gone = new AbortController();
+      res.once('close', () => gone.abort());
+      // Gone already, before this could listen for it
+      if (res.closed || req.destroyed) gone.abort();
+      await playingChange(guild.id, after, AbortSignal.any([gone.signal, AbortSignal.timeout(PLAYING_WAIT_MS)]));
+      if (gone.signal.aborted) return;
+    }
+    return { version: playingVersion(guild.id), playing: playingNow(guild.id) };
+  }
+  if (section === 'playing' && rest.length === 2 && rest[1] === 'stop' && req.method === 'POST') {
+    if (!stopPlayingOne(guild.id, Number(rest[0]))) throw new Refused(404, 'That’s already finished.');
+    return { playing: playingNow(guild.id) };
   }
   if (section === 'discord-sync' && !rest.length && req.method === 'POST') {
     const result = await syncToDiscord(guild);

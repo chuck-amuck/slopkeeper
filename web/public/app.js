@@ -4,6 +4,7 @@ import { api, attempt, el, formProblem, notice, openDialog, player, recall, reme
 import { renderMusic } from './music.js';
 import { renderNights } from './nights.js';
 import { renderPick } from './pick.js';
+import { stopDock, stopWatchingPlaying, watchPlaying } from './playing.js';
 import { renderSettings } from './settings.js';
 import { renderSoundboard, VIEW_KEY } from './soundboard.js';
 import { renderStats } from './stats.js';
@@ -28,6 +29,7 @@ let tab = TABS.some(([id]) => id === recall('tab')) ? recall('tab') : 'board';
 
 function showLogin() {
   player.stop();
+  stopWatchingPlaying();
   const password = el('input', { type: 'password', autocomplete: 'current-password', required: true, placeholder: 'Password', ariaLabel: 'Password', 'aria-describedby': 'login-error' });
   const error = el('div', { className: 'bad-text', id: 'login-error', role: 'alert', hidden: true });
   const submit = el('button', { className: 'primary', type: 'submit' }, 'Log in');
@@ -223,27 +225,10 @@ function renderFrame() {
     title,
     main,
     // In the corner of every page, so it's always in reach
-    guild &&
-      el(
-        'button',
-        {
-          className: 'stop-all',
-          title: 'Stops every sound and line of speech. The music carries on',
-          onclick: () =>
-            attempt(async () => {
-              const { musicPlaying } = await request(api('/stop'), { method: 'POST' });
-              // The music has its own controls, but it's often what someone wanted quiet too
-              const pause = { label: 'Pause music', run: async () => {
-                await request(api('/music/pause'), { method: 'POST' });
-                toast('Music paused.');
-              } };
-              toast('Stopped sounds and speech.', false, musicPlaying ? pause : null);
-            }),
-        },
-        el('span', { ariaHidden: 'true' }, '■ '),
-        'Stop sounds',
-      ),
+    guild && stopDock(),
   );
+  if (guild) watchPlaying();
+  else stopWatchingPlaying();
 
   fitNav();
   if (focusTitle) title.focus();

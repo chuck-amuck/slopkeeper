@@ -162,12 +162,84 @@ button.confirm.icon > span:last-child {
   white-space: nowrap;
 }
 
-/* Stops everything the bot is playing, from any page */
-button.stop-all {
+/* Stops everything the bot is playing, from any page, with what's playing above it */
+.stop-dock {
   position: fixed;
   right: 16px;
   bottom: 16px;
   z-index: 10;
+  display: grid;
+  justify-items: end;
+  gap: 8px;
+  max-width: calc(100vw - 32px);
+}
+
+.now-sounds {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  justify-items: end;
+  gap: 6px;
+}
+
+.now-sounds li {
+  max-width: 100%;
+}
+
+.now-sound,
+.now-more {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: min(320px, 100%);
+  min-height: 32px;
+  padding: 4px 12px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  font-size: 14px;
+  box-shadow: 0 2px 8px rgb(0 0 0 / 15%);
+}
+
+.now-more {
+  color: var(--muted);
+}
+
+.now-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.now-sound.speech .now-name {
+  font-style: italic;
+}
+
+.now-loop,
+.now-x {
+  flex: none;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.now-x {
+  font-size: 16px;
+  line-height: 1;
+}
+
+.stop-label {
+  display: inline-block;
+  max-width: 14em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+}
+
+button.stop-all {
+  max-width: 100%;
   min-height: 48px;
   padding-inline: 20px;
   border-color: var(--bad);
@@ -899,6 +971,37 @@ dialog .actions {
 
 .tile.hit {
   animation: hit 0.3s ease-out;
+}
+
+.tile.playing {
+  border-color: var(--accent);
+}
+
+/* How far through it is: full for a loop, or a sound whose length isn't known */
+.tile-progress {
+  position: absolute;
+  right: 1px;
+  bottom: 1px;
+  left: 1px;
+  height: 4px;
+  border-radius: 0 0 var(--radius) var(--radius);
+  background: var(--accent);
+  transform-origin: left;
+  pointer-events: none;
+}
+
+.tile-progress.waiting {
+  transform: scaleX(0);
+}
+
+.tile-progress.running {
+  animation: tile-play var(--play-ms) linear var(--play-delay) both;
+}
+
+@keyframes tile-play {
+  from {
+    transform: scaleX(0);
+  }
 }
 
 @keyframes hit {
@@ -1682,7 +1785,8 @@ textarea {
 #toasts {
   position: fixed;
   right: 16px;
-  bottom: 76px;
+  /* Above the Stop sounds button, and what's playing when that shows */
+  bottom: calc(76px + var(--dock-extra, 0px));
   left: 16px;
   z-index: 20;
   display: grid;
@@ -1763,6 +1867,10 @@ textarea {
 
   .phrase-remove {
     min-width: 44px;
+  }
+
+  .now-sound {
+    min-height: 44px;
   }
 
   .toggle {

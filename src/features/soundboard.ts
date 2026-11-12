@@ -49,7 +49,7 @@ import { config } from '../config.ts';
 import { db } from '../db.ts';
 import * as discordBoard from '../discordSounds.ts';
 import { measureGain } from '../loudness.ts';
-import { MIX_VOLUME, Mixer, type VoiceOptions } from '../mixer.ts';
+import { MIX_VOLUME, Mixer, type Playing, type VoiceOptions } from '../mixer.ts';
 import { idSetting, isAllowed, setSetting, setting, storedSetting } from '../settings.ts';
 import type { LoopProgram } from '../loopBot.ts';
 import { cutAudio } from '../trim.ts';
@@ -583,7 +583,7 @@ export async function playDiscordSound(channel: VoiceBasedChannel, sound: Discor
   if (saved) return playFromWeb(channel, saved);
   const file = path.join(tmpdir(), `slopkeeper-discord-${sound.id}`);
   if (!existsSync(file)) writeFileSync(file, (await discordBoard.download(sound)).data);
-  return play(channel, file, sound.volume / VOLUME);
+  return play(channel, file, sound.volume / VOLUME, undefined, { label: sound.name });
 }
 
 /** Copies every sound that fits into Discord's soundboard, until it's full */
@@ -722,6 +722,7 @@ function mixInto(guildId: string, add: (mixer: Mixer) => void) {
   clearTimeout(a.idleTimer);
   if (a.mixer && !a.mixer.finished) return add(a.mixer);
   a.mixer = new Mixer(VOLUME, MAX_VOICES);
+  a.mixer.on('playing', () => playingChanged(guildId));
   a.mixer.setGroupGain('sound', setting(guildId, 'soundVolume') / 100);
   a.mixer.setGroupGain('music', setting(guildId, 'musicVolume') / 100);
   // Before playing, or the mixer would find nothing to mix and end straight away
@@ -875,7 +876,7 @@ async function startLoop(guild: Guild, room: VoiceBasedChannel, part: LoopPart, 
     () => {
       if (current()) looping.delete(key);
     },
-    { loop: true, ...(everyMs > 0 && { everyMs }) },
+    { loop: true, ...(everyMs > 0 && { everyMs }), label: part === 'sound' ? sound!.name : (setting(guild.id, 'loopText') ?? 'Looping speech'), spoken: part !== 'sound' },
   );
 }
 
@@ -1159,6 +1160,54 @@ const stopListeners: ((guildId: string, keepMusic: boolean) => void)[] = [];
 
 /** For whatever else is waiting to play, so that Stop stops that too */
 export const onPlaybackStop = (listener: (guildId: string, keepMusic: boolean) => void) => void stopListeners.push(listener);
+
+// ---------- what's playing ----------
+
+// Starts each run of the bot afresh, so a page that last heard of version 3 before a restart isn't kept waiting
+const PLAYING_RUN = Date.now().toString(36);
+const playingVersions = new Map<string, number>();
+const playingWaiters = new Map<string, Set<() => void>>();
+
+function playingChanged(guildId: string) {
+  playingVersions.set(guildId, (playingVersions.get(guildId) ?? 0) + 1);
+  const waiting = playingWaiters.get(guildId);
+  playingWaiters.delete(guildId);
+  for (const wake of waiting ?? []) wake();
+}
+
+/** Changes whenever a sound or line of speech starts or ends in a server */
+export const playingVersion = (guildId: string) => `${PLAYING_RUN}-${playingVersions.get(guildId) ?? 0}`;
+
+/** The sounds and speech playing in a server, not counting music */
+export function playingNow(guildId: string): Playing[] {
+  const mixer = audio.get(guildId)?.mixer;
+  return mixer && !mixer.finished ? mixer.playing() : [];
+}
+
+/** Waits until what's playing differs from `version`, or `signal` gives up */
+export function playingChange(guildId: string, version: string, signal: AbortSignal): Promise<void> {
+  if (playingVersion(guildId) !== version || signal.aborted) return Promise.resolve();
+  return new Promise((resolve) => {
+    const waiting = playingWaiters.get(guildId) ?? new Set();
+    playingWaiters.set(guildId, waiting);
+    const wake = () => {
+      waiting.delete(wake);
+      signal.removeEventListener('abort', wake);
+      resolve();
+    };
+    waiting.add(wake);
+    signal.addEventListener('abort', wake, { once: true });
+  });
+}
+
+/** Stops one sound or line of speech. Stopping the room's loop keeps it quiet until someone else joins, as Stop does */
+export function stopPlayingOne(guildId: string, id: number): boolean {
+  const mixer = audio.get(guildId)?.mixer;
+  const found = mixer?.finished ? undefined : mixer?.playing().find((p) => p.id === id);
+  if (!found) return false;
+  if (found.loop && isLooping(guildId)) silenced.add(guildId);
+  return mixer!.stopPlaying(id);
+}
 
 /** Stops sounds and speech, and pauses the music unless `keepMusic`, as the web UI's Stop does */
 export function stopPlayback(guildId: string, keepMusic = false) {

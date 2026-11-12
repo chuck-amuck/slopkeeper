@@ -1,4 +1,5 @@
 import { api, attempt, el, emojiNode, keepFocus, notice, postDialog, request, soundPath, state, toast, undoToast } from './lib.js';
+import { elapsed, onPlaying } from './playing.js';
 import { voiceBar } from './voice.js';
 
 const byUse = (a, b) => b.plays - a.plays || a.name.localeCompare(b.name);
@@ -104,6 +105,9 @@ export function renderBoard(main, openManage) {
   let sounds = null;
   let filter = '';
   const tiles = [];
+  /** Each tile shown, by sound name, to mark the ones playing */
+  const shownTiles = new Map();
+  let nowPlaying = [];
 
   const voice = voiceBar(main, paint);
   const search = el('input', {
@@ -151,6 +155,8 @@ export function renderBoard(main, openManage) {
       el('span', { className: 'tile-name' }, sound.name),
     );
     tiles.push(button);
+    const progress = el('span', { className: 'tile-progress', hidden: true });
+    shownTiles.set(sound.name, { button, progress, sound });
     const star = el(
       'button',
       {
@@ -167,11 +173,45 @@ export function renderBoard(main, openManage) {
       },
       sound.favourite ? '★' : '☆',
     );
-    return el('div', { className: 'tile-box' }, button, star);
+    return el('div', { className: 'tile-box' }, button, progress, star);
   }
+
+  /** Marks the tiles of the sounds playing, with how far through they are */
+  function markPlaying() {
+    const playing = new Map(nowPlaying.filter((p) => p.kind === 'sound').map((p) => [p.name, p]));
+    for (const [name, { button, progress, sound }] of shownTiles) {
+      const p = playing.get(name);
+      button.classList.toggle('playing', !!p);
+      progress.hidden = !p;
+      if (!p) {
+        delete progress.dataset.id;
+        continue;
+      }
+      // Only a new play, or one that's just been heard, starts the bar again
+      const key = `${p.id}:${p.started}`;
+      if (progress.dataset.id === key) continue;
+      progress.dataset.id = key;
+      progress.classList.remove('running', 'waiting');
+      if (p.loop || !sound.seconds) continue;
+      // Empty until the sound is heard, so the bar keeps pace with it
+      if (!p.started) {
+        progress.classList.add('waiting');
+        continue;
+      }
+      progress.style.setProperty('--play-ms', `${sound.seconds * 1000}ms`);
+      progress.style.setProperty('--play-delay', `${-Math.round(elapsed(p))}ms`);
+      void progress.offsetWidth;
+      progress.classList.add('running');
+    }
+  }
+  onPlaying(board, (playing) => {
+    nowPlaying = playing;
+    markPlaying();
+  });
 
   function render() {
     tiles.length = 0;
+    shownTiles.clear();
     if (!sounds.length) return board.replaceChildren(notice('empty', 'No sounds yet. ', el('button', { className: 'link', onclick: openManage }, 'Add some in Manage'), '.'));
     const shown = sounds.filter((s) => s.name.includes(filter));
     if (!shown.length) return board.replaceChildren(notice('empty', `Nothing matches “${filter}”.`));
@@ -181,6 +221,7 @@ export function renderBoard(main, openManage) {
       ...(starred.length ? [el('h2', {}, 'Favourites'), el('div', { className: 'tiles' }, starred.map(tile))] : []),
       ...(others.length ? [...(starred.length ? [el('h2', {}, 'Everything else')] : []), el('div', { className: 'tiles' }, others.map(tile))] : []),
     ));
+    markPlaying();
     paint();
   }
 

@@ -290,3 +290,59 @@ test('music drops under speech and comes back up after', { skip: !hasFfmpeg }, a
   stop();
   await done;
 });
+
+test('lists what’s playing once per sound, leaving out the music, and stops one of them', { skip: !hasFfmpeg }, async () => {
+  const mixer = new Mixer(0.5, 12);
+  const { done } = record(mixer);
+  let changes = 0;
+  mixer.on('playing', () => changes++);
+  mixer.add(tone('tune.wav', 440, 5), 1, undefined, { group: 'music' });
+  mixer.add(tone('honk-again.wav', 550, 5));
+  await sleep(100);
+  // Pressed again: the copy fading out doesn't show twice
+  mixer.add(tone('honk-again.wav', 550, 5));
+  mixer.add(tone('line.wav', 660, 5), 1, undefined, { group: 'speech', label: 'gg' });
+  mixer.add(tone('room.wav', 330, 5), 1, undefined, { loop: true, label: 'Looping line', spoken: true });
+  await sleep(100);
+  const playing = mixer.playing();
+  assert.deepEqual(
+    playing.map((p) => [p.name, p.kind, p.loop]),
+    [
+      ['honk-again', 'sound', false],
+      ['gg', 'speech', false],
+      ['Looping line', 'speech', true],
+    ],
+  );
+  assert.ok(playing.every((p) => p.elapsedMs >= 0 && p.elapsedMs < 2000));
+  const before = changes;
+  assert.equal(mixer.stopPlaying(playing[0].id), true);
+  assert.equal(mixer.stopPlaying(playing[0].id), false, 'already stopped');
+  assert.ok(changes > before, 'says what’s playing changed');
+  assert.deepEqual(
+    mixer.playing().map((p) => p.name),
+    ['gg', 'Looping line'],
+  );
+  mixer.stopAll();
+  await done;
+  assert.deepEqual(mixer.playing(), []);
+});
+
+test('a tap on the room’s looping sound shows beside the loop, and stopping the tap leaves the loop', { skip: !hasFfmpeg }, async () => {
+  const mixer = new Mixer(0.5, 12);
+  const { done } = record(mixer);
+  const file = tone('loop-and-tap.wav', 440, 2);
+  mixer.add(file, 1, undefined, { loop: true });
+  await sleep(100);
+  mixer.add(file);
+  await sleep(100);
+  const [loop, tap] = mixer.playing();
+  assert.deepEqual([loop.loop, tap.loop], [true, false]);
+  assert.ok(loop.started && tap.started, 'both being heard');
+  mixer.stopPlaying(tap.id);
+  assert.deepEqual(
+    mixer.playing().map((p) => p.id),
+    [loop.id],
+  );
+  mixer.stopAll();
+  await done;
+});
