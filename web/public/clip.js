@@ -132,37 +132,29 @@ export function pickClip(main, sound, clipSeconds, replacing) {
       move(start + step, false);
     });
 
-    const node = openDialog(
-      main,
-      el('h2', {}, `Add part of ${sound.name}`),
-      el('p', {}, `Discord allows ${clipSeconds} s. Drag across the waveform to choose which part.`),
-      canvas,
-      status,
-      el(
-        'form',
-        {
-          onsubmit: async (e) => {
-            e.preventDefault();
-            try {
-              await request(soundPath(sound.name, '/discord'), { method: 'PUT', json: { start: startInput.valueAsNumber, replacing } });
-              resolve(true);
-              node.close();
-            } catch (err) {
-              node.close();
-              reject(err);
-            }
-          },
-        },
+    const node = openDialog(main, {
+      title: `Add part of ${sound.name}`,
+      body: [
+        el('p', {}, `Discord allows ${clipSeconds} s. Drag across the waveform to choose which part.`),
+        canvas,
+        status,
         el('label', { className: 'start' }, 'Start at', startInput, 'seconds'),
-        el(
-          'div',
-          { className: 'actions' },
-          preview,
-          el('button', { type: 'button', onclick: () => node.close() }, 'Cancel'),
-          el('button', { className: 'primary', type: 'submit' }, 'Add to Discord'),
-        ),
-      ),
-    );
+      ],
+      start: [preview],
+      actions: [el('button', { className: 'primary', type: 'submit' }, 'Add to Discord')],
+      close: 'Cancel',
+      onsubmit: async (e) => {
+        e.preventDefault();
+        try {
+          await request(soundPath(sound.name, '/discord'), { method: 'PUT', json: { start: startInput.valueAsNumber, replacing } });
+          resolve(true);
+          node.close();
+        } catch (err) {
+          node.close();
+          reject(err);
+        }
+      },
+    });
     node.addEventListener('close', () => {
       stop();
       void context.close();

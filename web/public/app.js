@@ -82,40 +82,36 @@ function meDialog(main) {
   const who = el('select', { ariaLabel: 'Discord member' }, el('option', { value: '' }, 'Not linked'));
   const problem = formProblem();
   const submit = el('button', { className: 'primary', type: 'submit', disabled: true }, 'Save');
-  const node = openDialog(
-    main,
-    el('h2', {}, `Signed in as ${state.me.name}`),
-    el('p', {}, 'Which Discord member are you? Your changes show under that name in Activity, and anything that asks for a person starts on you.'),
-    el(
-      'form',
-      {
-        className: 'plan',
-        onsubmit: (e) => {
-          e.preventDefault();
-          submit.disabled = true;
-          problem.hidden = true;
-          void attempt(async () => {
-            try {
-              const { me } = await request(api('/me'), who.value ? { method: 'PUT', json: { userId: who.value } } : { method: 'DELETE' });
-              state.me = me;
-              node.close();
-              toast(me.userId ? `You’re ${who.selectedOptions[0].textContent} here now.` : 'Not linked to anyone now.');
-              renderFrame();
-            } catch (err) {
-              if (!(err instanceof RequestError)) throw err;
-              problem.textContent = err.message;
-              problem.hidden = false;
-            } finally {
-              submit.disabled = false;
-            }
-          });
-        },
-      },
+  const node = openDialog(main, {
+    title: `Signed in as ${state.me.name}`,
+    body: [
+      el('p', {}, 'Which Discord member are you? Your changes show under that name in Activity, and anything that asks for a person starts on you.'),
       who,
       problem,
-      el('div', { className: 'actions' }, el('button', { type: 'button', onclick: () => node.close() }, 'Cancel'), submit),
-    ),
-  );
+    ],
+    actions: [submit],
+    close: 'Cancel',
+    onsubmit: (e) => {
+      e.preventDefault();
+      submit.disabled = true;
+      problem.hidden = true;
+      void attempt(async () => {
+        try {
+          const { me } = await request(api('/me'), who.value ? { method: 'PUT', json: { userId: who.value } } : { method: 'DELETE' });
+          state.me = me;
+          node.close();
+          toast(me.userId ? `You’re ${who.selectedOptions[0].textContent} here now.` : 'Not linked to anyone now.');
+          renderFrame();
+        } catch (err) {
+          if (!(err instanceof RequestError)) throw err;
+          problem.textContent = err.message;
+          problem.hidden = false;
+        } finally {
+          submit.disabled = false;
+        }
+      });
+    },
+  });
   void attempt(async () => {
     const { members } = await request(api('/pick/options'));
     who.append(...members.map((m) => el('option', { value: m.id, selected: m.id === state.me.userId }, m.name)));

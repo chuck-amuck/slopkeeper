@@ -76,47 +76,10 @@ function planDialog(main, data, onPlanned) {
   // In the dialog, since it would cover a toast
   const problem = formProblem();
 
-  const node = openDialog(
-    main,
-    el('h2', {}, 'Plan a game night'),
-    el('p', {}, 'Posts the card and a Discord event, and pings anyone following the game, just like /gamenight plan.'),
-    el(
-      'form',
-      {
-        className: 'plan',
-        onsubmit: (e) => {
-          e.preventDefault();
-          void attempt(async () => {
-            submit.disabled = true;
-            problem.hidden = true;
-            try {
-              const { eventNote } = await request(api('/game-nights'), {
-                method: 'POST',
-                json: {
-                  game: game.value,
-                  when: when_.value,
-                  channelId: channel.value,
-                  voiceChannelId: voiceChannel.value || null,
-                  hostId: host.value,
-                  details: details.value.trim() || null,
-                  repeat: repeat.value ? Number(repeat.value) : null,
-                },
-              });
-              remember('nightHost', host.value);
-              toast(`${game.value.trim()} night is on.`);
-              if (eventNote) toast(eventNote, true);
-              node.close();
-              await onPlanned();
-            } catch (err) {
-              if (!(err instanceof RequestError)) throw err;
-              problem.textContent = err.message;
-              problem.hidden = false;
-            } finally {
-              submit.disabled = false;
-            }
-          });
-        },
-      },
+  const node = openDialog(main, {
+    title: 'Plan a game night',
+    body: [
+      el('p', {}, 'Posts the card and a Discord event, and pings anyone following the game, just like /gamenight plan.'),
       el('datalist', { id: 'night-games' }, data.games.map((name) => el('option', { value: name }))),
       row('Game', game),
       row('When', when_, whenNote),
@@ -126,9 +89,42 @@ function planDialog(main, data, onPlanned) {
       row('Repeats', repeat),
       row('Details', details),
       problem,
-      el('div', { className: 'actions' }, el('button', { type: 'button', onclick: () => node.close() }, 'Cancel'), submit),
-    ),
-  );
+    ],
+    actions: [submit],
+    close: 'Cancel',
+    onsubmit: (e) => {
+      e.preventDefault();
+      void attempt(async () => {
+        submit.disabled = true;
+        problem.hidden = true;
+        try {
+          const { eventNote } = await request(api('/game-nights'), {
+            method: 'POST',
+            json: {
+              game: game.value,
+              when: when_.value,
+              channelId: channel.value,
+              voiceChannelId: voiceChannel.value || null,
+              hostId: host.value,
+              details: details.value.trim() || null,
+              repeat: repeat.value ? Number(repeat.value) : null,
+            },
+          });
+          remember('nightHost', host.value);
+          toast(`${game.value.trim()} night is on.`);
+          if (eventNote) toast(eventNote, true);
+          node.close();
+          await onPlanned();
+        } catch (err) {
+          if (!(err instanceof RequestError)) throw err;
+          problem.textContent = err.message;
+          problem.hidden = false;
+        } finally {
+          submit.disabled = false;
+        }
+      });
+    },
+  });
   game.focus();
 }
 

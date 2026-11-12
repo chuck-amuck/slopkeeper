@@ -353,15 +353,10 @@ export function renderSettings(main) {
       });
     }
 
-    const node = openDialog(
-      main,
-      el('h2', {}, 'Who gets pinged'),
-      el('p', {}, 'Pick a person and tick what they get pinged for. They can change these themselves with /notify and /pings.'),
-      who,
-      list,
-      problem,
-      el('div', { className: 'actions' }, el('button', { type: 'button', onclick: () => node.close() }, 'Close')),
-    );
+    openDialog(main, {
+      title: 'Who gets pinged',
+      body: [el('p', {}, 'Pick a person and tick what they get pinged for. They can change these themselves with /notify and /pings.'), who, list, problem],
+    });
     void attempt(async () => {
       const { members } = await request(api('/pick/options'));
       who.replaceChildren(...members.map((m) => el('option', { value: m.id, selected: m.id === state.me?.userId }, m.name)));

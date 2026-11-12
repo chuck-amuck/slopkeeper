@@ -315,13 +315,26 @@ export function emojiNode(code, label) {
 let dialogs = 0;
 
 /**
- * Opens a modal dialog, named by its first heading. Toasts show inside it while it's open, as the page behind is
- * hidden from screen readers. On closing, focus goes back to what opened it, or to its replacement if the page was
- * redrawn meanwhile
+ * Opens a modal dialog, laid out the same way everywhere: its title, a body that scrolls when it's long, and a footer
+ * that stays put. The footer has `start` on the left (such as Preview or Remove), then `actions` (such as Save), then
+ * the button that closes it (`close`: Cancel, Close or Done, filled if `closePrimary`), always last on the right. With
+ * `onsubmit`, the body and footer are one form, so Enter in a field submits it.
+ *
+ * Toasts show inside it while it's open, as the page behind is hidden from screen readers. On closing, focus goes back
+ * to what opened it, or to its replacement if the page was redrawn meanwhile
  */
-export function openDialog(parent, ...children) {
+export function openDialog(parent, { title, body = [], start = [], actions = [], close = 'Close', closePrimary = false, onsubmit, noValidate }) {
   const opener = document.activeElement;
   const openerKey = opener && opener !== document.body ? nameOf(opener) : null;
+  const heading = el('h2', { id: `dialog-title-${++dialogs}` }, title);
+  const main = el('div', { className: 'dialog-body' }, ...body);
+  const foot = el(
+    'div',
+    { className: 'dialog-foot' },
+    el('div', { className: 'dialog-start' }, ...start),
+    ...actions,
+    el('button', { type: 'button', className: closePrimary ? 'primary' : undefined, onclick: () => node.close() }, close),
+  );
   const node = el(
     'dialog',
     {
@@ -334,13 +347,10 @@ export function openDialog(parent, ...children) {
         stand?.focus();
       },
     },
-    ...children,
+    heading,
+    onsubmit ? el('form', { className: 'dialog-form', onsubmit, noValidate }, main, foot) : [main, foot],
   );
-  const heading = node.querySelector('h2');
-  if (heading) {
-    heading.id ||= `dialog-title-${++dialogs}`;
-    node.setAttribute('aria-labelledby', heading.id);
-  }
+  node.setAttribute('aria-labelledby', heading.id);
   parent.append(node);
   node.showModal();
   node.append(toasts);
@@ -352,37 +362,29 @@ export function postDialog(parent, title, text, post) {
   const channel = el('select', { required: true, ariaLabel: 'Channel' });
   const problem = formProblem();
   const submit = el('button', { className: 'primary', type: 'submit', disabled: true }, 'Post');
-  const node = openDialog(
-    parent,
-    el('h2', {}, title),
-    el('p', {}, text),
-    el(
-      'form',
-      {
-        className: 'plan',
-        onsubmit: (e) => {
-          e.preventDefault();
-          submit.disabled = true;
-          problem.hidden = true;
-          void attempt(async () => {
-            try {
-              await post(channel.value, channel.selectedOptions[0].textContent);
-              node.close();
-            } catch (err) {
-              if (!(err instanceof RequestError)) throw err;
-              problem.textContent = err.message;
-              problem.hidden = false;
-            } finally {
-              submit.disabled = false;
-            }
-          });
-        },
-      },
-      channel,
-      problem,
-      el('div', { className: 'actions' }, el('button', { type: 'button', onclick: () => node.close() }, 'Cancel'), submit),
-    ),
-  );
+  const node = openDialog(parent, {
+    title,
+    body: [el('p', {}, text), channel, problem],
+    actions: [submit],
+    close: 'Cancel',
+    onsubmit: (e) => {
+      e.preventDefault();
+      submit.disabled = true;
+      problem.hidden = true;
+      void attempt(async () => {
+        try {
+          await post(channel.value, channel.selectedOptions[0].textContent);
+          node.close();
+        } catch (err) {
+          if (!(err instanceof RequestError)) throw err;
+          problem.textContent = err.message;
+          problem.hidden = false;
+        } finally {
+          submit.disabled = false;
+        }
+      });
+    },
+  });
   void attempt(async () => {
     const { channels, announceChannel } = await request(api('/pick/options'));
     channel.replaceChildren(...channels.map((c) => el('option', { value: c.id, selected: c.id === announceChannel }, `#${c.name}`)));

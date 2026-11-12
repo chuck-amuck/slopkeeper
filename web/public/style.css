@@ -852,21 +852,100 @@ main {
   transform: none;
 }
 
+/* Every dialog: the title, a body that scrolls when it's long, and a footer that stays put */
 dialog {
   width: min(420px, calc(100vw - 32px));
-  padding: 20px;
+  max-height: calc(100dvh - 32px);
+  padding: 0;
+  overflow: hidden;
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: var(--surface);
   color: var(--text);
 }
 
+dialog[open] {
+  display: flex;
+  flex-direction: column;
+}
+
+.dialog-form {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.dialog-body {
+  display: grid;
+  flex: 1 1 auto;
+  align-content: start;
+  gap: var(--space-3);
+  min-height: 0;
+  padding: 4px 20px 16px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.dialog-foot {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  padding: 12px 20px;
+  border-top: 1px solid var(--line);
+}
+
+/* Takes the room on the left, so the main action and Close sit on the right */
+.dialog-start {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-right: auto;
+}
+
+.dialog-section {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.dialog-section + .dialog-section {
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--line);
+}
+
+.dialog-section h3 {
+  margin: 0;
+  font-size: var(--text-base);
+}
+
+.section-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.dialog-body .merge-list,
+.dialog-body > p,
+.dialog-section > p {
+  margin: 0;
+}
+
+/* Red at rest for something that can't be undone; it fills red once pressed, like other confirm buttons */
+button.bad-outline:not(.danger) {
+  border-color: var(--bad);
+  color: var(--bad);
+}
+
 dialog::backdrop {
   background: rgb(0 0 0 / 45%);
 }
 
-dialog h2 {
-  margin: 0 0 6px;
+dialog > h2 {
+  flex: none;
+  margin: 0;
+  padding: 18px 20px 8px;
   font-size: 17px;
 }
 
@@ -880,17 +959,9 @@ dialog input {
   width: 100%;
 }
 
-dialog .actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: var(--space-2);
-  margin-top: 16px;
-}
-
 .emoji-tabs {
   display: flex;
   gap: var(--space-1);
-  margin-top: 12px;
   overflow-x: auto;
 }
 
@@ -902,7 +973,6 @@ dialog .actions {
 
 .emoji-picker {
   height: min(280px, 40vh);
-  margin-top: 12px;
   overflow-y: auto;
 }
 
@@ -1149,7 +1219,6 @@ dialog .actions {
   display: block;
   width: 100%;
   height: 96px;
-  margin-bottom: 12px;
   border-radius: var(--radius-sm);
   background: var(--raised);
   cursor: ew-resize;
@@ -1175,10 +1244,6 @@ dialog:has(.wave) {
 
 dialog .start input {
   width: 110px;
-}
-
-dialog .actions button:first-child:not(.primary):has(+ button) {
-  margin-right: auto;
 }
 
 /* Merging games */

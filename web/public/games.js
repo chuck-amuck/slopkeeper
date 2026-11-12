@@ -65,40 +65,36 @@ function addDialog(main, onAdded) {
     else if (shown.length > SHOWN_GAMES) list.append(notice('more', `Showing ${SHOWN_GAMES} of ${shown.length}. Search to find the rest.`, { compact: true }));
   }
 
-  const node = openDialog(
-    main,
-    el('h2', {}, 'Add a game'),
-    el('p', {}, 'Pick from what members own on Steam, or add anything else by name or store link. Private Steam libraries aren’t listed.'),
-    el(
-      'form',
-      {
-        className: 'plan',
-        onsubmit: (e) => {
-          e.preventDefault();
-          void attempt(async () => {
-            submit.disabled = true;
-            say(problem, null);
-            try {
-              const { name: title, added: isNew } = await request(api('/games'), { method: 'POST', json: { name: name.value } });
-              toast(isNew ? `${title} is in the library.` : `${title} was already in the library.`);
-              node.close();
-              await onAdded();
-            } catch (err) {
-              if (!(err instanceof RequestError)) throw err;
-              say(problem, err.message);
-            } finally {
-              submit.disabled = false;
-            }
-          });
-        },
-      },
+  const node = openDialog(main, {
+    title: 'Add a game',
+    body: [
+      el('p', {}, 'Pick from what members own on Steam, or add anything else by name or store link. Private Steam libraries aren’t listed.'),
       name,
       list,
       added,
       problem,
-      el('div', { className: 'actions' }, el('button', { type: 'button', onclick: () => node.close() }, 'Close'), submit),
-    ),
-  );
+    ],
+    actions: [submit],
+    close: 'Close',
+    onsubmit: (e) => {
+      e.preventDefault();
+      void attempt(async () => {
+        submit.disabled = true;
+        say(problem, null);
+        try {
+          const { name: title, added: isNew } = await request(api('/games'), { method: 'POST', json: { name: name.value } });
+          toast(isNew ? `${title} is in the library.` : `${title} was already in the library.`);
+          node.close();
+          await onAdded();
+        } catch (err) {
+          if (!(err instanceof RequestError)) throw err;
+          say(problem, err.message);
+        } finally {
+          submit.disabled = false;
+        }
+      });
+    },
+  });
   name.focus();
   void request(api('/games/owned')).then(
     ({ games }) => {
@@ -195,47 +191,46 @@ function manageDialog(main, gameId, data, reload) {
     if (!shown.length) list.append(el('p', {}, 'Nobody matches that.'));
   }
 
-  const node = openDialog(
-    main,
-    el('h2', {}, start.name),
-    el(
-      'form',
-      {
-        className: 'plan',
-        onsubmit: (e) => {
-          e.preventDefault();
-          void attempt(() =>
-            guarded(async () => {
-              await request(api(`/games/${gameId}`), { method: 'PATCH', json: { maxPlayers: limit.value ? Number(limit.value) : null, steam: steam.value } });
-              toast(`${start.name} saved.`);
-              await reload();
-              paint();
-            }),
-          );
-        },
-      },
-      row('Player limit', limit),
-      row('Steam link', steam),
-      el('div', { className: 'actions' }, save),
-    ),
-    el('label', { className: 'game-mark' }, hide, 'Never suggest this'),
-    hideNote,
-    el('h3', {}, 'Who has it'),
-    search,
-    list,
-    problem,
-    el(
-      'div',
-      { className: 'actions' },
-      confirmButton({ ariaLabel: `Remove ${start.name}` }, 'Remove game', 'Remove it?', async () => {
+  const section = (title, ...children) => el('section', { className: 'dialog-section' }, el('h3', {}, title), ...children);
+  const node = openDialog(main, {
+    title: start.name,
+    body: [
+      section(
+        'Details',
+        el(
+          'form',
+          {
+            className: 'plan',
+            onsubmit: (e) => {
+              e.preventDefault();
+              void attempt(() =>
+                guarded(async () => {
+                  await request(api(`/games/${gameId}`), { method: 'PATCH', json: { maxPlayers: limit.value ? Number(limit.value) : null, steam: steam.value } });
+                  toast(`${start.name} saved.`);
+                  await reload();
+                  paint();
+                }),
+              );
+            },
+          },
+          row('Player limit', limit),
+          row('Steam link', steam),
+          el('div', { className: 'section-actions' }, save),
+        ),
+      ),
+      section('Suggestions', el('label', { className: 'game-mark' }, hide, 'Never suggest this'), hideNote),
+      section('Who has it', el('p', { className: 'hint' }, 'Ticks save as you make them.'), search, list),
+      problem,
+    ],
+    start: [
+      confirmButton({ className: 'bad-outline', ariaLabel: `Remove ${start.name}` }, 'Remove game', 'Remove it?', async () => {
         await request(api(`/games/${gameId}`), { method: 'DELETE' });
         toast(`${start.name} is out of the library.`);
         node.close();
         await reload();
       }),
-      el('button', { type: 'button', onclick: () => node.close() }, 'Close'),
-    ),
-  );
+    ],
+  });
   paint();
 }
 
@@ -422,17 +417,18 @@ function accountsDialog(main, onChanged) {
     'Refresh libraries',
   );
 
-  const node = openDialog(
-    main,
-    el('h2', {}, 'Steam accounts'),
-    el('p', {}, 'Who’s who on Steam, for working out who owns what. A link applies in every server someone shares with the bot. People who share a Steam family can play each other’s shareable games, with one person playing per copy.'),
-    search,
-    list,
-    help,
-    done,
-    problem,
-    el('div', { className: 'actions' }, refreshAll, el('button', { type: 'button', onclick: () => node.close() }, 'Close')),
-  );
+  openDialog(main, {
+    title: 'Steam accounts',
+    body: [
+      el('p', {}, 'Who’s who on Steam, for working out who owns what. A link applies in every server someone shares with the bot. People who share a Steam family can play each other’s shareable games, with one person playing per copy.'),
+      search,
+      list,
+      help,
+      done,
+      problem,
+    ],
+    start: [refreshAll],
+  });
   void attempt(async () => {
     try {
       data = await request(api('/steam-links'));

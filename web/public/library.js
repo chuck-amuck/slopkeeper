@@ -254,7 +254,7 @@ export function renderLibrary(main) {
         if (!shown.length) list.append(el('p', {}, sounds.length ? 'No sounds match that.' : 'There’s nothing to pick from.'));
       };
       const input = el('input', { type: 'search', placeholder: 'Search sounds', ariaLabel: 'Search sounds', oninput: paint });
-      const node = openDialog(main, el('h2', {}, heading), el('p', {}, text), input, list, el('div', { className: 'actions' }, el('button', { onclick: () => node.close() }, 'Cancel')));
+      const node = openDialog(main, { title: heading, body: [el('p', {}, text), input, list], close: 'Cancel' });
       node.addEventListener('close', () => resolve(picked));
       paint();
     });
@@ -535,14 +535,10 @@ export function renderLibrary(main) {
       player.setLoudness(sound.name, loudness());
     };
     show(sound.percent);
-    const node = openDialog(
-      main,
-      el('h2', {}, `Volume for ${sound.name}`),
-      note,
-      el('div', { className: 'volume' }, control.node),
-      el(
-        'div',
-        { className: 'actions' },
+    openDialog(main, {
+      title: `Volume for ${sound.name}`,
+      body: [note, el('div', { className: 'volume' }, control.node)],
+      start: [
         el(
           'button',
           {
@@ -555,9 +551,10 @@ export function renderLibrary(main) {
         ),
         el('button', { onclick: () => player.toggle(soundPath(sound.name, '/audio'), sound.name, loudness()) }, 'Preview'),
         voice.channel() && el('button', { onclick: () => attempt(() => voice.play(sound.name)) }, 'Play in voice'),
-        el('button', { className: 'primary', onclick: () => node.close() }, 'Done'),
-      ),
-    );
+      ],
+      close: 'Done',
+      closePrimary: true,
+    });
   }
 
   function pickEmoji(sound) {
@@ -568,27 +565,17 @@ export function renderLibrary(main) {
         await load();
       });
     const picker = emojiPicker(data.emojis, set);
-    const node = openDialog(
-      main,
-      el('h2', {}, `Emoji for ${sound.name}`),
-      el(
-        'form',
-        {
-          onsubmit: (e) => {
-            e.preventDefault();
-            const emoji = picker.chosen();
-            if (emoji) void set(emoji);
-          },
-        },
-        ...picker.nodes,
-        el(
-          'div',
-          { className: 'actions' },
-          sound.emoji && el('button', { type: 'button', onclick: () => set(null) }, 'Clear'),
-          el('button', { type: 'button', onclick: () => node.close() }, 'Cancel'),
-        ),
-      ),
-    );
+    const node = openDialog(main, {
+      title: `Emoji for ${sound.name}`,
+      body: picker.nodes,
+      start: [sound.emoji && el('button', { type: 'button', onclick: () => set(null) }, 'Clear')],
+      close: 'Cancel',
+      onsubmit: (e) => {
+        e.preventDefault();
+        const emoji = picker.chosen();
+        if (emoji) void set(emoji);
+      },
+    });
   }
 
   function addFiles(files) {

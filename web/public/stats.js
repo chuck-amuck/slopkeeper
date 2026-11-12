@@ -241,7 +241,16 @@ function overview(main) {
       const list = el('div', { className: 'merge-list' }, el('p', {}, 'Loading games…'));
       const keep = el('select', { ariaLabel: 'Name to keep' });
       const merge = el('button', { className: 'primary', type: 'submit', disabled: true }, 'Merge');
-      const search = el('input', { type: 'search', placeholder: 'Search games', ariaLabel: 'Search games', oninput: () => paint() });
+      const search = el('input', {
+        type: 'search',
+        placeholder: 'Search games',
+        ariaLabel: 'Search games',
+        oninput: () => paint(),
+        // It's in the form, but Enter there shouldn't merge
+        onkeydown: (e) => {
+          if (e.key === 'Enter') e.preventDefault();
+        },
+      });
 
       function paintKeep() {
         const was = keep.value;
@@ -275,35 +284,32 @@ function overview(main) {
         if (!shown.length) list.append(el('p', {}, 'No games match that.'));
       }
 
-      const node = openDialog(
-        main,
-        el('h2', {}, 'Merge games'),
-        el('p', {}, 'Tick the entries that are the same game. Past stats and ping roles follow, and you can separate them again.'),
-        search,
-        list,
-        problem,
-        el(
-          'form',
-          {
-            onsubmit: async (e) => {
-              e.preventDefault();
-              problem.hidden = true;
-              merge.disabled = true;
-              try {
-                await request(api('/game-names/merge'), { method: 'POST', json: { names: [...ticked], into: keep.value } });
-                kept = keep.value;
-                node.close();
-              } catch (err) {
-                problem.textContent = err.message;
-                problem.hidden = false;
-                merge.disabled = false;
-              }
-            },
-          },
+      const node = openDialog(main, {
+        title: 'Merge games',
+        body: [
+          el('p', {}, 'Tick the entries that are the same game. Past stats and ping roles follow, and you can separate them again.'),
+          search,
+          list,
+          problem,
           el('label', { className: 'start' }, 'Keep the name', keep),
-          el('div', { className: 'actions' }, el('button', { type: 'button', onclick: () => node.close() }, 'Cancel'), merge),
-        ),
-      );
+        ],
+        actions: [merge],
+        close: 'Cancel',
+        onsubmit: async (e) => {
+          e.preventDefault();
+          problem.hidden = true;
+          merge.disabled = true;
+          try {
+            await request(api('/game-names/merge'), { method: 'POST', json: { names: [...ticked], into: keep.value } });
+            kept = keep.value;
+            node.close();
+          } catch (err) {
+            problem.textContent = err.message;
+            problem.hidden = false;
+            merge.disabled = false;
+          }
+        },
+      });
       node.addEventListener('close', () => resolve(kept));
       void request(api('/game-names')).then(
         (data) => {

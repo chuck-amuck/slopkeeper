@@ -42,39 +42,35 @@ function voteDialog(main, options, voice, games) {
   const minutes = el('input', { type: 'number', min: 1, max: 10, step: 1, required: true, value: 1, ariaLabel: 'Minutes' });
   const problem = formProblem();
   const submit = el('button', { className: 'primary', type: 'submit' }, 'Start vote');
-  const node = openDialog(
-    main,
-    el('h2', {}, 'Start a vote'),
-    el('p', {}, games ? `Everyone in ${voice.name} votes in Discord, on ${games.length > VOTE_OPTIONS ? `${VOTE_OPTIONS} of ` : ''}the ${games.length} games shown.` : `Everyone in ${voice.name} votes in Discord, on the games they all own.`),
-    el(
-      'form',
-      {
-        className: 'plan',
-        onsubmit: (e) => {
-          e.preventDefault();
-          submit.disabled = true;
-          problem.hidden = true;
-          void attempt(async () => {
-            try {
-              await request(api('/votes'), { method: 'POST', json: { voiceChannelId: voice.id, channelId: channel.value, minutes: Number(minutes.value), games: games ?? undefined } });
-              toast(`Vote posted in ${channel.selectedOptions[0].textContent}.`);
-              node.close();
-            } catch (err) {
-              if (!(err instanceof RequestError)) throw err;
-              problem.textContent = err.message;
-              problem.hidden = false;
-            } finally {
-              submit.disabled = false;
-            }
-          });
-        },
-      },
+  const node = openDialog(main, {
+    title: 'Start a vote',
+    body: [
+      el('p', {}, games ? `Everyone in ${voice.name} votes in Discord, on ${games.length > VOTE_OPTIONS ? `${VOTE_OPTIONS} of ` : ''}the ${games.length} games shown.` : `Everyone in ${voice.name} votes in Discord, on the games they all own.`),
       el('label', { className: 'form-row' }, el('span', {}, 'Post it in'), channel),
       el('label', { className: 'form-row' }, el('span', {}, 'Minutes'), minutes),
       problem,
-      el('div', { className: 'actions' }, el('button', { type: 'button', onclick: () => node.close() }, 'Cancel'), submit),
-    ),
-  );
+    ],
+    actions: [submit],
+    close: 'Cancel',
+    onsubmit: (e) => {
+      e.preventDefault();
+      submit.disabled = true;
+      problem.hidden = true;
+      void attempt(async () => {
+        try {
+          await request(api('/votes'), { method: 'POST', json: { voiceChannelId: voice.id, channelId: channel.value, minutes: Number(minutes.value), games: games ?? undefined } });
+          toast(`Vote posted in ${channel.selectedOptions[0].textContent}.`);
+          node.close();
+        } catch (err) {
+          if (!(err instanceof RequestError)) throw err;
+          problem.textContent = err.message;
+          problem.hidden = false;
+        } finally {
+          submit.disabled = false;
+        }
+      });
+    },
+  });
 }
 
 /** What a group could play, with what each of them has put into it */

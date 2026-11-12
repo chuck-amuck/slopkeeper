@@ -99,34 +99,25 @@ export function pickTrim(main, sound) {
       }
     };
 
-    const node = openDialog(
-      main,
-      el('h2', {}, `Trim ${sound.name}`),
-      el('p', {}, 'Drag either end of the waveform to choose what to keep.'),
-      sound.onDiscord && el('p', {}, 'The copy on Discord’s soundboard stays as it is. Untick and retick On Discord to send the new version.'),
-      canvas,
-      status,
-      problem,
-      el(
-        'form',
-        {
-          noValidate: true,
-          onsubmit: (e) => {
-            e.preventDefault();
-            if (!save.disabled) void change('/trim', { start, end }, 'trimmed');
-          },
-        },
+    const node = openDialog(main, {
+      title: `Trim ${sound.name}`,
+      body: [
+        el('p', {}, 'Drag either end of the waveform to choose what to keep.'),
+        sound.onDiscord && el('p', {}, 'The copy on Discord’s soundboard stays as it is. Untick and retick On Discord to send the new version.'),
+        canvas,
+        status,
+        problem,
         el('div', { className: 'trim-times' }, el('label', { className: 'start' }, 'Start', startInput), el('label', { className: 'start' }, 'End', endInput), length),
-        el(
-          'div',
-          { className: 'actions' },
-          preview,
-          sound.trimmed && el('button', { type: 'button', onclick: () => change('/restore', null, 'restored') }, 'Restore original'),
-          el('button', { type: 'button', onclick: () => node.close() }, 'Cancel'),
-          save,
-        ),
-      ),
-    );
+      ],
+      start: [preview, sound.trimmed && el('button', { type: 'button', onclick: () => change('/restore', null, 'restored') }, 'Restore original')],
+      actions: [save],
+      close: 'Cancel',
+      noValidate: true,
+      onsubmit: (e) => {
+        e.preventDefault();
+        if (!save.disabled) void change('/trim', { start, end }, 'trimmed');
+      },
+    });
     node.addEventListener('close', () => {
       stop();
       void context.close();
