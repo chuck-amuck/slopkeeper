@@ -1,7 +1,8 @@
 import { Events, type Client, type Guild, type VoiceBasedChannel } from 'discord.js';
 import { anyChange, type FeedName, feeds } from '../changes.ts';
 import { playingNow } from '../features/voiceAudio.ts';
-import { setting } from '../settings.ts';
+import { config } from '../config.ts';
+import { idSetting, setting } from '../settings.ts';
 import { humansIn } from '../util.ts';
 import { type Ask, Refused, untilGone } from './common.ts';
 import { musicList } from './music.ts';
@@ -25,12 +26,27 @@ export function voiceList(guild: Guild) {
 export const updates: Record<FeedName, (guild: Guild) => object | Promise<object>> = {
   playing: (guild) => ({ playing: playingNow(guild.id) }),
   music: (guild) => musicList(guild),
-  voice: (guild) => ({ ...voiceList(guild), soundVolume: setting(guild.id, 'soundVolume') }),
+  voice: (guild) => voiceList(guild),
   nights: (guild) => nightList(guild),
   // The newest page: a page that has seen less than all of it starts again from there
   activity: (guild) => activityList(guild),
   sounds: (guild) => soundsNow(guild),
+  volumes: (guild) => volumesOf(guild),
 };
+
+/** How loud the bot plays each thing, for everyone in the server. Null for what isn't set up, so there's no slider for it */
+export function volumesOf(guild: Guild) {
+  const id = guild.id;
+  const speech = Boolean(config.voiceUrl);
+  const loop = idSetting(id, 'loopRoom') !== null;
+  return {
+    sounds: setting(id, 'soundVolume'),
+    speech: speech && setting(id, 'tts') ? setting(id, 'ttsVolume') : null,
+    music: config.musicUrl ? setting(id, 'musicVolume') : null,
+    loopSound: loop && setting(id, 'loopSound') ? setting(id, 'loopVolume') : null,
+    loopSpeech: loop && speech && setting(id, 'loopText') ? setting(id, 'loopTextVolume') : null,
+  };
+}
 
 /**
  * The library, its groups and Discord's soundboard, as /sounds has them, with the bin. Every tab open on the soundboard
@@ -72,7 +88,8 @@ export function followVoice(client: Client) {
 }
 
 export async function liveRoutes({ client, guild, req, res, url, section, rest }: Ask) {
-  if (section === 'voice' && !rest.length && req.method === 'GET') return { ...voiceList(guild), soundVolume: setting(guild.id, 'soundVolume') };
+  if (section === 'voice' && !rest.length && req.method === 'GET') return voiceList(guild);
+  if (section === 'volumes' && !rest.length && req.method === 'GET') return { version: feeds.volumes.version(guild.id), ...volumesOf(guild) };
   if (section === 'updates' && !rest.length && req.method === 'GET') {
     // One request per page for all it keeps up with: ?playing=&music=&sounds=… with the version it has of each it wants (empty
     // for none yet). It waits until one changes, then answers with only those that did, or with nothing after a while

@@ -20,7 +20,7 @@ const AREAS = new Map<string, (ask: Ask) => Promise<unknown>>([
   ...['game-nights', 'game-night-series'].map((s) => [s, nightRoutes] as const),
   ...['music'].map((s) => [s, musicRoutes] as const),
   ...['settings', 'me', 'activity'].map((s) => [s, serverRoutes] as const),
-  ...['voice', 'updates'].map((s) => [s, liveRoutes] as const),
+  ...['voice', 'volumes', 'updates'].map((s) => [s, liveRoutes] as const),
 ]);
 
 async function handle(client: Client<true>, req: IncomingMessage, res: ServerResponse) {

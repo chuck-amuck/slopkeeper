@@ -24,16 +24,18 @@ export function onPlaying(node, listener) {
 }
 
 /**
- * The Stop sounds button, in the corner of every page, with what's playing above it. Tapping a name stops just that
- * one; the button stops them all, but never the music
+ * The corner of every page: the Volume button, and while anything's playing, the Stop button beside it with what's
+ * playing above. Tapping a name stops just that one; Stop stops them all, but never the music. `volume` is the Volume
+ * button and the panel it opens, which goes above the rest
  */
-export function stopDock() {
+export function stopDock(volume) {
   const list = el('ul', { className: 'now-sounds', ariaLabel: 'Playing now', hidden: true });
   const label = el('span', { className: 'stop-label' }, 'Stop sounds');
   const button = el(
     'button',
     {
       className: 'stop-all with-icon',
+      hidden: true,
       title: 'Stops every sound and line of speech. The music carries on',
       onclick: () =>
         attempt(async () => {
@@ -52,7 +54,7 @@ export function stopDock() {
     icon('stop'),
     label,
   );
-  const node = el('div', { className: 'stop-dock' }, list, button);
+  const node = el('div', { className: 'stop-dock' }, list, volume.panel, el('div', { className: 'dock-row' }, button, volume.button));
   // On a phone, two or more show as one chip until it's tapped, so they don't cover the sounds
   const narrow = matchMedia('(max-width: 640px)');
   let expanded = false;
@@ -72,7 +74,9 @@ export function stopDock() {
 
   const paintList = (playing) => {
     shownPlaying = playing;
-    label.textContent = !playing.length ? 'Stop sounds' : playing.length === 1 ? `Stop ${playing[0].kind === 'speech' ? 'speech' : playing[0].name}` : `Stop all ${playing.length}`;
+    // Only while there's something to stop
+    button.hidden = !playing.length;
+    label.textContent = playing.length === 1 ? `Stop ${playing[0].kind === 'speech' ? 'speech' : playing[0].name}` : `Stop all ${playing.length}`;
     if (playing.length < 2) expanded = false;
     list.hidden = !playing.length;
     if (narrow.matches && playing.length > 1 && !expanded) {
@@ -130,15 +134,18 @@ export function stopDock() {
   onPlaying(node, paintList);
   const onNarrow = () => (node.isConnected ? paintList(shownPlaying) : narrow.removeEventListener('change', onNarrow));
   narrow.addEventListener('change', onNarrow);
-  // Toasts sit above the dock, wherever its top is now. Measured once it's on the page and whenever it changes size
+  // Toasts sit above the corner, wherever its top is now: above what's playing and the Volume panel when open. Measured
+  // once it's on the page and whenever either changes size
   const sizes = new ResizeObserver(() => {
     // A dock left behind by a redraw lets go, rather than being watched for the rest of the visit
     if (!node.isConnected) {
       narrow.removeEventListener('change', onNarrow);
       return sizes.disconnect();
     }
-    document.documentElement.style.setProperty('--dock-extra', `${list.offsetHeight ? list.offsetHeight + 8 : 0}px`);
+    const above = [list, volume.panel].reduce((sum, part) => sum + (part.offsetHeight ? part.offsetHeight + 8 : 0), 0);
+    document.documentElement.style.setProperty('--dock-extra', `${above}px`);
   });
   sizes.observe(list);
+  sizes.observe(volume.panel);
   return node;
 }

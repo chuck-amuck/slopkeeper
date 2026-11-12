@@ -167,16 +167,24 @@ export function setting<K extends SettingKey>(guildId: string, key: K): SettingV
 }
 
 /** Settings that pages besides Settings show, and the live updates those pages follow, so a change shows on them at once */
-const SHOWN_ON: Partial<Record<SettingKey, FeedName>> = {
-  // The volume beside Play in
-  soundVolume: 'voice',
-  // Autoplay's switch is told through the music card, which changes with it
-  musicVolume: 'music',
+const SHOWN_ON: Partial<Record<SettingKey, FeedName[]>> = {
+  // The volume sliders on the Soundboard and behind the Volume button on every page
+  soundVolume: ['volumes'],
+  ttsVolume: ['volumes'],
+  loopVolume: ['volumes'],
+  loopTextVolume: ['volumes'],
+  // Whether there's speech or a looping room to have a volume for
+  tts: ['volumes'],
+  loopRoom: ['volumes'],
+  loopSound: ['volumes'],
+  loopText: ['volumes'],
+  // The music card has it too. Autoplay's switch is told through the card, which changes with it
+  musicVolume: ['music', 'volumes'],
   // Manage's switch
-  evenVolume: 'sounds',
+  evenVolume: ['sounds'],
   // Night times, and the channel the planning form starts on
-  timezone: 'nights',
-  announceChannel: 'nights',
+  timezone: ['nights'],
+  announceChannel: ['nights'],
 };
 
 /** Stores a /setup value; undefined goes back to the default. The web UI and /setup both come through here */
@@ -189,8 +197,7 @@ export function setSetting(guildId: string, key: SettingKey, value: string | num
       value === null ? '' : String(value),
     );
   }
-  const feed = SHOWN_ON[key];
-  if (feed) feeds[feed].changed(guildId);
+  for (const feed of SHOWN_ON[key] ?? []) feeds[feed].changed(guildId);
 }
 
 export type IdSettingKey = 'announceChannel' | 'hopOnRole' | 'freeGamesChannel' | 'saleChannel' | 'patchNotesChannel' | 'soundManagerRole' | 'ttsRole' | 'ttsChannel' | 'loopRoom' | 'musicDjRole';

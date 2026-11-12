@@ -369,7 +369,7 @@ export async function soundRoutes({ client, guild, req, res, url, section, rest 
     return {};
   }
   if (section === 'say' && !rest.length && req.method === 'GET') {
-    return { on: Boolean(config.voiceUrl) && setting(guild.id, 'tts'), voices: VOICES.map((v) => ({ id: v.id, name: v.name, group: voiceGroup(v) })), voice: serverVoice(guild.id).id, volume: setting(guild.id, 'ttsVolume'), longest: setting(guild.id, 'ttsMaxChars'), phrases: phrases(guild.id) };
+    return { on: Boolean(config.voiceUrl) && setting(guild.id, 'tts'), voices: VOICES.map((v) => ({ id: v.id, name: v.name, group: voiceGroup(v) })), voice: serverVoice(guild.id).id, longest: setting(guild.id, 'ttsMaxChars'), phrases: phrases(guild.id) };
   }
   if (section === 'say' && rest.length === 1 && rest[0] === 'preview' && req.method === 'GET') {
     if (!config.voiceUrl || !setting(guild.id, 'tts')) throw new Refused(409, 'Text to speech is off for this server.');

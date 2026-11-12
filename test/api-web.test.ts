@@ -317,6 +317,26 @@ test('the Nights, Activity and Soundboard tabs hear what changes them, and nothi
   assert.equal(update.activity.entries[0].action, 'Did a thing');
 });
 
+test('the volumes leave out what isn’t set up, so there’s no slider for it', async (t) => {
+  const levels = async () => {
+    const { version, ...each } = await ok(`/guilds/${GUILD}/volumes`);
+    assert.ok(version);
+    return each;
+  };
+  assert.deepEqual(await levels(), { sounds: 100, speech: null, music: null, loopSound: null, loopSpeech: null });
+  const was = { ...config };
+  t.after(() => Object.assign(config, was));
+  Object.assign(config, { voiceUrl: 'http://voice', musicUrl: 'http://music' });
+  setSetting(GUILD, 'loopRoom', '701');
+  t.after(() => ['loopRoom', 'loopSound', 'loopText', 'tts'].forEach((key) => setSetting(GUILD, key as never, undefined)));
+  assert.deepEqual(await levels(), { sounds: 100, speech: 100, music: 40, loopSound: null, loopSpeech: null });
+  setSetting(GUILD, 'loopSound', 'airhorn');
+  assert.deepEqual(await levels(), { sounds: 100, speech: 100, music: 40, loopSound: 50, loopSpeech: null });
+  setSetting(GUILD, 'loopText', 'Welcome');
+  setSetting(GUILD, 'tts', false);
+  assert.deepEqual(await levels(), { sounds: 100, speech: null, music: 40, loopSound: 50, loopSpeech: 50 });
+});
+
 test('a page’s one request for updates waits for a change, then answers with only what changed', async (t) => {
   t.after(() => ok(`/guilds/${GUILD}/music/queue`, { method: 'DELETE' }));
   assert.match(await refused(400, `/guilds/${GUILD}/updates`), /playing, music, voice/);
@@ -326,7 +346,6 @@ test('a page’s one request for updates waits for a change, then answers with o
   assert.deepEqual(first.playing.playing, []);
   assert.deepEqual(first.music.queue, []);
   assert.deepEqual(first.voice.channels.map((c: { id: string }) => c.id), ['702', '701']);
-  assert.equal(first.voice.soundVolume, 100);
   const since = (have: Record<string, string>) => `/guilds/${GUILD}/updates?${new URLSearchParams(have)}`;
   const all = { playing: first.playing.version, music: first.music.version, voice: first.voice.version };
 
@@ -374,11 +393,13 @@ test('a page’s one request for updates waits for a change, then answers with o
   all.music = moved.music.version;
   all.voice = moved.voice.version;
 
-  // The sound volume, shown beside Play in
-  const louder = ok(since(all));
+  // The volumes, on the Soundboard and behind the Volume button on every page
+  const { volumes } = await ok(`/guilds/${GUILD}/updates?volumes=`);
+  assert.equal(volumes.sounds, 100);
+  const louder = ok(since({ ...all, volumes: volumes.version }));
   await ok(`/guilds/${GUILD}/settings/soundVolume`, { method: 'PUT', json: { value: 80 } });
   const volume = await louder;
-  assert.deepEqual(Object.keys(volume), ['voice']);
-  assert.equal(volume.voice.soundVolume, 80);
+  assert.deepEqual(Object.keys(volume), ['volumes']);
+  assert.equal(volume.volumes.sounds, 80);
   await ok(`/guilds/${GUILD}/settings/soundVolume`, { method: 'DELETE' });
 });

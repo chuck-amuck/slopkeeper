@@ -292,6 +292,88 @@ button.stop-all:hover:not(:disabled) {
   background: var(--bad);
 }
 
+/* Stop, while anything's playing, then the Volume button, which is always there */
+.dock-row {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  max-width: 100%;
+  min-width: 0;
+}
+
+.dock-row .stop-all {
+  min-width: 0;
+}
+
+button.volume-fab {
+  flex: none;
+  min-height: 48px;
+  padding-inline: 18px;
+  border-color: var(--line);
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+  color: var(--text);
+  font-weight: 600;
+  box-shadow: 0 4px 16px rgb(0 0 0 / 25%);
+}
+
+button.volume-fab .ico {
+  width: 22px;
+  height: 22px;
+}
+
+button.volume-fab[aria-expanded='true'] {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* Every volume, above the Volume button */
+.volume-float {
+  display: grid;
+  gap: var(--space-2);
+  box-sizing: border-box;
+  width: min(380px, calc(100vw - 32px));
+  max-height: calc(100dvh - 160px - var(--bar-h));
+  overflow-y: auto;
+  padding: var(--space-4);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 25%);
+}
+
+.volume-float h2 {
+  margin: 0;
+  font-size: var(--text-lg);
+}
+
+.volume-float h3 {
+  margin: var(--space-2) 0 0;
+  color: var(--muted);
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+
+.volume-float .hint {
+  margin: 0;
+}
+
+.volume-float .volume-sliders,
+.volume-group {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.volume-float .voice-volume {
+  display: flex;
+}
+
+.volume-float .voice-volume input[type='range'] {
+  flex: 1 1 auto;
+  width: auto;
+}
+
 button.quiet {
   border-color: transparent;
   background: transparent;
@@ -532,7 +614,7 @@ main {
   min-width: 5.5em;
 }
 
-/* The volumes, folded under the Volume button beside Play in */
+/* Play in, with the sounds' and speech's volumes under it */
 .voice-box {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
@@ -544,39 +626,31 @@ main {
   flex-wrap: nowrap;
 }
 
-.volume-toggle {
-  flex: none;
+/* Side by side where there's room, a row each on a phone */
+.volume-sliders {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-5);
+  min-width: 0;
 }
 
-.volume-toggle .ico-chevron {
-  transition: transform 0.15s;
-}
-
-.volume-toggle[aria-expanded='true'] .ico-chevron {
-  transform: rotate(180deg);
-}
-
-.volume-panel {
-  display: grid;
-  gap: var(--space-2);
-  padding: var(--space-3);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-md);
-  background: var(--surface);
-}
-
-.volume-panel[hidden] {
+.volume-sliders:not(:has(> :not([hidden]))) {
   display: none;
 }
 
-.volume-panel .hint {
-  margin: 0;
-  color: var(--muted);
-  font-size: var(--text-sm);
+.volume-sliders .voice-label {
+  min-width: 4em;
 }
 
-.volume-panel .voice-label {
-  width: 4.5em;
+@media (max-width: 640px) {
+  .volume-sliders .voice-volume {
+    flex: 1 1 100%;
+  }
+
+  .volume-sliders .voice-volume input[type='range'] {
+    flex: 1 1 auto;
+    width: auto;
+  }
 }
 
 .say-box {
@@ -2402,13 +2476,18 @@ textarea {
     max-width: 10em;
   }
 
-  /* The word goes, the speaker and arrow say it */
-  .volume-word {
+  /* The word goes, the speaker says it */
+  .volume-fab-word {
     position: absolute;
     width: 1px;
     height: 1px;
     overflow: hidden;
     clip-path: inset(50%);
+  }
+
+  button.volume-fab {
+    width: 48px;
+    padding: 0;
   }
 
   /* Two lines for a long name rather than cutting it off */
@@ -3159,6 +3238,18 @@ span.steam-family {
     height: var(--bar-h);
     padding-bottom: env(safe-area-inset-bottom, 0px);
     border-top: 1px solid var(--line);
+    background: var(--surface);
+  }
+
+  /* Some phone browsers leave a strip below the bar at the very end of a page, as their own toolbar slides away. The
+     bar's colour carries on down into it, rather than the page showing through */
+  .bottom-nav::after {
+    content: '';
+    position: absolute;
+    top: 100%;
+    right: 0;
+    left: 0;
+    height: 120px;
     background: var(--surface);
   }
 

@@ -5,6 +5,7 @@ import { renderMusic } from './music.js';
 import { renderNights } from './nights.js';
 import { renderPick } from './pick.js';
 import { stopDock } from './playing.js';
+import { volumeDock } from './volumes.js';
 import { stopWatchingUpdates, watchUpdates } from './updates.js';
 import { renderSettings } from './settings.js';
 import { renderSoundboard, VIEW_KEY } from './soundboard.js';
@@ -15,15 +16,15 @@ const app = document.getElementById('app');
 const TABS = [
   ['board', 'Soundboard', renderSoundboard, 'speaker', 'Sounds'],
   ['music', 'Music', renderMusic, 'note'],
-  ['nights', 'Game nights', renderNights, 'calendar', 'Nights'],
   ['games', 'Games', renderGames, 'star'],
+  ['nights', 'Game nights', renderNights, 'calendar', 'Nights'],
   ['pick', 'Pick a game', renderPick, 'dice', 'Pick'],
   ['stats', 'Stats', renderStats, 'chart'],
   ['activity', 'Activity', renderActivity, 'clock'],
   ['settings', 'Settings', renderSettings, 'sliders'],
 ];
-// What a phone's bottom bar has room for: what's used during a call. The rest are under More
-const BAR = ['board', 'music', 'nights', 'pick'];
+// What a phone's bottom bar has room for, in the same order as the tabs on a wider screen. The rest are under More
+const BAR = ['board', 'music', 'games', 'nights'];
 // Sounds was its own tab, and is now the Soundboard's Manage view
 if (recall('tab') === 'library') {
   remember('tab', 'board');
@@ -284,8 +285,8 @@ function renderFrame() {
       }),
       el('button', { type: 'button', ...(!BAR.includes(tab) && { 'aria-current': 'page' }), ariaHasPopup: 'dialog', onclick: () => moreSheet(main) }, icon('more'), el('span', {}, BAR.includes(tab) ? 'More' : TABS.find(([t]) => t === tab)[1])),
     ),
-    // In the corner of every page, so it's always in reach
-    guild && stopDock(),
+    // In the corner of every page, so they're always in reach
+    guild && stopDock(volumeDock()),
   );
   if (guild) watchUpdates();
   else stopWatchingUpdates();

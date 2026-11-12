@@ -29,11 +29,15 @@ test('an empty id setting means none', () => {
 });
 
 test('a setting another page shows tells that page, from /setup and the web UI alike', () => {
-  const before = { voice: feeds.voice.version('g9'), music: feeds.music.version('g9') };
+  const now = () => ({ volumes: feeds.volumes.version('g9'), music: feeds.music.version('g9') });
+  const before = now();
   setSetting('g9', 'hopOnMinPeople', 4);
-  assert.deepEqual({ voice: feeds.voice.version('g9'), music: feeds.music.version('g9') }, before, 'nothing else shows that one');
+  assert.deepEqual(now(), before, 'nothing else shows that one');
   setSetting('g9', 'soundVolume', 50);
-  assert.notEqual(feeds.voice.version('g9'), before.voice, 'the volume beside Play in');
+  const sounds = now();
+  assert.notEqual(sounds.volumes, before.volumes, 'the volume sliders');
+  assert.equal(sounds.music, before.music);
   setSetting('g9', 'musicVolume', undefined);
-  assert.notEqual(feeds.music.version('g9'), before.music, 'the music page, back to the default too');
+  assert.notEqual(now().music, sounds.music, 'the music page, back to the default too');
+  assert.notEqual(now().volumes, sounds.volumes, 'and the volume sliders');
 });

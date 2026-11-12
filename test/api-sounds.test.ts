@@ -1171,7 +1171,7 @@ test('tells the page what text to speech offers', async () => {
     assert.deepEqual(Object.keys(data.voices[0]), ['id', 'name', 'group']);
     const group = (id: string) => data.voices.find((v: { id: string }) => v.id === id).group;
     assert.deepEqual([group('glados'), group('russian'), group('demon')], ['Characters', 'Accents', 'Effects']);
-    assert.deepEqual([data.on, data.voice, data.volume, data.longest], [true, 'tiktok', 100, 200]);
+    assert.deepEqual([data.on, data.voice, data.longest], [true, 'tiktok', 200]);
     setSetting(GUILD, 'tts', false);
     assert.equal((await ok(`/guilds/${GUILD}/say`)).on, false);
   } finally {

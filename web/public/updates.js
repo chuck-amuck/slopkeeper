@@ -1,8 +1,8 @@
 import { el, request, state } from './lib.js';
 
 /**
- * Keeps the page up with what's playing, the music, who's in voice, game nights, the activity log and the sounds,
- * through one request at a time per tab. Each
+ * Keeps the page up with what's playing, the music, who's in voice, game nights, the activity log, the sounds and the
+ * volumes, through one request at a time per tab. Each
  * waits at the bot until something the page shows changes, then brings only what did. A hidden tab stops asking until
  * it's shown again
  */
@@ -15,14 +15,14 @@ const UNCHANGED_MS = 1000;
 const UNSEEN_MS = 5000;
 
 /** Who follows each part: { node, listener, since, seen } */
-const followers = { playing: new Set(), music: new Set(), voice: new Set(), nights: new Set(), activity: new Set(), sounds: new Set() };
+const followers = { playing: new Set(), music: new Set(), voice: new Set(), nights: new Set(), activity: new Set(), sounds: new Set(), volumes: new Set() };
 /** The last of each part the bot sent for the server watched: { data, at } */
 let latest = new Map();
 /** The request loop for one server */
 let run = null;
 
 /**
- * Calls `listener(data, at)` with `part` (playing, music, voice, nights, activity or sounds) for the server picked, now if it's known and each
+ * Calls `listener(data, at)` with `part` (playing, music, voice, nights, activity, sounds or volumes) for the server picked, now if it's known and each
  * time it changes, until `node` leaves the page. `at` is the performance.now() when the bot sent it
  */
 export function follow(part, node, listener) {

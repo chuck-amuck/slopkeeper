@@ -1,4 +1,4 @@
-import { announce, api, attempt, confirmButton, el, emojiNode, fetchAudio, icon, keepFocus, notice, player, recall, remember, request, soundPath, state, toast, undoToast, volumeControl } from './lib.js';
+import { announce, api, attempt, confirmButton, el, emojiNode, fetchAudio, icon, keepFocus, notice, player, recall, remember, request, soundPath, state, toast, undoToast } from './lib.js';
 import { elapsed, onPlaying } from './playing.js';
 import { followWhenIdle, older } from './updates.js';
 import { voiceBar } from './voice.js';
@@ -182,28 +182,15 @@ function sayBox(voice) {
     saveLine,
     send,
   );
-  // Apart from the sounds' volume, so a quiet voice can be turned up without the soundboard
-  const volume = volumeControl({
-    min: 25,
-    max: 200,
-    label: 'Speech volume',
-    onSave: (value) =>
-      void attempt(async () => {
-        await request(api('/settings/ttsVolume'), { method: 'PUT', json: { value } });
-        toast(`Speech plays at ${value}% for everyone now.`);
-      }),
-  });
   const node = el('div', { className: 'say-box', hidden: true }, form, row);
   void attempt(async () => {
-    const { on, voices, voice: serverDefault, volume: loudness, longest, phrases: saved } = await request(api('/say'));
+    const { on, voices, voice: serverDefault, longest, phrases: saved } = await request(api('/say'));
     if (guildId !== state.guildId) return;
-    volume.set(loudness);
     text.maxLength = longest;
     // The voice last used on this device, while the bot still offers it
     const mine = recall(voiceKey);
     picker.replaceChildren(...voiceOptions(voices, voices.some((v) => v.id === mine) ? mine : serverDefault));
     node.hidden = !on;
-    if (on) voice.addVolume('Speech', volume.node);
     remembered(saved);
   });
   return { node, paint };

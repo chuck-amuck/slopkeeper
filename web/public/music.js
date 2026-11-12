@@ -1,5 +1,5 @@
 import { announce, api, attempt, confirmButton, el, icon, keepFocus, notice, pickedVoice, request, RequestError, session, state, toast, undoToast, volumeControl } from './lib.js';
-import { follow } from './updates.js';
+import { follow, followWhenIdle } from './updates.js';
 
 // A playlist adds this many songs, the first or at random
 const FROM_A_LIST = 100;
@@ -160,6 +160,8 @@ export function renderMusic(main) {
   );
   // Where and how loud, at the top as on the Soundboard
   const voiceRow = el('div', { className: 'toolbar voice music-voice' }, el('span', { className: 'voice-label' }, 'Play in'), picker, volumeLabel);
+  // Kept up with a change from the Volume button or anywhere else, apart from while it's being dragged or typed in
+  followWhenIdle('volumes', volumeLabel, () => [volumeLabel], (levels) => levels.music !== null && volume.set(levels.music));
 
   async function playOrPause() {
     if (data?.phase === 'playing') return request(api('/music/pause'), { method: 'POST' });
