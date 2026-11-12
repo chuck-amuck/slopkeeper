@@ -18,6 +18,8 @@ import {
   ButtonStyle,
   DiscordAPIError,
   Events,
+  FileUploadBuilder,
+  LabelBuilder,
   MessageFlags,
   ModalBuilder,
   PermissionFlagsBits,
@@ -34,6 +36,7 @@ import {
   type Guild,
   type GuildTextBasedChannel,
   type GuildMember,
+  type ModalMessageModalSubmitInteraction,
   type VoiceBasedChannel,
   type VoiceState,
 } from 'discord.js';
@@ -93,6 +96,8 @@ const UPLOAD_WAIT_MS = 5 * 60_000;
 const SETTINGS = 'sb:#settings';
 const VOLUME_STEP = 25;
 const INPUT = 'value';
+const UPLOAD_FILE = 'file';
+const UPLOAD_EMOJI = 'emoji';
 /** The /sound subcommands that don't change any sound. Anything else needs the sound managers role, if there is one */
 const OPEN_TO_ALL = new Set(['play', 'stop', 'join', 'panel']);
 
@@ -198,6 +203,18 @@ export function uploadProblem(name: string, ext: string, size: number): string |
   if (!NAME_PATTERN.test(name)) return 'Name can only use lowercase letters, numbers, - and _.';
   if (!EXTENSIONS.includes(ext)) return `Unsupported file type. Use one of: ${EXTENSIONS.join(', ')}`;
   return size > MAX_BYTES ? 'File is over 5 MB.' : null;
+}
+
+/** A sound name made from a file's name, for an upload that didn't give one: "Air Horn (1).mp3" → air-horn-1 */
+export function nameFromFile(fileName: string): string {
+  const name = path
+    .parse(fileName)
+    .name.toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 32)
+    .replace(/-+$/, '');
+  return name || 'sound';
 }
 
 /** Each sound's measured gain and picked volume, by name */
@@ -1346,13 +1363,17 @@ function settingsMenu(i: BaseInteraction<'cached'>, page: number, note?: string)
   }
   // Its own pages, so a sound on another page of the panel is reachable without moving the panel for everyone
   const pages = pageCount(sounds);
+  const last = new ActionRowBuilder<ButtonBuilder>();
+  if (canChangeSounds(i)) last.addComponents(actionButton('add', page, '', 'Add a sound', '➕', ButtonStyle.Primary));
   if (pages > 1) {
     const turn = (to: number, label: string, emoji: string) => actionButton('back', to, '', label, emoji).setDisabled(to < 0 || to >= pages);
-    rows.push(new ActionRowBuilder<ButtonBuilder>().addComponents(turn(page - 1, 'Earlier sounds', '◀️'), turn(page + 1, 'Later sounds', '▶️')));
+    last.addComponents(turn(page - 1, 'Earlier sounds', '◀️'), turn(page + 1, 'Later sounds', '▶️'));
   }
+  if (last.components.length) rows.push(last);
   const prompt = canChangeSounds(i) ? '⚙️ Pick a sound to change.' : `⚙️ Pick a sound to test. ${managersOnly(guildId)}`;
   const where = pages > 1 ? ` (page ${page + 1} of ${pages})` : '';
-  return { content: [note, shown.length ? `${prompt}${where}` : `🔊 No sounds yet. Add one with ${commandMention(guildId, 'sound add')}.`].filter(Boolean).join('\n'), components: rows };
+  const empty = canChangeSounds(i) ? '🔊 No sounds yet. Add one with the button below.' : `🔊 No sounds yet. ${managersOnly(guildId)}`;
+  return { content: [note, shown.length ? `${prompt}${where}` : empty].filter(Boolean).join('\n'), components: rows };
 }
 
 /** Everything that can be changed about one sound, for those allowed to */
@@ -1397,6 +1418,43 @@ function askFor(id: string, title: string, label: string, value: string | undefi
     .addComponents(new ActionRowBuilder<TextInputBuilder>().addComponents(value ? input.setValue(value) : input));
 }
 
+/** The form behind Add a sound: a file, and optionally its name and emoji */
+function uploadForm(page: number) {
+  const text = (id: string, placeholder: string, max: number) =>
+    new TextInputBuilder().setCustomId(id).setStyle(TextInputStyle.Short).setRequired(false).setMaxLength(max).setPlaceholder(placeholder);
+  return new ModalBuilder()
+    .setCustomId(settingId('add', page))
+    .setTitle('Add a sound')
+    .addLabelComponents(
+      new LabelBuilder()
+        .setLabel('Sound file')
+        .setDescription(`${EXTENSIONS.map((e) => e.slice(1)).join(', ')}, up to 5 MB`)
+        .setFileUploadComponent(new FileUploadBuilder().setCustomId(UPLOAD_FILE).setMinValues(1).setMaxValues(1).setRequired(true)),
+      new LabelBuilder().setLabel('Name').setDescription('Lowercase letters, numbers, - and _. Leave empty to use the file’s name').setTextInputComponent(text(INPUT, 'airhorn', 32)),
+      new LabelBuilder().setLabel('Emoji').setDescription('Shown on its button').setTextInputComponent(text(UPLOAD_EMOJI, '📯', 100)),
+    );
+}
+
+/** Add a sound's form, sent: stores the file, or asks first if the name's taken, as /sound add does */
+async function submitUpload(i: ModalMessageModalSubmitInteraction<'cached'>, page: number) {
+  if (!canChangeSounds(i)) return i.update(settingsMenu(i, page, managersOnly(i.guildId)));
+  const file = i.fields.getUploadedFiles(UPLOAD_FILE, true).first()!;
+  const name = i.fields.getTextInputValue(INPUT).trim().toLowerCase() || nameFromFile(file.name);
+  const ext = path.extname(file.name).toLowerCase();
+  const problem = uploadProblem(name, ext, file.size);
+  if (problem) return i.update(settingsMenu(i, page, `⚠️ ${problem}`));
+  const emojiInput = i.fields.getTextInputValue(UPLOAD_EMOJI).trim();
+  const emoji = emojiInput ? await parseEmoji(i.guild, emojiInput) : null;
+  if (emoji && 'error' in emoji) return i.update(settingsMenu(i, page, `⚠️ ${emoji.error}`));
+  const upload = { name, ext, url: file.url, fileName: file.name, emoji: emoji?.emoji };
+  if (findSound(i.guildId, name)) return i.update(askAboutUpload(i.guildId, upload));
+  await i.deferUpdate();
+  // The result goes to everyone, as it does from /sound add
+  await i.followUp(await storeUpload(i.guild, i.user.id, upload));
+  await refreshPanels(i.client, i.guildId);
+  return i.editReply(settingsMenu(i, page));
+}
+
 const SOUND_GONE = { content: 'That sound was removed.', components: [] };
 
 /** The buttons under ⚙️ Settings, which live on a private message rather than the panel */
@@ -1406,6 +1464,7 @@ async function onSetting(i: ButtonInteraction<'cached'>) {
   const notify = () => refreshPanels(i.client, i.guildId);
 
   if (action === 'back') return i.update(settingsMenu(i, page));
+  if (action === 'add') return canChangeSounds(i) ? i.showModal(uploadForm(page)) : i.update(settingsMenu(i, page, managersOnly(i.guildId)));
 
   if (action === 'even' || action === 'joins') {
     if (!i.memberPermissions.has(PermissionFlagsBits.ManageGuild)) return i.update(settingsMenu(i, page, 'You need **Manage Server** for that.'));
@@ -1852,6 +1911,7 @@ export const soundboard: Feature = {
     if (!i.inCachedGuild() || !i.isFromMessage()) return;
     const [action, pageText, name] = i.customId.slice('sb:#'.length).split(':');
     const page = Number(pageText);
+    if (action === 'add') return submitUpload(i, page);
     const sound = findSound(i.guildId, name);
     if (!sound) return i.update(SOUND_GONE);
     if (!canChangeSounds(i)) return i.update(soundSettings(i, sound, page));

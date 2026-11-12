@@ -1,13 +1,13 @@
 import './helpers.ts';
-import { DiscordAPIError, MessageFlags, PermissionFlagsBits } from 'discord.js';
+import { Collection, DiscordAPIError, MessageFlags, PermissionFlagsBits } from 'discord.js';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { mock, test } from 'node:test';
 import { recentActivity } from '../src/activity.ts';
 import { db } from '../src/db.ts';
-import { findSound, listSounds, refreshPanels, soundboard, soundLevels } from '../src/features/soundboard.ts';
+import { findSound, listSounds, nameFromFile, refreshPanels, soundboard, soundLevels } from '../src/features/soundboard.ts';
 import { setSetting, setting } from '../src/settings.ts';
 
 const hasFfmpeg = spawnSync('ffmpeg', ['-version']).status === 0;
@@ -44,7 +44,7 @@ type Reply = { content: string; components: { toJSON(): { components: Record<str
 
 /** Fakes a click on a settings control, and keeps what the private message shows afterwards */
 function clicker(s: ReturnType<typeof server>, options: { admin?: boolean; voice?: unknown; roles?: string[] } = {}) {
-  const state: { shown?: Reply; modal?: { toJSON(): Record<string, any> } } = {};
+  const state: { shown?: Reply; modal?: { toJSON(): Record<string, any> }; said: string[] } = { said: [] };
   const edits: unknown[] = [];
   const base = {
     inCachedGuild: () => true,
@@ -60,6 +60,7 @@ function clicker(s: ReturnType<typeof server>, options: { admin?: boolean; voice
     reply: async (r: Reply) => void (state.shown = r),
     editReply: async (r: Reply) => void (state.shown = r),
     showModal: async (m: typeof state.modal) => void (state.modal = m),
+    followUp: async (r: string) => void state.said.push(r),
   };
   return {
     state,
@@ -68,6 +69,17 @@ function clicker(s: ReturnType<typeof server>, options: { admin?: boolean; voice
     pick: (name: string, page = 0) => soundboard.onSelect!({ ...base, customId: `sb:#pick:${page}`, values: [name] } as never),
     submit: (customId: string, value: string) =>
       soundboard.onModal!({ ...base, customId, isFromMessage: () => true, fields: { getTextInputValue: () => value } } as never),
+    /** Sends Add a sound's form with this file and these boxes filled in */
+    upload: (file: { name: string; size?: number }, boxes: { value?: string; emoji?: string } = {}) =>
+      soundboard.onModal!({
+        ...base,
+        customId: 'sb:#add:0:',
+        isFromMessage: () => true,
+        fields: {
+          getUploadedFiles: () => new Collection([['a', { url: `http://files/${file.name}`, size: 100, ...file }]]),
+          getTextInputValue: (id: 'value' | 'emoji') => boxes[id] ?? '',
+        },
+      } as never),
   };
 }
 
@@ -269,8 +281,8 @@ test('settings on an empty library say so', async () => {
   insertPanel(s.id, 'empty-panel');
   const c = clicker(s);
   await c.press('sb:#settings', { id: 'empty-panel' });
-  assert.match(c.state.shown!.content, /No sounds yet/);
-  assert.deepEqual(c.state.shown!.components, []);
+  assert.match(c.state.shown!.content, /No sounds yet\. Add one with the button below/);
+  assert.deepEqual(flat(c.state.shown!).map((b) => b.custom_id), ['sb:#add:0:']);
 });
 
 function panelCommand(s: ReturnType<typeof server>, edit: () => Promise<unknown>) {
@@ -336,6 +348,57 @@ test('the even volume switch updates the copies on Discord too', async (t) => {
   const edited = t.mock.method(s.guild.soundboardSounds, 'edit', async () => {});
   await clicker(s, { admin: true }).press('sb:#even:0:');
   assert.equal(edited.mock.callCount(), 1);
+});
+
+test('Add a sound opens a form, names the sound after its file when left empty, and tells everyone', { skip: !hasFfmpeg }, async (t) => {
+  const s = server();
+  const c = clicker(s);
+  await c.press('sb:#settings', { id: 'no-panel' });
+  assert.equal(button(c.state.shown!, 'sb:#add:0:').label, 'Add a sound');
+  await c.press('sb:#add:0:');
+  const form = c.state.modal!.toJSON();
+  assert.equal(form.custom_id, 'sb:#add:0:');
+  assert.deepEqual(form.components.map((l: { component: { custom_id: string; type: number } }) => [l.component.custom_id, l.component.type]), [['file', 19], ['value', 4], ['emoji', 4]]);
+
+  const file = path.join(process.env.DATA_DIR!, 'upload-tone.wav');
+  execFileSync('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-y', '-f', 'lavfi', '-i', 'sine=frequency=440:duration=1', file]);
+  t.mock.method(globalThis, 'fetch', async () => new Response(readFileSync(file)));
+  await c.upload({ name: 'Air Horn (1).WAV' }, { emoji: '📯' });
+  assert.match(c.state.said[0], /➕ Added sound 📯 \*\*air-horn-1\*\*/);
+  assert.deepEqual(listSounds(s.id).map((sound) => [sound.name, sound.emoji]), [['air-horn-1', '📯'], ['horn', undefined]]);
+  assert.match(c.state.shown!.content, /Pick a sound to change/, 'back to the settings');
+  assert.deepEqual(log(s.id)[0], 'Added sound **air-horn-1**');
+
+  // A taken name asks first, as /sound add does
+  await c.upload({ name: 'x.wav' }, { value: 'Horn' });
+  assert.match(c.state.shown!.content, /already a sound called \*\*horn\*\*/);
+  await c.upload({ name: 'notes.txt' });
+  assert.match(c.state.shown!.content, /^⚠️ Unsupported file type/);
+  await c.upload({ name: 'big.mp3', size: 6 * 1024 * 1024 });
+  assert.match(c.state.shown!.content, /^⚠️ File is over 5 MB/);
+  await c.upload({ name: 'a.mp3' }, { value: 'no spaces' });
+  assert.match(c.state.shown!.content, /^⚠️ Name can only use/);
+  assert.equal(c.state.said.length, 1);
+});
+
+test('without the sound managers role there’s no Add a sound, and a form left open is refused', async () => {
+  const s = server();
+  setSetting(s.id, 'soundManagerRole', 'managers');
+  const c = clicker(s);
+  await c.press('sb:#settings', { id: 'no-panel' });
+  assert.equal(flat(c.state.shown!).find((b) => b.custom_id === 'sb:#add:0:'), undefined);
+  await c.press('sb:#add:0:');
+  assert.equal(c.state.modal, undefined);
+  await c.upload({ name: 'a.wav' });
+  assert.match(c.state.shown!.content, /Only <@&managers>/);
+  assert.deepEqual(listSounds(s.id).map((sound) => sound.name), ['horn']);
+});
+
+test('a file’s name makes a sound name', () => {
+  assert.equal(nameFromFile('Air Horn (1).mp3'), 'air-horn-1');
+  assert.equal(nameFromFile('__bruh__.ogg'), '__bruh__');
+  assert.equal(nameFromFile('😀.wav'), 'sound');
+  assert.equal(nameFromFile(`${'a'.repeat(31)} b.wav`), 'a'.repeat(31));
 });
 
 const CHANGES = ['up', 'down', 'discord', 'emoji', 'rename', 'delete', 'confirm'];
