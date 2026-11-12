@@ -49,6 +49,8 @@ const SAFE_FILE = /^[\w.-]+$/;
 const OTHER_LINK = /^https?:\/\/((www|m|music)\.)?(youtube\.com|youtu\.be|soundcloud\.com)\//i;
 // Where the music was, kept so a restart or redeploy carries on from there
 const SAVED_KEY = 'musicSessions';
+/** Where each server's live music card is, so it keeps being redrawn after a restart */
+const CARDS_KEY = 'musicCards';
 const SAVE_EVERY_MS = 5_000;
 // After longer than this, carrying on would surprise whoever's still around
 const RESUME_WITHIN_MS = 10 * 60_000;
@@ -843,8 +845,31 @@ interface Card {
 /** The card from the latest /music play in each server, which is redrawn as the music changes */
 const cards = new Map<string, Card>();
 
+function saveCards() {
+  setKv(CARDS_KEY, JSON.stringify([...cards].map(([guildId, { channelId, messageId }]) => ({ guildId, channelId, messageId }))));
+}
+
+/** Picks up the cards from before a restart and redraws them, as the music may have moved on meanwhile */
+export function restoreCards(client: Client) {
+  let saved: unknown;
+  try {
+    saved = JSON.parse(getKv(CARDS_KEY) ?? '[]');
+  } catch {
+    return;
+  }
+  if (!Array.isArray(saved)) return;
+  for (const entry of saved as Partial<Record<'guildId' | 'channelId' | 'messageId', unknown>>[]) {
+    const { guildId, channelId, messageId } = entry ?? {};
+    if (typeof guildId !== 'string' || typeof channelId !== 'string' || typeof messageId !== 'string' || cards.has(guildId)) continue;
+    cards.set(guildId, { client, channelId, messageId });
+    cardChanged(guildId);
+  }
+}
+
 async function editCard(card: Card, edit: ReturnType<typeof musicCard> | { embeds: EmbedBuilder[]; components: [] }) {
-  const channel = await card.client.channels.fetch(card.channelId).catch(() => null);
+  const channel = await Promise.resolve()
+    .then(() => card.client.channels.fetch(card.channelId))
+    .catch(() => null);
   if (!channel?.isTextBased()) return false;
   return channel.messages.edit(card.messageId, edit).then(
     () => true,
@@ -856,6 +881,7 @@ async function editCard(card: Card, edit: ReturnType<typeof musicCard> | { embed
 function adoptCard(guildId: string, card: Card) {
   const old = cards.get(guildId);
   cards.set(guildId, card);
+  saveCards();
   if (!old || old.messageId === card.messageId) return;
   clearTimeout(old.timer);
   void editCard(old, { embeds: [new EmbedBuilder().setColor(0x99aab5).setDescription('🎵 The music card moved further down.')], components: [] });
@@ -869,7 +895,10 @@ function cardChanged(guildId: string) {
     card.timer = undefined;
     void editCard(card, musicCard(guildId)).then((ok) => {
       // A deleted card, or one in a channel the bot lost, is let go
-      if (!ok && cards.get(guildId) === card) cards.delete(guildId);
+      if (!ok && cards.get(guildId) === card) {
+        cards.delete(guildId);
+        saveCards();
+      }
     });
   }, CARD_DELAY_MS);
   card.timer.unref();
@@ -1081,6 +1110,7 @@ export const music: Feature = {
     rmSync(filesDir(), { recursive: true, force: true });
     if (!config.musicUrl || !config.musicToken) return;
     exiting = false;
+    restoreCards(client);
     saver = setInterval(() => {
       if (sessions.size || !wroteNone) saveSessions();
     }, SAVE_EVERY_MS).unref();

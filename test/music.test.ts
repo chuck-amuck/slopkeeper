@@ -27,6 +27,7 @@ import {
   queueOf,
   removeTrack,
   resetMusic,
+  restoreCards,
   resumeAfterRestart,
   shuffleQueue,
   seekFile,
@@ -866,6 +867,56 @@ test('the card /music play posts follows the music, and a newer one takes over',
   await sleep(1_700);
   assert.equal(edits.at(-1)![0], 'card-2');
   assert.equal(cardJson(edits.at(-1)![1]).embed.description, 'The queue is empty. Add songs with /music play.');
+});
+
+test('after a restart the card is picked up again and redrawn, and one that was deleted is let go', async () => {
+  const { id, guild, channel } = server();
+  const edits: [string, any][] = [];
+  let deleted = false;
+  const client = {
+    channels: {
+      fetch: async () => ({
+        isTextBased: () => true,
+        messages: {
+          edit: async (messageId: string, r: unknown) => {
+            if (deleted) throw new Error('Unknown Message');
+            edits.push([messageId, r]);
+          },
+        },
+      }),
+    },
+  };
+  addTracks(id, [song(1), song(2)], 'u1');
+  await music.commands![0].run({
+    inCachedGuild: () => true,
+    guildId: id,
+    guild,
+    client,
+    member: person(id, channel),
+    user: { id: 'u1' },
+    deferred: true,
+    options: { getSubcommand: () => 'play', getString: () => null, getBoolean: () => null },
+    deferReply: async () => {},
+    editReply: async () => ({ channelId: 'text', id: 'kept-card' }),
+  } as never);
+  const saved = () => (JSON.parse(getKv('musicCards') ?? '[]') as { guildId: string; messageId: string }[]).filter((c) => c.guildId === id);
+  assert.deepEqual(saved().map((c) => c.messageId), ['kept-card']);
+
+  // The bot restarts, and the music moved on while it was away
+  resetMusic(RUNNING);
+  addTracks(id, [song(3)], 'u1');
+  restoreCards(client as never);
+  await sleep(1_700);
+  const [messageId, redrawn] = edits.at(-1)!;
+  assert.equal(messageId, 'kept-card');
+  assert.equal(cardJson(redrawn).embed.fields![0].name, 'Up next: 3 songs, 10 min');
+
+  // Deleted while the bot was away
+  resetMusic(RUNNING);
+  deleted = true;
+  restoreCards(client as never);
+  await sleep(1_700);
+  assert.deepEqual(saved(), []);
 });
 
 test('/music remove offers the queue as the card numbers it, and takes the song out', async () => {
