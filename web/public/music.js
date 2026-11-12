@@ -5,6 +5,8 @@ const REFRESH_MS = 3000;
 const FROM_A_LIST = 100;
 const PLAYLISTS_SHOWN = 20;
 const LINK = /^(https?:\/\/|spotify:)/i;
+/** A Spotify album or playlist, which can be added shuffled */
+const LIST_LINK = /^(https?:\/\/open\.spotify\.com\/(intl-[a-z]+\/)?(album|playlist)\/|spotify:(album|playlist):)/i;
 // What a file played once can be. The bot checks again, and how long it is
 const FILE_TYPES = ['.mp3', '.ogg', '.wav', '.m4a', '.opus', '.webm', '.flac'];
 const MOST_FILE_MB = 60;
@@ -184,7 +186,10 @@ export function renderMusic(main) {
   }
 
   // ---------- search ----------
-  const query = el('input', { type: 'search', ariaLabel: 'Search Spotify', placeholder: 'Search Spotify, or paste a Spotify, YouTube or SoundCloud link', autocomplete: 'off', maxLength: 300, oninput: () => mode === 'playlists' && showPlaylists() });
+  const query = el('input', { type: 'search', ariaLabel: 'Search Spotify', placeholder: 'Search Spotify, or paste a Spotify, YouTube or SoundCloud link', autocomplete: 'off', maxLength: 300, oninput: () => {
+    paintLinkButtons();
+    if (mode === 'playlists') showPlaylists();
+  } });
   let mode = 'songs';
   // Loaded the first time they're shown, then filtered as you type
   let playlists = null;
@@ -200,11 +205,23 @@ export function renderMusic(main) {
     query.placeholder = hint;
     query.ariaLabel = label === 'Songs' ? 'Search Spotify' : 'Find a playlist';
     query.value = '';
-    searchButton.hidden = id === 'playlists';
+    paintLinkButtons();
     results.hidden = true;
     if (id === 'playlists') void loadPlaylists();
   }
   const searchButton = el('button', { type: 'submit' }, 'Search');
+  // A pasted link is added rather than searched for, so it gets the same choice as a search result
+  const fromLink = (next, shuffle = false) => void addFrom({ query: query.value.trim(), shuffle }, next, true).then(paintLinkButtons);
+  const linkNext = el('button', { type: 'button', hidden: true, onclick: () => fromLink(true) }, 'Play next');
+  const linkEnd = el('button', { type: 'submit', className: 'primary', hidden: true }, 'Add to end');
+  const linkShuffle = el('button', { type: 'button', hidden: true, title: 'Adds songs from it at random, to the end', onclick: () => fromLink(false, true) }, 'Shuffle');
+  function paintLinkButtons() {
+    const text = query.value.trim();
+    const link = LINK.test(text);
+    searchButton.hidden = link || mode === 'playlists';
+    linkNext.hidden = linkEnd.hidden = !link;
+    linkShuffle.hidden = !LIST_LINK.test(text);
+  }
   const results = el('div', { className: 'music-results', hidden: true });
   const searchForm = el(
     'form',
@@ -214,7 +231,8 @@ export function renderMusic(main) {
         e.preventDefault();
         const text = query.value.trim();
         if (!text) return;
-        if (LINK.test(text)) return void addFrom({ query: text }, false, true);
+        // Enter adds a link to the end, as Add to end does
+        if (LINK.test(text)) return fromLink(false);
         if (mode === 'playlists') return;
         searchButton.disabled = true;
         void attempt(async () => {
@@ -226,6 +244,9 @@ export function renderMusic(main) {
     },
     query,
     searchButton,
+    linkNext,
+    linkEnd,
+    linkShuffle,
   );
   const searchNote = el('p', { className: 'card-note', hidden: true }, 'Search needs a Spotify app’s Client ID and Secret (SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET).');
 
@@ -286,7 +307,7 @@ export function renderMusic(main) {
             el('div', { className: 'song-title' }, p.name),
             el('div', { className: 'song-sub' }, long ? `${p.songs} songs · adds the first ${FROM_A_LIST}, or ${FROM_A_LIST} at random` : `${p.songs} song${p.songs === 1 ? '' : 's'}`),
           ),
-          el('div', { className: 'song-actions' }, add('Play next', true, false), add('Add', false, false), long && add('Shuffle', false, true)),
+          el('div', { className: 'song-actions' }, add('Play next', true, false), add('Add to end', false, false), long && add('Shuffle', false, true)),
         );
       }),
       ...(matching.length > PLAYLISTS_SHOWN ? [notice('more', `…and ${matching.length - PLAYLISTS_SHOWN} more. Type to narrow them down.`, { compact: true })] : []),
@@ -305,7 +326,7 @@ export function renderMusic(main) {
               cover(t.cover, 40),
               el('div', { className: 'song-text' }, el('div', { className: 'song-title' }, t.title), el('div', { className: 'song-sub' }, `${t.artist} · ${t.album}`)),
               el('span', { className: 'song-time' }, time(t.durationMs)),
-              el('div', { className: 'song-actions' }, el('button', { onclick: () => void addFrom({ track: t }, true) }, 'Play next'), el('button', { onclick: () => void addFrom({ track: t }, false) }, 'Add')),
+              el('div', { className: 'song-actions' }, el('button', { onclick: () => void addFrom({ track: t }, true) }, 'Play next'), el('button', { onclick: () => void addFrom({ track: t }, false) }, 'Add to end')),
             ),
           )
         : [notice('empty', `Nothing on Spotify matches “${text}”.`, { compact: true })]),
@@ -499,6 +520,8 @@ export function renderMusic(main) {
       el(
         'div',
         { className: 'song-actions' },
+        // Straight to the top, which on a phone beats pressing ↑ over and over
+        el('button', { className: 'icon', ariaLabel: `Play ${row.title} next`, title: 'Play next', disabled: index <= first, onclick: () => move(row, first) }, '⤒'),
         el('button', { className: 'icon', ariaLabel: `Move ${row.title} up`, title: 'Move up', disabled: index <= first, onclick: () => move(row, index - 1) }, '↑'),
         el('button', { className: 'icon', ariaLabel: `Move ${row.title} down`, title: 'Move down', disabled: index >= last, onclick: () => move(row, index + 1) }, '↓'),
         el('button', { className: 'icon', ariaLabel: `Remove ${row.title}`, title: 'Remove', onclick: () => void remove(row, index) }, '×'),

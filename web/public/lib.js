@@ -66,8 +66,11 @@ export function announce(text) {
  * What a list or page says in place of its contents: 'loading', 'empty', 'error' (read out at once) or 'more' (a
  * list cut short). One look for each, so an error never passes for an empty list
  */
-export function notice(kind, text, { compact = false, tag = 'div' } = {}) {
-  return el(tag, { className: `notice ${kind}${compact ? ' compact' : ''}`, role: kind === 'error' ? 'alert' : undefined }, text);
+export function notice(kind, text, ...rest) {
+  // Options come last, and anything between is more of the message, such as a link
+  const options = rest.length && !(rest.at(-1) instanceof Node) && typeof rest.at(-1) === 'object' ? rest.pop() : {};
+  const { compact = false, tag = 'div' } = options;
+  return el(tag, { className: `notice ${kind}${compact ? ' compact' : ''}`, role: kind === 'error' ? 'alert' : undefined }, text, ...rest);
 }
 
 /** The line in a form that says why it didn't go through. Read out when it's shown */

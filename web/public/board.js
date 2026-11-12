@@ -98,7 +98,8 @@ function sayBox(voice) {
 }
 
 /** Big buttons for playing sounds during a game: favourites first, then whatever gets played most */
-export function renderBoard(main) {
+/** `openManage` switches to the Soundboard tab's Manage view, where sounds are added */
+export function renderBoard(main, openManage) {
   const guildId = state.guildId;
   let sounds = null;
   let filter = '';
@@ -171,7 +172,7 @@ export function renderBoard(main) {
 
   function render() {
     tiles.length = 0;
-    if (!sounds.length) return board.replaceChildren(notice('empty', 'No sounds yet. Add some on the Sounds tab.'));
+    if (!sounds.length) return board.replaceChildren(notice('empty', 'No sounds yet. ', el('button', { className: 'link', onclick: openManage }, 'Add some in Manage'), '.'));
     const shown = sounds.filter((s) => s.name.includes(filter));
     if (!shown.length) return board.replaceChildren(notice('empty', `Nothing matches “${filter}”.`));
     const starred = shown.filter((s) => s.favourite);

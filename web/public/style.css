@@ -2164,6 +2164,13 @@ span.steam-family {
   gap: 8px;
 }
 
+/* The Soundboard tab's Play or Manage, laid out as main is */
+.view {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}
+
 .views button[aria-current='page'] {
   background: var(--raised);
   font-weight: 500;

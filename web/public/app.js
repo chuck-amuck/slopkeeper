@@ -1,19 +1,17 @@
 import { renderActivity } from './activity.js';
-import { renderBoard } from './board.js';
 import { renderGames } from './games.js';
 import { api, attempt, el, formProblem, notice, openDialog, player, recall, remember, request, RequestError, session, state, toast } from './lib.js';
-import { renderLibrary } from './library.js';
 import { renderMusic } from './music.js';
 import { renderNights } from './nights.js';
 import { renderPick } from './pick.js';
 import { renderSettings } from './settings.js';
+import { renderSoundboard, VIEW_KEY } from './soundboard.js';
 import { renderStats } from './stats.js';
 
 const app = document.getElementById('app');
 const TABS = [
-  ['board', 'Soundboard', renderBoard],
+  ['board', 'Soundboard', renderSoundboard],
   ['music', 'Music', renderMusic],
-  ['library', 'Sounds', renderLibrary],
   ['nights', 'Game nights', renderNights],
   ['games', 'Games', renderGames],
   ['pick', 'Pick a game', renderPick],
@@ -21,6 +19,11 @@ const TABS = [
   ['activity', 'Activity', renderActivity],
   ['settings', 'Settings', renderSettings],
 ];
+// Sounds was its own tab, and is now the Soundboard's Manage view
+if (recall('tab') === 'library') {
+  remember('tab', 'board');
+  remember(VIEW_KEY, 'manage');
+}
 let tab = TABS.some(([id]) => id === recall('tab')) ? recall('tab') : 'board';
 
 function showLogin() {
