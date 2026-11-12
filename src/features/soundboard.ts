@@ -1090,15 +1090,17 @@ export function setGreeter(line: (member: GuildMember) => string | null, say: (c
   greeter = { line, say };
 }
 
-const stopListeners: ((guildId: string) => void)[] = [];
+const stopListeners: ((guildId: string, keepMusic: boolean) => void)[] = [];
 
 /** For whatever else is waiting to play, so that Stop stops that too */
-export const onPlaybackStop = (listener: (guildId: string) => void) => void stopListeners.push(listener);
+export const onPlaybackStop = (listener: (guildId: string, keepMusic: boolean) => void) => void stopListeners.push(listener);
 
-export function stopPlayback(guildId: string) {
-  for (const listener of stopListeners) listener(guildId);
+/** Stops sounds and speech, and pauses the music unless `keepMusic`, as the web UI's Stop does */
+export function stopPlayback(guildId: string, keepMusic = false) {
+  for (const listener of stopListeners) listener(guildId, keepMusic);
   if (isLooping(guildId)) silenced.add(guildId);
   const a = audio.get(guildId);
+  if (keepMusic && a?.mixer) return a.mixer.stopAllBut('music');
   a?.mixer?.stopAll();
   a?.player.stop(true);
 }

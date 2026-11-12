@@ -497,6 +497,15 @@ test('pausing or skipping while a song downloads drops the download rather than 
   stopMusic(id, 'u1');
 });
 
+test('the web UI’s Stop leaves the music playing', async () => {
+  const { id, guild, channel } = server();
+  addTracks(id, [song(1)], 'u1');
+  await startMusic(guild, channel);
+  stopPlayback(id, true);
+  assert.deepEqual([musicState(id).phase, lastPlayed().stopped], ['playing', false]);
+  stopMusic(id, 'u1');
+});
+
 test('Stop on the soundboard, or the song being cut off, pauses and keeps the queue', async () => {
   const { id, guild, channel } = server();
   addTracks(id, [song(1), song(2)], 'u1');

@@ -378,7 +378,7 @@ Examples:
 /sound remove name:old-meme
 ```
 
-The web UI's Library page also shows everything on Discord's soundboard, including sounds people added there themselves. You can play or preview any of them, save them to the library, and swap one for a library sound. Nothing is lost: a sound that comes off and isn't in the library is saved there first.
+The web UI's Sounds tab also shows everything on Discord's soundboard, including sounds people added there themselves. You can play or preview any of them, save them to the library, and swap one for a library sound. Nothing is lost: a sound that comes off and isn't in the library is saved there first.
 
 ### Text to speech
 
@@ -481,7 +481,7 @@ How it plays:
 - **Several servers** can play at once, each with its own queue.
 - **Playlists:** a link to any public playlist (yours, someone else's, or Spotify's own, like Today's Top Hits) adds its first 100 songs, or those 100 in random order when shuffled. They're read from Spotify's public embed player, which needs no sign-in but lists no more than 100 songs and no album covers. The covers fill in a few seconds later, the next songs first, from Spotify's public oEmbed (also no sign-in). Private playlists can't be read. If the Spotify account has [signed in](#the-music-container), playlists it made or collaborates on are read through it instead, which reaches the whole playlist and shows covers.
 - **Sounds and speech** play on top. Music drops to under a third while the bot talks.
-- **Stop on the soundboard**, or everyone leaving, pauses the music and keeps the queue. Music counts as the bot being busy, so it doesn't leave for being idle and the looping room waits.
+- **Stop on the soundboard panel** in Discord, or everyone leaving, pauses the music and keeps the queue. The web UI's red Stop leaves the music playing. Music counts as the bot being busy, so it doesn't leave for being idle and the looping room waits.
 - **Who can control it:** everyone, until `/setup music dj_role:` sets a role. Then only that role and people with **Manage Server** can add, pause, skip, shuffle and stop. Anyone can see the queue. The web UI isn't limited by the role.
 - **Activity** shows what was added, removed and skipped, and by whom.
 
@@ -620,15 +620,15 @@ One running bot can serve several servers. Each server gets its own:
 
 A page in [`web/`](web) that runs as a second container next to the bot, for your home network or behind a sign-in proxy like [Pangolin](#signing-in-through-pangolin):
 
-- **Stop:** the red button in the bottom corner of every page does what the panel's ⏹ **Stop** does: it silences every sound and line of speech and pauses the music.
+- **Stop:** the red button in the bottom corner of every page silences every sound and line of speech. The music carries on: it has its own controls on the Music tab.
 - **Soundboard:** big buttons that play in voice, with favourites first and then whatever gets played most, and a box for having the bot say something.
 - **Music:** what's playing, Spotify search, and the queue to add to, reorder and clear. See [Music](#music).
-- **Library:** upload files or whole folders, preview, rename and delete sounds, set a sound's volume, trim it with a way back to the original, and choose what's on Discord's soundboard, with a waveform for picking part of a long sound. **Recently deleted** restores a sound or erases it for good.
+- **Sounds:** upload files or whole folders, preview, rename and delete sounds, set a sound's volume, trim it with a way back to the original, and choose what's on Discord's soundboard, with a waveform for picking part of a long sound. **Recently deleted** restores a sound or erases it for good.
 - **Game nights:** plan a night, see what's coming up and who still needs to add each other on Steam, cancel one or stop a repeating one.
 - **Games:** the game library, with who has each game, who needs it, who wants it and any sale. Add games from a searchable list of what members own on Steam, or by name or store link. **Steam accounts** links, changes and unlinks anyone's Steam account, says who shares a Steam family, and refreshes libraries. Remove games, set player limits and Steam links, tick who owns or wants what, and hide a game from `/whatdoweplay` or let it back in. Ownership from a Steam library is locked.
 - **Pick a game:** choose a voice channel, or tick people to plan before anyone's in voice, and see the games everyone owns and those one purchase away, using the same rules as `/whatdoweplay`. Each game shows time played here, Steam hours, its last two weeks on Steam and when it was last played, in total and per person, plus who'd play on a family copy. Opening one shows how many are playing it on Steam right now and its latest patch, and **Achievements** compares everyone's progress with goals nobody has yet. Sort them, with **Hot right now** for the last two weeks, search them, or filter to co-op, PvP or Steam Deck. **Pick for us** chooses one at random, and **Start a vote** posts the usual `/gamevote` card in a channel. Anyone in a joinable Steam lobby shows at the top with a link to join.
 - **Stats:** **Overview** has game and voice time, overall or for one person or game, with sessions, rank and when it was last played. **Compare** is `/compare` with every game two people both own and their achievements in any of them, and **Monthly recap** is `/recap`.
-- **Discord's soundboard:** on Library, see what fills the slots, play or save any sound, and swap sounds between Discord and the library.
+- **Discord's soundboard:** on Sounds, see what fills the slots, play or save any sound, and swap sounds between Discord and the library.
 - **Merging games:** on Stats, Merge games puts different spellings of a game together, and Separate on a clicked game takes one back out.
 - **Activity:** a history of changes to sounds, games, pings, Steam accounts, music, settings and game nights, made here or in Discord, and who made them.
 - **Settings:** everything in `/setup`, for each server, game ping roles, everyone's join sounds, which free games are being posted or hidden and why, and what's on sale now. **Who gets pinged** changes anyone's hop-on and game pings, as `/notify` and `/pings` do.

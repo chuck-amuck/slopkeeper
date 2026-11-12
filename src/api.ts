@@ -1267,7 +1267,8 @@ async function handle(client: Client<true>, req: IncomingMessage, res: ServerRes
   }
   if (section === 'music') return handleMusic(guild, req, url, rest);
   if (section === 'stop' && !rest.length && req.method === 'POST') {
-    stopPlayback(guild.id);
+    // Sounds and speech only: the music has its own controls
+    stopPlayback(guild.id, true);
     return {};
   }
   if (section === 'discord-sync' && !rest.length && req.method === 'POST') {

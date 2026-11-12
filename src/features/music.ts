@@ -889,8 +889,9 @@ export const music: Feature = {
     void resumeAfterRestart(client).catch((err: unknown) => console.error('Music: couldn’t carry on after the restart:', err));
     // Songs left in the queue from before without a cover
     void fillCovers();
-    // Stop, and everyone leaving, pause the music rather than lose the queue
-    onPlaybackStop((guildId) => {
+    // Stop, and everyone leaving, pause the music rather than lose the queue. The web UI's Stop leaves it playing
+    onPlaybackStop((guildId, keepMusic) => {
+      if (keepMusic) return;
       const s = sessions.get(guildId);
       if (s && s.phase !== 'paused') pauseHere(s, null);
     });

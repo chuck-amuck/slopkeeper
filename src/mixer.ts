@@ -278,6 +278,12 @@ export class Mixer extends Readable {
     this.voices = [];
   }
 
+  /** Stops everything except one group, such as the music */
+  stopAllBut(group: NonNullable<VoiceOptions['group']>) {
+    for (const voice of this.voices) if (voice.group !== group) voice.stop();
+    this.voices = this.voices.filter((v) => v.group === group);
+  }
+
   override _read() {
     if (this.timer) return;
     // Pace output to real time; the player would otherwise pull seconds ahead and new sounds would lag

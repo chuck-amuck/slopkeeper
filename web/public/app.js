@@ -13,7 +13,7 @@ const app = document.getElementById('app');
 const TABS = [
   ['board', 'Soundboard', renderBoard],
   ['music', 'Music', renderMusic],
-  ['library', 'Library', renderLibrary],
+  ['library', 'Sounds', renderLibrary],
   ['nights', 'Game nights', renderNights],
   ['games', 'Games', renderGames],
   ['pick', 'Pick a game', renderPick],
@@ -201,7 +201,7 @@ function renderFrame() {
         'button',
         {
           className: 'stop-all',
-          title: 'Stops every sound and line of speech, and pauses the music',
+          title: 'Stops every sound and line of speech. The music carries on',
           onclick: () =>
             attempt(async () => {
               await request(api('/stop'), { method: 'POST' });

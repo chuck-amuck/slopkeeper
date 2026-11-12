@@ -159,6 +159,18 @@ test('stopping ends playback', { skip: !hasFfmpeg }, async () => {
   assert.ok(peaks.length < 40);
 });
 
+test('stopping all but the music leaves the music playing', { skip: !hasFfmpeg }, async () => {
+  const mixer = new Mixer(0.5, 12);
+  const { done } = record(mixer);
+  const ended: string[] = [];
+  mixer.add(tone('song.wav', 440, 0.6), 1, (byItself) => ended.push(`music ${byItself ? 'played out' : 'stopped'}`), { group: 'music' });
+  mixer.add(tone('honk.wav', 550, 5), 1, (byItself) => ended.push(`sound ${byItself ? 'played out' : 'stopped'}`));
+  await sleep(100);
+  mixer.stopAllBut('music');
+  await done;
+  assert.deepEqual(ended, ['sound stopped', 'music played out']);
+});
+
 test('says when a sound is over, however it ended', { skip: !hasFfmpeg }, async () => {
   const mixer = new Mixer(0.5, 2);
   const { done } = record(mixer);

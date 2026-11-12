@@ -167,7 +167,7 @@ export function renderBoard(main) {
 
   function render() {
     tiles.length = 0;
-    if (!sounds.length) return board.replaceChildren(el('div', { className: 'empty' }, 'No sounds yet. Add some in Library.'));
+    if (!sounds.length) return board.replaceChildren(el('div', { className: 'empty' }, 'No sounds yet. Add some on the Sounds tab.'));
     const shown = sounds.filter((s) => s.name.includes(filter));
     if (!shown.length) return board.replaceChildren(el('div', { className: 'empty' }, `Nothing matches “${filter}”.`));
     const starred = shown.filter((s) => s.favourite);
