@@ -315,7 +315,7 @@ test('shuffling a playlist into the queue says so, and a long one in order says 
 test('/music play suggests the owner’s matching playlists first, then songs', async (t) => {
   const offered = async (typed: string) => {
     let answer: { name: string; value: string }[] = [];
-    await music.commands![0].autocomplete!({ options: { getFocused: () => typed }, respond: async (a: typeof answer) => void (answer = a) } as never);
+    await music.commands![0].autocomplete!({ options: { getSubcommand: () => 'play', getFocused: () => typed }, respond: async (a: typeof answer) => void (answer = a) } as never);
     return answer;
   };
   fakeSpotify(t, {

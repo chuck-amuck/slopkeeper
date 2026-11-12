@@ -867,3 +867,33 @@ test('the card /music play posts follows the music, and a newer one takes over',
   assert.equal(edits.at(-1)![0], 'card-2');
   assert.equal(cardJson(edits.at(-1)![1]).embed.description, 'The queue is empty. Add songs with /music play.');
 });
+
+test('/music remove offers the queue as the card numbers it, and takes the song out', async () => {
+  const { id, guild, channel } = server();
+  addTracks(id, [song(1), song(2), song(3)], 'u1');
+  await startMusic(guild, channel);
+  let offered: { name: string; value: string }[] = [];
+  const ask = (typed: string) =>
+    music.commands![0].autocomplete!({ guildId: id, options: { getSubcommand: () => 'remove', getFocused: () => typed }, respond: async (r: typeof offered) => void (offered = r) } as never);
+  await ask('');
+  assert.deepEqual(offered.map((o) => o.name), ['▶ Song 1 – Band', '1. Song 2 – Band', '2. Song 3 – Band']);
+  await ask('song 3');
+  assert.deepEqual(offered.map((o) => o.name), ['2. Song 3 – Band']);
+
+  const answers: string[] = [];
+  const remove = (value: string) =>
+    music.commands![0].run({
+      inCachedGuild: () => true,
+      guildId: id,
+      guild,
+      member: person(id, channel),
+      user: { id: 'u1' },
+      options: { getSubcommand: () => 'remove', getString: () => value },
+      reply: async (r: { content: string }) => void answers.push(r.content),
+    } as never);
+  await remove(offered[0].value);
+  assert.deepEqual(titles(id), ['Song 1', 'Song 2']);
+  await remove(offered[0].value);
+  assert.deepEqual(answers, ['Took **Song 3** out of the queue.', 'That song isn’t in the queue any more. Pick one from the list.']);
+  stopMusic(id, 'u1');
+});

@@ -937,6 +937,19 @@ async function searched(typed: string): Promise<Track[]> {
 }
 
 async function suggest(i: AutocompleteInteraction) {
+  if (i.options.getSubcommand() === 'remove') {
+    // The queue, searched by title or artist, numbered as the card shows it
+    const typed = String(i.options.getFocused()).trim().toLowerCase();
+    const rows = i.guildId ? queueOf(i.guildId) : [];
+    const playing = i.guildId ? sessions.get(i.guildId)?.current.id : undefined;
+    return i.respond(
+      rows
+        .map((r, n) => ({ r, label: `${r.id === playing ? '▶' : `${playing === undefined ? n + 1 : n}.`} ${r.title} – ${r.artist}` }))
+        .filter(({ r }) => !typed || `${r.title} ${r.artist}`.toLowerCase().includes(typed))
+        .slice(0, 25)
+        .map(({ r, label }) => ({ name: label.slice(0, 100), value: String(r.id) })),
+    );
+  }
   const typed = String(i.options.getFocused()).trim();
   if (!typed || parseLink(typed) || !searchReady()) return i.respond([]);
   // The account's own playlists that match come first, as searching can't find them. Discord waits 3 seconds, so both are asked at once
@@ -1014,6 +1027,12 @@ async function run(i: ChatInputCommandInteraction<'cached'>) {
     }
     return i.editReply({ content: `Skipped **${title}**.`, allowedMentions: { parse: [] } });
   }
+  if (sub === 'remove') {
+    const id = Number(i.options.getString('song', true));
+    const row = Number.isInteger(id) ? await removeTrack(i.guildId, id, i.user.id) : null;
+    if (!row) return reply('That song isn’t in the queue any more. Pick one from the list.');
+    return announce(`Took **${row.title}** out of the queue.`);
+  }
   if (sub === 'shuffle') {
     const shuffled = shuffleQueue(i.guildId, i.user.id);
     return shuffled ? announce(`Shuffled the ${shuffled} songs in the queue.`) : reply('There’s nothing to shuffle. It takes two songs waiting.');
@@ -1046,6 +1065,12 @@ export const music: Feature = {
         .addSubcommand((s) => s.setName('skip').setDescription('Skip to the next song'))
         .addSubcommand((s) => s.setName('queue').setDescription('Show what’s playing and what’s next'))
         .addSubcommand((s) => s.setName('shuffle').setDescription('Put the songs waiting in a random order'))
+        .addSubcommand((s) =>
+          s
+            .setName('remove')
+            .setDescription('Take a song out of the queue. Taking out the one playing skips it')
+            .addStringOption((o) => o.setName('song').setDescription('A song in the queue').setRequired(true).setAutocomplete(true)),
+        )
         .addSubcommand((s) => s.setName('stop').setDescription('Stop the music and clear the queue')),
       run: (i) => (i.inCachedGuild() ? run(i) : i.reply({ content: 'Music only works in a server.', flags: MessageFlags.Ephemeral })),
       autocomplete: suggest,
