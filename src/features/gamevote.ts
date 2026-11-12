@@ -58,14 +58,19 @@ function votersFor(vote: Vote): string[][] {
 const tallyLines = (options: Option[], voters: string[][], order: number[]) =>
   order.map((idx) => `**${options[idx].name}** · ${voters[idx].length}${voters[idx].length ? ` · ${voters[idx].map((id) => `<@${id}>`).join(' ')}` : ''}`);
 
-function view(vote: Vote) {
+/** The vote as it stands, with who in `voice` hasn't voted yet */
+function view(vote: Vote, voice?: VoiceBasedChannel) {
   const options = optionsOf(vote);
   const voters = votersFor(vote);
   const intro = `Everyone in <#${vote.voice_channel_id}> gets one vote. Closes <t:${Math.ceil(vote.closes_at / 1000)}:R>, or as soon as everyone’s voted.`;
+  const voted = new Set(voters.flat());
+  const here = voice ? humansIn(voice) : [];
+  const waiting = here.filter((m) => !voted.has(m.id));
+  const progress = here.length ? `-# ${here.length - waiting.length} of ${here.length} voted${waiting.length ? ` · waiting on ${waiting.map((m) => `<@${m.id}>`).join(' ')}` : ''}` : null;
   const embed = new EmbedBuilder()
     .setTitle('🗳️ What do we play?')
     .setColor(0xeb459e)
-    .setDescription([intro, vote.note, '', ...tallyLines(options, voters, [...options.keys()])].filter((line) => line !== null).join('\n'));
+    .setDescription([intro, progress, vote.note, '', ...tallyLines(options, voters, [...options.keys()])].filter((line) => line !== null).join('\n'));
   const buttons = options.map((option, idx) =>
     new ButtonBuilder().setCustomId(`vote:${vote.id}:${idx}`).setLabel(`${option.name.slice(0, 70)} (${voters[idx].length})`).setStyle(ButtonStyle.Secondary),
   );
@@ -139,7 +144,7 @@ export async function postVote(channel: GuildTextBasedChannel, voice: VoiceBased
   const vote = await open(channel.guild, channel.id, voice, minutes, only);
   if (typeof vote === 'string') return vote;
   try {
-    attach(vote, (await channel.send(view(vote))).id);
+    attach(vote, (await channel.send(view(vote, voice))).id);
   } catch (err) {
     // A vote with no card can't be voted on, and it would block the next one
     db.prepare('DELETE FROM game_votes WHERE id = ?').run(vote.id);
@@ -160,7 +165,7 @@ async function start(i: ChatInputCommandInteraction<'cached'> | ButtonInteractio
   await i.deferReply();
   const vote = await open(i.guild, i.channelId, voice, minutes);
   if (typeof vote === 'string') return i.editReply(vote);
-  attach(vote, (await i.editReply(view(vote))).id);
+  attach(vote, (await i.editReply(view(vote, voice))).id);
 }
 
 export const gameVotes: Feature = {
@@ -195,8 +200,9 @@ export const gameVotes: Feature = {
     );
     const voted = new Set(votersFor(vote).flat());
     const channel = i.guild.channels.cache.get(vote.voice_channel_id);
-    const everyone = channel?.isVoiceBased() && humansIn(channel).every((m) => voted.has(m.id));
-    return i.update(everyone ? finish(vote) : view(vote));
+    const room = channel?.isVoiceBased() ? channel : undefined;
+    const everyone = room && humansIn(room).every((m) => voted.has(m.id));
+    return i.update(everyone ? finish(vote) : view(vote, room));
   },
   setup(client) {
     setInterval(() => void tick(client).catch(console.error), 5_000);

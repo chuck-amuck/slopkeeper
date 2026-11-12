@@ -185,7 +185,7 @@ Buttons:
 How a vote works:
 - The ballot has up to 10 games from the same list: the 5 you've played most, then a random mix of the rest.
 - Everyone in the voice channel gets one vote and can change it until the vote closes. People outside the channel can't vote.
-- It closes as soon as everyone in the channel has voted, or when time runs out. A tie is settled at random, and the result says so.
+- The card shows how many have voted and who it's waiting on. It closes as soon as everyone in the channel has voted, or when time runs out. A tie is settled at random, and the result says so.
 - Each voice channel can only have one vote open at a time.
 
 ### Game library

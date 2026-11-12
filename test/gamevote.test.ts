@@ -43,6 +43,7 @@ test('a vote stays open until everyone in voice has voted, and a vote can be cha
   const people = ['a', 'b'];
   const first = await press(`vote:${id}:0`, 'a', 'v1', people);
   assert.equal(first.update!.embeds![0].toJSON().title, '🗳️ What do we play?');
+  assert.match(first.update!.embeds![0].toJSON().description, /^-# 1 of 2 voted · waiting on <@b>$/m);
   assert.equal(first.update!.components.length, 1);
   await press(`vote:${id}:1`, 'a', 'v1', people);
   assert.ok(getVote(id));
