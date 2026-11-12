@@ -1,4 +1,16 @@
-import { EmbedBuilder, Events, MessageFlags, SlashCommandBuilder, type Client, type Guild, type GuildMember } from 'discord.js';
+import {
+  ApplicationCommandType,
+  ContextMenuCommandBuilder,
+  EmbedBuilder,
+  Events,
+  InteractionContextType,
+  MessageFlags,
+  SlashCommandBuilder,
+  type Client,
+  type Guild,
+  type GuildMember,
+  type User,
+} from 'discord.js';
 import { db, MIN_PLAY } from '../db.ts';
 import { gameKey, gameName, noteGame } from '../gameNames.ts';
 import { isAllowed } from '../settings.ts';
@@ -319,20 +331,8 @@ export const gameStats: Feature = {
         }
 
         if (user) {
-          const games = stats(i.guildId, since, 'user', 'game', user.id);
-          if (!games.length) return nothing(`games for ${name}`);
-          const total = games.reduce((sum, g) => sum + g.ms, 0);
-          embed
-            .setTitle(`🎮 ${name}’s games`)
-            .setThumbnail(user.displayAvatarURL())
-            .setDescription(
-              `**${formatDuration(total)}** across ${plural(games.length, 'game')}\n\n` +
-                games
-                  .slice(0, 15)
-                  .map((g, idx) => `${rank(idx)} **${short(g.key)}** · ${formatDuration(g.ms)} · ${ago(g.last)}`)
-                  .join('\n'),
-            );
-          return i.reply({ embeds: [embed] });
+          const games = gamesOf(i.guildId, user, name!, period);
+          return games ? i.reply({ embeds: [games] }) : nothing(`games for ${name}`);
         }
 
         if (game) {
@@ -391,30 +391,31 @@ export const gameStats: Feature = {
         if (first.id === second.id) return i.reply({ content: 'Pick two different people.', flags: MessageFlags.Ephemeral });
         if (first.bot || second.bot) return i.reply({ content: 'Bots don’t play games. Pick two people.', flags: MessageFlags.Ephemeral });
 
-        const nameOf = (u: typeof first) => i.guild.members.cache.get(u.id)?.displayName ?? u.displayName;
-        const { games, voice, shared, totals } = comparison(i.guildId, first.id, second.id);
-
-        const summary: string[] = [];
-        if (games.length) summary.push(`**${formatDuration(games.reduce((sum, g) => sum + g.ms, 0))}** in the same game and voice channel`);
-        if (voice.n) summary.push(`**${plural(voice.n, 'voice session')}** together, up to ${formatDuration(voice.seconds * 1000)}`);
-        if (!summary.length) summary.push('No time together on record yet.');
-        summary.push(`All-time game time: ${nameOf(first)} ${formatDuration(totals[0])}, ${nameOf(second)} ${formatDuration(totals[1])}`);
-
-        const embed = new EmbedBuilder().setColor(0x57f287).setTitle(`🤝 ${nameOf(first)} and ${nameOf(second)}`).setDescription(summary.join('\n'));
-        if (games.length) {
-          embed.addFields({
-            name: 'Played together most',
-            value: games
-              .slice(0, 5)
-              .map((g, idx) => `${rank(idx)} **${short(g.game)}** · ${formatDuration(g.ms)}`)
-              .join('\n'),
-          });
-        }
-        embed.addFields({
-          name: `Both own (${shared.length})`,
-          value: shared.map((g) => short(g.name)).slice(0, 15).join(', ') || 'Nothing yet. Link Steam with `/steam link` or mark games with `/game own`.',
-        });
-        return i.reply({ embeds: [embed], allowedMentions: { parse: [] } });
+        return i.reply({ embeds: [compared(i.guild, first, second)], allowedMentions: { parse: [] } });
+      },
+    },
+  ],
+  menus: [
+    {
+      data: new ContextMenuCommandBuilder().setName('Game stats').setType(ApplicationCommandType.User).setContexts(InteractionContextType.Guild),
+      about: 'On a member: what they’ve played here in the past month, just for you.',
+      async run(i) {
+        if (!i.isUserContextMenuCommand() || !i.inCachedGuild()) return i.reply({ content: 'Use this in a server.', flags: MessageFlags.Ephemeral });
+        checkpoint();
+        const name = i.targetMember?.displayName ?? i.targetUser.displayName;
+        const games = gamesOf(i.guildId, i.targetUser, name, PERIODS.month);
+        return i.reply(games ? { embeds: [games], flags: MessageFlags.Ephemeral } : { content: `No games for ${name} in the past month.`, flags: MessageFlags.Ephemeral });
+      },
+    },
+    {
+      data: new ContextMenuCommandBuilder().setName('Compare with me').setType(ApplicationCommandType.User).setContexts(InteractionContextType.Guild),
+      about: 'On a member: what you and they have in common, as /compare shows, just for you.',
+      async run(i) {
+        if (!i.isUserContextMenuCommand() || !i.inCachedGuild()) return i.reply({ content: 'Use this in a server.', flags: MessageFlags.Ephemeral });
+        if (i.targetUser.id === i.user.id) return i.reply({ content: 'That’s you. Pick someone else.', flags: MessageFlags.Ephemeral });
+        if (i.targetUser.bot) return i.reply({ content: 'Bots don’t play games. Pick a person.', flags: MessageFlags.Ephemeral });
+        checkpoint();
+        return i.reply({ embeds: [compared(i.guild, i.user, i.targetUser)], flags: MessageFlags.Ephemeral });
       },
     },
   ],
@@ -444,3 +445,51 @@ export const gameStats: Feature = {
     open.clear();
   },
 };
+
+/** One person's games in a period, most played first, for /gamestats and the Game stats app. Null if they played none */
+function gamesOf(guildId: string, user: User, name: string, period: (typeof PERIODS)[keyof typeof PERIODS]) {
+  const since = Number.isFinite(period.ms) ? Date.now() - period.ms : 0;
+  const games = stats(guildId, since, 'user', 'game', user.id);
+  if (!games.length) return null;
+  const total = games.reduce((sum, g) => sum + g.ms, 0);
+  return new EmbedBuilder()
+    .setColor(0x57f287)
+    .setFooter({ text: `${period.label} · games played in voice` })
+    .setTitle(`🎮 ${name}’s games`)
+    .setThumbnail(user.displayAvatarURL())
+    .setDescription(
+      `**${formatDuration(total)}** across ${plural(games.length, 'game')}\n\n` +
+        games
+          .slice(0, 15)
+          .map((g, idx) => `${rank(idx)} **${short(g.key)}** · ${formatDuration(g.ms)} · ${ago(g.last)}`)
+          .join('\n'),
+    );
+}
+
+/** What two people have in common, for /compare and the Compare with me app */
+function compared(guild: Guild, first: User, second: User) {
+  const nameOf = (u: typeof first) => guild.members.cache.get(u.id)?.displayName ?? u.displayName;
+  const { games, voice, shared, totals } = comparison(guild.id, first.id, second.id);
+
+  const summary: string[] = [];
+  if (games.length) summary.push(`**${formatDuration(games.reduce((sum, g) => sum + g.ms, 0))}** in the same game and voice channel`);
+  if (voice.n) summary.push(`**${plural(voice.n, 'voice session')}** together, up to ${formatDuration(voice.seconds * 1000)}`);
+  if (!summary.length) summary.push('No time together on record yet.');
+  summary.push(`All-time game time: ${nameOf(first)} ${formatDuration(totals[0])}, ${nameOf(second)} ${formatDuration(totals[1])}`);
+
+  const embed = new EmbedBuilder().setColor(0x57f287).setTitle(`🤝 ${nameOf(first)} and ${nameOf(second)}`).setDescription(summary.join('\n'));
+  if (games.length) {
+    embed.addFields({
+      name: 'Played together most',
+      value: games
+        .slice(0, 5)
+        .map((g, idx) => `${rank(idx)} **${short(g.game)}** · ${formatDuration(g.ms)}`)
+        .join('\n'),
+    });
+  }
+  embed.addFields({
+    name: `Both own (${shared.length})`,
+    value: shared.map((g) => short(g.name)).slice(0, 15).join(', ') || 'Nothing yet. Link Steam with `/steam link` or mark games with `/game own`.',
+  });
+  return embed;
+}

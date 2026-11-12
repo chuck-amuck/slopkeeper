@@ -866,3 +866,34 @@ test('no join sound or greeting in the looping room', { skip: !hasFfmpeg }, asyn
   await join();
   assert.deepEqual(await said(), ['Ana joined'], 'anywhere else, as before');
 });
+
+/** Uses Say this aloud on a message */
+function sayMessage(voice: unknown, message: { content: string; author: string; name?: string }) {
+  const guild = (voice as { guild?: { id: string } } | null)?.guild ?? { id: 'say-app' };
+  const replies: string[] = [];
+  return speak.menus![0]
+    .run({
+      isMessageContextMenuCommand: () => true,
+      inCachedGuild: () => true,
+      guildId: guild.id,
+      guild,
+      user: { id: 'me' },
+      memberPermissions: { has: () => false },
+      member: { voice: { channel: voice }, roles: { cache: new Map() } },
+      targetMessage: { content: message.content, author: { id: message.author, displayName: message.author }, member: message.name ? { displayName: message.name } : null },
+      reply: async (r: { content: string }) => replies.push(r.content),
+      deferReply: async () => {},
+      editReply: async (r: string) => replies.push(r),
+    } as never)
+    .then(() => replies[0]);
+}
+
+test('Say this aloud reads a message out, saying whose it is', { skip: !hasFfmpeg }, async (t) => {
+  const asked = fakeVoice(t);
+  const voice = channel();
+  assert.equal(await sayMessage(null, { content: 'hi', author: 'me' }), 'Join a voice channel first.');
+  assert.equal(await sayMessage(voice, { content: '||spoiler|| https://example.test', author: 'them' }), 'There’s nothing in that message to read out.');
+  assert.equal(await sayMessage(voice, { content: 'gg everyone ||it was me||', author: 'them', name: 'Sam' }), 'Said it.');
+  assert.equal(await sayMessage(voice, { content: 'my own words', author: 'me' }), 'Said it.');
+  assert.deepEqual(asked.map((a) => a.text), ['Sam says, gg everyone', 'my own words']);
+});

@@ -9,6 +9,8 @@ import { features, startOrder } from './features/all.ts';
 import { servedGuilds } from './util.ts';
 
 const commands = new Map(features.flatMap((f) => f.commands ?? []).map((c) => [c.data.name, c]));
+const menus = new Map(features.flatMap((f) => f.menus ?? []).map((c) => [c.data.name, c]));
+const registered = [...commands.values(), ...menus.values()].map((c) => c.data.toJSON());
 
 /** Registers the commands in a server, or leaves it if it isn't allowed */
 async function join(guild: Guild, isNew: boolean) {
@@ -18,8 +20,8 @@ async function join(guild: Guild, isNew: boolean) {
   }
   await guild.members.fetch();
   // Guild-scoped commands update instantly, unlike global ones
-  rememberCommands(guild.id, (await guild.commands.set([...commands.values()].map((cmd) => cmd.data.toJSON()))).values());
-  console.log(`${commands.size} commands registered in ${guild.name} (${guild.id})`);
+  rememberCommands(guild.id, (await guild.commands.set(registered)).values());
+  console.log(`${registered.length} commands registered in ${guild.name} (${guild.id})`);
   if (idSetting(guild.id, 'announceChannel')) return;
   console.log(`${guild.name} has no announce channel yet; a server admin needs to run /setup announce-channel`);
   // Nothing gets announced until an admin picks a channel, so tell a newly joined server where it'll see it
@@ -54,7 +56,8 @@ function describe(i: Interaction): string {
   if (i.isChatInputCommand() || i.isAutocomplete()) {
     what = [`/${i.commandName}`, i.options.getSubcommand(false)].filter(Boolean).join(' ');
     if (i.isAutocomplete()) what += ' autocomplete';
-  } else if (i.isButton() || i.isStringSelectMenu() || i.isModalSubmit()) what = `Component ${i.customId}`;
+  } else if (i.isContextMenuCommand()) what = `App ${i.commandName}`;
+  else if (i.isButton() || i.isStringSelectMenu() || i.isModalSubmit()) what = `Component ${i.customId}`;
   return `${what} by ${i.user.tag} in ${where}`;
 }
 
@@ -62,6 +65,7 @@ client.on(Events.InteractionCreate, async (i) => {
   try {
     if (i.isChatInputCommand()) await commands.get(i.commandName)?.run(i);
     else if (i.isAutocomplete()) await commands.get(i.commandName)?.autocomplete?.(i);
+    else if (i.isContextMenuCommand()) await menus.get(i.commandName)?.run(i);
     else if (i.isButton() || i.isStringSelectMenu()) {
       const feature = features.find((f) => f.componentPrefix === i.customId.split(':')[0]);
       await (i.isButton() ? feature?.onButton?.(i) : feature?.onSelect?.(i));

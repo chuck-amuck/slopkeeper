@@ -44,3 +44,23 @@ test('/help covers every command, however many there are', () => {
   assert.equal(option.autocomplete, true);
   assert.equal(option.choices, undefined);
 });
+
+test('the Apps menus fit Discord’s limits, and /help lists them', () => {
+  const menus = features.flatMap((f) => f.menus ?? []);
+  const json = menus.map((m) => m.data.toJSON());
+  assert.equal(new Set(json.map((m) => m.name)).size, json.length);
+  // Discord allows five of each kind in a server
+  for (const type of [2, 3]) assert.ok(json.filter((m) => m.type === type).length <= 5);
+  for (const m of json) assert.ok(m.name.length >= 1 && m.name.length <= 32, m.name);
+  for (const m of menus) assert.ok(m.about.length > 0);
+
+  let reply: { embeds: { toJSON(): { fields: { name: string; value: string }[] } }[] } | undefined;
+  const helpCommand = features[0].commands![0];
+  return helpCommand
+    .run({ guildId: null, guild: null, memberPermissions: null, options: { getString: () => null }, reply: async (r: typeof reply) => (reply = r) } as never)
+    .then(() => {
+      const apps = reply!.embeds[0].toJSON().fields.at(-1)!;
+      assert.match(apps.name, /^Apps/);
+      assert.deepEqual([...apps.value.matchAll(/\*\*(.+?)\*\*/g)].map((m) => m[1]), menus.map((m) => m.data.name));
+    });
+});

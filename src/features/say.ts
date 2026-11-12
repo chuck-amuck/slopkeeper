@@ -3,7 +3,20 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { getVoiceConnection } from '@discordjs/voice';
-import { Events, MessageFlags, PermissionFlagsBits, SlashCommandBuilder, type ChatInputCommandInteraction, type Guild, type GuildMember, type Message, type VoiceBasedChannel } from 'discord.js';
+import {
+  ApplicationCommandType,
+  ContextMenuCommandBuilder,
+  Events,
+  InteractionContextType,
+  MessageFlags,
+  PermissionFlagsBits,
+  SlashCommandBuilder,
+  type Guild,
+  type GuildMember,
+  type Message,
+  type PermissionsBitField,
+  type VoiceBasedChannel,
+} from 'discord.js';
 import { logActivity } from '../activity.ts';
 import { config } from '../config.ts';
 import { db } from '../db.ts';
@@ -530,8 +543,7 @@ export async function readMessage(message: Message) {
   const role = idSetting(guild.id, 'ttsRole');
   if (role && !member?.roles.cache.has(role) && !member?.permissions.has(PermissionFlagsBits.ManageGuild)) return;
 
-  // Saying a spoiler would ruin it, and nobody wants to hear code
-  const shown = message.content.replace(/\|\|[\s\S]*?\|\|/g, ' ').replace(/```[\s\S]*?```/g, ' ');
+  const shown = sayable(message.content);
   const text = speechFor(guild, shown);
   if (!hasWords(speechFor(guild, shown.replace(LINK, ' '))) || text.length > setting(guild.id, 'ttsMaxChars')) return;
   const channel = listeningChannel(message);
@@ -545,8 +557,11 @@ export async function readMessage(message: Message) {
   if (problem && problem !== STOPPED) console.error(`Couldn’t read a message out in server ${guild.id}: ${problem}`);
 }
 
+/** A message's text without what shouldn't be read out: saying a spoiler would ruin it, and nobody wants to hear code */
+const sayable = (content: string) => content.replace(/\|\|[\s\S]*?\|\|/g, ' ').replace(/```[\s\S]*?```/g, ' ');
+
 /** With a role set, using this takes that role or Manage Server */
-function canSay(i: ChatInputCommandInteraction<'cached'>) {
+function canSay(i: { guildId: string; memberPermissions: Readonly<PermissionsBitField>; member: GuildMember }) {
   const role = idSetting(i.guildId, 'ttsRole');
   return !role || i.memberPermissions.has(PermissionFlagsBits.ManageGuild) || i.member.roles.cache.has(role);
 }
@@ -592,6 +607,28 @@ export const speak: Feature = {
         }
         const matches = i.guildId ? phrases(i.guildId).filter((p) => p.text.toLowerCase().includes(search)) : [];
         return i.respond(matches.slice(0, 25).map((p) => ({ name: p.text.slice(0, 100), value: String(p.id) })));
+      },
+    },
+  ],
+  menus: [
+    {
+      data: new ContextMenuCommandBuilder().setName('Say this aloud').setType(ApplicationCommandType.Message).setContexts(InteractionContextType.Guild),
+      about: 'On a message: reads it out in your voice channel, in the server’s voice, as /say would.',
+      async run(i) {
+        if (!i.isMessageContextMenuCommand() || !i.inCachedGuild()) return i.reply({ content: 'Use this in a server.', flags: MessageFlags.Ephemeral });
+        if (!canSay(i)) {
+          return i.reply({ content: `Only <@&${idSetting(i.guildId, 'ttsRole')}> and people with **Manage Server** can use this.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
+        }
+        const channel = i.member.voice.channel;
+        if (!channel) return i.reply({ content: 'Join a voice channel first.', flags: MessageFlags.Ephemeral });
+        const message = i.targetMessage;
+        const shown = sayable(message.content);
+        if (!hasWords(speechFor(i.guild, shown.replace(LINK, ' ')))) return i.reply({ content: 'There’s nothing in that message to read out.', flags: MessageFlags.Ephemeral });
+        // Someone else's words say whose they are, as reading the chat channel aloud does
+        const line = message.author.id === i.user.id ? shown : `${message.member?.displayName ?? message.author.displayName} says, ${shown}`;
+        await i.deferReply({ flags: MessageFlags.Ephemeral });
+        const problem = await say(channel, line, undefined, i.user.id);
+        return i.editReply(problem ?? 'Said it.');
       },
     },
   ],

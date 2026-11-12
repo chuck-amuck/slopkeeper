@@ -10,6 +10,7 @@ export function help(features: Feature[]): Feature {
     .filter((f) => f.title && f.commands?.length)
     .map((f) => ({ title: f.title!, commands: f.commands!.map((c) => c.data.toJSON()) }));
   const all = sections.flatMap((s) => s.commands);
+  const apps = features.flatMap((f) => f.menus ?? []);
   // Commands someone can't use (like /setup without Manage Server) are left out, as Discord hides them too
   const canUse = (perms: string | null | undefined, member: Readonly<PermissionsBitField> | null) => !perms || !member || member.has(new PermissionsBitField(BigInt(perms)));
 
@@ -64,6 +65,9 @@ export function help(features: Feature[]): Feature {
                 return `**/${c.name}**: ${c.description}${subs.length ? `\n-# ${subs.join(' · ')}` : ''}`;
               });
             if (lines.length) embed.addFields({ name: section.title, value: lines.join('\n').slice(0, 1024) });
+          }
+          if (apps.length) {
+            embed.addFields({ name: 'Apps: right-click a message or member, or press and hold on a phone', value: apps.map((m) => `**${m.data.name}**: ${m.about}`).join('\n').slice(0, 1024) });
           }
           return i.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
         },

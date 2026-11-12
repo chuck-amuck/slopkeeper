@@ -239,7 +239,7 @@ async function compare(user: { id: string; bot?: boolean; displayName?: string }
     inCachedGuild: () => true,
     guildId: 'c',
     user: { id: 'a', displayName: 'Alex' },
-    guild: { members: { cache: new Map([['a', { displayName: 'Alex' }], ['b', { displayName: 'Sam' }]]) } },
+    guild: { id: 'c', members: { cache: new Map([['a', { displayName: 'Alex' }], ['b', { displayName: 'Sam' }]]) } },
     options: { getUser: (name: string) => (name === 'user' ? user : (other ?? null)) },
     reply: async (r: typeof reply) => (reply = r),
   } as never);
@@ -519,3 +519,28 @@ test('plays from before voice tracking aren’t counted anywhere', async (t) => 
 function t2(hoursAgo: number) {
   return t - hoursAgo * HOUR;
 }
+
+/** Uses one of the Apps on a member */
+async function app(n: number, target: { id: string; bot?: boolean; displayName?: string }) {
+  let reply: { content?: string; flags?: unknown; embeds?: { toJSON(): { title: string; description: string } }[] } = {};
+  await gameStats.menus![n].run({
+    isUserContextMenuCommand: () => true,
+    inCachedGuild: () => true,
+    guildId: 'c',
+    user: { id: 'a', displayName: 'Alex' },
+    guild: { id: 'c', members: { cache: new Map([['a', { displayName: 'Alex' }], ['b', { displayName: 'Sam' }]]) } },
+    targetUser: { ...target, displayAvatarURL: () => 'https://cdn.test/a.png' },
+    targetMember: null,
+    reply: async (r: typeof reply) => (reply = r),
+  } as never);
+  return reply;
+}
+
+test('Compare with me and Game stats answer just the person who asked', async () => {
+  const compared = await app(1, { id: 'b', displayName: 'Sam' });
+  assert.equal(compared.embeds![0].toJSON().title, '🤝 Alex and Sam');
+  assert.ok(compared.flags);
+  assert.match((await app(1, { id: 'a' })).content!, /That’s you/);
+  assert.match((await app(1, { id: 'robot', bot: true })).content!, /Bots/);
+  assert.equal((await app(0, { id: 'nobody', displayName: 'Pat' })).content, 'No games for Pat in the past month.');
+});

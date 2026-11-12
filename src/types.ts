@@ -3,9 +3,12 @@ import type {
   ButtonInteraction,
   ChatInputCommandInteraction,
   Client,
+  MessageContextMenuCommandInteraction,
   ModalSubmitInteraction,
   RESTPostAPIChatInputApplicationCommandsJSONBody,
+  RESTPostAPIContextMenuApplicationCommandsJSONBody,
   StringSelectMenuInteraction,
+  UserContextMenuCommandInteraction,
 } from 'discord.js';
 
 export interface Command {
@@ -14,10 +17,19 @@ export interface Command {
   autocomplete?(interaction: AutocompleteInteraction): Promise<unknown>;
 }
 
+/** A command in a message's or member's Apps menu (right-click, or press and hold on a phone) */
+export interface MenuCommand {
+  data: { name: string; toJSON(): RESTPostAPIContextMenuApplicationCommandsJSONBody };
+  /** What it does, for /help, as Discord shows these without a description */
+  about: string;
+  run(interaction: MessageContextMenuCommandInteraction | UserContextMenuCommandInteraction): Promise<unknown>;
+}
+
 export interface Feature {
   /** Heading for the feature's commands in /help */
   title?: string;
   commands?: Command[];
+  menus?: MenuCommand[];
   /** Handles buttons, select menus and modals whose customId starts with `${componentPrefix}:` */
   componentPrefix?: string;
   onButton?(interaction: ButtonInteraction): Promise<unknown>;

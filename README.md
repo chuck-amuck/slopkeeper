@@ -10,7 +10,7 @@ Keeper of the slop. A Discord bot for friends servers that helps people get toge
 - **Remembering the night:** recaps each voice session, keeps a weekly leaderboard, tracks what everyone plays, per person and for the whole server, and posts a recap of each month.
 - **Messing around:** a soundboard that layers different sounds like Discord's own and restarts a spammed one without a gap, with short clips mirrored into Discord's soundboard, and text to speech.
 
-Everything happens through slash commands (type `/` in any channel, or run `/help`) and through automatic posts in each server's announce channel.
+Everything happens through slash commands (type `/` in any channel, or run `/help`), a few **Apps** on messages and members (right-click, or press and hold on a phone), and automatic posts in each server's announce channel.
 
 **Contents**
 
@@ -302,6 +302,7 @@ Game time from before this rule is an estimate: the bot kept what fell inside sa
 | `/gamestats user` | One person: their total and their top games, with when they last played each. |
 | `/gamestats game` | One game: how long it was played, and how long each person played it. The name autocompletes from what's been played. |
 | `/gamestats user game` | One person and one game: their hours, number of sessions, and where they rank among the server's players. |
+| **Game stats** (Apps menu) | Right-click a member, or press and hold on a phone, then **Apps → Game stats**: their past month, as `/gamestats user` shows it, just for you. |
 
 Every form takes `period`: past week, past month (default), past year or all time.
 
@@ -318,6 +319,7 @@ Examples:
 | Command | What it does |
 | --- | --- |
 | `/compare user [with]` | Compares someone with you, or with whoever you pick in `with`. |
+| **Compare with me** (Apps menu) | Right-click a member, or press and hold on a phone, then **Apps → Compare with me**: the same, just for you. |
 
 It shows, over all time:
 - how long the two played the same game in the same voice channel, and which games most;
@@ -385,6 +387,7 @@ The web UI's Soundboard tab, under **Manage**, also shows everything on Discord'
 
 `/say text [voice]` has the bot read something out in your voice channel, joining it first if it has to. There's a **Say something** box on the web UI's Soundboard tab too. **Save** there keeps a line as a one-click button, up to 25 per server, and `/say saved:` picks one in Discord. A saved line is said in the voice picked next to the box, or in Discord in `voice` or else the server's default voice. Saved lines follow the same rules as typed ones.
 
+- **Say this aloud:** right-click a message, or press and hold it on a phone, then **Apps → Say this aloud** to have it read out in your voice channel, in the server's voice, starting with whose message it is. Spoilers and code blocks are skipped, and it follows the same rules as `/say`.
 - Lines wait their turn, while sounds still layer on top. **Stop** ends the line and clears anything waiting.
 - Mentions are read as names, custom emoji as their name, and links as "link".
 - Every line goes in the Activity tab with who said it.
