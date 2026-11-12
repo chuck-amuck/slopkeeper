@@ -34,6 +34,7 @@ function server(sounds: string[] = ['horn']) {
       },
       delete: async () => {},
       edit: async () => {},
+      cache: new Map(),
     },
     boardFull: false,
   };

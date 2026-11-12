@@ -52,9 +52,21 @@ export interface DiscordSound {
   removable: boolean;
 }
 
+// The gateway keeps discord.js's copy of each server's soundboard current, so it's only fetched again now and then,
+// in case an event went missing over a reconnect
+const REFETCH_MS = 5 * 60_000;
+const fetchedAt = new Map<string, number>();
+
+async function liveSounds(guild: Guild, now = Date.now()) {
+  if (now - (fetchedAt.get(guild.id) ?? -Infinity) < REFETCH_MS) return guild.soundboardSounds.cache;
+  const live = await guild.soundboardSounds.fetch();
+  fetchedAt.set(guild.id, now);
+  return live;
+}
+
 /** What's on the server's Discord soundboard and how many slots it has */
 export async function board(guild: Guild): Promise<{ used: number; total: number; sounds: DiscordSound[] }> {
-  const live = await guild.soundboardSounds.fetch();
+  const live = await liveSounds(guild);
   const saved = new Map([...synced(guild.id)].map(([name, id]) => [id, name]));
   const canManage = guild.members.me?.permissions.has(PermissionFlagsBits.ManageGuildExpressions) ?? false;
   const sounds = [...live].map(([id, s]) => ({
@@ -171,6 +183,8 @@ export async function remove(guild: Guild, name: string) {
   if (!id) return;
   try {
     await guild.soundboardSounds.delete(id);
+    // Gone now, without waiting for the gateway to say so
+    guild.soundboardSounds.cache.delete(id);
   } catch (err) {
     // Someone may have deleted it in Discord already
     if (!(err instanceof DiscordAPIError && err.status === 404)) throw new Error(explainChange(err));
@@ -216,5 +230,6 @@ export function forget(soundId: string): boolean {
 /** Forgets copies deleted from Discord while the bot wasn't watching */
 export async function reconcile(guild: Guild) {
   const live = await guild.soundboardSounds.fetch();
+  fetchedAt.set(guild.id, Date.now());
   for (const id of synced(guild.id).values()) if (!live.has(id)) forget(id);
 }

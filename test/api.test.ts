@@ -145,7 +145,11 @@ const guild = {
     },
   },
   soundboardSounds: {
-    fetch: async () => new Map([...discordSounds].map(([id, sound]) => [id, { ...sound, url: `https://cdn.test/${id}` }])),
+    fetch: async () => guild.soundboardSounds.cache,
+    // What the gateway keeps current between fetches
+    get cache() {
+      return new Map([...discordSounds].map(([id, sound]) => [id, { ...sound, url: `https://cdn.test/${id}` }]));
+    },
     create: async ({ name, volume }: { name: string; volume: number }) => {
       if (refuseDiscord) throw refuseDiscord;
       const soundId = `s${++nextSoundId}`;
@@ -1573,6 +1577,8 @@ test('a soundboard Discord won’t show leaves the library working', async (t) =
   t.mock.method(guild.soundboardSounds, 'fetch', async () => {
     throw new Error('Discord is down');
   });
+  // Past when the gateway's copy is trusted, so it asks Discord
+  t.mock.timers.enable({ apis: ['Date'], now: Date.now() + 10 * 60_000 });
   const body = await ok(`/guilds/${GUILD}/sounds`);
   assert.equal(body.slots, null);
   assert.deepEqual(body.discordSounds, []);
