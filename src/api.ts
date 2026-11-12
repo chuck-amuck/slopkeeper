@@ -23,7 +23,7 @@ import { addTracks, clearQueue, fileProblem, fileUploadPath, MOST_FILE_BYTES, mo
 import { phrases, removePhrase, savePhrase, say, VOICES } from './features/say.ts';
 import { voiceTotals } from './features/sessions.ts';
 import { checkSetting, LABELS, LIMITS, show, source, STEPS } from './features/setup.ts';
-import { addSound, addToDiscord, afterSettingsChanged, BIN_DAYS, changeEmoji, deletedSounds, eraseDeleted, expiresAt, favourites, findSound, joinSounds, listSounds, loopBotStatus, loopSpeechProblem, parseEmoji, playCounts, playDiscordSound, playFromWeb, postPanel, refreshPanels, removeSound, renameSound, restoreDeleted, restoreSound, saveFromDiscord, setFavourite, setJoinSound, setSoundVolume, type Sound, soundLevels, soundVolumes, stopPlayback, swapOnDiscord, syncToDiscord, takeOffDiscord, trimmedSounds, trimProblem, trimSound, uploadProblem, volumeProblem } from './features/soundboard.ts';
+import { addSound, addToDiscord, afterSettingsChanged, BIN_DAYS, changeEmoji, deletedSounds, eraseDeleted, expiresAt, favourites, findSound, joinSounds, listSounds, loopBotStatus, loopSpeechProblem, parseEmoji, playCounts, playDiscordSound, playFromWeb, postPanel, refreshPanels, removeSound, renameSound, restoreDeleted, restoreSound, saveFromDiscord, setFavourite, setJoinSound, setSoundVolume, type Sound, soundLevels, soundVolumes, stopPlayback, swapOnDiscord, syncToDiscord, takeOffDiscord, trimmedSounds, trimProblem, trimSound, untaken, uploadProblem, volumeProblem } from './features/soundboard.ts';
 import { DEFAULTS, idSetting, isAllowed, setSetting, setting, type SettingKey } from './settings.ts';
 import { myPlaylists, playlistsReady, search, SpotifyError, type Track } from './spotify.ts';
 import type { Feature } from './types.ts';
@@ -642,12 +642,17 @@ async function handleSounds(client: Client<true>, guild: Guild, req: IncomingMes
   if (method === 'PUT') {
     const ext = path.extname(url.searchParams.get('file') ?? '').toLowerCase();
     refuse(guild, uploadProblem(name, ext, Number(req.headers['content-length'] ?? 0)));
+    // Read first, as a proxy can turn an answer sent mid-upload into a dropped connection
     const data = await readBody(req);
-    const added = await addSound(guild, name, ext, data, undefined, url.searchParams.get('discord') !== '0');
+    // Replacing has to be asked for, so a name picked by accident can't cost anyone a sound. keep=1 picks a free name
+    const taken = findSound(guild.id, name);
+    if (taken && url.searchParams.get('replace') !== '1' && url.searchParams.get('keep') !== '1') throw new Refused(409, `There’s already a sound called ${name}.`);
+    const saveAs = taken && url.searchParams.get('keep') === '1' ? untaken(guild.id, name) : name;
+    const added = await addSound(guild, saveAs, ext, data, undefined, url.searchParams.get('discord') !== '0');
     if (!added) throw new Refused(400, 'That file doesn’t have any audio the bot can read, so it wasn’t saved.');
-    note(`${added.replaced ? 'Replaced' : 'Added'} sound **${name}**`);
+    note(`${added.replaced ? 'Replaced' : 'Added'} sound **${saveAs}**`);
     await refresh();
-    return { replaced: added.replaced, discordProblem: added.problem && plain(guild, added.problem) };
+    return { name: saveAs, replaced: added.replaced, discordProblem: added.problem && plain(guild, added.problem) };
   }
 
   if (method === 'PATCH') {
@@ -883,13 +888,19 @@ async function pickFromWeb(guild: Guild, url: URL) {
   return { people: users.length, counted: picked.counted.length, notes: picked.notes.map((n) => plain(guild, n)), ready: picked.ready.map(person), almost: picked.almost.map(person) };
 }
 
+/** More than any server's game list, so a filtered list always fits */
+const MAX_VOTE_NAMES = 2000;
+
 async function voteFromWeb(guild: Guild, req: IncomingMessage) {
-  const { voiceChannelId, channelId, minutes } = await readJson(req);
+  const { voiceChannelId, channelId, minutes, games } = await readJson(req);
   const length = minutes ?? 1;
   if (!Number.isInteger(length) || (length as number) < 1 || (length as number) > 10) throw new Refused(400, 'A vote lasts from 1 to 10 minutes.');
+  if (games !== undefined && !(Array.isArray(games) && games.length <= MAX_VOTE_NAMES && games.every((g) => typeof g === 'string'))) {
+    throw new Refused(400, `games has to be a list of up to ${MAX_VOTE_NAMES} game names.`);
+  }
   const voice = voiceChannelFor(guild, voiceChannelId);
   const channel = postingChannel(guild, channelId);
-  refuse(guild, await postVote(channel, voice, length as number).catch(cantPost));
+  refuse(guild, await postVote(channel, voice, length as number, games as string[] | undefined).catch(cantPost));
   logActivity(guild.id, by(), `Started a game vote for <#${voice.id}> in <#${channel.id}>`);
   return {};
 }

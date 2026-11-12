@@ -482,6 +482,23 @@ main {
   font-size: 13px;
 }
 
+/* A taken name: what it is, then Replace or Keep both */
+.queue-row .note.choice {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+}
+
+.queue-row .note.choice span {
+  flex: 1 1 200px;
+}
+
+.queue-actions .hint {
+  margin-right: auto;
+  align-self: center;
+}
+
 .queue-actions {
   display: flex;
   justify-content: flex-end;

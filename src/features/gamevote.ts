@@ -113,11 +113,15 @@ export async function tick(client: Client<true>) {
 
 const voteIn = (voice: VoiceBasedChannel) => db.prepare('SELECT * FROM game_votes WHERE voice_channel_id = ?').get(voice.id) as Vote | undefined;
 
-/** Opens a vote on what the people in a voice channel all own, or returns why there's nothing to vote on */
-async function open(guild: Guild, channelId: string, voice: VoiceBasedChannel, minutes: number) {
+/**
+ * Opens a vote on what the people in a voice channel all own, or returns why there's nothing to vote on. `only`
+ * narrows it to those games, as the web UI's filters do; they still have to be owned by everyone.
+ */
+async function open(guild: Guild, channelId: string, voice: VoiceBasedChannel, minutes: number, only?: string[]) {
   const found = await candidatesFor(guild, humansIn(voice).map((m) => m.id));
   if (!found) return NOBODY_COUNTED;
-  const ready = found.candidates.filter((c) => c.missing.length === 0);
+  const wanted = only && new Set(only);
+  const ready = found.candidates.filter((c) => c.missing.length === 0 && (!wanted || wanted.has(c.name)));
   if (ready.length < 2) {
     return ready.length ? `**${ready[0].name}** is the only game that fits, so there’s nothing to vote on.` : 'No game fits everyone here, so there’s nothing to vote on.';
   }
@@ -129,10 +133,10 @@ async function open(guild: Guild, channelId: string, voice: VoiceBasedChannel, m
 
 const attach = (vote: Vote, messageId: string) => db.prepare('UPDATE game_votes SET message_id = ? WHERE id = ?').run(messageId, vote.id);
 
-/** Posts a vote from outside Discord. Returns why it couldn't, or null */
-export async function postVote(channel: GuildTextBasedChannel, voice: VoiceBasedChannel, minutes: number): Promise<string | null> {
+/** Posts a vote from outside Discord, on only the games named if it's given some. Returns why it couldn't, or null */
+export async function postVote(channel: GuildTextBasedChannel, voice: VoiceBasedChannel, minutes: number, only?: string[]): Promise<string | null> {
   if (voteIn(voice)) return `There’s already a vote going in ${voice}.`;
-  const vote = await open(channel.guild, channel.id, voice, minutes);
+  const vote = await open(channel.guild, channel.id, voice, minutes, only);
   if (typeof vote === 'string') return vote;
   try {
     attach(vote, (await channel.send(view(vote))).id);

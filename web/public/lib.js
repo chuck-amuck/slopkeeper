@@ -34,7 +34,12 @@ export function recall(key) {
   }
 }
 
-export class RequestError extends Error {}
+export class RequestError extends Error {
+  constructor(message, status = 0) {
+    super(message);
+    this.status = status;
+  }
+}
 
 /** Set by the app: what to do when the session has run out */
 export const session = { onExpired: () => {} };
@@ -55,7 +60,7 @@ export async function request(url, { json, body, method = 'GET' } = {}) {
     throw new RequestError('Log in again.');
   }
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new RequestError(data.error ?? `Request failed (${res.status}).`);
+  if (!res.ok) throw new RequestError(data.error ?? `Request failed (${res.status}).`, res.status);
   return data;
 }
 

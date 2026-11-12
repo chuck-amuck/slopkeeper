@@ -1,6 +1,6 @@
 import './helpers.ts';
 import { getVoiceConnection, joinVoiceChannel, VoiceConnectionStatus } from '@discordjs/voice';
-import { PermissionFlagsBits } from 'discord.js';
+import { MessageFlags, PermissionFlagsBits } from 'discord.js';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
@@ -8,7 +8,7 @@ import path from 'node:path';
 import { mock, test, type TestContext } from 'node:test';
 import { db } from '../src/db.ts';
 import { recentActivity } from '../src/activity.ts';
-import { cantJoin, dropMissingEmoji, joinSounds, leaveIfAlone, play, playJoinSound, saveUpload, setJoinSound, soundboard, soundGain } from '../src/features/soundboard.ts';
+import { cantJoin, dropMissingEmoji, joinSounds, leaveIfAlone, listSounds, onPlaybackStop, play, playJoinSound, saveUpload, setJoinSound, soundboard, soundGain } from '../src/features/soundboard.ts';
 import { Mixer } from '../src/mixer.ts';
 import { setSetting } from '../src/settings.ts';
 
@@ -384,6 +384,81 @@ async function slash(guildId: string, sub: string, values: Record<string, unknow
   } as never);
   return (reply.content ?? reply) as string;
 }
+
+/** Runs /sound add as someone allowed to change sounds, and returns what it replied */
+async function slashAdd(guildId: string, name: string) {
+  let reply: any;
+  const answer = async (r: unknown) => void (reply = r);
+  await soundboard.commands![0].run({
+    inCachedGuild: () => true,
+    guildId,
+    guild: { id: guildId },
+    user: { id: 'person' },
+    options: { getSubcommand: () => 'add', getString: (key: string) => (key === 'name' ? name : null), getAttachment: () => ({ name: 'new.mp3', size: 100, url: 'http://files/new.mp3' }) },
+    reply: answer,
+    deferReply: async () => {},
+    editReply: answer,
+  } as never);
+  return reply;
+}
+
+/** Presses a button on what /sound add asked, and returns everything said after */
+async function answerAdd(guildId: string, customId: string) {
+  const said: { update: any[]; followUp: any[]; deleted: boolean } = { update: [], followUp: [], deleted: false };
+  await soundboard.onButton!({
+    customId,
+    inCachedGuild: () => true,
+    guildId,
+    guild: { id: guildId },
+    user: { id: 'person' },
+    client: { channels: { cache: new Map(), fetch: async () => null } },
+    update: async (r: unknown) => void said.update.push(r),
+    followUp: async (r: unknown) => void said.followUp.push(r),
+    deleteReply: async () => void (said.deleted = true),
+  } as never);
+  return said;
+}
+
+test('/sound add asks before replacing a sound, and can keep both or leave it be', { skip: !hasFfmpeg }, async (t) => {
+  const guild = 'slash-ask';
+  await saveUpload(guild, 'horn', '.wav', wav());
+  // Not audio, so nothing goes near Discord's soundboard and the sound it would replace is kept
+  t.mock.method(globalThis, 'fetch', async () => new Response('not audio'));
+
+  const asked = await slashAdd(guild, 'horn');
+  assert.match(asked.content, /already a sound called \*\*horn\*\*.*\*\*horn-2\*\*/);
+  assert.equal(asked.flags, MessageFlags.Ephemeral);
+  const ids = asked.components[0].toJSON().components.map((c: { custom_id: string }) => c.custom_id);
+  assert.deepEqual(ids.map((id: string) => id.split(':').at(-1)), ['replace', 'keep', 'cancel']);
+
+  const cancelled = await answerAdd(guild, ids[2]);
+  assert.deepEqual(cancelled.update, [{ content: 'Left **horn** as it was.', components: [] }]);
+  assert.equal((await answerAdd(guild, ids[1])).update[0].content, 'That upload timed out. Run /sound add again.');
+
+  const keepId = (await slashAdd(guild, 'horn')).components[0].toJSON().components[1].custom_id;
+  const kept = await answerAdd(guild, keepId);
+  assert.equal(kept.update[0].content, 'Adding it…');
+  assert.match(kept.followUp[0], /\*\*new\.mp3\*\* doesn’t have any audio/);
+  assert.equal(kept.deleted, true);
+  assert.deepEqual(listSounds(guild).map((s) => s.name), ['horn']);
+
+  // A new name doesn't ask
+  assert.match(await slashAdd(guild, 'bell'), /new\.mp3\*\* doesn’t have any audio/);
+});
+
+test('Stop on a panel stops sounds and speech but leaves the music playing', async () => {
+  const heard: [string, boolean][] = [];
+  onPlaybackStop((guildId, keepMusic) => void heard.push([guildId, keepMusic]));
+  await soundboard.onButton!({
+    customId: 'sb:#stop',
+    inCachedGuild: () => true,
+    guildId: 'panel-stop',
+    channelId: 'text',
+    message: { id: 'panel-stop-msg' },
+    deferUpdate: async () => {},
+  } as never);
+  assert.deepEqual(heard.filter(([id]) => id === 'panel-stop'), [['panel-stop', true]]);
+});
 
 test('/sound join sets, changes and clears your own join sound, and it’s recorded', async () => {
   await saveUpload('slash-join', 'horn', '.wav', wav());

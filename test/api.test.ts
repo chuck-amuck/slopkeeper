@@ -238,7 +238,8 @@ async function refused(status: number, url: string, init?: RequestInit & { json?
   return body.error;
 }
 
-const upload = (name: string, file = 'clip.wav', body: BodyInit = wav() as BodyInit) => call(`/guilds/${GUILD}/sounds/${name}?file=${file}`, { method: 'PUT', body });
+const upload = (name: string, file = 'clip.wav', body: BodyInit = wav() as BodyInit, replace = false) =>
+  call(`/guilds/${GUILD}/sounds/${name}?file=${file}${replace ? '&replace=1' : ''}`, { method: 'PUT', body });
 const sounds = async () => (await ok(`/guilds/${GUILD}/sounds`)).sounds as any[];
 
 test('says when the free game list can’t be read', async (t) => {
@@ -292,7 +293,7 @@ test('lists servers, and refuses one the bot isn’t in', async () => {
 
 test('uploads a sound, copies it to Discord and updates the posted panels', async () => {
   const res = await upload('horn');
-  assert.deepEqual(await res.json(), { replaced: false, discordProblem: null });
+  assert.deepEqual(await res.json(), { name: 'horn', replaced: false, discordProblem: null });
   assert.equal(res.status, 200);
   const [sound] = await sounds();
   assert.equal(sound.name, 'horn');
@@ -303,11 +304,31 @@ test('uploads a sound, copies it to Discord and updates the posted panels', asyn
   assert.equal(panelEdits.length, 1);
 });
 
-test('replacing keeps the sound and says so', async () => {
-  await upload('horn', 'a.wav');
-  const res = await upload('horn', 'b.wav');
+test('replacing has to be asked for, and puts the old sound in Recently deleted', async () => {
+  await upload('horn', 'a.wav', wav() as BodyInit);
+  const refusal = await upload('horn', 'b.wav', wav(1) as BodyInit);
+  assert.equal(refusal.status, 409);
+  assert.equal(((await refusal.json()) as any).error, 'There’s already a sound called horn.');
+  assert.ok(Math.abs((await sounds())[0].seconds - 0.2) < 0.05, 'the first sound is untouched');
+
+  const res = await call(`/guilds/${GUILD}/sounds/horn?file=b.wav&replace=1`, { method: 'PUT', body: wav(1) as BodyInit });
   assert.equal(((await res.json()) as any).replaced, true);
+  const [sound] = await sounds();
   assert.equal((await sounds()).length, 1);
+  assert.ok(Math.abs(sound.seconds - 1) < 0.05);
+  const { sounds: binned } = await ok(`/guilds/${GUILD}/deleted-sounds`);
+  assert.deepEqual(binned.map((s: any) => s.name), ['horn']);
+  await ok(`/guilds/${GUILD}/deleted-sounds/${binned[0].id}/restore`, { method: 'POST' });
+  assert.deepEqual((await sounds()).map((s: any) => s.name), ['horn', 'horn-2']);
+});
+
+test('keep=1 adds an upload under the next free name instead of replacing', async () => {
+  await upload('horn');
+  const kept = await ok(`/guilds/${GUILD}/sounds/horn?file=b.wav&keep=1`, { method: 'PUT', body: wav() as never });
+  assert.deepEqual([kept.name, kept.replaced], ['horn-2', false]);
+  assert.equal((await ok(`/guilds/${GUILD}/sounds/bell?file=c.wav&keep=1`, { method: 'PUT', body: wav() as never })).name, 'bell');
+  assert.deepEqual((await sounds()).map((s: any) => s.name), ['bell', 'horn', 'horn-2']);
+  assert.deepEqual((await ok(`/guilds/${GUILD}/deleted-sounds`)).sounds, []);
 });
 
 test('a sound too long for Discord stays on the bot, with a reason in plain text', async () => {
@@ -890,7 +911,7 @@ test('new audio under an old name starts from a new measurement and normal volum
   await upload('horn');
   await ok(`/guilds/${GUILD}/sounds/horn`, { method: 'PATCH', json: { volume: 50 } });
   const loud = (await sounds())[0].gainDb;
-  await upload('horn', 'q.wav', quietWav() as BodyInit);
+  await upload('horn', 'q.wav', quietWav() as BodyInit, true);
   const [sound] = await sounds();
   assert.equal(sound.percent, 100);
   assert.ok(sound.gainDb > loud);
@@ -950,7 +971,7 @@ test('measures sounds from before levelling, once, keeping a volume already pick
 
 test('an upload can stay off Discord', async () => {
   const res = await call(`/guilds/${GUILD}/sounds/horn?file=a.wav&discord=0`, { method: 'PUT', body: wav() as BodyInit });
-  assert.deepEqual(await res.json(), { replaced: false, discordProblem: null });
+  assert.deepEqual(await res.json(), { name: 'horn', replaced: false, discordProblem: null });
   assert.equal(discordSounds.size, 0);
   assert.equal((await sounds())[0].onDiscord, false);
 });
@@ -958,7 +979,7 @@ test('an upload can stay off Discord', async () => {
 test('replacing a sound that’s on Discord updates its copy even when told to stay off', async () => {
   await upload('horn');
   const old = [...discordSounds.keys()][0];
-  await call(`/guilds/${GUILD}/sounds/horn?file=a.wav&discord=0`, { method: 'PUT', body: wav() as BodyInit });
+  await call(`/guilds/${GUILD}/sounds/horn?file=a.wav&discord=0&replace=1`, { method: 'PUT', body: wav() as BodyInit });
   assert.equal(discordSounds.size, 1);
   assert.notEqual([...discordSounds.keys()][0], old);
 });
@@ -1279,8 +1300,10 @@ test('an original follows a renamed sound, and goes with a deleted or replaced o
   assert.ok(readFileSync(path.join(soundFolder, 'second.wav')).equals(data));
 
   await ok(`/guilds/${GUILD}/sounds/second/trim`, { method: 'POST', json: { start: 0, end: 1 } });
-  await addFile('second', '.mp3', steps('.mp3'));
+  await ok(`/guilds/${GUILD}/sounds/second?file=second.mp3&replace=1`, { method: 'PUT', body: steps('.mp3') as never });
   assert.equal((await listed('second')).trimmed, false);
+  // The replaced sound took its original to the bin with it
+  assert.deepEqual(readdirSync(path.join(soundFolder, 'originals')), []);
 
   await ok(`/guilds/${GUILD}/sounds/second/trim`, { method: 'POST', json: { start: 0, end: 1 } });
   await ok(`/guilds/${GUILD}/sounds/second`, { method: 'DELETE' });
@@ -2746,6 +2769,16 @@ test('posts a vote in the channel picked, for the people in the voice channel', 
   assert.ok(Math.abs(vote.closes_at - Date.now() - 180_000) < 5000);
   assert.deepEqual(JSON.parse(vote.options).map((o: any) => o.name).sort(), ['Halo', 'Valheim']);
   assert.equal(activityText().at(-1), 'Started a game vote for <#702> in <#111>');
+});
+
+test('a vote from the web offers only the games it names, if they still fit everyone', async (t) => {
+  await ownedGames(t);
+  await startVote({ voiceChannelId: '702', channelId: '111', games: ['Valheim', 'Halo', 'Not a game'] });
+  assert.deepEqual(JSON.parse(voteRows()[0].options).map((o: any) => o.name).sort(), ['Halo', 'Valheim']);
+  db.exec('DELETE FROM game_votes');
+  const refusal = await refused(400, `/guilds/${GUILD}/votes`, { method: 'POST', json: { voiceChannelId: '702', channelId: '111', games: ['Halo'] } });
+  assert.equal(refusal, 'Halo is the only game that fits, so there’s nothing to vote on.');
+  assert.equal(await refused(400, `/guilds/${GUILD}/votes`, { method: 'POST', json: { voiceChannelId: '702', channelId: '111', games: 'Halo' } }), 'games has to be a list of up to 2000 game names.');
 });
 
 test('a vote runs one at a time per voice channel', async (t) => {

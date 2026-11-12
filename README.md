@@ -348,7 +348,7 @@ The bot holds a library of uploaded sounds and plays them in your voice channel.
 
 | Command | What it does |
 | --- | --- |
-| `/sound panel` | Posts a button grid in the current channel: 20 sounds per page, ◀ ▶ to flip pages, ⏹ **Stop** to silence everything. The bot keeps every panel it posts up to date as sounds change, so post one in a handy channel and pin it. |
+| `/sound panel` | Posts a button grid in the current channel: 20 sounds per page, ◀ ▶ to flip pages, ⏹ **Stop** to silence every sound and line of speech (the music carries on). The bot keeps every panel it posts up to date as sounds change, so post one in a handy channel and pin it. |
 | `/sound play name` | Plays one sound in your voice channel. The name autocompletes. |
 | `/sound stop` | Stops everything and makes the bot leave voice. The reply is in the channel, so people can see who stopped it. |
 | `/sound join [name]` | Picks a sound that plays when you join voice. Leave `name` empty to stop having one. |
@@ -363,7 +363,7 @@ You have to be in a voice channel to play a sound. The bot joins whichever chann
 
 | Command | What it does |
 | --- | --- |
-| `/sound add name file [emoji]` | Uploads a sound. Names use lowercase letters, numbers, `-` and `_` (up to 32 characters). The file can be mp3, ogg, wav, m4a, opus, webm or flac, up to 5 MB, and the bot turns it down if it can't find audio in it. Using an existing name replaces that sound and keeps its emoji unless you give a new one. |
+| `/sound add name file [emoji]` | Uploads a sound. Names use lowercase letters, numbers, `-` and `_` (up to 32 characters). The file can be mp3, ogg, wav, m4a, opus, webm or flac, up to 5 MB, and the bot turns it down if it can't find audio in it. Using an existing name asks first: **Replace it** (the old sound goes to Recently deleted and the emoji stays unless you give a new one), **Keep both** (the new one gets the next free name, like `airhorn-2`) or **Cancel**. The question lasts 5 minutes. |
 | `/sound emoji name [emoji]` | Sets the emoji on a sound's button. Leave `emoji` empty to clear it. Custom emoji have to be from this server. |
 | `/sound remove name` | Deletes a sound from the bot, and from Discord's soundboard if it's there. It stays in a bin for 30 days. |
 | `/sound restore name` | Brings back a sound from the bin with its emoji, volume, star and untrimmed original. If the name's been taken, it comes back numbered, like `horn-2`. It isn't put back on Discord's soundboard, and anyone who had it as a join sound has to pick it again. |
@@ -481,7 +481,7 @@ How it plays:
 - **Several servers** can play at once, each with its own queue.
 - **Playlists:** a link to any public playlist (yours, someone else's, or Spotify's own, like Today's Top Hits) adds its first 100 songs, or those 100 in random order when shuffled. They're read from Spotify's public embed player, which needs no sign-in but lists no more than 100 songs and no album covers. The covers fill in a few seconds later, the next songs first, from Spotify's public oEmbed (also no sign-in). Private playlists can't be read. If the Spotify account has [signed in](#the-music-container), playlists it made or collaborates on are read through it instead, which reaches the whole playlist and shows covers.
 - **Sounds and speech** play on top. Music drops to under a third while the bot talks.
-- **Stop on the soundboard panel** in Discord, or everyone leaving, pauses the music and keeps the queue. The web UI's red Stop leaves the music playing. Music counts as the bot being busy, so it doesn't leave for being idle and the looping room waits.
+- **Everyone leaving** pauses the music and keeps the queue. **Stop** on the soundboard panel and the web UI's red Stop leave the music playing. Music counts as the bot being busy, so it doesn't leave for being idle and the looping room waits.
 - **Who can control it:** everyone, until `/setup music dj_role:` sets a role. Then only that role and people with **Manage Server** can add, pause, skip, shuffle and stop. Anyone can see the queue. The web UI isn't limited by the role.
 - **Activity** shows what was added, removed and skipped, and by whom.
 
@@ -624,10 +624,10 @@ A page in [`web/`](web) that runs as a second container next to the bot, for you
 - **Stop:** the red button in the bottom corner of every page silences every sound and line of speech. The music carries on: it has its own controls on the Music tab.
 - **Soundboard:** big buttons that play in voice, with favourites first and then whatever gets played most, and a box for having the bot say something.
 - **Music:** what's playing, Spotify search, and the queue to add to, reorder and clear. See [Music](#music).
-- **Sounds:** upload files or whole folders, preview, rename and delete sounds, set a sound's volume, trim it with a way back to the original, and choose what's on Discord's soundboard, with a waveform for picking part of a long sound. **Recently deleted** restores a sound or erases it for good.
+- **Sounds:** upload files or whole folders, preview, rename and delete sounds, set a sound's volume, trim it with a way back to the original, and choose what's on Discord's soundboard, with a waveform for picking part of a long sound. A file named like an existing sound waits until you choose **Replace it** or **Keep both**. **Recently deleted** restores a deleted or replaced sound, or erases it for good.
 - **Game nights:** plan a night, see what's coming up and who still needs to add each other on Steam, cancel one or stop a repeating one.
 - **Games:** the game library, with who has each game, who needs it, who wants it and any sale. Add games from a searchable list of what members own on Steam, or by name or store link. **Steam accounts** links, changes and unlinks anyone's Steam account, says who shares a Steam family, and refreshes libraries. Remove games, set player limits and Steam links, tick who owns or wants what, and hide a game from `/whatdoweplay` or let it back in. Ownership from a Steam library is locked.
-- **Pick a game:** choose a voice channel, or tick people to plan before anyone's in voice, and see the games everyone owns and those one purchase away, using the same rules as `/whatdoweplay`. Each game shows time played here, Steam hours, its last two weeks on Steam and when it was last played, in total and per person, plus who'd play on a family copy. Opening one shows how many are playing it on Steam right now and its latest patch, and **Achievements** compares everyone's progress with goals nobody has yet. Sort them, with **Hot right now** for the last two weeks, search them, or filter to co-op, PvP or Steam Deck. **Pick for us** chooses one at random, and **Start a vote** posts the usual `/gamevote` card in a channel. Anyone in a joinable Steam lobby shows at the top with a link to join.
+- **Pick a game:** choose a voice channel, or tick people to plan before anyone's in voice, and see the games everyone owns and those one purchase away, using the same rules as `/whatdoweplay`. Each game shows time played here, Steam hours, its last two weeks on Steam and when it was last played, in total and per person, plus who'd play on a family copy. Opening one shows how many are playing it on Steam right now and its latest patch, and **Achievements** compares everyone's progress with goals nobody has yet. Sort them, with **Hot right now** for the last two weeks, search them, or filter to co-op, PvP or Steam Deck. **Pick for us** chooses one at random, and **Start a vote** posts the usual `/gamevote` card in a channel. Both go by the search and filters, so a vote offers only the games shown. Anyone in a joinable Steam lobby shows at the top with a link to join.
 - **Stats:** **Overview** has game and voice time, overall or for one person or game, with sessions, rank and when it was last played. **Compare** is `/compare` with every game two people both own and their achievements in any of them, and **Monthly recap** is `/recap`.
 - **Discord's soundboard:** on Sounds, see what fills the slots, play or save any sound, and swap sounds between Discord and the library.
 - **Merging games:** on Stats, Merge games puts different spellings of a game together, and Separate on a clicked game takes one back out.
@@ -703,7 +703,7 @@ It applies the same rules as `/sound` and `/setup`, and every request needs an `
 | --- | --- |
 | `GET /guilds` | Lists servers |
 | `GET /guilds/:id/sounds` | Lists sounds, Discord slots and the server's emoji |
-| `PUT /guilds/:id/sounds/:name?file=<filename>` | Adds or replaces a sound; the body is the file. `&discord=0` keeps a new sound off Discord's soundboard |
+| `PUT /guilds/:id/sounds/:name?file=<filename>` | Adds a sound; the body is the file. A taken name gets 409 unless `&replace=1`, which moves the old sound to Recently deleted, or `&keep=1`, which adds it under the next free name. The reply gives the name it's under. `&discord=0` keeps a new sound off Discord's soundboard |
 | `PATCH /guilds/:id/sounds/:name` | Renames it, sets its emoji, volume or star: `{ "name": "..." }`, `{ "emoji": "..." }`, `{ "volume": 50 }`, `{ "favourite": true }` |
 | `DELETE /guilds/:id/sounds/:name` | Moves it to the bin for 30 days |
 | `GET /guilds/:id/sounds/:name/audio` | Downloads its audio |
@@ -771,7 +771,7 @@ It applies the same rules as `/sound` and `/setup`, and every request needs an `
 | `GET /guilds/:id/steam-apps/:appid` | How many are playing a game on Steam now, kept for 10 minutes, and its latest `patch`. `players` is null if Steam won't say |
 | `GET /guilds/:id/achievements?appid=<id>&users=<id>,<id>` | Achievement progress for those people, with `goals` nobody has yet and who was `skipped` |
 | `GET /guilds/:id/pick/options` | Lists the members, voice channels and text channels to choose from |
-| `POST /guilds/:id/votes` | Starts a vote: `{ "voiceChannelId", "channelId", "minutes" }`, with 1 to 10 minutes |
+| `POST /guilds/:id/votes` | Starts a vote: `{ "voiceChannelId", "channelId", "minutes", "games" }`, with 1 to 10 minutes. `games`, a list of names, narrows it to those games |
 | `GET /guilds/:id/compare?a=<id>&b=<id>` | Compares two people, as `/compare` does |
 | `GET /guilds/:id/recap?month=<last\|this>` | A month's highlights, as `/recap` shows them |
 | `GET /guilds/:id/members/:user/pings` | Lists the hop-on and game ping roles, and which someone has |

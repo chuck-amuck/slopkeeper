@@ -33,7 +33,11 @@ function kinds(game) {
 const playerRow = (p) =>
   el('tr', {}, el('td', {}, p.name), el('td', {}, p.playedMs ? duration(p.playedMs) : '—'), el('td', {}, p.steamMinutes === null ? '—' : steamTime(p.steamMinutes)), el('td', {}, p.recentMinutes ? steamTime(p.recentMinutes) : '—'), el('td', {}, p.last ? ago(p.last) : '—'));
 
-function voteDialog(main, options, voice) {
+/** Up to this many games go on a vote, as in the bot */
+const VOTE_OPTIONS = 10;
+
+/** `games` is what the filters leave, or null when nothing is filtered and the bot can choose from everything */
+function voteDialog(main, options, voice, games) {
   const channel = el('select', { ariaLabel: 'Post it in' }, options.channels.map((c) => el('option', { value: c.id, selected: c.id === options.announceChannel }, `#${c.name}`)));
   const minutes = el('input', { type: 'number', min: 1, max: 10, step: 1, required: true, value: 1, ariaLabel: 'Minutes' });
   const problem = el('div', { className: 'bad-text plan-problem', hidden: true });
@@ -41,7 +45,7 @@ function voteDialog(main, options, voice) {
   const node = openDialog(
     main,
     el('h2', {}, 'Start a vote'),
-    el('p', {}, `Everyone in ${voice.name} votes in Discord, on the games they all own.`),
+    el('p', {}, games ? `Everyone in ${voice.name} votes in Discord, on ${games.length > VOTE_OPTIONS ? `${VOTE_OPTIONS} of ` : ''}the ${games.length} games shown.` : `Everyone in ${voice.name} votes in Discord, on the games they all own.`),
     el(
       'form',
       {
@@ -52,7 +56,7 @@ function voteDialog(main, options, voice) {
           problem.hidden = true;
           void attempt(async () => {
             try {
-              await request(api('/votes'), { method: 'POST', json: { voiceChannelId: voice.id, channelId: channel.value, minutes: Number(minutes.value) } });
+              await request(api('/votes'), { method: 'POST', json: { voiceChannelId: voice.id, channelId: channel.value, minutes: Number(minutes.value), games: games ?? undefined } });
               toast(`Vote posted in ${channel.selectedOptions[0].textContent}.`);
               node.close();
             } catch (err) {
@@ -90,7 +94,7 @@ export function renderPick(main) {
 
   const who = el('select', { ariaLabel: 'Who’s playing', onchange: () => changed() });
   const pickButton = el('button', { className: 'primary', disabled: true, onclick: () => pickOne() }, 'Pick for us');
-  const voteButton = el('button', { disabled: true, onclick: () => voteDialog(main, options, voice()) }, 'Start a vote');
+  const voteButton = el('button', { disabled: true, onclick: () => voteDialog(main, options, voice(), filtered() ? shownReady().map((g) => g.name) : null) }, 'Start a vote');
   const people = el('div', { className: 'pick-people', hidden: true });
   const voteNote = el('p', { className: 'hint', hidden: true }, 'A vote needs a voice channel, as only the people in it can vote.');
   const content = el('div', { className: 'stack' }, el('div', { className: 'empty' }, 'Loading…'));
@@ -143,7 +147,7 @@ export function renderPick(main) {
   const lists = el('div', { className: 'stack' });
   const result = el('div');
   const joinable = el('div');
-  main.append(joinable, el('div', { className: 'toolbar' }, who, pickButton, voteButton), people, voteNote, content);
+  main.append(joinable, el('div', { className: 'toolbar' }, who), people, voteNote, content);
 
   /** Off the main list, as it asks Steam about everyone linked and a pick shouldn't wait for that */
   function showLobbies() {
@@ -160,6 +164,7 @@ export function renderPick(main) {
   const voice = () => options.voice.find((c) => c.id === who.value);
   const shown = (g) => g.name.toLowerCase().includes(query) && (!kind || g[kind]) && g.deck >= deck;
   const shownReady = () => data.ready.filter(shown);
+  const filtered = () => Boolean(query || kind || deck);
 
   /** How many are playing it worldwide. The bot keeps this for a while, so opening a game again costs nothing */
   function playingNow(game) {
@@ -259,20 +264,22 @@ export function renderPick(main) {
     const ready = shownReady();
     const almost = data.almost.filter(shown);
     lists.replaceChildren(
-      ready.length || query || kind || deck ? listCard('Everyone can play these', ready) : el('div', { className: 'empty' }, 'No game fits everyone here.'),
+      ready.length || filtered() ? listCard('Everyone can play these', ready) : el('div', { className: 'empty' }, 'No game fits everyone here.'),
       ...(almost.length ? [listCard('One purchase away', almost)] : []),
     );
     pickButton.disabled = !ready.length;
+    voteButton.disabled = byHand() || ready.length < 2;
+    voteButton.title = !byHand() && ready.length < 2 ? 'A vote needs at least two games to choose from.' : '';
   }
 
   function render() {
     content.replaceChildren(
       ...data.notes.map((note) => el('p', { className: 'hint' }, note)),
-      ...(data.counted ? [result, el('div', { className: 'toolbar' }, search, kindFilter, deckFilter, sorter), lists] : []),
+      // The filters come first, as the pick and the vote both go by them
+      ...(data.counted ? [el('div', { className: 'toolbar' }, search, kindFilter, deckFilter, sorter), el('div', { className: 'toolbar' }, pickButton, voteButton), result, lists] : []),
     );
     paintResult();
     if (data.counted) paintLists();
-    voteButton.disabled = byHand() || data.ready.length < 2;
   }
 
   function clear(text) {

@@ -86,6 +86,10 @@ const VOICE_PERMISSIONS = [
 const PREV = 'sb:#prev';
 const NEXT = 'sb:#next';
 const STOP = 'sb:#stop';
+/** The buttons on the question /sound add asks when the name is taken: sb:#upload:<id>:<choice> */
+const UPLOAD = 'sb:#upload:';
+/** How long that question waits for an answer */
+const UPLOAD_WAIT_MS = 5 * 60_000;
 const SETTINGS = 'sb:#settings';
 const VOLUME_STEP = 25;
 const INPUT = 'value';
@@ -114,11 +118,6 @@ export const isTrimmed = (guildId: string, name: string) => originalOf(guildId, 
 export function trimmedSounds(guildId: string): Set<string> {
   const dir = originalsDir(guildId);
   return new Set(existsSync(dir) ? readdirSync(dir).map((f) => path.parse(f).name) : []);
-}
-
-function dropOriginal(guildId: string, name: string) {
-  const original = originalOf(guildId, name);
-  if (original) rmSync(original);
 }
 
 /** A deleted sound's folder, inside the server's so its files can be moved rather than copied */
@@ -176,7 +175,8 @@ export function dropMissingEmoji(guild: Guild): boolean {
 
 /**
  * Stores an upload as a sound, replacing any sound of that name, unless it isn't audio. It only takes the place of
- * the old file once it's known to be good, so a bad upload can't cost the sound it was replacing.
+ * the old file once it's known to be good, so a bad upload can't cost the sound it was replacing. The sound it
+ * replaces goes to the bin, so a replacement can be undone.
  */
 export async function saveUpload(guildId: string, name: string, ext: string, data: Buffer): Promise<boolean> {
   const target = path.join(soundDir(guildId), name + ext);
@@ -187,11 +187,9 @@ export async function saveUpload(guildId: string, name: string, ext: string, dat
     return false;
   }
   const existing = findSound(guildId, name);
+  // Its trim original goes with it, as restoring that now would bring back the wrong sound
+  if (existing) moveToBin(guildId, existing);
   renameSync(upload, target);
-  // The new file may have a different extension
-  if (existing && existing.file !== target) rmSync(existing.file);
-  // That was the old audio, so restoring it now would bring back the wrong sound
-  dropOriginal(guildId, name);
   return true;
 }
 
@@ -333,7 +331,7 @@ export function clearBin(now = Date.now()) {
 }
 
 /** A name no sound is using: this one, or this one numbered */
-function untaken(guildId: string, base: string) {
+export function untaken(guildId: string, base: string) {
   const taken = new Set(listSounds(guildId).map((s) => s.name));
   let name = base;
   for (let n = 2; taken.has(name); n++) name = `${base.slice(0, 32 - String(n).length - 1)}-${n}`;
@@ -365,6 +363,69 @@ export function restoreDeleted(guildId: string, id: number): string | null {
   db.prepare('INSERT OR REPLACE INTO sound_levels (guild_id, name, gain_db, percent) VALUES (?, ?, ?, ?)').run(guildId, name, sound.gain_db, sound.percent);
   eraseDeleted(guildId, id);
   return name;
+}
+
+interface Upload {
+  name: string;
+  ext: string;
+  url: string;
+  fileName: string;
+  emoji?: string;
+}
+
+/** Uploads from /sound add waiting on whether to replace the sound of that name, by the id on their buttons */
+const pendingUploads = new Map<string, Upload & { offered: string; timer: NodeJS.Timeout }>();
+
+/** Asks what to do about an upload whose name is taken, as replacing a sound by accident is easy */
+function askAboutUpload(guildId: string, upload: Upload) {
+  const id = randomUUID().slice(0, 8);
+  const timer = setTimeout(() => pendingUploads.delete(id), UPLOAD_WAIT_MS).unref();
+  const offered = untaken(guildId, upload.name);
+  pendingUploads.set(id, { ...upload, offered, timer });
+  const button = (choice: string, label: string, style: ButtonStyle) => new ButtonBuilder().setCustomId(`${UPLOAD}${id}:${choice}`).setLabel(label).setStyle(style);
+  return {
+    content: `There’s already a sound called **${upload.name}**. Replace it, or keep both and call the new one **${offered}**?\n-# A replaced sound stays in Recently deleted for ${BIN_DAYS} days.`,
+    components: [
+      new ActionRowBuilder<ButtonBuilder>().addComponents(
+        button('replace', 'Replace it', ButtonStyle.Danger),
+        button('keep', 'Keep both', ButtonStyle.Primary),
+        button('cancel', 'Cancel', ButtonStyle.Secondary),
+      ),
+    ],
+  };
+}
+
+async function answerUpload(i: ButtonInteraction<'cached'>) {
+  const [id, choice] = i.customId.slice(UPLOAD.length).split(':');
+  const pending = pendingUploads.get(id);
+  if (!pending) return i.update({ content: 'That upload timed out. Run /sound add again.', components: [] });
+  clearTimeout(pending.timer);
+  pendingUploads.delete(id);
+  if (choice === 'cancel') return i.update({ content: `Left **${pending.name}** as it was.`, components: [] });
+  await i.update({ content: 'Adding it…', components: [] });
+  // The name it offered, unless that's been taken since
+  const name = choice === 'keep' ? untaken(i.guildId, pending.offered) : pending.name;
+  try {
+    // The question was private, but the result goes to everyone, as it does without a question
+    await i.followUp(await storeUpload(i.guild, i.user.id, { ...pending, name }));
+  } catch (err) {
+    await i.editReply('That didn’t work. Try `/sound add` again.').catch(() => {});
+    throw err;
+  }
+  await i.deleteReply().catch(() => {});
+  return refreshPanels(i.client, i.guildId);
+}
+
+/** Downloads a /sound add file and stores it. Returns what to tell the channel */
+async function storeUpload(guild: Guild, userId: string, upload: Upload): Promise<string> {
+  const res = await fetch(upload.url, { signal: requestTimeout() });
+  if (!res.ok) return `Download failed (HTTP ${res.status}).`;
+  const added = await addSound(guild, upload.name, upload.ext, Buffer.from(await res.arrayBuffer()), upload.emoji);
+  if (!added) return `**${upload.fileName}** doesn’t have any audio I can read, so I didn’t save it.`;
+  logActivity(guild.id, userId, `${added.replaced ? 'Replaced' : 'Added'} sound **${upload.name}**`);
+  const note = added.problem ? `\nBot soundboard only: ${added.problem}.` : '\n🟦 Also added to Discord’s soundboard.';
+  const binned = added.replaced ? `\n-# The old one is in Recently deleted for ${BIN_DAYS} days.` : '';
+  return `${added.replaced ? '♻️ Replaced' : '➕ Added'} sound ${upload.emoji ? upload.emoji + ' ' : ''}**${upload.name}**.${note}${binned}`;
 }
 
 /** Moves a sound to the bin. Returns why it couldn't come off Discord's soundboard, if it couldn't */
@@ -1490,14 +1551,10 @@ export const soundboard: Feature = {
           const emoji = emojiInput ? await parseEmoji(i.guild, emojiInput) : null;
           if (emoji && 'error' in emoji) return i.reply({ content: emoji.error, ...ephemeral });
 
+          const upload = { name, ext, url: file.url, fileName: file.name, emoji: emoji?.emoji };
+          if (findSound(i.guildId, name)) return i.reply({ ...askAboutUpload(i.guildId, upload), ...ephemeral });
           await i.deferReply();
-          const res = await fetch(file.url, { signal: requestTimeout() });
-          if (!res.ok) return i.editReply(`Download failed (HTTP ${res.status}).`);
-          const added = await addSound(i.guild, name, ext, Buffer.from(await res.arrayBuffer()), emoji?.emoji);
-          if (!added) return i.editReply(`**${file.name}** doesn’t have any audio I can read, so I didn’t save it.`);
-          logActivity(i.guildId, i.user.id, `${added.replaced ? 'Replaced' : 'Added'} sound **${name}**`);
-          const note = added.problem ? `\nBot soundboard only: ${added.problem}.` : '\n🟦 Also added to Discord’s soundboard.';
-          await i.editReply(`${added.replaced ? '♻️ Replaced' : '➕ Added'} sound ${emoji ? emoji.emoji + ' ' : ''}**${name}**.${note}`);
+          await i.editReply(await storeUpload(i.guild, i.user.id, upload));
           return refreshPanels(i.client, i.guildId);
         }
 
@@ -1660,6 +1717,7 @@ export const soundboard: Feature = {
   componentPrefix: 'sb',
   async onButton(i) {
     if (!i.inCachedGuild()) return;
+    if (i.customId.startsWith(UPLOAD)) return answerUpload(i);
     if (isSetting(i.customId)) return onSetting(i);
     // Discord greys the button out until the click is acknowledged, so do that before anything else
     if (!i.customId.startsWith('sb:#') || i.customId === STOP) await i.deferUpdate();
@@ -1679,7 +1737,8 @@ export const soundboard: Feature = {
       return i.update(panel(i.guildId, page));
     }
 
-    if (i.customId === STOP) return stopPlayback(i.guildId);
+    // Like the web UI's Stop, this leaves the music alone, as it has its own controls
+    if (i.customId === STOP) return stopPlayback(i.guildId, true);
 
     if (i.customId === SETTINGS) {
       const { page } = db.prepare('SELECT page FROM sound_panels WHERE message_id = ?').get(i.message.id) as { page: number };

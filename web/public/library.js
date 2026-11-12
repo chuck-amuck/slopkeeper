@@ -1,6 +1,6 @@
 import { pickClip } from './clip.js';
 import { emojiPicker } from './emojipicker.js';
-import { api, attempt, confirmButton, el, emojiNode, openDialog, player, recall, remember, request, soundPath, state, toast, volumeControl } from './lib.js';
+import { api, attempt, confirmButton, el, emojiNode, openDialog, player, recall, remember, request, RequestError, soundPath, state, toast, volumeControl } from './lib.js';
 import { pickTrim } from './trim.js';
 import { voiceBar } from './voice.js';
 
@@ -586,13 +586,32 @@ export function renderLibrary(main) {
     return null;
   }
 
+  const isSound = (name) => Boolean(data?.sounds.some((s) => s.name === name));
+  /** A file whose name is taken waits until someone says whether it replaces that sound or goes in beside it */
+  const undecided = (item) => !problemWith(item) && !item.choice && isSound(item.name);
+
+  /** What a row says under its name: why it can't go, the choice its name needs, or what it will do */
+  function queueNote(item, problem) {
+    if (item.status?.bad) return el('span', { className: 'note bad-text', role: 'alert' }, item.status.text);
+    if (problem) return el('span', { className: 'note bad-text' }, problem);
+    const choose = (text, ...buttons) => el('span', { className: 'note choice' }, el('span', {}, text), ...buttons);
+    const button = (label, choice, className = '') =>
+      el('button', { type: 'button', className, disabled: item.busy, onclick: () => {
+        item.choice = choice;
+        renderQueue();
+      } }, label);
+    if (!isSound(item.name)) return null;
+    if (item.choice === 'replace') return choose(`Replaces ${item.name}. The old one goes to Recently deleted.`, button('Keep both instead', 'keep'));
+    if (item.choice === 'keep') return choose(`Keeps both. The new one gets a number on the end of its name.`, button('Replace instead', 'replace'));
+    return choose(`There’s already a sound called ${item.name}.`, button('Replace it', 'replace', 'danger'), button('Keep both', 'keep'));
+  }
+
   function renderQueue() {
     queueBox.hidden = !queue.length;
     if (!queue.length) return queueBox.replaceChildren();
     const rows = queue.map((item) => {
       const problem = problemWith(item);
-      const replaces = !problem && data?.sounds.some((s) => s.name === item.name);
-      const note = item.status?.bad ? item.status.text : problem ?? (replaces ? `Replaces the existing ${item.name}.` : null);
+      const note = queueNote(item, problem);
       return el(
         'div',
         { className: 'queue-row' },
@@ -604,6 +623,7 @@ export function renderLibrary(main) {
           onchange: (e) => {
             item.name = e.target.value.trim().toLowerCase();
             item.status = null;
+            item.choice = null;
             renderQueue();
           },
         }),
@@ -622,10 +642,11 @@ export function renderLibrary(main) {
           },
           '✕',
         ),
-        note && el('span', { className: `note ${problem || item.status?.bad ? 'bad-text' : ''}` }, note),
+        note,
       );
     });
     const ready = queue.filter((item) => !problemWith(item) && !item.busy);
+    const waiting = ready.filter(undecided).length;
     const uploading = queue.filter((item) => item.busy).length;
     queueBox.replaceChildren(
       ...rows,
@@ -657,9 +678,10 @@ export function renderLibrary(main) {
           },
           'Clear',
         ),
+        waiting > 0 && el('span', { className: 'hint' }, waiting === 1 ? 'Choose what to do about the name that’s taken.' : `Choose what to do about the ${waiting} names that are taken.`),
         el(
           'button',
-          { className: 'primary', disabled: !ready.length, onclick: uploadAll },
+          { className: 'primary', disabled: !ready.length || waiting > 0, onclick: uploadAll },
           uploading ? `Uploading, ${uploading} to go…` : ready.length > 1 ? `Upload ${ready.length} sounds` : 'Upload',
         ),
       ),
@@ -667,29 +689,38 @@ export function renderLibrary(main) {
   }
 
   /** One message for the whole batch, however many sounds it was */
-  function reportUploads({ added, replaced, notes }) {
+  function reportUploads({ added, replaced, renamed, notes }) {
     const count = (n, word) => (n ? `${word} ${n} sound${n === 1 ? '' : 's'}` : null);
     const done = [count(added, 'Added'), count(replaced, 'replaced')].filter(Boolean).join(', ');
     const shown = notes.slice(0, MAX_NOTES).map((note) => `Bot soundboard only: ${note}`);
     if (notes.length > MAX_NOTES) shown.push(`And ${notes.length - MAX_NOTES} more are bot-only.`);
-    if (done || shown.length) toast([`${done}.`, ...shown].join('\n'));
+    const binned = replaced ? [`The old ${replaced === 1 ? 'one is' : 'ones are'} in Recently deleted.`] : [];
+    const named = renamed.length ? [`Added as ${renamed.join(', ')}.`] : [];
+    if (done || shown.length) toast([`${done}.`, ...named, ...binned, ...shown].join('\n'));
   }
 
   async function uploadAll() {
-    const items = queue.filter((item) => !problemWith(item));
+    const items = queue.filter((item) => !problemWith(item) && !undecided(item));
     for (const item of items) item.busy = true;
-    const uploaded = { added: 0, replaced: 0, notes: [] };
+    const uploaded = { added: 0, replaced: 0, renamed: [], notes: [] };
     renderQueue();
     for (const item of items) {
       try {
-        const query = `?file=${encodeURIComponent(item.file.name)}${toDiscord ? '' : '&discord=0'}`;
-        const { replaced, discordProblem } = await request(soundPath(item.name) + query, { method: 'PUT', body: item.file });
+        const query = `?file=${encodeURIComponent(item.file.name)}${toDiscord ? '' : '&discord=0'}${item.choice ? `&${item.choice}=1` : ''}`;
+        const { name, replaced, discordProblem } = await request(soundPath(item.name) + query, { method: 'PUT', body: item.file });
         queue = queue.filter((other) => other !== item);
         uploaded[replaced ? 'replaced' : 'added'] += 1;
+        if (name !== item.name) uploaded.renamed.push(name);
         if (discordProblem) uploaded.notes.push(`${item.name}, ${discordProblem}.`);
       } catch (err) {
         item.busy = false;
         item.status = { bad: true, text: err.message };
+        // Someone else added a sound by that name meanwhile, so it needs the same question
+        if (err instanceof RequestError && err.status === 409 && data) {
+          data.sounds.push({ name: item.name });
+          item.status = null;
+          item.choice = null;
+        }
       }
       renderQueue();
     }
