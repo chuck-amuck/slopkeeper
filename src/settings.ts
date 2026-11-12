@@ -17,6 +17,8 @@ export const DEFAULTS = {
   weeklyLeaderboard: process.env.WEEKLY_LEADERBOARD !== 'false',
   hopOnMinPeople: num('HOPON_MIN_PEOPLE', 2),
   hopOnCooldownMin: num('HOPON_COOLDOWN_MIN', 120),
+  // Off still records sessions for stats, it just doesn't post them
+  sessionRecap: process.env.SESSION_RECAP !== 'false',
   recapMinMinutes: num('RECAP_MIN_MINUTES', 15),
   sessionGraceMin: num('SESSION_GRACE_MIN', 5),
   steamCountry: process.env.STEAM_CC || 'us',
@@ -98,6 +100,7 @@ export const DEFAULT_ENV: Partial<Record<SettingKey, string>> = {
   weeklyLeaderboard: 'WEEKLY_LEADERBOARD',
   hopOnMinPeople: 'HOPON_MIN_PEOPLE',
   hopOnCooldownMin: 'HOPON_COOLDOWN_MIN',
+  sessionRecap: 'SESSION_RECAP',
   recapMinMinutes: 'RECAP_MIN_MINUTES',
   sessionGraceMin: 'SESSION_GRACE_MIN',
   steamCountry: 'STEAM_CC',

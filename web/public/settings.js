@@ -8,6 +8,7 @@ const FIELDS = {
   hopOnRole: { kind: 'role', none: 'None', hint: 'Pinged when people hop in voice. People opt in with /notify.' },
   hopOnMinPeople: { kind: 'number', unit: 'people', hint: 'People in a voice channel before pinging.' },
   hopOnCooldownMin: { kind: 'number', unit: 'min', hint: 'Time between pings.' },
+  sessionRecap: { kind: 'boolean', hint: 'Posts who was there and what was played when a voice session ends. Sessions count in stats either way.' },
   recapMinMinutes: { kind: 'number', unit: 'min', hint: 'Shorter sessions don’t get a recap or count in stats.' },
   sessionGraceMin: { kind: 'number', unit: 'min', hint: 'How long a channel stays empty before its session ends.' },
   weeklyLeaderboard: { kind: 'boolean', hint: 'Posts the past week’s voice leaderboard on the day and hour below.' },
@@ -66,7 +67,7 @@ const FIELDS = {
 const GROUPS = [
   ['Posting', ['announceChannel', 'timezone']],
   ['Hop-on pings', ['hopOnRole', 'hopOnMinPeople', 'hopOnCooldownMin']],
-  ['Voice sessions', ['recapMinMinutes', 'sessionGraceMin']],
+  ['Voice sessions', ['sessionRecap', 'recapMinMinutes', 'sessionGraceMin']],
   ['Leaderboard and recap', ['weeklyLeaderboard', 'weeklyPostDay', 'weeklyPostHour', 'monthlyRecap']],
   ['Games', ['steamCountry', 'steamStatus', 'gameNightReminderMin']],
   ['Sale alerts', ['saleMinDiscount', 'saleSteamWishlists', 'saleChannel']],

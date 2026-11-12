@@ -2,7 +2,7 @@ import { fakeClient } from './helpers.ts';
 import assert from 'node:assert/strict';
 import { mock, test } from 'node:test';
 import { db, getKv } from '../src/db.ts';
-import { join, maybePostWeekly, resync, sessions } from '../src/features/sessions.ts';
+import { join, leave, maybePostWeekly, resync, sessions } from '../src/features/sessions.ts';
 import { setSetting } from '../src/settings.ts';
 import { zonedParts } from '../src/util.ts';
 
@@ -65,6 +65,31 @@ const seconds = (guildId: string) =>
   db
     .prepare('SELECT m.user_id AS user, m.seconds AS secs FROM session_members m JOIN sessions s ON s.id = m.session_id WHERE s.guild_id = ? ORDER BY m.user_id')
     .all(guildId) as { user: string; secs: number }[];
+
+test('a session is recapped when it ends, unless the server turned recaps off, and is counted either way', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const posts: string[] = [];
+  const client = fakeClient(
+    [
+      { id: 'with-recaps', name: 'With recaps' },
+      { id: 'no-recaps', name: 'No recaps' },
+    ],
+    async (guildId) => posts.push(guildId),
+  );
+  setSetting('no-recaps', 'sessionRecap', false);
+  for (const guildId of ['with-recaps', 'no-recaps']) {
+    setSetting(guildId, 'announceChannel', `channel-${guildId}`);
+    const started = Date.now() - 3_600_000;
+    join(voice(guildId, `v-${guildId}`), person('a'), started);
+    join(voice(guildId, `v-${guildId}`), person('b'), started);
+    leave(client, `v-${guildId}`, 'a', Date.now());
+    leave(client, `v-${guildId}`, 'b', Date.now());
+  }
+  t.mock.timers.tick(5 * 60_000);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(posts, ['with-recaps']);
+  assert.deepEqual(seconds('no-recaps').map((r) => r.user), ['a', 'b'], 'still counted in stats');
+});
 
 test('a session still going when the bot stops is saved', () => {
   const started = Date.now() - 3_600_000;

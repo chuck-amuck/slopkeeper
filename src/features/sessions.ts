@@ -38,7 +38,7 @@ export function join(channel: VoiceBasedChannel, member: GuildMember, now: numbe
   for (const game of playingGames(member)) s.games.add(game);
 }
 
-function leave(client: Client<true>, channelId: string, userId: string, now: number) {
+export function leave(client: Client<true>, channelId: string, userId: string, now: number) {
   const s = live.get(channelId);
   const joinedAt = s?.present.get(userId);
   if (!s || joinedAt === undefined) return;
@@ -57,8 +57,8 @@ async function finish(client: Client<true>, channelId: string) {
   live.delete(channelId);
 
   const endedAt = s.emptySince ?? Date.now();
-  // Time alone counts towards the stats, but it's nothing to announce
-  if (!save(s, channelId, endedAt) || s.totals.size < 2) return;
+  // Time alone counts towards the stats, but it's nothing to announce, and a server can turn recaps off
+  if (!save(s, channelId, endedAt) || s.totals.size < 2 || !setting(s.guildId, 'sessionRecap')) return;
   const duration = endedAt - s.startedAt;
 
   const ranked = [...s.totals].sort((a, b) => b[1] - a[1]);

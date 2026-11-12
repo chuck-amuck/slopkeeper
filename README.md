@@ -275,7 +275,7 @@ The web UI's Settings page lists what's free right now, with the reason each gam
 
 The bot tracks each voice channel as a session. It records who was there, for how long, and which games Discord showed them playing. A session ends once the channel has been empty for 5 minutes, so a quick disconnect doesn't split the night in two.
 
-A session of at least 15 minutes is recorded, even with one person in it, so time alone counts towards voice stats. With 2 or more people, the bot also posts a recap with each person's time and the games played. Shorter sessions aren't recorded. Both times can be changed with `/setup sessions`.
+A session of at least 15 minutes is recorded, even with one person in it, so time alone counts towards voice stats. With 2 or more people, the bot also posts a recap with each person's time and the games played. Shorter sessions aren't recorded. Both times can be changed with `/setup sessions`, and `/setup sessions recaps:False` stops the recap posts while still recording sessions.
 
 ### Voice leaderboards
 
@@ -497,7 +497,7 @@ Every setting has a sensible default, so only the announce channel needs setting
 | `/setup announce-channel channel` | Sets where hop-on pings, session recaps, the weekly leaderboard, the monthly recap and sale alerts are posted, and free games unless they have their own channel. Until it's set, the bot works but posts nothing. It checks that it can post in the channel and tells you which permission is missing if not. |
 | `/setup hopon-role [role]` | Sets the role that hop-on pings ping, which `/notify` hands out. Leave `role` empty to post hop-on pings without pinging that role. It warns you if its own role is below this one, since Discord then won't let it hand the role out. |
 | `/setup hopon [min_people] [cooldown_minutes]` | How many people a voice channel needs before a hop-on ping, and how long to wait before the next one. |
-| `/setup sessions [recap_min_minutes] [grace_minutes]` | The shortest session that counts: shorter ones get no recap and aren't in stats or leaderboards. Also how long a channel stays empty before its session ends. |
+| `/setup sessions [recaps] [recap_min_minutes] [grace_minutes]` | Whether a recap is posted when a session ends (sessions count in stats either way). The shortest session that counts: shorter ones get no recap and aren't in stats or leaderboards. Also how long a channel stays empty before its session ends. |
 | `/setup leaderboard [enabled] [day] [hour]` | Whether and when the weekly voice leaderboard is posted. |
 | `/setup timezone zone` | The server's time zone, used for the weekly post, counting "nights" on leaderboards, and reading game night times. Autocompletes, e.g. `America/Chicago`, `Europe/London`. |
 | `/setup steam-region country` | Steam store region for sale prices, as a two-letter country code. |
@@ -547,6 +547,7 @@ Each setting goes by the name `/setup show` and `/setup reset` use.
 | Hop-on role | `hopon-role` | | none |
 | Hop-on ping at | `hopon` | `HOPON_MIN_PEOPLE` | 2 people |
 | Hop-on cooldown | `hopon` | `HOPON_COOLDOWN_MIN` | 120 minutes |
+| Session recaps | `sessions` | `SESSION_RECAP` (`false` to turn off) | on |
 | Shortest session counted | `sessions` | `RECAP_MIN_MINUTES` | 15 minutes |
 | Session ends after empty for | `sessions` | `SESSION_GRACE_MIN` | 5 minutes |
 | Weekly leaderboard | `leaderboard` | `WEEKLY_LEADERBOARD` (`false` to turn off) | on |

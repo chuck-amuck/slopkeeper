@@ -72,6 +72,7 @@ export const LABELS: Record<SettingKey, string> = {
   weeklyLeaderboard: 'Weekly leaderboard',
   hopOnMinPeople: 'Hop-on ping at',
   hopOnCooldownMin: 'Hop-on cooldown',
+  sessionRecap: 'Session recaps',
   recapMinMinutes: 'Shortest session counted',
   sessionGraceMin: 'Session ends after empty for',
   steamCountry: 'Steam price region',
@@ -163,6 +164,7 @@ export function show(key: SettingKey, value: unknown): string {
     case 'saleSteamWishlists':
     case 'steamStatus':
     case 'monthlyRecap':
+    case 'sessionRecap':
     case 'weeklyLeaderboard':
     case 'evenVolume':
     case 'joinSounds':
@@ -391,6 +393,7 @@ export const setup: Feature = {
           s
             .setName('sessions')
             .setDescription('Voice session recaps')
+            .addBooleanOption((o) => o.setName('recaps').setDescription('Post a recap when a session ends. Off still counts sessions in stats'))
             .addIntegerOption((o) => o.setName('recap_min_minutes').setDescription('Shorter sessions get no recap and don’t count in stats').setMinValue(LIMITS.recapMinMinutes[0]).setMaxValue(LIMITS.recapMinMinutes[1]))
             .addIntegerOption((o) =>
               o.setName('grace_minutes').setDescription('Minutes a channel stays empty before its session ends').setMinValue(LIMITS.sessionGraceMin[0]).setMaxValue(LIMITS.sessionGraceMin[1]),
@@ -664,6 +667,7 @@ export const setup: Feature = {
         }
         if (sub === 'sessions') {
           return apply(i, [
+            ['sessionRecap', i.options.getBoolean('recaps')],
             ['recapMinMinutes', i.options.getInteger('recap_min_minutes')],
             ['sessionGraceMin', i.options.getInteger('grace_minutes')],
           ]);
