@@ -64,6 +64,8 @@ interface Voice {
   /** Piper's noise_scale and noise_w_scale, to change how much the sound and timing vary from the model's own */
   noise?: readonly [number, number];
   stretches?: Stretches;
+  /** Multiplies the length_scale, for a model that sounds rushed at the same speed as the others */
+  pace?: number;
 }
 
 export const VOICES: readonly Voice[] = [
@@ -76,8 +78,8 @@ export const VOICES: readonly Voice[] = [
   { id: 'hal', name: 'HAL 9000', model: 'hal', stretches: CHARACTER_STRETCHES },
   { id: 'bender', name: 'Bender', model: 'bender', stretches: CHARACTER_STRETCHES },
   { id: 'optimus', name: 'Optimus Prime', model: 'optimus', stretches: CHARACTER_STRETCHES },
-  // Kronk stretches like the default model's voices
-  { id: 'kronk', name: 'Kronk', model: 'kronk' },
+  // Kronk stretches like the default model's voices, but sounded rushed: it's 15% slower, with steadier timing
+  { id: 'kronk', name: 'Kronk', model: 'kronk', noise: [0.667, 0.333], pace: 1.15 },
   { id: 'tiktok', name: 'TikTok', model: 'tiktok', stretches: CHARACTER_STRETCHES },
 ];
 
@@ -175,7 +177,7 @@ async function speech(text: string, voice: Voice, speed: number, signal: AbortSi
       text,
       voice: voice.model,
       speaker_id: voice.speaker,
-      length_scale: lengthFor(speed, voice.stretches),
+      length_scale: Math.round(lengthFor(speed, voice.stretches) * (voice.pace ?? 1) * 100) / 100,
       noise_scale: voice.noise?.[0],
       noise_w_scale: voice.noise?.[1],
     }),

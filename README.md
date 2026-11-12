@@ -387,7 +387,7 @@ The web UI's Soundboard tab, under **Manage**, also shows everything on Discord'
 - Lines wait their turn, while sounds still layer on top. **Stop** ends the line and clears anything waiting.
 - Mentions are read as names, custom emoji as their name, and links as "link".
 - Every line goes in the Activity tab with who said it.
-- The voices are **Voice 1**, **2**, **5** and **9**, plus characters: **GLaDOS**, **HAL 9000**, **Bender**, **Optimus Prime**, **Kronk** and **TikTok** (the TikTok text-to-speech lady). Each talks at the server's speed. A server whose default voice has been removed talks in the bot's default voice.
+- The voices are **Voice 1**, **2**, **5** and **9**, plus characters: **GLaDOS**, **HAL 9000**, **Bender**, **Optimus Prime**, **Kronk** and **TikTok** (the TikTok text-to-speech lady). Each talks at the server's speed, and Kronk a little slower than that, as his model sounds rushed. A server whose default voice has been removed talks in the bot's default voice.
 - `/setup speech` sets whether it's on, the default voice, how fast and how loud it talks, the longest line and how long each person waits between lines. `/setup speech-role` limits it to a role, plus people with **Manage Server**. The web UI isn't limited by the role, and counts as one person for the wait.
 
 It needs the [voice container](#the-voice-container).

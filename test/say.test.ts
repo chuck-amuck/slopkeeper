@@ -109,8 +109,8 @@ test('the character voices ask for their own model, delivery and speed', { skip:
     { text: 'good news everyone', voice: 'hal', length_scale: 1.25 },
     { text: 'good news everyone', voice: 'bender', length_scale: 1.25 },
     { text: 'good news everyone', voice: 'optimus', length_scale: 1.25 },
-    // Kronk stretches like the default model
-    { text: 'good news everyone', voice: 'kronk', length_scale: lengthFor(85) },
+    // Kronk stretches like the default model, then 15% slower and with steadier timing
+    { text: 'good news everyone', voice: 'kronk', length_scale: 1.56, noise_scale: 0.667, noise_w_scale: 0.333 },
     { text: 'good news everyone', voice: 'tiktok', length_scale: 1.25 },
   ]);
   assert.deepEqual(leftovers(), []);
