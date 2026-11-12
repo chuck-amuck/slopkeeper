@@ -192,6 +192,9 @@ export const soundPath = (name, part = '') => api(`/sounds/${encodeURIComponent(
 // Volume sliders follow a loudness curve rather than the percentage itself, which piles most of the change into the
 // bottom quarter: the percentage goes with the square of how far along the slider is, so 100% of 200 sits at 71%
 const SLIDER_STEPS = 1000;
+/** How far the arrow keys and Page Up or Down move a volume slider, in percent */
+const KEY_STEP = 5;
+const PAGE_STEP = 20;
 let volumeControls = 0;
 
 /**
@@ -214,9 +217,22 @@ export function volumeControl({ min, max, label, onInput, onSave }) {
     oninput: () => {
       percent = toPercent(Number(slider.value));
       box.value = percent;
+      slider.ariaValueText = `${percent}%`;
       onInput?.(percent);
     },
     onchange: () => onSave(percent),
+    // A slider position is a sliver of a percent, so the keys move in whole steps of the percentage instead
+    onkeydown: (e) => {
+      const step = { ArrowUp: KEY_STEP, ArrowRight: KEY_STEP, ArrowDown: -KEY_STEP, ArrowLeft: -KEY_STEP, PageUp: PAGE_STEP, PageDown: -PAGE_STEP }[e.key];
+      if (!step) return;
+      e.preventDefault();
+      // To the next multiple of the step, so 42% goes to 45% or 40%
+      const next = Math.min(max, Math.max(min, step > 0 ? Math.floor(percent / step) * step + step : Math.ceil(percent / -step) * -step + step));
+      if (next === percent) return;
+      set(next);
+      onInput?.(percent);
+      onSave(percent);
+    },
   });
   const box = el('input', {
     type: 'number',
@@ -236,6 +252,7 @@ export function volumeControl({ min, max, label, onInput, onSave }) {
   function set(value) {
     percent = value;
     slider.value = toPosition(value);
+    slider.ariaValueText = `${value}%`;
     box.value = value;
   }
 

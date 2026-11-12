@@ -44,6 +44,11 @@
   box-sizing: border-box;
 }
 
+/* Keyboard focus scrolls clear of the floating Stop sounds button; app.js sets the top for the sticky header */
+html {
+  scroll-padding-bottom: 80px;
+}
+
 [hidden] {
   display: none !important;
 }
@@ -308,11 +313,13 @@ main {
   margin: 0 auto;
   padding: 16px 16px 80px;
   display: grid;
+  /* A long channel name in a picker shrinks to fit rather than widening the page */
+  grid-template-columns: minmax(0, 1fr);
   gap: 16px;
 }
 
 /* Keeps Log out on the top row on a small window */
-@media (max-width: 1060px) {
+@media (max-width: 1300px) {
   nav button {
     padding-left: 8px;
     padding-right: 8px;
@@ -399,10 +406,19 @@ main {
   display: inline-flex;
   align-items: center;
   gap: 8px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+/* Shrinks on a narrow phone rather than pushing the page wider */
+.voice-volume .volume-control {
+  flex: 1 1 auto;
 }
 
 .voice-volume input[type='range'] {
+  flex: 0 1 160px;
   width: 160px;
+  min-width: 64px;
 }
 
 .voice-label {
@@ -1716,7 +1732,96 @@ textarea {
   color: var(--bad);
 }
 
+/* Too narrow for the tabs beside the server picker, so they get a row of their own. The header sticks with only
+   that row showing: app.js sets top to minus the height above it */
+@media (max-width: 1120px) {
+  nav {
+    order: 1;
+    width: 100%;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+  }
+
+  nav button {
+    flex: none;
+  }
+}
+
+/* Touch screens get fingertip-sized targets for the small controls (buttons and fields are already 38px tall) */
+@media (pointer: coarse) {
+  .song-actions button.icon {
+    width: 44px;
+    min-height: 44px;
+  }
+
+  .star {
+    top: 0;
+    right: 0;
+    width: 44px;
+    min-height: 44px;
+  }
+
+  .phrase-remove {
+    min-width: 44px;
+  }
+
+  .toggle {
+    min-height: 44px;
+  }
+
+  button.link {
+    min-height: 44px;
+    padding-inline: 6px;
+  }
+
+  .chart summary {
+    padding-block: 12px;
+  }
+
+  .sound .name button {
+    min-height: 32px;
+  }
+
+  .now-track {
+    padding: 20px 0;
+  }
+}
+
 @media (max-width: 640px) {
+  /* The queue's title gets the whole row, with its buttons on a line below */
+  .music-queue .song {
+    flex-wrap: wrap;
+  }
+
+  .music-queue .song-text {
+    flex: 1 1 calc(100% - 60px);
+  }
+
+  .music-queue .song-actions {
+    width: 100%;
+    justify-content: flex-end;
+  }
+
+  .card-head {
+    flex-wrap: wrap;
+  }
+
+  .card-head h2 {
+    white-space: nowrap;
+  }
+
+  /* Saved phrases scroll sideways in one line rather than pushing the sounds down */
+  .phrases {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .phrase {
+    flex: none;
+    max-width: 80%;
+  }
+
   .grip,
   .song-time,
   .song-number {
@@ -1745,10 +1850,18 @@ textarea {
     grid-column: 1;
   }
 
-  /* Sticks with only the tab row showing: app.js sets top to minus the height above it */
   header {
-    flex-wrap: wrap;
+    gap: 8px;
     padding: 8px 16px;
+  }
+
+  /* Leaves the server picker room on a narrow phone */
+  header > button.quiet {
+    max-width: 30vw;
+    padding-inline: 8px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .brand span {
@@ -1769,16 +1882,6 @@ textarea {
     display: none;
   }
 
-  nav {
-    order: 1;
-    width: 100%;
-    flex-wrap: nowrap;
-    overflow-x: auto;
-  }
-
-  nav button {
-    flex: none;
-  }
 
   .toggle span {
     display: none;
@@ -1828,14 +1931,27 @@ textarea {
     flex-basis: 100%;
   }
 
-  /* Too many controls to leave room for a name on the same line */
+  /* Too many controls to leave room for a name on the same line, and they fit on one line at 360px */
   .sound {
     flex-wrap: wrap;
+    gap: 6px 4px;
   }
 
+  /* The name and its length share the first line, and the controls take the second */
   .sound .name {
     order: -1;
     flex-basis: 100%;
+    flex-direction: row;
+    align-items: baseline;
+    gap: 8px;
+  }
+
+  .sound .name > :first-child {
+    min-width: 0;
+  }
+
+  .sound .meta {
+    flex: none;
   }
 
   .sound .toggle {
@@ -2167,8 +2283,8 @@ span.steam-family {
 /* The Soundboard tab's Play or Manage, laid out as main is */
 .view {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 16px;
-  min-width: 0;
 }
 
 .views button[aria-current='page'] {

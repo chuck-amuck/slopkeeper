@@ -416,7 +416,7 @@ Sounds from before this existed are measured when the bot starts. Copies on Disc
 
 **Soundboard volume** turns every sound up or down at once, including join sounds and the looping sound, and changes sounds that are already playing. It's the slider next to **Play in** on the web UI, in Settings, and `volume` in `/setup sounds`. Speech has its own volume.
 
-The web UI's volume sliders, for the soundboard, music and each sound, follow loudness rather than the percentage, so moving one sounds about as big a change anywhere along it, and 100% sits at the tick about 70% of the way along. The box beside each takes an exact percentage.
+The web UI's volume sliders, for the soundboard, music and each sound, follow loudness rather than the percentage, so moving one sounds about as big a change anywhere along it, and 100% sits at the tick about 70% of the way along. The box beside each takes an exact percentage, and the arrow keys move a slider 5% at a time (Page Up and Page Down 20%).
 
 ### Looping sound room
 

@@ -122,15 +122,18 @@ function meDialog(main) {
 }
 
 /**
- * On a phone the tabs sit on a row of their own under the server picker. The header sticks with only that row showing,
- * and the row scrolls to the tab that's open, which may be past the edge of the screen
+ * On a phone or tablet the tabs sit on a row of their own under the server picker. The header sticks with only that
+ * row showing, and the row scrolls to the tab that's open, which may be past the edge of the screen
  */
 function fitNav() {
   const header = app.querySelector('header');
   const nav = header?.querySelector('nav');
   if (!nav) return;
-  const phone = matchMedia('(max-width: 640px)').matches;
-  header.style.top = phone ? `${-nav.offsetTop}px` : '';
+  // The same width as style.css gives the tabs their own row
+  const ownRow = matchMedia('(max-width: 1120px)').matches;
+  header.style.top = ownRow ? `${-nav.offsetTop}px` : '';
+  // Keyboard focus scrolls clear of the part of the header that stays on screen
+  document.documentElement.style.scrollPaddingTop = `${header.offsetHeight - (ownRow ? nav.offsetTop : 0) + 8}px`;
   const current = nav.querySelector('[aria-current]');
   if (current) nav.scrollLeft = current.offsetLeft - nav.offsetLeft - (nav.clientWidth - current.offsetWidth) / 2;
 }
