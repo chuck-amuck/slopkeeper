@@ -42,6 +42,7 @@ const FIELDS = {
   ttsChannelWho: { kind: 'choice', options: [['everyone', 'Everyone'], ['voice', 'Only people in voice']], hint: 'Only people in voice leaves out anyone who’s only typing.' },
   soundVolume: { kind: 'number', unit: '%', hint: 'How loud every sound plays, including join sounds and the looping sound. Speech has its own volume. The slider on the Soundboard tab changes this too.' },
   musicVolume: { kind: 'number', unit: '%', hint: 'How loud music plays. It drops to under a third while the bot is talking. The slider on the Music tab changes this too.' },
+  musicAutoplay: { kind: 'boolean', hint: 'When the song playing is the last in the queue, adds two similar songs from YouTube, and two more each time they run out. Songs people add play first. Turning it off takes out the ones it added. The switch on the Music tab and the /music card change this too.' },
   musicDjRole: { kind: 'role', none: 'Everyone', hint: 'Who can add, skip, pause, shuffle and stop music with /music, along with people with Manage Server. Anyone can see the queue. This page isn’t limited by it.' },
   loopRoom: { kind: 'voice', none: 'Off', hint: 'While anyone’s in this channel, the bot plays the looping sound and speech there nonstop. Join sounds don’t play there.' },
   loopSound: { kind: 'sound', none: 'Not set', hint: 'A sound from the library.' },

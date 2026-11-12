@@ -1406,6 +1406,11 @@ dialog .start input {
   border-bottom: 0;
 }
 
+.head-count {
+  margin-left: var(--space-2);
+  font-weight: normal;
+}
+
 .merge-list {
   max-height: min(320px, 45vh);
   margin: 12px 0;

@@ -24,7 +24,7 @@ import { config } from '../config.ts';
 import { feeds } from '../changes.ts';
 import { db, getKv, setKv, transaction } from '../db.ts';
 import { durationOf, hasAudio } from '../discordSounds.ts';
-import { idSetting } from '../settings.ts';
+import { idSetting, setSetting, setting } from '../settings.ts';
 import { coverFor, isShortLink, MOST_FROM_LINK, myPlaylists, parseLink, playlistsReady, RateLimited, search, searchReady, SpotifyError, tracksFor, type Track } from '../spotify.ts';
 import type { Feature } from '../types.ts';
 import { humansIn } from '../util.ts';
@@ -59,6 +59,25 @@ const RESUME_WITHIN_MS = 10 * 60_000;
 // The music container restarts alongside the bot, and the music waits this long for it
 const READY_WAIT_MS = 3 * 60_000;
 const READY_CHECK_MS = 1_000;
+/** Who added the songs Autoplay picks, which the queue shows as Autoplay */
+export const AUTOPLAY = 'autoplay';
+/** Songs Autoplay adds each time the song playing is the last */
+const AUTOPLAY_ADDS = 2;
+/** Autoplay passes over anything shorter or longer, such as intros, mixes and whole albums */
+const AUTOPLAY_SHORTEST_MS = 60_000;
+const AUTOPLAY_LONGEST_MS = 10 * 60_000;
+/** YouTube's mixes kept for each session, as Autoplay goes on from a different song each time */
+const MIXES_KEPT = 20;
+/** A mix that couldn't be read isn't asked for again for this long, so seeking within a song doesn't keep asking */
+const MIX_RETRY_MS = 60_000;
+/** How long the last song, once it's ended, waits for Autoplay before the music stops */
+const AUTOPLAY_WAIT_MS = 30_000;
+/** Songs remembered as played, so a long evening doesn't repeat them, kept across a restart */
+const PLAYED_KEPT = 500;
+const AUTOPLAY_NOTE = 'Autoplay found nothing new like the songs played, so the music stops after this one.';
+const YOUTUBE_VIDEO = /^https:\/\/(?:(?:www|m|music)\.)?(?:youtube\.com\/watch\?(?:.*&)?v=|youtu\.be\/)(?<video>[\w-]{11})/;
+/** The YouTube video a link is to, or undefined for anything else */
+const videoOf = (url: string) => url.match(YOUTUBE_VIDEO)?.groups?.video;
 
 export interface QueueRow {
   id: number;
@@ -101,6 +120,12 @@ interface Session {
   stopAudio?: () => void;
   /** Why it stopped or skipped by itself, for the web page */
   note: string | null;
+  /** The YouTube videos played since the music started, newest last, for Autoplay to go on from */
+  played: { video: string; url: string; byPerson: boolean }[];
+  /** Videos Autoplay leaves out: those played, and those it added, so one taken out isn't added again */
+  seen: Set<string>;
+  /** YouTube's mix for each video Autoplay went on from, or when it last couldn't be read */
+  mixes: Map<string, Track[] | { failedAt: number }>;
 }
 
 const sessions = new Map<string, Session>();
@@ -119,13 +144,24 @@ export function queueOf(guildId: string): QueueRow[] {
 /** Whether the first row is the song playing (or paused), which stays put while the rest move around it */
 const holdsFirst = (guildId: string) => sessions.has(guildId);
 
-/** Adds songs to the end, or after the song playing with `next`. Returns how many fitted */
+/** Where the songs Autoplay added at the end start, leaving out the song playing */
+function afterPeople(rows: QueueRow[], first: number) {
+  let end = rows.length;
+  while (end > first && rows[end - 1]!.added_by === AUTOPLAY) end--;
+  return end;
+}
+
+/**
+ * Adds songs to the end, or after the song playing with `next`. Songs people add go ahead of those Autoplay added at the end, which
+ * only fill in after them. Returns how many fitted
+ */
 export function addTracks(guildId: string, tracks: Track[], who: string, next = false): number {
   const rows = queueOf(guildId);
   const room = Math.max(0, MOST_QUEUED - rows.length);
   const adding = tracks.slice(0, room);
   if (!adding.length) return 0;
-  const after = next ? (holdsFirst(guildId) ? 1 : 0) : rows.length;
+  const first = holdsFirst(guildId) ? 1 : 0;
+  const after = next ? first : who === AUTOPLAY ? rows.length : afterPeople(rows, first);
   const before = rows[after - 1]?.pos ?? (rows[0]?.pos ?? 1) - 1;
   const following = rows[after]?.pos ?? before + adding.length + 1;
   const step = (following - before) / (adding.length + 1);
@@ -139,6 +175,8 @@ export function addTracks(guildId: string, tracks: Track[], who: string, next = 
   fetchNext(guildId);
   cardChanged(guildId);
   if (adding.some((t) => !t.cover)) void fillCovers();
+  // A last song that ended waiting on Autoplay goes on to this one
+  if (who !== AUTOPLAY) stillLooking.get(guildId)?.();
   return adding.length;
 }
 
@@ -227,18 +265,22 @@ export function moveTrack(guildId: string, id: number, to: number): boolean {
   return true;
 }
 
-/** Puts the queue in a random order, leaving the song playing where it is. Returns how many songs were shuffled */
+/**
+ * Puts the queue in a random order, leaving the song playing where it is, and the songs Autoplay added at the end after the rest.
+ * Returns how many songs were shuffled
+ */
 export function shuffleQueue(guildId: string, who: string): number {
   const rows = queueOf(guildId);
   const first = holdsFirst(guildId) ? 1 : 0;
-  const rest = rows.slice(first);
+  const end = afterPeople(rows, first);
+  const rest = rows.slice(first, end);
   if (rest.length < 2) return 0;
   for (let n = rest.length - 1; n > 0; n--) {
     const k = Math.floor(Math.random() * (n + 1));
     [rest[n], rest[k]] = [rest[k], rest[n]];
   }
   const update = db.prepare('UPDATE music_queue SET pos = ? WHERE id = ?');
-  transaction(() => [...rows.slice(0, first), ...rest].forEach((r, i) => update.run(i, r.id)));
+  transaction(() => [...rows.slice(0, first), ...rest, ...rows.slice(end)].forEach((r, i) => update.run(i, r.id)));
   fetchNext(guildId);
   cardChanged(guildId);
   logActivity(guildId, who, 'Shuffled the music queue');
@@ -255,15 +297,17 @@ export async function removeTrack(guildId: string, id: number, who: string): Pro
   logActivity(guildId, who, `Removed **${row.title}** from the music queue`);
   fetchNext(guildId);
   cardChanged(guildId);
+  if (s && sessions.get(guildId) === s) void topUp(s);
   return row;
 }
 
 /** Empties the queue, apart from the song playing */
 export function clearQueue(guildId: string, who: string) {
-  const keep = sessions.get(guildId)?.current.id ?? -1;
-  db.prepare('DELETE FROM music_queue WHERE guild_id = ? AND id != ?').run(guildId, keep);
+  const s = sessions.get(guildId);
+  db.prepare('DELETE FROM music_queue WHERE guild_id = ? AND id != ?').run(guildId, s?.current.id ?? -1);
   cardChanged(guildId);
   logActivity(guildId, who, 'Cleared the music queue');
+  if (s) void topUp(s);
 }
 
 // ---------- the music container ----------
@@ -276,7 +320,7 @@ const askedAhead = new Set<string>();
 const asBridge = () => ({ authorization: `Bearer ${config.musicToken}`, 'content-type': 'application/json' });
 
 /** Asks the music container something about YouTube. A 404 is "not found", with the reason; anything else that isn't fine throws */
-async function askYoutube(where: '/fetch' | '/lookup', body: Record<string, unknown>): Promise<Record<string, unknown> & { missing?: string }> {
+async function askYoutube(where: '/fetch' | '/lookup' | '/similar', body: Record<string, unknown>): Promise<Record<string, unknown> & { missing?: string }> {
   const res = await fetch(`${config.musicUrl}${where}`, { method: 'POST', headers: asBridge(), body: JSON.stringify(body), signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
   const answer = (await res.json().catch(() => ({}))) as Record<string, unknown>;
   if (res.status === 404) return { missing: String(answer.error ?? 'Not found.') };
@@ -284,12 +328,12 @@ async function askYoutube(where: '/fetch' | '/lookup', body: Record<string, unkn
   return answer;
 }
 
-/** The audio for a song: a file the music container downloaded, or why there isn't one */
-async function fetchAudio(row: QueueRow): Promise<{ file: string; source: string } | { missing: string }> {
+/** The audio for a song: a file the music container downloaded, with where it came from, or why there isn't one */
+async function fetchAudio(row: QueueRow): Promise<{ file: string; source: string; url: string | null } | { missing: string }> {
   const answer = await askYoutube('/fetch', row.uri.startsWith('spotify:') ? { uri: row.uri, title: row.title, artist: row.artist, durationMs: row.duration_ms } : { url: row.uri });
   if (answer.missing) return { missing: answer.missing };
   if (typeof answer.file !== 'string' || !SAFE_FILE.test(answer.file)) throw new Error('the music container named the file oddly');
-  return { file: path.join(config.musicAudioDir, answer.file), source: String(answer.source ?? 'youtube') };
+  return { file: path.join(config.musicAudioDir, answer.file), source: String(answer.source ?? 'youtube'), url: typeof answer.url === 'string' ? answer.url : null };
 }
 
 /** Starts downloading the first two songs in the queue, so pressing play, and the song after, start without a wait */
@@ -372,6 +416,10 @@ const channelOf = (s: Session) => {
   return channel?.isVoiceBased() ? channel : undefined;
 };
 
+function newSession(guild: Guild, channelId: string, current: QueueRow, phase: Session['phase'], positionMs: number): Session {
+  return { guild, channelId, phase, current, via: null, turn: 0, position: { ms: positionMs, at: Date.now(), speed: 0 }, note: null, played: [], seen: new Set(), mixes: new Map() };
+}
+
 /** Starts the queue in a channel, or carries on where it paused. Returns null on success or the reason it couldn't, for the user */
 export async function startMusic(guild: Guild, channel: VoiceBasedChannel): Promise<string | null> {
   const problem = unavailable();
@@ -385,7 +433,7 @@ export async function startMusic(guild: Guild, channel: VoiceBasedChannel): Prom
   const carryOn = s?.current.id === first.id ? positionOf(s) : 0;
   if (s) Object.assign(s, { channelId: channel.id, note: null, current: first });
   else {
-    s = { guild, channelId: channel.id, phase: 'starting', current: first, via: null, turn: 0, position: { ms: 0, at: Date.now(), speed: 0 }, note: null };
+    s = newSession(guild, channel.id, first, 'starting', 0);
     sessions.set(guild.id, s);
   }
   return playCurrent(s, carryOn);
@@ -431,9 +479,16 @@ async function playCurrent(s: Session, fromMs = 0): Promise<string | null> {
     return stop;
   }
   Object.assign(s, { stopAudio: stop, via: found.source, phase: 'playing', position: { ms: fromMs, at: Date.now(), speed: 1 } });
+  const video = found.url && videoOf(found.url);
+  if (video && s.played.at(-1)?.video !== video) {
+    s.played.push({ video, url: `https://www.youtube.com/watch?v=${video}`, byPerson: row.added_by !== AUTOPLAY });
+    if (s.played.length > PLAYED_KEPT) s.played.shift();
+    remember(s, video);
+  }
   cardChanged(s.guild.id);
   saveSessions();
   fetchNext(s.guild.id);
+  void topUp(s);
   return null;
 }
 
@@ -503,8 +558,17 @@ export function stopMusic(guildId: string, who: string) {
   logActivity(guildId, who, 'Stopped the music and cleared the queue');
 }
 
-/** Goes on to the next song in the queue, or stops once there isn't one. Returns why the next song couldn't play, if it couldn't */
+/**
+ * Goes on to the next song in the queue, or stops once there isn't one. With Autoplay on, the last song waits for it to find more.
+ * Returns why the next song couldn't play, if it couldn't
+ */
 async function moveOn(s: Session): Promise<string | null> {
+  if (autoplayDue(s)) {
+    const { turn, current } = s;
+    await untilToppedUp(s);
+    // Someone skipped, stopped, paused or jumped within the song meanwhile
+    if (sessions.get(s.guild.id) !== s || s.current !== current || s.turn !== turn) return null;
+  }
   db.prepare('DELETE FROM music_queue WHERE id = ?').run(s.current.id);
   const next = queueOf(s.guild.id)[0];
   if (!next) {
@@ -525,10 +589,154 @@ async function moveOn(s: Session): Promise<string | null> {
 
 function endSession(s: Session) {
   s.turn++;
+  stillLooking.get(s.guild.id)?.();
   stopAudioOf(s);
   if (sessions.get(s.guild.id) === s) sessions.delete(s.guild.id);
   cardChanged(s.guild.id);
   saveSessions();
+}
+
+// ---------- Autoplay ----------
+
+const waitingAfter = db.prepare('SELECT 1 FROM music_queue WHERE guild_id = ? AND id != ? LIMIT 1');
+
+/** Whether Autoplay adds songs now: it's on and nothing waits after the song playing */
+const autoplayDue = (s: Session) => setting(s.guild.id, 'musicAutoplay') && !waitingAfter.get(s.guild.id, s.current.id);
+
+/** Autoplay looking for songs in each server, which a second look waits on rather than repeating */
+const toppingUp = new Map<string, Promise<void>>();
+/** The last song in each server that ended while Autoplay looked, which a song being added or the music stopping lets go on */
+const stillLooking = new Map<string, () => void>();
+
+/** Notes a video as played or added, so Autoplay doesn't pick it again */
+function remember(s: Session, video: string) {
+  s.seen.delete(video);
+  s.seen.add(video);
+  if (s.seen.size > PLAYED_KEPT) s.seen.delete(s.seen.values().next().value!);
+}
+
+/** Waits for Autoplay to add songs after the last one ended, unless someone adds one first or it takes too long */
+async function untilToppedUp(s: Session) {
+  const guildId = s.guild.id;
+  let timer: NodeJS.Timeout | undefined;
+  await Promise.race([
+    topUp(s),
+    new Promise<void>((resolve) => {
+      stillLooking.set(guildId, resolve);
+      timer = setTimeout(resolve, AUTOPLAY_WAIT_MS).unref();
+    }),
+  ]);
+  clearTimeout(timer);
+  stillLooking.delete(guildId);
+}
+
+/** Adds songs like those played once the song playing is the last, while Autoplay is on */
+function topUp(s: Session): Promise<void> {
+  const guildId = s.guild.id;
+  const looking = toppingUp.get(guildId);
+  if (looking) return looking;
+  if (!autoplayDue(s) || unavailable()) return Promise.resolve();
+  const from = s.current;
+  let again = false;
+  const job = similarSongs(s)
+    .then((songs) => {
+      // Stopped, turned off, or someone added songs meanwhile
+      if (sessions.get(guildId) !== s || !autoplayDue(s)) return;
+      // The music moved on to a song someone added while it looked, so it looks again from that one
+      if (s.current !== from) return void (again = true);
+      if (!songs.length) {
+        s.note = AUTOPLAY_NOTE;
+        cardChanged(guildId);
+        return;
+      }
+      if (s.note === AUTOPLAY_NOTE) s.note = null;
+      for (const song of songs) remember(s, videoOf(song.uri)!);
+      addTracks(guildId, songs, AUTOPLAY);
+    })
+    .catch((err: unknown) => console.error(`Music: Autoplay couldn’t find songs in ${s.guild.name}:`, (err as Error).message))
+    .finally(() => {
+      toppingUp.delete(guildId);
+      if (again) void topUp(s);
+    });
+  toppingUp.set(guildId, job);
+  return job;
+}
+
+/**
+ * Songs not played yet from YouTube's mix of the latest song someone added, which keeps Autoplay close to what people chose. Once
+ * that runs out, or can't be read, from the mix of the latest song played. Throws when no mix could be read
+ */
+async function similarSongs(s: Session): Promise<Track[]> {
+  const seeds = [s.played.findLast((p) => p.byPerson), s.played.at(-1)].filter((p, n, all): p is Session['played'][number] => !!p && all.findIndex((q) => q?.video === p.video) === n);
+  const queued = new Set(queueOf(s.guild.id).map((r) => videoOf(r.uri)));
+  const picked: Track[] = [];
+  let failed: Error | undefined;
+  for (const seed of seeds) {
+    const mix = await mixOf(s, seed, (err) => (failed = err));
+    for (const song of mix) {
+      const video = videoOf(song.uri)!;
+      if (s.seen.has(video) || queued.has(video) || picked.some((p) => p.uri === song.uri)) continue;
+      if (song.durationMs < AUTOPLAY_SHORTEST_MS || song.durationMs > AUTOPLAY_LONGEST_MS) continue;
+      picked.push(song);
+      if (picked.length === AUTOPLAY_ADDS) return picked;
+    }
+  }
+  if (!picked.length && failed) throw failed;
+  return picked;
+}
+
+/** A seed's mix, kept for the session. One that couldn't be read is empty for a while, with `failed` hearing why */
+async function mixOf(s: Session, seed: Session['played'][number], failed: (err: Error) => void): Promise<Track[]> {
+  let mix = s.mixes.get(seed.video);
+  if (mix && 'failedAt' in mix && Date.now() - mix.failedAt > MIX_RETRY_MS) mix = undefined;
+  if (!mix) {
+    try {
+      mix = await mixFor(seed.url);
+    } catch (err) {
+      failed(err as Error);
+      mix = { failedAt: Date.now() };
+    }
+  }
+  // Most recently used last, so the oldest goes first
+  s.mixes.delete(seed.video);
+  s.mixes.set(seed.video, mix);
+  if (s.mixes.size > MIXES_KEPT) s.mixes.delete(s.mixes.keys().next().value!);
+  return Array.isArray(mix) ? mix : [];
+}
+
+/** YouTube Music's mix for a video, from the music container */
+async function mixFor(url: string): Promise<Track[]> {
+  const answer = await askYoutube('/similar', { url });
+  if (answer.missing) return [];
+  const songs = Array.isArray(answer.songs) ? (answer.songs as Record<string, unknown>[]) : [];
+  return songs.flatMap((song) => {
+    const video = typeof song.url === 'string' ? videoOf(song.url) : undefined;
+    if (!video) return [];
+    const cover = typeof song.cover === 'string' && song.cover.startsWith('https://i.ytimg.com/') ? song.cover : null;
+    return [{ uri: `https://www.youtube.com/watch?v=${video}`, title: String(song.title ?? 'Untitled').slice(0, 300), artist: String(song.artist ?? '').slice(0, 300), album: '', cover, durationMs: Number(song.durationMs) || 0 }];
+  });
+}
+
+/** Turns Autoplay on or off. Off takes out the songs it added that haven't played */
+export function setAutoplay(guildId: string, on: boolean, who: string) {
+  setSetting(guildId, 'musicAutoplay', on);
+  logActivity(guildId, who, `Turned Autoplay ${on ? 'on' : 'off'}`);
+  autoplayChanged(guildId);
+}
+
+/** Puts a change to the Autoplay setting into effect, from anywhere it's changed */
+export function autoplayChanged(guildId: string) {
+  const s = sessions.get(guildId);
+  if (setting(guildId, 'musicAutoplay')) {
+    if (s) void topUp(s);
+  } else {
+    db.prepare('DELETE FROM music_queue WHERE guild_id = ? AND added_by = ? AND id != ?').run(guildId, AUTOPLAY, s?.current.id ?? -1);
+    if (s?.note === AUTOPLAY_NOTE) s.note = null;
+    // A last song waiting for it stops the music now
+    stillLooking.get(guildId)?.();
+  }
+  // The switch on the page and the card show it
+  cardChanged(guildId);
 }
 
 // ---------- carrying on after a restart ----------
@@ -541,6 +749,9 @@ interface SavedSession {
   positionMs: number;
   playing: boolean;
   at: number;
+  /** What Autoplay knows of what played, so it neither repeats songs nor loses its place */
+  played?: Session['played'];
+  seen?: string[];
 }
 
 /** Once the bot is exiting, the place it saved last is the one to keep, rather than the pauses that leaving voice causes */
@@ -557,6 +768,8 @@ function saveSessions() {
     positionMs: Math.round(Math.max(0, Math.min(positionOf(s), s.current.duration_ms))),
     playing: s.phase !== 'paused',
     at: Date.now(),
+    played: s.played.slice(-MIXES_KEPT),
+    seen: [...s.seen],
   }));
   if (!saved.length && wroteNone) return;
   wroteNone = !saved.length;
@@ -590,7 +803,9 @@ async function resumeOne(client: Client, saved: SavedSession) {
   if (!channel?.isVoiceBased()) return didnt('its voice channel is gone');
   const positionMs = Math.min(Math.max(0, Number(saved.positionMs) || 0), first.duration_ms);
   // Paused at the same place, so pressing play carries on from there
-  const s: Session = { guild, channelId: channel.id, phase: 'paused', current: first, via: null, turn: 0, position: { ms: positionMs, at: Date.now(), speed: 0 }, note: null };
+  const s = newSession(guild, channel.id, first, 'paused', positionMs);
+  if (Array.isArray(saved.played)) s.played = saved.played.filter((p) => typeof p?.video === 'string' && typeof p.url === 'string' && videoOf(p.url) === p.video);
+  if (Array.isArray(saved.seen)) s.seen = new Set(saved.seen.filter((v) => typeof v === 'string').slice(-PLAYED_KEPT));
   sessions.set(guild.id, s);
   saveSessions();
   if (!saved.playing) return;
@@ -835,7 +1050,9 @@ export function musicCard(guildId: string, page = 0) {
   }
   if (waiting.length) {
     const first = shown * CARD_PAGE;
-    const lines = waiting.slice(first, first + CARD_PAGE).map((r, n) => `${first + n + 1}. **${cut(r.title, 60)}** – ${cut(r.artist, 40)} · ${time(r.duration_ms)}`);
+    const lines = waiting
+      .slice(first, first + CARD_PAGE)
+      .map((r, n) => `${first + n + 1}. **${cut(r.title, 60)}** – ${cut(r.artist, 40)} · ${time(r.duration_ms)}${r.added_by === AUTOPLAY ? ' · *Autoplay*' : ''}`);
     const left = waiting.reduce((sum, r) => sum + r.duration_ms, 0);
     embed.addFields({ name: `Up next: ${waiting.length} song${waiting.length === 1 ? '' : 's'}, ${Math.round(left / 60_000)} min`, value: lines.join('\n').slice(0, 1024) });
   }
@@ -850,15 +1067,20 @@ export function musicCard(guildId: string, page = 0) {
     button('stop', 'Stop', '⏹', !s && !rows.length, ButtonStyle.Danger),
     button('show', 'Refresh', '🔄'),
   );
-  if (pages === 1) return { embeds: [embed], components: [controls] };
-  const turn = (to: number, label: string, emoji: string) =>
-    new ButtonBuilder().setCustomId(`music:show:${to}`).setLabel(label).setEmoji(emoji).setStyle(ButtonStyle.Secondary).setDisabled(to < 0 || to >= pages);
-  const paging = new ActionRowBuilder<ButtonBuilder>().addComponents(
-    turn(shown - 1, 'Earlier', '◀'),
-    new ButtonBuilder().setCustomId('music:page').setLabel(`Page ${shown + 1} of ${pages}`).setStyle(ButtonStyle.Secondary).setDisabled(true),
-    turn(shown + 1, 'Later', '▶'),
-  );
-  return { embeds: [embed], components: [controls, paging] };
+  // Autoplay shares the second row with the pages, when there's more than one
+  const autoplay = setting(guildId, 'musicAutoplay');
+  const more = new ActionRowBuilder<ButtonBuilder>();
+  if (pages > 1) {
+    const turn = (to: number, label: string, emoji: string) =>
+      new ButtonBuilder().setCustomId(`music:show:${to}`).setLabel(label).setEmoji(emoji).setStyle(ButtonStyle.Secondary).setDisabled(to < 0 || to >= pages);
+    more.addComponents(
+      turn(shown - 1, 'Earlier', '◀'),
+      new ButtonBuilder().setCustomId('music:page').setLabel(`Page ${shown + 1} of ${pages}`).setStyle(ButtonStyle.Secondary).setDisabled(true),
+      turn(shown + 1, 'Later', '▶'),
+    );
+  }
+  more.addComponents(button('autoplay', autoplay ? 'Autoplay: on' : 'Autoplay: off', '♾️', false, autoplay ? ButtonStyle.Primary : ButtonStyle.Secondary));
+  return { embeds: [embed], components: [controls, more] };
 }
 
 interface Card {
@@ -942,6 +1164,10 @@ async function onCardButton(i: ButtonInteraction<'cached'>) {
 
   if (action === 'shuffle') {
     shuffleQueue(i.guildId, i.user.id);
+    return i.update(musicCard(i.guildId, page));
+  }
+  if (action === 'autoplay') {
+    setAutoplay(i.guildId, !setting(i.guildId, 'musicAutoplay'), i.user.id);
     return i.update(musicCard(i.guildId, page));
   }
   if (action === 'stop') {
@@ -1097,6 +1323,11 @@ async function run(i: ChatInputCommandInteraction<'cached'>) {
     stopMusic(i.guildId, i.user.id);
     return announce('Stopped the music and cleared the queue.');
   }
+  if (sub === 'autoplay') {
+    const on = i.options.getBoolean('on') ?? !setting(i.guildId, 'musicAutoplay');
+    setAutoplay(i.guildId, on, i.user.id);
+    return announce(on ? 'Turned Autoplay on: when the queue runs out, similar songs from YouTube keep playing.' : 'Turned Autoplay off: the music stops when the queue runs out.');
+  }
 }
 
 export const music: Feature = {
@@ -1127,7 +1358,13 @@ export const music: Feature = {
             .setDescription('Take a song out of the queue. Taking out the one playing skips it')
             .addStringOption((o) => o.setName('song').setDescription('A song in the queue').setRequired(true).setAutocomplete(true)),
         )
-        .addSubcommand((s) => s.setName('stop').setDescription('Stop the music and clear the queue')),
+        .addSubcommand((s) => s.setName('stop').setDescription('Stop the music and clear the queue'))
+        .addSubcommand((s) =>
+          s
+            .setName('autoplay')
+            .setDescription('Keep playing similar songs from YouTube when the queue runs out')
+            .addBooleanOption((o) => o.setName('on').setDescription('On or off. Leave it out to switch it')),
+        ),
       run: (i) => (i.inCachedGuild() ? run(i) : i.reply({ content: 'Music only works in a server.', flags: MessageFlags.Ephemeral })),
       autocomplete: suggest,
     },
@@ -1177,6 +1414,8 @@ export const musicChannelFor = (guildId: string) => sessions.get(guildId)?.chann
 /** For tests: starts from nothing and follows a fake music container's status */
 export function resetMusic(next: PlayerStatus | null = null) {
   askedAhead.clear();
+  toppingUp.clear();
+  stillLooking.clear();
   for (const card of cards.values()) clearTimeout(card.timer);
   cards.clear();
   for (const s of sessions.values()) s.turn++;

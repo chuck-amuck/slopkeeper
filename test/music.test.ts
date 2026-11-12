@@ -12,6 +12,7 @@ import { db, getKv } from '../src/db.ts';
 import { Mixer, type VoiceOptions } from '../src/mixer.ts';
 import {
   addTracks,
+  AUTOPLAY,
   clearQueue,
   fileUploadPath,
   coversFilled,
@@ -33,6 +34,7 @@ import {
   shuffleQueue,
   seekFile,
   seekMusic,
+  setAutoplay,
   skipMusic,
   startMusic,
   stopFile,
@@ -54,6 +56,22 @@ config.musicAudioDir = '/audio';
 // The music container. Songs are "downloaded" unless `youtube` says a song is missing, fails, or waits until the test lets it go on
 const fetched: string[] = [];
 const youtube = new Map<string, 'missing' | 'fail' | Promise<void>>();
+// YouTube Music's mixes, for Autoplay: each video's lists itself and four others, unless `mixes` gives its own. A test can hold them all
+interface MixSong {
+  url: string;
+  title: string;
+  artist: string;
+  durationMs: number;
+  cover: string | null;
+}
+const similarAsked: string[] = [];
+const mixes = new Map<string, MixSong[] | 'fail'>();
+let mixGate: Promise<void> | null = null;
+const watch = (video: string) => `https://www.youtube.com/watch?v=${video}`;
+/** The YouTube video the music container matches each Spotify song to */
+const video = (n: number) => `yt${String(n).padStart(9, '0')}`;
+const mixSong = (id: string, durationMs = 200_000): MixSong => ({ url: watch(id), title: `Like ${id}`, artist: 'Band', durationMs, cover: null });
+const mixOf = (id: string) => (mixes.get(id) as MixSong[] | undefined) ?? [mixSong(id), ...[1, 2, 3, 4].map((n) => ({ ...mixSong(`${id.slice(-4)}mix000${n}`), title: `Like ${id.slice(-4)} ${n}` }))];
 // Spotify's oEmbed, for album covers. Every song has one, unless `covers` says it has none, Spotify is limiting or down once, or the test holds it
 const looked: string[] = [];
 const covers = new Map<string, 'none' | 'limited' | 'down' | Promise<void>>();
@@ -86,7 +104,14 @@ mock.method(globalThis, 'fetch', async (url: string, init: RequestInit = {}) => 
     if (how instanceof Promise) await how;
     if (how === 'missing') return Response.json({ error: 'No match on YouTube or SoundCloud.' }, { status: 404 });
     if (how === 'fail') return Response.json({ error: 'Sign in to confirm you’re not a bot' }, { status: 502 });
-    return Response.json({ file: `yt-${key.slice(-4)}.webm`, source: 'youtube' });
+    return Response.json({ file: `yt-${key.slice(-4)}.webm`, source: 'youtube', url: body.uri ? watch(`yt${body.uri.slice(-9)}`) : body.url });
+  }
+  if (where === '/similar') {
+    const { url: link } = JSON.parse(init.body as string) as { url: string };
+    similarAsked.push(link);
+    if (mixGate) await mixGate;
+    if (mixes.get(link.slice(-11)) === 'fail') return Response.json({ error: 'Sign in to confirm you’re not a bot' }, { status: 502 });
+    return Response.json({ songs: mixOf(link.slice(-11)) });
   }
   if (where === '/lookup') {
     const { url: link } = JSON.parse(init.body as string) as { url: string };
@@ -162,6 +187,9 @@ beforeEach(() => {
   played.length = 0;
   youtube.clear();
   covers.clear();
+  similarAsked.length = 0;
+  mixes.clear();
+  mixGate = null;
 });
 after(() => {
   clearInterval(discord);
@@ -781,12 +809,12 @@ test('the card shows what’s playing, how far in, and a page of what’s next',
   assert.equal(card.embed.description, `Band · 3:00\nEnds <t:${Math.round((Date.now() + 120_000) / 1000)}:R> in <#voice>`);
   assert.equal(card.embed.fields![0].name, 'Up next: 22 songs, 66 min');
   assert.match(card.embed.fields![0].value, /^1\. \*\*Song 2\*\*/);
-  assert.deepEqual(card.buttons.map(([idText]) => idText), ['music:toggle:0', 'music:skip:0', 'music:shuffle:0', 'music:stop:0', 'music:show:0', 'music:show:-1', 'music:page', 'music:show:1']);
+  assert.deepEqual(card.buttons.map(([idText]) => idText), ['music:toggle:0', 'music:skip:0', 'music:shuffle:0', 'music:stop:0', 'music:show:0', 'music:show:-1', 'music:page', 'music:show:1', 'music:autoplay:0']);
   assert.equal(card.buttons[0][1], 'Pause');
 
   card = cardJson(musicCard(id, 9));
   assert.match(card.embed.fields![0].value, /^21\. \*\*Song 22\*\*/, 'a page past the end shows the last');
-  assert.deepEqual(card.buttons.slice(5).map(([, label, off]) => [label, off]), [['Earlier', false], ['Page 3 of 3', true], ['Later', true]]);
+  assert.deepEqual(card.buttons.slice(5).map(([, label, off]) => [label, off]), [['Earlier', false], ['Page 3 of 3', true], ['Later', true], ['Autoplay: off', false]]);
 
   pauseMusic(id);
   card = cardJson(musicCard(id));
@@ -950,5 +978,258 @@ test('/music remove offers the queue as the card numbers it, and takes the song 
   assert.deepEqual(titles(id), ['Song 1', 'Song 2']);
   await remove(offered[0].value);
   assert.deepEqual(answers, ['Took **Song 3** out of the queue.', 'That song isn’t in the queue any more. Pick one from the list.']);
+  stopMusic(id, 'u1');
+});
+
+const settle = () => sleep(5);
+const queued = (guildId: string) => queueOf(guildId).map((r) => [r.title, r.added_by]);
+
+test('Autoplay adds two songs from YouTube’s mix once the song playing is the last, and goes on from the song someone chose', async () => {
+  const { id, guild, channel } = server();
+  addTracks(id, [song(1)], 'u1');
+  await startMusic(guild, channel);
+  await settle();
+  assert.deepEqual(similarAsked, [], 'off until it’s turned on');
+  setAutoplay(id, true, 'u1');
+  await settle();
+  assert.deepEqual(similarAsked, [watch(video(1))], 'from the video Song 1 was matched to');
+  assert.deepEqual(queued(id), [['Song 1', 'u1'], ['Like 0001 1', AUTOPLAY], ['Like 0001 2', AUTOPLAY]], 'the song itself, first in its mix, is left out');
+  assert.deepEqual([queueOf(id)[1].uri, queueOf(id)[1].duration_ms], [watch('0001mix0001'), 200_000]);
+  assert.equal(recentActivity(id, 1)[0].action, 'Turned Autoplay on');
+
+  lastPlayed().end();
+  await settle();
+  assert.deepEqual(titles(id), ['Like 0001 1', 'Like 0001 2'], 'with a song still waiting, nothing is added');
+  lastPlayed().end();
+  await settle();
+  assert.deepEqual(titles(id), ['Like 0001 2', 'Like 0001 3', 'Like 0001 4'], 'Song 1’s mix carries on, without repeats');
+  assert.equal(similarAsked.length, 1, 'that mix is kept rather than asked for again');
+  lastPlayed().end();
+  await settle();
+  lastPlayed().end();
+  await settle();
+  assert.deepEqual(titles(id), ['Like 0001 4', 'Like 0004 1', 'Like 0004 2'], 'once it’s used up, from the mix of the song playing');
+  assert.equal(musicState(id).phase, 'playing');
+  stopMusic(id, 'u1');
+});
+
+test('songs people add play before Autoplay’s, and play next goes before both', async () => {
+  const { id, guild, channel } = server();
+  setSetting(id, 'musicAutoplay', true);
+  addTracks(id, [song(1)], 'u1');
+  await startMusic(guild, channel);
+  await settle();
+  addTracks(id, [song(2)], 'u1');
+  assert.deepEqual(titles(id), ['Song 1', 'Song 2', 'Like 0001 1', 'Like 0001 2']);
+  addTracks(id, [song(3)], 'u1', true);
+  assert.deepEqual(titles(id), ['Song 1', 'Song 3', 'Song 2', 'Like 0001 1', 'Like 0001 2']);
+  // Autoplay's songs in the middle, after a shuffle, stay where they are
+  moveTrack(id, queueOf(id)[3].id, 1);
+  addTracks(id, [song(4)], 'u1');
+  assert.deepEqual(titles(id), ['Song 1', 'Like 0001 1', 'Song 3', 'Song 2', 'Song 4', 'Like 0001 2']);
+  stopMusic(id, 'u1');
+});
+
+test('with Autoplay on, the last song ending waits for its songs rather than stopping the music', async () => {
+  const { id, guild, channel } = server();
+  setSetting(id, 'musicAutoplay', true);
+  let release!: () => void;
+  mixGate = new Promise((resolve) => (release = resolve));
+  addTracks(id, [song(1)], 'u1');
+  await startMusic(guild, channel);
+  lastPlayed().end();
+  await settle();
+  assert.deepEqual([titles(id), musicState(id).phase], [['Song 1'], 'playing'], 'still on the song that ended');
+  release();
+  await settle();
+  assert.deepEqual(titles(id), ['Like 0001 1', 'Like 0001 2']);
+  assert.deepEqual([played.length, musicState(id).phase], [2, 'playing'], 'the first of them plays');
+  assert.equal(similarAsked.length, 1, 'the look that started with the song is the one waited for');
+  stopMusic(id, 'u1');
+});
+
+test('turning Autoplay off takes out the songs it added, apart from the one playing', async () => {
+  const { id, guild, channel } = server();
+  setSetting(id, 'musicAutoplay', true);
+  addTracks(id, [song(1)], 'u1');
+  await startMusic(guild, channel);
+  await settle();
+  lastPlayed().end();
+  await settle();
+  addTracks(id, [song(2)], 'u1');
+  assert.deepEqual(titles(id), ['Like 0001 1', 'Song 2', 'Like 0001 2']);
+  setAutoplay(id, false, 'u1');
+  assert.deepEqual(titles(id), ['Like 0001 1', 'Song 2']);
+  assert.equal(recentActivity(id, 1)[0].action, 'Turned Autoplay off');
+  await skipMusic(id, 'u1');
+  lastPlayed().end();
+  await settle();
+  assert.equal(musicState(id).phase, 'stopped', 'the music stops when the queue runs out');
+  assert.equal(similarAsked.length, 1);
+});
+
+test('Autoplay passes over songs too short or long, doesn’t bring back ones taken out, and says when it has nothing new', async () => {
+  const { id, guild, channel } = server();
+  setSetting(id, 'musicAutoplay', true);
+  mixes.set(video(1), [mixSong('aaaaaaaaaa1'), mixSong('aaaaaaaaaa2', 11 * 60_000), mixSong('aaaaaaaaaa3', 30_000), mixSong('aaaaaaaaaa4'), mixSong('aaaaaaaaaa5')]);
+  addTracks(id, [song(1)], 'u1');
+  await startMusic(guild, channel);
+  await settle();
+  assert.deepEqual(titles(id), ['Song 1', 'Like aaaaaaaaaa1', 'Like aaaaaaaaaa4']);
+  await removeTrack(id, queueOf(id)[1].id, 'u1');
+  await settle();
+  assert.deepEqual(titles(id), ['Song 1', 'Like aaaaaaaaaa4'], 'one still waits, so nothing is added');
+  await removeTrack(id, queueOf(id)[1].id, 'u1');
+  await settle();
+  assert.deepEqual(titles(id), ['Song 1', 'Like aaaaaaaaaa5'], 'only one is left that wasn’t taken out');
+  clearQueue(id, 'u1');
+  await settle();
+  assert.deepEqual(titles(id), ['Song 1']);
+  assert.match(musicState(id).note!, /Autoplay found nothing new/);
+  setAutoplay(id, false, 'u1');
+  assert.equal(musicState(id).note, null, 'turning it off takes back what it said');
+  lastPlayed().end();
+  await settle();
+  assert.equal(musicState(id).phase, 'stopped');
+});
+
+test('the card and /music autoplay switch Autoplay, for the DJs, and the card marks its songs', async () => {
+  const { id, guild, channel } = server();
+  addTracks(id, [song(1)], 'u1');
+  await startMusic(guild, channel);
+  let out = await pressCard(guild, 'music:autoplay:0');
+  await settle();
+  assert.equal(cardJson(out.updates[0]).buttons.at(-1)![1], 'Autoplay: on');
+  const card = cardJson(musicCard(id));
+  assert.match(card.embed.fields![0].value, /^1\. \*\*Like 0001 1\*\* – Band · 3:20 · \*Autoplay\*/);
+
+  const answers: string[] = [];
+  const autoplay = (on: boolean | null, member = person(id, channel)) =>
+    music.commands![0].run({
+      inCachedGuild: () => true,
+      guildId: id,
+      guild,
+      member,
+      user: { id: 'u1' },
+      options: { getSubcommand: () => 'autoplay', getBoolean: () => on },
+      reply: async (r: { content: string }) => void answers.push(r.content),
+    } as never);
+  await autoplay(null);
+  assert.deepEqual(titles(id), ['Song 1'], 'switched off');
+  await autoplay(false);
+  assert.equal(cardJson(musicCard(id)).buttons.at(-1)![1], 'Autoplay: off');
+  setSetting(id, 'musicDjRole', 'dj');
+  await autoplay(true);
+  out = await pressCard(guild, 'music:autoplay:0');
+  assert.match(out.replies[0].content, /Only <@&dj>/);
+  assert.deepEqual(answers, [
+    'Turned Autoplay off: the music stops when the queue runs out.',
+    'Turned Autoplay off: the music stops when the queue runs out.',
+    'Only <@&dj> and people with **Manage Server** can control the music.',
+  ]);
+  stopMusic(id, 'u1');
+});
+
+test('while the last song waits on Autoplay, a song someone adds plays straight away, and Autoplay then goes on from it', async () => {
+  const { id, guild, channel } = server();
+  setSetting(id, 'musicAutoplay', true);
+  let release!: () => void;
+  mixGate = new Promise((resolve) => (release = resolve));
+  addTracks(id, [song(1)], 'u1');
+  await startMusic(guild, channel);
+  lastPlayed().end();
+  await settle();
+  addTracks(id, [song(2)], 'u1');
+  await settle();
+  assert.deepEqual([titles(id), musicState(id).phase], [['Song 2'], 'playing'], 'without waiting for Autoplay');
+  release();
+  await settle();
+  assert.deepEqual(titles(id), ['Song 2', 'Like 0002 1', 'Like 0002 2'], 'from Song 2, not the look that started with Song 1');
+  assert.deepEqual(similarAsked, [watch(video(1)), watch(video(2))]);
+  stopMusic(id, 'u1');
+});
+
+test('stopping while the last song waits on Autoplay stops at once, and adds nothing later', async () => {
+  const { id, guild, channel } = server();
+  setSetting(id, 'musicAutoplay', true);
+  let release!: () => void;
+  mixGate = new Promise((resolve) => (release = resolve));
+  addTracks(id, [song(1)], 'u1');
+  await startMusic(guild, channel);
+  lastPlayed().end();
+  await settle();
+  stopMusic(id, 'u1');
+  release();
+  await settle();
+  assert.deepEqual([titles(id), musicState(id).phase, played.length], [[], 'stopped', 1]);
+});
+
+test('shuffling leaves Autoplay’s songs at the end', async () => {
+  const { id, guild, channel } = server();
+  setSetting(id, 'musicAutoplay', true);
+  addTracks(id, [song(1)], 'u1');
+  await startMusic(guild, channel);
+  await settle();
+  addTracks(id, [2, 3, 4, 5, 6].map((n) => song(n)), 'u1');
+  for (let n = 0; n < 5; n++) {
+    shuffleQueue(id, 'u1');
+    assert.deepEqual(titles(id).slice(-2), ['Like 0001 1', 'Like 0001 2']);
+    assert.deepEqual(titles(id).slice(1, -2).sort(), ['Song 2', 'Song 3', 'Song 4', 'Song 5', 'Song 6']);
+  }
+  stopMusic(id, 'u1');
+});
+
+test('a mix that can’t be read falls back on the latest song played, and isn’t asked for again for a minute', async (t) => {
+  const tick = clock(t);
+  const errors = t.mock.method(console, 'error', () => {});
+  const { id, guild, channel } = server();
+  setSetting(id, 'musicAutoplay', true);
+  mixes.set(video(1), 'fail');
+  addTracks(id, [song(1)], 'u1');
+  addTracks(id, [{ ...song(9), uri: watch('bbbbbbbbbbb'), title: 'Picked' }], AUTOPLAY);
+  await startMusic(guild, channel);
+  lastPlayed().end();
+  await settle();
+  assert.deepEqual(titles(id), ['Picked', 'Like bbbb 1', 'Like bbbb 2'], 'Song 1’s mix failed, so from the song playing');
+  assert.deepEqual(similarAsked, [watch(video(1)), watch('bbbbbbbbbbb')]);
+
+  // Only Song 1's mix, failing, with nothing else to go on
+  const other = server();
+  setSetting(other.id, 'musicAutoplay', true);
+  addTracks(other.id, [song(1)], 'u1');
+  similarAsked.length = 0;
+  await startMusic(other.guild, other.channel);
+  await settle();
+  assert.equal(errors.mock.callCount(), 1, 'it says why, only once nothing could be read');
+  assert.match(String(errors.mock.calls.at(-1)!.arguments[1]), /not a bot/);
+  await seekMusic(other.id, 10_000);
+  await settle();
+  assert.equal(similarAsked.length, 1, 'jumping within the song doesn’t ask again straight away');
+  tick(61_000);
+  await seekMusic(other.id, 20_000);
+  await settle();
+  assert.equal(similarAsked.length, 2, 'a minute later it does');
+  stopMusic(id, 'u1');
+  stopMusic(other.id, 'u1');
+});
+
+test('Autoplay remembers what played through a restart', async (t) => {
+  t.mock.method(console, 'log', () => {});
+  const { id, guild, channel, join } = server();
+  join();
+  setSetting(id, 'musicAutoplay', true);
+  addTracks(id, [song(1)], 'u1');
+  await startMusic(guild, channel);
+  await settle();
+  lastPlayed().end();
+  await settle();
+  assert.deepEqual(titles(id), ['Like 0001 1', 'Like 0001 2']);
+  const saved = JSON.parse(getKv('musicSessions')!)[0];
+  assert.deepEqual(saved.played.map((p: { video: string }) => p.video), [video(1), '0001mix0001']);
+  await restart(guild);
+  await settle();
+  lastPlayed().end();
+  await settle();
+  assert.deepEqual(titles(id), ['Like 0001 2', 'Like 0001 3', 'Like 0001 4'], 'Song 1 still leads, and nothing played comes back');
   stopMusic(id, 'u1');
 });

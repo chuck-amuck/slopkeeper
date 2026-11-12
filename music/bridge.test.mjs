@@ -21,7 +21,8 @@ const FAKE_FETCH = `
   let raw = '';
   process.stdin.on('data', (c) => (raw += c)).on('end', () => {
     const r = JSON.parse(raw);
-    fs.appendFileSync(r.dir + '/../runs.log', (r.uri ?? r.url) + (r.info ? ' info' : '') + '\\n');
+    fs.appendFileSync(r.dir + '/../runs.log', (r.uri ?? r.url ?? r.similar) + (r.info ? ' info' : r.similar ? ' similar' : '') + '\\n');
+    if (r.similar) return console.log(JSON.stringify({ songs: [{ url: 'https://www.youtube.com/watch?v=bbbbbbbbbbb', title: 'Next', artist: 'Band', durationMs: 200000, cover: null }] }));
     if (r.title === 'Broken') process.exit(1);
     if (r.title === 'Missing') return console.log(JSON.stringify({ error: 'No match on YouTube or SoundCloud.', missing: true }));
     if (r.title === 'Odd') return console.log(JSON.stringify({ file: '../escape.webm' }));
@@ -145,6 +146,19 @@ test('a link can be looked up without downloading, and downloaded when it plays'
   assert.equal(fs.readdirSync(path.join(dataDir, 'audio')).length, 0);
   assert.equal((await fetchSong(base, { url })).status, 200);
   assert.deepEqual(runs(dataDir), [`${url} info`, url]);
+});
+
+test('songs like a YouTube video are listed for Autoplay, without downloading anything', async () => {
+  const dataDir = temp();
+  const { base } = await bridge({ dataDir });
+  const url = 'https://www.youtube.com/watch?v=aaaaaaaaaaa';
+  const res = await ask(base, '/similar', { method: 'POST', body: JSON.stringify({ url }) });
+  assert.equal(res.status, 200);
+  assert.deepEqual((await res.json()).songs.map((s) => s.title), ['Next']);
+  assert.equal(fs.readdirSync(path.join(dataDir, 'audio')).length, 0);
+  assert.deepEqual(runs(dataDir), [`${url} similar`]);
+  const bad = await ask(base, '/similar', { method: 'POST', body: JSON.stringify({ uri: 'spotify:track:1' }) });
+  assert.equal(bad.status, 400, 'it takes a link');
 });
 
 test('without a working yt-dlp, fetching says why', async () => {

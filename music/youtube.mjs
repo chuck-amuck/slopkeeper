@@ -171,6 +171,8 @@ export function createFetcher(o) {
     },
     /** What a YouTube or SoundCloud link is, without downloading it */
     lookup: (url) => run({ url, info: true }),
+    /** Songs like a YouTube video, from YouTube Music's mix for it */
+    similar: (url) => run({ similar: url }),
     stop() {
       clearInterval(updateTimer);
     },

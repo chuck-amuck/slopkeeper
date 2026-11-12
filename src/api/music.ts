@@ -2,7 +2,7 @@ import { type Guild } from 'discord.js';
 import { type IncomingMessage } from 'node:http';
 import path from 'node:path';
 import { logActivity } from '../activity.ts';
-import { addTracks, clearQueue, fileProblem, fileUploadPath, MOST_FILE_BYTES, moveTrack, musicChannelFor, musicState, pauseMusic, playFile, queueFrom, queueOf, removeTrack, seekFile, seekMusic, shuffleQueue, skipMusic, startMusic, stopFile, stopMusic } from '../features/music.ts';
+import { addTracks, AUTOPLAY, clearQueue, fileProblem, fileUploadPath, MOST_FILE_BYTES, moveTrack, musicChannelFor, musicState, pauseMusic, playFile, queueFrom, queueOf, removeTrack, seekFile, seekMusic, shuffleQueue, skipMusic, startMusic, stopFile, stopMusic } from '../features/music.ts';
 import { setting } from '../settings.ts';
 import { myPlaylists, playlistsReady, search, SpotifyError, type Track } from '../spotify.ts';
 import { type Ask, Refused, by, plain, readJson, refuse, saveBody, voiceChannelFor, whoDid } from './common.ts';
@@ -17,6 +17,7 @@ export function musicList(guild: Guild) {
     channelName: channel?.name ?? null,
     defaultChannelId: musicChannelFor(guild.id),
     volume: setting(guild.id, 'musicVolume'),
+    autoplay: setting(guild.id, 'musicAutoplay'),
     queue: queueOf(guild.id).map((r) => ({
       id: r.id,
       uri: r.uri,
@@ -25,7 +26,8 @@ export function musicList(guild: Guild) {
       album: r.album,
       cover: r.cover,
       durationMs: r.duration_ms,
-      addedBy: whoDid(guild, r.added_by),
+      addedBy: r.added_by === AUTOPLAY ? 'Autoplay' : whoDid(guild, r.added_by),
+      autoplay: r.added_by === AUTOPLAY,
     })),
   };
 }

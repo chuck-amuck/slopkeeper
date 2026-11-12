@@ -11,6 +11,7 @@ import { servedGuilds } from '../util.ts';
 import { commandMention } from '../commandIds.ts';
 import { BIN_DAYS, DAY, type Sound, VOLUME_PERCENT, addToDiscord, applyLevels, changeEmoji, clearBin, deletedSounds, dropMissingEmoji, findSound, levelLibrary, listSounds, parseEmoji, recordDiscordPlay, recordPlay, removeSound, renameSound, restoreDeleted, setSoundVolume, soundGain, syncToDiscord, uploadProblem } from './soundLibrary.ts';
 import { applyMusicVolume, applySoundVolume, applySpeechVolume, leaveIfAlone, leaveVoice, musicOn, play, stopPlayback } from './voiceAudio.ts';
+import { autoplayChanged } from './music.ts';
 import { affectsLoopRoom, checkLoopRoom, noteLoopRoom, refreshLoopRoom, startLoopRoom, stopLoopRoom } from './loopRoom.ts';
 import { playJoinSound, setJoinSound } from './joinSounds.ts';
 import { INPUT, NEXT, PREV, SETTINGS, SOUND_GONE, STOP, UPLOAD, answerUpload, askAboutUpload, canChangeSounds, editPanel, isSetting, managersOnly, onSetting, pageCount, panel, refreshPanels, settingsMenu, soundSettings, storeUpload, submitUpload, trackPanel } from './soundPanel.ts';
@@ -33,6 +34,7 @@ export async function afterSettingsChanged(guild: Guild, keys: string[]) {
     // The music page shows it
     feeds.music.changed(guild.id);
   }
+  if (keys.includes('musicAutoplay')) autoplayChanged(guild.id);
   if (keys.some(affectsLoopRoom)) await refreshLoopRoom(guild);
 }
 

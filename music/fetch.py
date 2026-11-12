@@ -3,6 +3,7 @@
 #   {"title", "artist", "durationMs", "dir"}  a song from Spotify, matched by name and length, then downloaded
 #   {"url", "dir"}                            a YouTube or SoundCloud link, downloaded
 #   {"url", "info": true}                     what a link is, without downloading it
+#   {"similar"}                               songs like a YouTube video, from YouTube Music's mix for it
 import json
 import re
 import sys
@@ -16,6 +17,11 @@ LONGEST = 20 * 60
 LOOKED_UP = 2
 OTHER_VERSIONS = re.compile(r'\b(live|en vivo|cover|karaoke|instrumental|remix|sped up|slowed|8d|reverb|demo|session|acoustic|acústico)\b', re.I)
 LINK = re.compile(r'^https?://((www|m|music)\.)?(youtube\.com|youtu\.be|soundcloud\.com)/', re.I)
+VIDEO = re.compile(r'^https://(?:(?:www|m|music)\.)?(?:youtube\.com/watch\?(?:.*&)?v=|youtu\.be/)(?P<video>[\w-]{11})')
+# How much of a mix is read. Its first songs are the closest, and reading more takes no longer
+MIX_LENGTH = 40
+# What a video's title says besides the song, like (Official Video) or [4K Remaster]
+EXTRAS = re.compile(r'\s*[(\[][^)\]]*\b(official|video|audio|lyrics?|visuali[sz]er|remaster(ed)?|hd|4k|mv)\b[^)\]]*[)\]]', re.I)
 
 
 def other_version(found, wanted):
@@ -95,7 +101,66 @@ def about(info, url):
     }
 
 
+def plain_name(name):
+    return re.sub(r'\W|official|vevo|topic|music', '', name.lower())
+
+
+def same_name(a, b):
+    """Whether two names are the same artist, as Linkin Park and LinkinParkOfficial are"""
+    return bool(plain_name(a)) and plain_name(a) == plain_name(b)
+
+
+def song_from(entry):
+    """A song in a mix as the queue shows it: "Artist - Title (Official Video)" read as the artist and the title"""
+    title = EXTRAS.sub('', entry.get('title') or '').strip()
+    channel = re.sub(r'\s*(- Topic|VEVO)$', '', entry.get('channel') or entry.get('uploader') or '').strip()
+    parts = re.split(r'\s+[-–—]\s+', title, maxsplit=1)
+    if len(parts) == 2 and all(parts):
+        artist, title = parts
+        # Some put the song first, as "Title - Artist"
+        if same_name(title, channel) and not same_name(artist, channel):
+            artist, title = title, artist
+    else:
+        artist = channel
+    return {
+        'url': f"https://www.youtube.com/watch?v={entry['id']}",
+        'title': title or entry.get('title') or 'Untitled',
+        'artist': artist,
+        'durationMs': round(entry['duration'] * 1000),
+        'cover': f"https://i.ytimg.com/vi/{entry['id']}/hqdefault.jpg",
+    }
+
+
+def similar(url):
+    """
+    Songs like a YouTube video, from YouTube Music's mix for it, or YouTube's own when that has too few. Leaves out the video itself
+    and live versions, covers and remixes
+    """
+    found = VIDEO.match(url)
+    if not found:
+        return {'error': 'Only a YouTube video has similar songs.', 'missing': True}
+    video = found.group('video')
+    songs, problem = [], None
+    for mix in (f'https://music.youtube.com/watch?v={video}&list=RDAMVM{video}', f'https://www.youtube.com/watch?v={video}&list=RD{video}'):
+        try:
+            entries = listed(mix, MIX_LENGTH)
+        except Exception as err:
+            problem = err
+            continue
+        seed = next((e.get('title') or '' for e in entries if e.get('id') == video), '')
+        these = [song_from(e) for e in entries if e.get('id') and e['id'] != video and e.get('duration') and not other_version(e.get('title'), seed)]
+        if len(these) > len(songs):
+            songs = these
+        if len(songs) >= 2:
+            break
+    if not songs and problem:
+        raise problem
+    return {'songs': songs}
+
+
 def answer(request):
+    if 'similar' in request:
+        return similar(request['similar'])
     if 'url' in request:
         url = request['url']
         if not LINK.match(url):

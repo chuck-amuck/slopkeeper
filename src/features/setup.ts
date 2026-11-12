@@ -125,6 +125,7 @@ export const LABELS: Record<SettingKey, string> = {
   ttsNightReminders: 'Say game night reminders',
   ttsHopOn: 'Say hop-on pings',
   musicVolume: 'Music volume',
+  musicAutoplay: 'Autoplay',
   musicDjRole: 'Who can control music',
 };
 
@@ -214,7 +215,8 @@ export function show(key: SettingKey, value: unknown): string {
     case 'gameNightReminderMin':
       return value ? `${value} min before` : 'off';
     default:
-      return String(value);
+      // Every other on/off setting, such as Autoplay and Say who joined
+      return typeof value === 'boolean' ? (value ? 'on' : 'off') : String(value);
   }
 }
 
@@ -263,7 +265,7 @@ export const GROUPS: [string, SettingKey[]][] = [
   ['Patch notes', ['patchNotes', 'patchNotesChannel']],
   ['Free games', ['freeGames', 'freeGamesChannel', 'freeGamesMinRating', 'freeGamesTaste', 'freeGamesMultiplayer', 'freeGamesUnlisted']],
   ['Soundboard', ['soundVolume', 'evenVolume', 'joinSounds', 'joinSoundDelayMs', 'joinSoundCooldownMin', 'soundManagerRole']],
-  ['Music', ['musicVolume', 'musicDjRole']],
+  ['Music', ['musicVolume', 'musicAutoplay', 'musicDjRole']],
   ['Looping sound room', ['loopRoom', 'loopSound', 'loopVolume', 'loopEvery', 'loopText', 'loopVoice', 'loopTextVolume', 'loopTextEvery', 'loopIntro', 'loopIntroDelayMs', 'loopSoundDelayMs', 'loopTextDelayMs']],
   ['Text to speech', ['tts', 'ttsVoice', 'ttsSpeed', 'ttsVolume', 'ttsChannel', 'ttsChannelWho', 'ttsGreet', 'ttsGreeting', 'ttsNightReminders', 'ttsHopOn', 'ttsRole', 'ttsMaxChars', 'ttsCooldownSec']],
 ];
@@ -610,8 +612,9 @@ export const setup: Feature = {
         .addSubcommand((s) =>
           s
             .setName('music')
-            .setDescription('Spotify in voice: how loud it plays, and who can control it')
+            .setDescription('Music in voice: how loud it plays, Autoplay, and who can control it')
             .addIntegerOption((o) => o.setName('volume').setDescription('How loud music plays, as a percentage (40 by default)').setMinValue(LIMITS.musicVolume[0]).setMaxValue(LIMITS.musicVolume[1]))
+            .addBooleanOption((o) => o.setName('autoplay').setDescription('Keep playing similar songs from YouTube when the queue runs out'))
             .addRoleOption((o) => o.setName('dj_role').setDescription('Only this role, plus people with Manage Server, can control music'))
             .addBooleanOption((o) => o.setName('everyone').setDescription('Let everyone control music again')),
         )
@@ -854,6 +857,7 @@ export const setup: Feature = {
         if (sub === 'music') {
           return apply(i, [
             ['musicVolume', i.options.getInteger('volume')],
+            ['musicAutoplay', i.options.getBoolean('autoplay')],
             ['musicDjRole', roleOrEveryone('dj_role')],
           ]);
         }

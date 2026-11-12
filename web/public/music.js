@@ -452,10 +452,34 @@ export function renderMusic(main) {
 
   // ---------- queue ----------
   const list = el('ol', { className: 'music-queue' });
-  const queueCount = el('span', { className: 'voice-label' });
+  // Beside the heading, leaving the toolbar room for its switch and buttons on a phone
+  const queueCount = el('span', { className: 'voice-label head-count' });
   const clearButton = confirmButton({}, 'Clear', 'Clear the queue?', async () => show(await request(api('/music/queue'), { method: 'DELETE' })));
   const shuffleButton = el('button', { className: 'with-icon', title: 'Put the songs waiting in a random order', onclick: () => void act(() => request(api('/music/queue/shuffle'), { method: 'POST' })) }, icon('shuffle'), 'Shuffle');
-  const queueCard = el('section', { className: 'card music' }, el('div', { className: 'card-head' }, el('h2', {}, 'Up next'), el('div', { className: 'toolbar' }, queueCount, shuffleButton, clearButton)), list);
+  // Autoplay is a setting for the whole server, saved as soon as it's switched. Updates wait until every switch is saved, and a
+  // failed save only switches it back if it was the latest
+  let savingAutoplay = 0;
+  let autoplaySwitches = 0;
+  const autoplayBox = el('input', {
+    type: 'checkbox',
+    onchange: (e) => {
+      const on = e.target.checked;
+      const mine = ++autoplaySwitches;
+      savingAutoplay++;
+      void attempt(async () => {
+        await request(api('/settings/musicAutoplay'), { method: 'PUT', json: { value: on } });
+        toast(on ? 'Autoplay is on: when the queue runs out, similar songs keep playing.' : 'Autoplay is off: the music stops when the queue runs out.');
+        return true;
+      })
+        .then((saved) => {
+          if (!saved && mine === autoplaySwitches) autoplayBox.checked = !on;
+        })
+        .finally(() => savingAutoplay--);
+    },
+  });
+  // The words are a text node rather than a span, which a phone would hide
+  const autoplaySwitch = el('label', { className: 'toggle autoplay', title: 'When the song playing is the last, adds two similar songs from YouTube, and more as they run out. Songs people add play first.' }, autoplayBox, 'Autoplay');
+  const queueCard = el('section', { className: 'card music' }, el('div', { className: 'card-head' }, el('h2', {}, 'Up next', queueCount), el('div', { className: 'toolbar' }, autoplaySwitch, shuffleButton, clearButton)), list);
 
   /** The first song stays put while it's playing or paused, so the list starts after it */
   const held = () => (data && data.phase !== 'stopped' ? 1 : 0);
@@ -586,6 +610,7 @@ export function renderMusic(main) {
       volume.set(data.volume);
       volumeLabel.hidden = false;
     }
+    if (!savingAutoplay) autoplayBox.checked = !!data.autoplay;
 
     const song = data.phase !== 'stopped' ? data.queue[0] : null;
     nowCover.replaceChildren(cover(song?.cover, 96));

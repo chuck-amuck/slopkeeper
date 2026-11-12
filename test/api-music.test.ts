@@ -8,6 +8,7 @@ import path from 'node:path';
 import { config } from '../src/config.ts';
 import { recentActivity } from '../src/activity.ts';
 import { Mixer } from '../src/mixer.ts';
+import { addTracks, AUTOPLAY } from '../src/features/music.ts';
 import { soundboard } from '../src/features/soundboard.ts';
 import { resetSpotify } from '../src/spotify.ts';
 import { GUILD, call, guild, ok, permitted, refused, wav } from './apiFixture.ts';
@@ -123,5 +124,20 @@ test('the page lists the Spotify account’s own playlists, and can shuffle one 
   const music = await ok(`/guilds/${GUILD}/music/queue`, { method: 'POST', json: { query: `spotify:playlist:${LIST}`, shuffle: true } });
   assert.equal(music.message, 'Added 100 random songs from Road Trip.');
   assert.ok(music.queue.some((r: any) => Number(r.title.slice(5)) >= 100), 'from all of it, not just the first 100');
+  await ok(`/guilds/${GUILD}/music/queue`, { method: 'DELETE' });
+});
+
+test('Autoplay switches from the page, its songs say so, and the page’s songs go ahead of them', async () => {
+  const track = (n: number) => ({ uri: `spotify:track:${String(n).padStart(22, 'b')}`, title: `Song ${n}`, artist: 'Band', album: 'Album', cover: null, durationMs: 180_000 });
+  assert.equal((await ok(`/guilds/${GUILD}/music`)).autoplay, false);
+  await ok(`/guilds/${GUILD}/settings/musicAutoplay`, { method: 'PUT', json: { value: true } });
+  assert.equal(recentActivity(GUILD, 1)[0].action, 'Set Autoplay to on');
+  addTracks(GUILD, [{ ...track(1), uri: 'https://www.youtube.com/watch?v=ccccccccccc' }], AUTOPLAY);
+  let music = await ok(`/guilds/${GUILD}/music/queue`, { method: 'POST', json: { track: track(2) } });
+  assert.equal(music.autoplay, true);
+  assert.deepEqual(music.queue.map((r: any) => [r.title, r.addedBy, r.autoplay]), [['Song 2', 'Web UI', false], ['Song 1', 'Autoplay', true]]);
+  await ok(`/guilds/${GUILD}/settings/musicAutoplay`, { method: 'PUT', json: { value: false } });
+  music = await ok(`/guilds/${GUILD}/music`);
+  assert.deepEqual([music.autoplay, music.queue.map((r: any) => r.title)], [false, ['Song 2']], 'turning it off takes its songs out');
   await ok(`/guilds/${GUILD}/music/queue`, { method: 'DELETE' });
 });

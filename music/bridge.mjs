@@ -1,5 +1,5 @@
 // The music container: finds songs on YouTube or SoundCloud with yt-dlp and downloads their audio, for the bot to play from the
-// shared volume. The bot asks over HTTP, with MUSIC_TOKEN
+// shared volume, and lists songs like one for Autoplay. The bot asks over HTTP, with MUSIC_TOKEN
 import { timingSafeEqual } from 'node:crypto';
 import fs from 'node:fs';
 import http from 'node:http';
@@ -54,7 +54,7 @@ export function createBridge(options = {}) {
       req.once('close', () => sse.delete(res));
       return;
     }
-    if (route !== 'POST /fetch' && route !== 'POST /lookup') return json(res, 404, { error: 'not found' });
+    if (route !== 'POST /fetch' && route !== 'POST /lookup' && route !== 'POST /similar') return json(res, 404, { error: 'not found' });
     let body;
     try {
       let raw = '';
@@ -68,7 +68,12 @@ export function createBridge(options = {}) {
     if (route === 'POST /fetch' ? !song && !link : !link) return json(res, 400, { error: 'say which song or link' });
     if (!youtube.state.ready) return json(res, 503, { error: youtube.state.message || 'yt-dlp isn’t ready' });
     try {
-      const answer = route === 'POST /lookup' ? await youtube.lookup(body.url) : await youtube.fetchAudio(link ? { url: body.url } : { uri: body.uri, title: body.title, artist: body.artist, durationMs: body.durationMs });
+      const answer =
+        route === 'POST /lookup'
+          ? await youtube.lookup(body.url)
+          : route === 'POST /similar'
+            ? await youtube.similar(body.url)
+            : await youtube.fetchAudio(link ? { url: body.url } : { uri: body.uri, title: body.title, artist: body.artist, durationMs: body.durationMs });
       if (answer.error) return json(res, answer.missing ? 404 : 502, { error: answer.error });
       return json(res, 200, answer);
     } catch (err) {
