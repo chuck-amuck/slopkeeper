@@ -299,7 +299,7 @@ button.quiet {
 }
 
 button.icon {
-  width: 38px;
+  width: var(--control-h);
   padding: 0;
   display: inline-grid;
   place-items: center;
@@ -535,6 +535,7 @@ main {
 /* The volumes, folded under the Volume button beside Play in */
 .voice-box {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: var(--space-2);
   min-width: 0;
 }
@@ -708,6 +709,23 @@ main {
 .voice-label {
   color: var(--muted);
   font-size: var(--text-sm);
+  white-space: nowrap;
+}
+
+/* On a phone the music's volume gets a row of its own, so the channel and the slider both have room */
+@media (max-width: 640px) {
+  .toolbar.music-voice {
+    flex-wrap: wrap;
+  }
+
+  .music-voice .voice-volume {
+    flex: 1 1 100%;
+  }
+
+  .music-voice .voice-volume input[type='range'] {
+    flex: 1 1 auto;
+    width: auto;
+  }
 }
 
 .slots {
@@ -2188,11 +2206,10 @@ textarea {
   }
 }
 
-/* Touch screens get fingertip-sized targets for the small controls (buttons and fields are already 38px tall) */
+/* Touch screens get fingertip-sized targets: 44px, as Apple and Android both suggest */
 @media (pointer: coarse) {
-  .song-actions button.icon {
-    width: 44px;
-    min-height: 44px;
+  :root {
+    --control-h: 44px;
   }
 
   .star {
@@ -2287,6 +2304,7 @@ textarea {
   .all-lines {
     display: inline-flex;
     flex: none;
+    align-items: center;
   }
 
   .say-voice {

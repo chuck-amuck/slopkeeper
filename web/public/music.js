@@ -159,7 +159,7 @@ export function renderMusic(main) {
     el('div', { className: 'toolbar now-controls' }, playButton, skipButton, stopButton),
   );
   // Where and how loud, at the top as on the Soundboard
-  const voiceRow = el('div', { className: 'toolbar voice' }, el('span', { className: 'voice-label' }, 'Play in'), picker, volumeLabel);
+  const voiceRow = el('div', { className: 'toolbar voice music-voice' }, el('span', { className: 'voice-label' }, 'Play in'), picker, volumeLabel);
 
   async function playOrPause() {
     if (data?.phase === 'playing') return request(api('/music/pause'), { method: 'POST' });
