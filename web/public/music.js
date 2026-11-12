@@ -357,14 +357,17 @@ export function renderMusic(main) {
     // A file takes the box's place while it uploads, and until it's added or thrown away
     const file = !!(sending || uploaded);
     const link = LINK.test(text) && !file;
-    query.hidden = file;
+    searchField.hidden = file;
     fileChip.hidden = !file;
-    uploadButton.hidden = file || mode !== 'songs';
+    // Inside the box, and gone once anything's typed, as the placeholder is
+    uploadButton.hidden = mode !== 'songs' || query.value !== '';
+    searchField.classList.toggle('with-upload', !uploadButton.hidden);
     searchButton.hidden = file || link || mode === 'playlists';
     linkNext.hidden = linkEnd.hidden = !(link || uploaded);
     linkShuffle.hidden = file || !LIST_LINK.test(text);
   }
   const results = el('div', { className: 'music-results', hidden: true });
+  const searchField = el('div', { className: 'search-field' }, query, uploadButton);
   const searchForm = el(
     'form',
     {
@@ -386,9 +389,8 @@ export function renderMusic(main) {
         }).finally(() => (searchButton.disabled = false));
       },
     },
-    query,
+    searchField,
     fileChip,
-    uploadButton,
     filePicker,
     searchButton,
     linkNext,

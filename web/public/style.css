@@ -2198,9 +2198,40 @@ textarea {
   padding: 4px 12px;
 }
 
-.music-search input[type='search'] {
+/* The search box, with Upload inside its right end until something's typed */
+.search-field {
+  position: relative;
+  display: flex;
   flex: 1 1 220px;
   min-width: 0;
+}
+
+.search-field input[type='search'] {
+  flex: 1;
+  min-width: 0;
+}
+
+.search-field.with-upload input[type='search'] {
+  padding-right: 104px;
+}
+
+button.music-upload {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  bottom: 4px;
+  min-height: 0;
+  padding: 0 10px;
+  border-color: transparent;
+  border-radius: var(--radius-sm);
+  background: var(--raised);
+  color: var(--muted);
+  font-size: var(--text-sm);
+}
+
+button.music-upload:hover:not(:disabled) {
+  background: var(--line);
+  color: var(--text);
 }
 
 .music-results {
@@ -2743,19 +2774,18 @@ textarea {
     max-width: 100%;
   }
 
-  /* Upload is its arrow alone, so the box, Upload and Search share a row */
+  /* Upload is its arrow alone, leaving the box room for what's typed */
   .upload-word {
     display: none;
   }
 
   button.music-upload {
-    width: var(--control-h);
+    width: 40px;
     padding: 0;
-    justify-content: center;
   }
 
-  .music-search input[type='search'] {
-    flex-basis: 120px;
+  .search-field.with-upload input[type='search'] {
+    padding-right: 48px;
   }
 
   /* The file gets the row, so its name shows, and Play next and Add to end go under it */
