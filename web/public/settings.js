@@ -64,20 +64,6 @@ const FIELDS = {
   ttsCooldownSec: { kind: 'number', unit: 'seconds', hint: 'Shortest time between one person’s lines. The page counts as one person.' },
 };
 
-const GROUPS = [
-  ['Posting', ['announceChannel', 'timezone']],
-  ['Hop-on pings', ['hopOnRole', 'hopOnMinPeople', 'hopOnCooldownMin']],
-  ['Voice sessions', ['sessionRecap', 'recapMinMinutes', 'sessionGraceMin']],
-  ['Leaderboard and recap', ['weeklyLeaderboard', 'weeklyPostDay', 'weeklyPostHour', 'monthlyRecap']],
-  ['Games', ['steamCountry', 'steamStatus', 'gameNightReminderMin']],
-  ['Sale alerts', ['saleMinDiscount', 'saleSteamWishlists', 'saleChannel']],
-  ['Patch notes', ['patchNotes', 'patchNotesChannel']],
-  ['Free games', ['freeGames', 'freeGamesChannel', 'freeGamesMinRating', 'freeGamesTaste', 'freeGamesMultiplayer', 'freeGamesUnlisted']],
-  ['Soundboard', ['soundVolume', 'evenVolume', 'joinSounds', 'joinSoundDelayMs', 'joinSoundCooldownMin', 'soundManagerRole']],
-  ['Music', ['musicVolume', 'musicDjRole']],
-  ['Looping sound room', ['loopRoom', 'loopSound', 'loopVolume', 'loopEvery', 'loopText', 'loopVoice', 'loopTextVolume', 'loopTextEvery', 'loopIntro', 'loopIntroDelayMs', 'loopSoundDelayMs', 'loopTextDelayMs']],
-  ['Text to speech', ['tts', 'ttsVoice', 'ttsSpeed', 'ttsVolume', 'ttsChannel', 'ttsChannelWho', 'ttsGreet', 'ttsGreeting', 'ttsNightReminders', 'ttsHopOn', 'ttsRole', 'ttsMaxChars', 'ttsCooldownSec']],
-];
 
 export function renderSettings(main) {
   const guildId = state.guildId;
@@ -469,9 +455,12 @@ export function renderSettings(main) {
       const [data, joinSounds, gamePings] = await Promise.all([request(api('/settings')), request(api('/join-sounds')), request(api('/game-pings'))]);
       if (guildId !== state.guildId || !main.isConnected) return;
       const byKey = new Map(data.settings.map((s) => [s.key, s]));
-      const grouped = new Set(GROUPS.flatMap(([, keys]) => keys));
+      // The bot says how to group them, the same way /setup show does
+      // (an older bot sends none, and its settings all go under Other until it's updated)
+      const given = data.groups ?? [];
+      const grouped = new Set(given.flatMap(([, keys]) => keys));
       const others = data.settings.filter((s) => !grouped.has(s.key)).map((s) => s.key);
-      const groups = others.length ? [...GROUPS, ['Other', others]] : GROUPS;
+      const groups = others.length ? [...given, ['Other', others]] : given;
       main.replaceChildren(
         el('datalist', { id: 'time-zones' }, data.timeZones.map((zone) => el('option', { value: zone }))),
         ...groups.flatMap(([title, keys]) => {

@@ -1,4 +1,17 @@
-import { DiscordAPIError, Events, MessageFlags, RESTJSONErrorCodes, SlashCommandBuilder, type Client, type VoiceState } from 'discord.js';
+import {
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
+  DiscordAPIError,
+  Events,
+  MessageFlags,
+  RESTJSONErrorCodes,
+  SlashCommandBuilder,
+  type ButtonInteraction,
+  type Client,
+  type VoiceBasedChannel,
+  type VoiceState,
+} from 'discord.js';
 import { idSetting, isAllowed, setting } from '../settings.ts';
 import type { Feature } from '../types.ts';
 import { gameName } from '../gameNames.ts';
@@ -35,13 +48,45 @@ async function onVoiceState(client: Client<true>, oldState: VoiceState, newState
   const hopOnRole = idSetting(guildId, 'hopOnRole');
   const roles = [...new Set([...(hopOnRole ? [hopOnRole] : []), ...rolesForGames(guildId, games)])];
   if (roles.length) text = `${roles.map((id) => `<@&${id}>`).join(' ')} ${text}`;
-  await out.send({ content: text, allowedMentions: { roles } });
+  await out.send({ content: text, allowedMentions: { roles }, components: [buttons(channel)] });
   const doing = games.length ? `playing ${listNames(games)}` : 'in voice';
   void announceAloud(channel, `${listNames(humans.map((m) => m.displayName))} ${humans.length === 1 ? 'is' : 'are'} ${doing}, hop on`, 'ttsHopOn').catch(console.error);
 }
 
+/** A link straight into the channel, and a way to say you're coming */
+function buttons(channel: VoiceBasedChannel) {
+  return new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder().setStyle(ButtonStyle.Link).setURL(`https://discord.com/channels/${channel.guild.id}/${channel.id}`).setLabel(`Join ${channel.name}`.slice(0, 80)),
+    new ButtonBuilder().setCustomId(`hop:omw:${channel.id}`).setStyle(ButtonStyle.Secondary).setEmoji('🏃').setLabel('On my way'),
+  );
+}
+
+const ON_THE_WAY = '-# 🏃 On the way: ';
+
+/** Adds or takes off someone's name on the post's "On the way" line, which is kept in the post itself so it survives restarts */
+export function onTheWay(content: string, userId: string): string {
+  const lines = content.split('\n');
+  const at = lines.findIndex((line) => line.startsWith(ON_THE_WAY));
+  const ids = at < 0 ? [] : [...lines[at].matchAll(/<@(\d+)>/g)].map((m) => m[1]);
+  const now = ids.includes(userId) ? ids.filter((id) => id !== userId) : [...ids, userId];
+  const line = now.length ? `${ON_THE_WAY}${now.map((id) => `<@${id}>`).join(', ')}` : null;
+  if (at < 0) return line ? [...lines, line].join('\n') : content;
+  return (line ? lines.with(at, line) : lines.toSpliced(at, 1)).join('\n');
+}
+
+async function onButton(i: ButtonInteraction) {
+  if (!i.inCachedGuild()) return;
+  const [, action, channelId] = i.customId.split(':');
+  if (action !== 'omw') return;
+  if (i.member.voice.channelId === channelId) return i.reply({ content: `You’re already in <#${channelId}>.`, flags: MessageFlags.Ephemeral });
+  // Editing doesn't ping anyone again
+  return i.update({ content: onTheWay(i.message.content, i.user.id), allowedMentions: { parse: [] } });
+}
+
 export const hopOn: Feature = {
   title: 'Hop-on pings',
+  componentPrefix: 'hop',
+  onButton,
   commands: [
     {
       data: new SlashCommandBuilder().setName('notify').setDescription('Toggle getting pinged when people hop in voice'),

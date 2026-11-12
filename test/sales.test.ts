@@ -660,7 +660,7 @@ test('/sales lists what’s on sale from the last check, without asking Steam', 
   await checkSales(s.client);
   world.pricesDown = true;
   let reply: { embeds: { toJSON(): { description: string; title: string } }[]; allowedMentions: unknown } | undefined;
-  await sales.commands![0].run({ inCachedGuild: () => true, guild: s.guild, deferReply: async () => {}, editReply: async (r: typeof reply) => (reply = r) } as never);
+  await sales.commands![0].run({ inCachedGuild: () => true, guild: s.guild, user: { id: 'a' }, options: { getBoolean: () => null }, deferReply: async () => {}, editReply: async (r: typeof reply) => (reply = r) } as never);
   const { description, title } = reply!.embeds[0].toJSON();
   assert.equal(title, '💸 2 games on sale');
   assert.match(description, /Small Sale/, 'it shows sales too small to post');
@@ -671,23 +671,44 @@ test('/sales lists what’s on sale from the last check, without asking Steam', 
 test('/sales says so when nothing is on sale', async () => {
   const s = server(['a']);
   let reply: unknown;
-  await sales.commands![0].run({ inCachedGuild: () => true, guild: s.guild, deferReply: async () => {}, editReply: async (r: unknown) => (reply = r) } as never);
-  assert.match(reply as string, /Nothing/);
+  await sales.commands![0].run({ inCachedGuild: () => true, guild: s.guild, user: { id: 'a' }, options: { getBoolean: () => null }, deferReply: async () => {}, editReply: async (r: unknown) => (reply = r) } as never);
+  assert.match((reply as { content: string }).content, /Nothing/);
 });
 
-test('a long /sales says how many didn’t fit', async () => {
+test('a long /sales turns pages, and the buttons show the next page', async () => {
   const s = server(['a']);
   for (let n = 0; n < 60; n++) {
     addGame(s.id, `${'Extremely long title '.repeat(3)}${n}`, 5000 + n);
     world.prices.set(5000 + n, { discount: 50 });
   }
   await checkSales(s.client);
-  let reply: { embeds: { toJSON(): { description: string; footer?: { text: string } } }[] } | undefined;
-  await sales.commands![0].run({ inCachedGuild: () => true, guild: s.guild, deferReply: async () => {}, editReply: async (r: typeof reply) => (reply = r) } as never);
-  const { description, footer } = reply!.embeds[0].toJSON();
-  assert.ok(description.length <= 4096);
-  const shown = description.split('\n').length;
-  assert.equal(footer?.text, `and ${60 - shown} more`);
+  type Reply = { embeds: { toJSON(): { description: string; footer?: { text: string } } }[]; components: { toJSON(): { components: { custom_id: string; disabled?: boolean }[] } }[] };
+  let reply: Reply | undefined;
+  await sales.commands![0].run({ inCachedGuild: () => true, guild: s.guild, user: { id: 'a' }, options: { getBoolean: () => null }, deferReply: async () => {}, editReply: async (r: Reply) => (reply = r) } as never);
+  const first = reply!.embeds[0].toJSON();
+  assert.ok(first.description.length <= 4096);
+  assert.match(first.footer!.text, /^Page 1 of \d+$/);
+  const [back, next] = reply!.components[0].toJSON().components;
+  assert.equal(back.disabled, true);
+  await sales.onButton!({ inCachedGuild: () => true, guild: s.guild, customId: next.custom_id, deferUpdate: async () => {}, editReply: async (r: Reply) => (reply = r) } as never);
+  const second = reply!.embeds[0].toJSON();
+  assert.match(second.footer!.text, /^Page 2 of /);
+  assert.notEqual(second.description, first.description);
+});
+
+test('/sales mine shows only what you want or wishlisted', async () => {
+  const s = server(['a', 'b']);
+  linkSteam('a');
+  world.wishlists.set(STEAM_ID('a'), [61]);
+  world.prices.set(61, { discount: 50 });
+  await checkSales(s.client);
+  const mine = async (user: string) => {
+    let reply: { content: string; embeds: { toJSON(): { title: string } }[] } | undefined;
+    await sales.commands![0].run({ inCachedGuild: () => true, guild: s.guild, user: { id: user }, options: { getBoolean: () => true }, deferReply: async () => {}, editReply: async (r: typeof reply) => (reply = r) } as never);
+    return reply!;
+  };
+  assert.match((await mine('a')).embeds[0].toJSON().title, /1 game on sale that you want/);
+  assert.match((await mine('b')).content, /Nothing you want/);
 });
 
 test('a wishlisted game with no name yet shows its Steam name, or its number if Steam has none', async () => {

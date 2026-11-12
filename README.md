@@ -56,7 +56,7 @@ Everything happens through slash commands (type `/` in any channel, or run `/hel
 
 ### Hop-on pings
 
-When a voice channel reaches 2 people, the bot posts in the announce channel. The post names who's there and what they're playing, and pings the hop-on role (set with [`/setup hopon-role`](#server-settings)) plus the [game ping](#game-pings) role of each game being played. It fires once as the channel reaches that number, not on every join after. It then waits 2 hours before pinging again, so a busy evening doesn't spam. The AFK channel and bots don't count. Both numbers can be changed with `/setup hopon`.
+When a voice channel reaches 2 people, the bot posts in the announce channel. The post names who's there and what they're playing, and pings the hop-on role (set with [`/setup hopon-role`](#server-settings)) plus the [game ping](#game-pings) role of each game being played. It fires once as the channel reaches that number, not on every join after. It then waits 2 hours before pinging again, so a busy evening doesn't spam. The AFK channel and bots don't count. Both numbers can be changed with `/setup hopon`. The post has a **Join** button that opens the voice channel, and **On my way**, which adds your name to the post (press it again to take it off).
 
 | Command | What it does |
 | --- | --- |
@@ -242,7 +242,7 @@ The "group" here is the server's members who have linked Steam or marked at leas
 
 | Command | What it does |
 | --- | --- |
-| `/sales` | Shows what this server plays or wants that was on sale at the last check, including sales too small to post. A long list stops at what fits in one message and says how many more there are. |
+| `/sales [mine]` | Shows what this server plays or wants that was on sale at the last check, including sales too small to post. A long list has ◀ ▶ buttons to turn the pages. `mine:True` shows only games you want or have on your Steam wishlist. |
 
 ### Free games
 
@@ -498,7 +498,7 @@ Every setting has a sensible default, so only the announce channel needs setting
 
 | Command | What it does |
 | --- | --- |
-| `/setup show` | Lists every setting, its current value and where it comes from: **set here** (with `/setup`), **host default** (the host's `.env`) or **default**. |
+| `/setup show` | Lists every setting in the same groups as the web UI's Settings, with its current value. A changed setting says where it comes from: **set here** (with `/setup`) or **host default** (the host's `.env`). Anything stopping the bot, like a missing announce channel or a deleted role, is listed first. |
 | `/setup announce-channel channel` | Sets where hop-on pings, session recaps, the weekly leaderboard, the monthly recap and sale alerts are posted, and free games unless they have their own channel. Until it's set, the bot works but posts nothing. It checks that it can post in the channel and tells you which permission is missing if not. |
 | `/setup hopon-role [role] [off]` | Sets the role that hop-on pings ping, which `/notify` hands out. `off:True` posts hop-on pings without pinging a role. It warns you if its own role is below this one, since Discord then won't let it hand the role out. |
 | `/setup hopon [min_people] [cooldown_minutes]` | How many people a voice channel needs before a hop-on ping, and how long to wait before the next one. |
@@ -795,7 +795,7 @@ It applies the same rules as `/sound` and `/setup`, and every request needs an `
 | `PUT /guilds/:id/me` | Says which member the signed-in person is: `{ "userId": "..." }` |
 | `DELETE /guilds/:id/me` | Unlinks them |
 | `GET /guilds/:id/stats?period=<week\|month\|year\|all>&user=<id>&game=<name>` | Game and voice totals, with game time over the period, plus sessions, rank and when it was last played where a person or game is chosen |
-| `GET /guilds/:id/settings` | Lists settings, channels, roles and time zones |
+| `GET /guilds/:id/settings` | Lists settings, the `groups` they're shown in (as in `/setup show`), channels, roles and time zones |
 | `PUT /guilds/:id/settings/:key` | Changes a setting: `{ "value": ... }` |
 | `DELETE /guilds/:id/settings/:key` | Puts a setting back to its default |
 

@@ -1,4 +1,4 @@
-import { EmbedBuilder, escapeMarkdown, MessageFlags, SlashCommandBuilder, type Client, type Guild } from 'discord.js';
+import { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, escapeMarkdown, MessageFlags, SlashCommandBuilder, type Client, type Guild } from 'discord.js';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { config } from '../config.ts';
 import { db } from '../db.ts';
@@ -284,24 +284,54 @@ async function checkGuild(client: Client<true>, guild: Guild, prices: Prices) {
   for (const g of due) rememberAlert(guild.id, g.appid, g.discount);
 }
 
+/** A page of what's on sale, everything or only what one person wants or wishlisted, with buttons to turn pages */
+export async function salesPage(guild: Guild, wanted: number, mine: string | null) {
+  const all = await onSale(guild);
+  const games = mine ? all.filter((g) => g.wanted.includes(mine) || g.wishlisted.includes(mine)) : all;
+  if (!games.length) {
+    const content = mine ? 'Nothing you want or have on your Steam wishlist is on sale right now.' : 'Nothing this server plays or wants is on sale right now.';
+    return { content, embeds: [], components: [] };
+  }
+  const info = appInfo();
+  const pages = paginate(games.map((g) => saleLine(g, saleName(g, info))), LIST_CHARS);
+  const page = Math.min(Math.max(wanted, 0), pages.length - 1);
+  const title = `💸 ${plural(games.length, 'game')} on sale${mine ? ' that you want' : ''}`;
+  const embed = new EmbedBuilder().setTitle(title).setDescription(pages[page].join('\n')).setColor(0x57f287);
+  if (pages.length === 1) return { content: '', embeds: [embed], components: [] };
+  embed.setFooter({ text: `Page ${page + 1} of ${pages.length}` });
+  const turn = (target: number, emoji: string) =>
+    new ButtonBuilder()
+      .setCustomId(`sales:page:${target}:${mine ?? ''}`)
+      .setEmoji(emoji)
+      .setStyle(ButtonStyle.Secondary)
+      .setDisabled(target < 0 || target >= pages.length);
+  return { content: '', embeds: [embed], components: [new ActionRowBuilder<ButtonBuilder>().addComponents(turn(page - 1, '◀️'), turn(page + 1, '▶️'))] };
+}
+
 export const sales: Feature = {
   title: 'Sale alerts',
+  componentPrefix: 'sales',
   commands: [
     {
-      data: new SlashCommandBuilder().setName('sales').setDescription('Show what this server plays or wants that’s on sale'),
+      data: new SlashCommandBuilder()
+        .setName('sales')
+        .setDescription('Show what this server plays or wants that’s on sale')
+        .addBooleanOption((o) => o.setName('mine').setDescription('Only games you want or have on your Steam wishlist')),
       async run(i) {
         if (!i.inCachedGuild()) return i.reply({ content: 'Use this in a server.', flags: MessageFlags.Ephemeral });
         await i.deferReply();
-        const games = await onSale(i.guild);
-        if (!games.length) return i.editReply('Nothing this server plays or wants is on sale right now.');
-        const info = appInfo();
-        const [page] = paginate(games.map((g) => saleLine(g, saleName(g, info))), LIST_CHARS);
-        const embed = new EmbedBuilder().setTitle(`💸 ${plural(games.length, 'game')} on sale`).setDescription(page.join('\n')).setColor(0x57f287);
-        if (page.length < games.length) embed.setFooter({ text: `and ${games.length - page.length} more` });
-        return i.editReply({ embeds: [embed], allowedMentions: { parse: [] } });
+        return i.editReply({ ...(await salesPage(i.guild, 0, i.options.getBoolean('mine') ? i.user.id : null)), allowedMentions: { parse: [] } });
       },
     },
   ],
+  async onButton(i) {
+    if (!i.inCachedGuild()) return;
+    const [, action, page, mine] = i.customId.split(':');
+    if (action !== 'page') return;
+    // Working out the list again can take a moment
+    await i.deferUpdate();
+    return i.editReply({ ...(await salesPage(i.guild, Number(page), mine || null)), allowedMentions: { parse: [] } });
+  },
   setup(client) {
     const run = () => void checkSales(client).catch(console.error);
     setTimeout(run, 60_000);

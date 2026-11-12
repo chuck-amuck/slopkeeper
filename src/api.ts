@@ -22,7 +22,7 @@ import { gameName, gameSpellings, mergeGames, separateGame } from './gameNames.t
 import { addTracks, clearQueue, fileProblem, fileUploadPath, MOST_FILE_BYTES, moveTrack, musicChannelFor, musicState, pauseMusic, playFile, queueFrom, queueOf, removeTrack, seekFile, seekMusic, shuffleQueue, skipMusic, startMusic, stopFile, stopMusic } from './features/music.ts';
 import { phrases, previewSpeech, removePhrase, savePhrase, say, serverVoice, TooSoon, voiceGroup, VOICES } from './features/say.ts';
 import { voiceTotals } from './features/sessions.ts';
-import { checkSetting, LABELS, LIMITS, show, source, STEPS } from './features/setup.ts';
+import { checkSetting, GROUPS, LABELS, LIMITS, show, source, STEPS } from './features/setup.ts';
 import { addSound, addToDiscord, afterSettingsChanged, BIN_DAYS, changeEmoji, deletedSounds, eraseDeleted, expiresAt, favourites, findSound, joinSounds, listSounds, loopBotStatus, loopSpeechProblem, parseEmoji, playCounts, playDiscordSound, playFromWeb, playingChange, playingNow, playingVersion, postPanel, refreshPanels, removeSound, renameSound, restoreDeleted, restoreSound, saveFromDiscord, setFavourite, setJoinSound, setSoundVolume, type Sound, soundLevels, soundVolumes, stopPlayback, stopPlayingOne, swapOnDiscord, syncToDiscord, takeOffDiscord, trimmedSounds, trimProblem, trimSound, untaken, uploadProblem, volumeProblem } from './features/soundboard.ts';
 import { DEFAULTS, idSetting, isAllowed, setSetting, setting, type SettingKey } from './settings.ts';
 import { myPlaylists, playlistsReady, search, SpotifyError, type Track } from './spotify.ts';
@@ -231,6 +231,7 @@ function settingList(guild: Guild) {
       limits: LIMITS[key as keyof typeof LIMITS] ?? null,
       step: STEPS[key as keyof typeof LIMITS] ?? 1,
     })),
+    groups: GROUPS,
     channels: textChannels(guild),
     voiceChannels: [...guild.channels.cache.values()]
       .filter((c): c is VoiceChannel => c.type === ChannelType.GuildVoice && c.id !== guild.afkChannelId && listed(guild)(c))

@@ -281,6 +281,11 @@ test('a hop-on post names a game once, whatever it’s called', async (t) => {
   assert.equal((sent[0].content!.match(/Deep Rock Galactic/g) ?? []).length, 1);
   assert.doesNotMatch(sent[0].content!, /deeprockgalactic/);
   assert.match(sent[0].content!, /<@&drg>/);
+  const [row] = (sent[0] as { components: { toJSON(): { components: { url?: string; custom_id?: string; label: string }[] } }[] }).components;
+  const [link, coming] = row.toJSON().components;
+  assert.match(link.url!, /^https:\/\/discord\.com\/channels\/hopon\/\w+$/);
+  assert.match(link.label, /^Join /);
+  assert.match(coming.custom_id!, /^hop:omw:/);
 });
 
 test('a hop-on ping is said in voice when that’s turned on, and the post is the same', async (t) => {

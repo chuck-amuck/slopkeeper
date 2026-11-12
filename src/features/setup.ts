@@ -10,7 +10,7 @@ import {
   type Role,
 } from 'discord.js';
 import { logActivity } from '../activity.ts';
-import { DEFAULT_ENV, DEFAULTS, setSetting, setting, storedSetting, type SettingKey } from '../settings.ts';
+import { DEFAULT_ENV, DEFAULTS, idSetting, setSetting, setting, storedSetting, type SettingKey } from '../settings.ts';
 import type { Feature } from '../types.ts';
 import { isTimeZone, pingWarning } from '../util.ts';
 import { serverVoice, VOICES } from './say.ts';
@@ -248,6 +248,69 @@ function roleWarning(guild: Guild, role: Role): string {
   }
   return `${problems.length ? `\n⚠️ Before /notify works: ${problems.join(', and ')}.` : ''}${pingWarning(role)}`;
 }
+
+/** The settings in the groups the web UI shows them in, so both read the same way */
+export const GROUPS: [string, SettingKey[]][] = [
+  ['Posting', ['announceChannel', 'timezone']],
+  ['Hop-on pings', ['hopOnRole', 'hopOnMinPeople', 'hopOnCooldownMin']],
+  ['Voice sessions', ['sessionRecap', 'recapMinMinutes', 'sessionGraceMin']],
+  ['Leaderboard and recap', ['weeklyLeaderboard', 'weeklyPostDay', 'weeklyPostHour', 'monthlyRecap']],
+  ['Games', ['steamCountry', 'steamStatus', 'gameNightReminderMin']],
+  ['Sale alerts', ['saleMinDiscount', 'saleSteamWishlists', 'saleChannel']],
+  ['Patch notes', ['patchNotes', 'patchNotesChannel']],
+  ['Free games', ['freeGames', 'freeGamesChannel', 'freeGamesMinRating', 'freeGamesTaste', 'freeGamesMultiplayer', 'freeGamesUnlisted']],
+  ['Soundboard', ['soundVolume', 'evenVolume', 'joinSounds', 'joinSoundDelayMs', 'joinSoundCooldownMin', 'soundManagerRole']],
+  ['Music', ['musicVolume', 'musicDjRole']],
+  ['Looping sound room', ['loopRoom', 'loopSound', 'loopVolume', 'loopEvery', 'loopText', 'loopVoice', 'loopTextVolume', 'loopTextEvery', 'loopIntro', 'loopIntroDelayMs', 'loopSoundDelayMs', 'loopTextDelayMs']],
+  ['Text to speech', ['tts', 'ttsVoice', 'ttsSpeed', 'ttsVolume', 'ttsChannel', 'ttsChannelWho', 'ttsGreet', 'ttsGreeting', 'ttsNightReminders', 'ttsHopOn', 'ttsRole', 'ttsMaxChars', 'ttsCooldownSec']],
+];
+
+/** What stops the bot doing what its settings ask, for the top of /setup show */
+function settingProblems(guild: Guild): string[] {
+  const problems: string[] = [];
+  const announce = idSetting(guild.id, 'announceChannel');
+  const channel = announce ? guild.channels.cache.get(announce) : undefined;
+  if (!announce) problems.push(`Nothing gets posted until an announce channel is set with ${commandMention(guild.id, 'setup announce-channel')}.`);
+  else if (!channel) problems.push('The announce channel is gone. Pick another one.');
+  else {
+    const problem = cantPost(guild, channel);
+    if (problem) problems.push(problem);
+  }
+  const hopOnRole = idSetting(guild.id, 'hopOnRole');
+  const role = hopOnRole ? guild.roles.cache.get(hopOnRole) : undefined;
+  if (hopOnRole && !role) problems.push('The hop-on role is gone, so hop-on pings ping nobody.');
+  if (role) {
+    const warning = roleWarning(guild, role).trim();
+    if (warning) problems.push(warning.replace(/^⚠️ /, ''));
+  }
+  const loopRoom = idSetting(guild.id, 'loopRoom');
+  if (loopRoom && !guild.channels.cache.get(loopRoom)) problems.push('The looping room’s channel is gone.');
+  return problems;
+}
+
+/** /setup show: each group of settings, with where a changed one came from, after anything that needs fixing */
+export function settingsEmbed(guild: Guild) {
+  const line = (key: SettingKey) => {
+    const where = source(guild.id, key);
+    const value = show(key, IDS.has(key) ? setting(guild.id, key) || null : setting(guild.id, key));
+    return `**${LABELS[key]}:** ${value.length > 120 ? `${value.slice(0, 119)}…` : value}${where === 'default' ? '' : ` · *${where}*`}`;
+  };
+  const problems = settingProblems(guild);
+  // The web UI does the same, so a setting left out of GROUPS still shows somewhere
+  const grouped = new Set(GROUPS.flatMap(([, keys]) => keys));
+  const others = (Object.keys(DEFAULTS) as SettingKey[]).filter((key) => !grouped.has(key));
+  const groups = others.length ? [...GROUPS, ['Other', others] as [string, SettingKey[]]] : GROUPS;
+  const embed = new EmbedBuilder()
+    .setTitle('⚙️ Slopkeeper settings')
+    .setColor(problems.length ? 0xfee75c : 0x5865f2)
+    .addFields(groups.map(([name, keys]) => ({ name, value: keys.map(line).join('\n').slice(0, 1024) })))
+    .setFooter({ text: 'Change one with its /setup command, or put it back with /setup reset. The web UI has every setting too.' });
+  if (problems.length) embed.setDescription(problems.map((p) => `⚠️ ${p}`).join('\n').slice(0, 4096));
+  return embed;
+}
+
+/** Channel and role settings, which store '' for "deliberately none" */
+const IDS = new Set<SettingKey>(['announceChannel', 'hopOnRole', 'freeGamesChannel', 'saleChannel', 'patchNotesChannel', 'soundManagerRole', 'musicDjRole', 'ttsRole', 'ttsChannel', 'loopRoom']);
 
 type Checked = { value: string | number | boolean; warning?: string } | { error: string };
 
@@ -832,19 +895,7 @@ export const setup: Feature = {
           return afterSettingsChanged(i.guild, [key]);
         }
 
-        const embed = new EmbedBuilder()
-          .setTitle('⚙️ Slopkeeper settings')
-          .setColor(0x5865f2)
-          .setDescription(
-            (Object.keys(DEFAULTS) as SettingKey[])
-              .map((key) => {
-                const value = key === 'announceChannel' || key === 'hopOnRole' || key === 'freeGamesChannel' || key === 'saleChannel' || key === 'patchNotesChannel' || key === 'soundManagerRole' || key === 'musicDjRole' ? setting(i.guildId, key) || null : setting(i.guildId, key);
-                return `**${LABELS[key]}:** ${show(key, value)} · *${source(i.guildId, key)}*`;
-              })
-              .join('\n'),
-          )
-          .setFooter({ text: 'Change one with its /setup command, or put it back with /setup reset' });
-        return i.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
+        return i.reply({ embeds: [settingsEmbed(i.guild)], flags: MessageFlags.Ephemeral });
       },
     },
   ],
