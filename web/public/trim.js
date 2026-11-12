@@ -1,5 +1,5 @@
 import { drawWave, loadWave } from './clip.js';
-import { el, openDialog, request, soundPath } from './lib.js';
+import { el, formProblem, openDialog, request, soundPath } from './lib.js';
 
 const SHORTEST = 0.1;
 /** The page rounds to this, so anything closer than twice it to the end of the sound still means the end */
@@ -25,7 +25,7 @@ export function pickTrim(main, sound) {
 
     const canvas = el('canvas', { className: 'wave', hidden: true });
     const status = el('p', {}, sound.seconds === null ? 'The bot can’t read how long this sound is, so it can’t be trimmed.' : 'Loading the waveform…');
-    const problem = el('div', { className: 'bad-text plan-problem', hidden: true });
+    const problem = formProblem();
     const length = el('output', {});
     const box = (label, change) => el('input', { type: 'number', min: 0, max: seconds, step: STEP, ariaLabel: label, required: true, oninput: (e) => Number.isFinite(e.target.valueAsNumber) && change(e.target.valueAsNumber, true) });
     const startInput = box(`Start of ${sound.name} in seconds`, moveStart);

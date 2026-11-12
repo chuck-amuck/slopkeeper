@@ -1,4 +1,4 @@
-import { api, attempt, confirmButton, el, openDialog, recall, remember, request, RequestError, state, toast } from './lib.js';
+import { api, attempt, confirmButton, el, formProblem, notice, openDialog, recall, remember, request, RequestError, state, toast } from './lib.js';
 
 const READ_DELAY_MS = 250;
 const WHEN_HINT = 'Try fri 8pm, tomorrow 20:30 or nov 3 7pm.';
@@ -64,7 +64,7 @@ function planDialog(main, data, onPlanned) {
   const details = el('textarea', { maxLength: 1000, rows: 2 });
   const submit = el('button', { className: 'primary', type: 'submit' }, 'Plan it');
   // In the dialog, since it would cover a toast
-  const problem = el('div', { className: 'bad-text plan-problem', hidden: true });
+  const problem = formProblem();
 
   const node = openDialog(
     main,
@@ -125,7 +125,7 @@ function planDialog(main, data, onPlanned) {
 export function renderNights(main) {
   const guildId = state.guildId;
   let latest = null;
-  const box = el('div', { className: 'stack' }, el('div', { className: 'empty' }, 'Loading game nights…'));
+  const box = el('div', { className: 'stack' }, notice('loading', 'Loading game nights…'));
   const plan = el('button', { className: 'primary', disabled: true, onclick: () => planDialog(main, latest, load) }, 'Plan a game night');
   main.append(el('div', { className: 'toolbar end' }, plan), box);
 
@@ -135,7 +135,7 @@ export function renderNights(main) {
     latest = data;
     plan.disabled = !data.channels.length || !data.members.length;
     if (!data.nights.length && !data.series.length) {
-      return box.replaceChildren(el('div', { className: 'empty' }, 'No game nights planned.'));
+      return box.replaceChildren(notice('empty', 'No game nights planned.'));
     }
 
     const night = (n) =>
@@ -193,7 +193,7 @@ export function renderNights(main) {
     try {
       await load();
     } catch (err) {
-      box.replaceChildren(el('div', { className: 'empty' }, err.message));
+      box.replaceChildren(notice('error', err.message));
       throw err;
     }
   });

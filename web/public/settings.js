@@ -1,4 +1,4 @@
-import { api, attempt, confirmButton, el, openDialog, postDialog, request, RequestError, state, toast, undoToast } from './lib.js';
+import { api, attempt, confirmButton, el, formProblem, notice, openDialog, postDialog, request, RequestError, state, toast, undoToast } from './lib.js';
 
 const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
@@ -81,7 +81,7 @@ const GROUPS = [
 
 export function renderSettings(main) {
   const guildId = state.guildId;
-  const loading = el('div', { className: 'empty' }, 'Loading settings…');
+  const loading = notice('loading', 'Loading settings…');
   main.append(loading);
   const fields = new Map();
 
@@ -146,12 +146,19 @@ export function renderSettings(main) {
     const spec = FIELDS[setting.key] ?? {};
     const box = el('div', { className: 'control' });
     const status = el('div', { className: 'status' });
-    const message = el('div', { className: 'message', hidden: true });
+    const message = el('div', { className: 'message', id: `setting-message-${setting.key}`, hidden: true });
 
+    /** Shows a warning or a problem under the field. A problem marks the field and is read out */
     const say = (text, bad) => {
       message.hidden = !text;
       message.textContent = text ?? '';
       message.className = bad ? 'message bad' : 'message';
+      message.role = bad ? 'alert' : null;
+      const input = box.querySelector('input, select, textarea');
+      if (!input) return;
+      input.ariaInvalid = bad ? 'true' : null;
+      if (text) input.setAttribute('aria-describedby', message.id);
+      else input.removeAttribute('aria-describedby');
     };
 
     const refresh = async () => {
@@ -171,6 +178,8 @@ export function renderSettings(main) {
           toast(`${setting.label} saved.`);
         } catch (err) {
           say(err.message, true);
+          // The field may be scrolled out of sight by now
+          toast(`${setting.label} wasn’t saved: ${err.message}`, true);
         }
         await refresh();
       });
@@ -227,15 +236,15 @@ export function renderSettings(main) {
                 el('span', { className: g.show ? 'free-reason' : 'free-reason hidden-game' }, g.show ? `Posted${g.reason ? `: ${g.reason}` : ''}` : `Hidden: ${g.reason}`),
               ),
             )
-          : [el('p', { className: 'card-note empty-note' }, 'Nothing is free to keep right now.')]),
+          : [notice('empty', 'Nothing is free to keep right now.', { compact: true })]),
       );
     } catch (err) {
-      freeBody.replaceChildren(el('p', { className: 'card-note empty-note' }, err.message));
+      freeBody.replaceChildren(notice('error', err.message, { compact: true }));
     }
   }
 
   function freeGamesCard() {
-    freeBody.append(el('p', { className: 'card-note empty-note' }, 'Checking what’s free…'));
+    freeBody.append(notice('loading', 'Checking what’s free…', { compact: true }));
     void paintFreeGames();
     return el('section', { className: 'card' }, el('h2', {}, 'Free games right now'), freeBody);
   }
@@ -257,15 +266,15 @@ export function renderSettings(main) {
                 g.why && el('span', { className: 'sale-why' }, g.why),
               ),
             )
-          : [el('p', { className: 'card-note empty-note' }, 'Nothing this server plays or wants is on sale right now.')]),
+          : [notice('empty', 'Nothing this server plays or wants is on sale right now.', { compact: true })]),
       );
     } catch (err) {
-      salesBody.replaceChildren(el('p', { className: 'card-note empty-note' }, err.message));
+      salesBody.replaceChildren(notice('error', err.message, { compact: true }));
     }
   }
 
   function salesCard() {
-    salesBody.append(el('p', { className: 'card-note empty-note' }, 'Checking what’s on sale…'));
+    salesBody.append(notice('loading', 'Checking what’s on sale…', { compact: true }));
     void paintSales();
     return el('section', { className: 'card' }, el('h2', {}, 'On sale now'), salesBody);
   }
@@ -308,7 +317,7 @@ export function renderSettings(main) {
   function pingsDialog() {
     const who = el('select', { ariaLabel: 'Person', onchange: () => show() });
     const list = el('div', { className: 'merge-list' });
-    const problem = el('div', { className: 'bad-text plan-problem', hidden: true });
+    const problem = formProblem();
     const say = (text) => {
       problem.textContent = text ?? '';
       problem.hidden = !text;
@@ -394,7 +403,7 @@ export function renderSettings(main) {
     }
 
     function paint(data) {
-      body.replaceChildren(...(data.pings.length ? data.pings.map(pingRow) : [el('p', { className: 'card-note empty-note' }, 'No games have pings yet.')]));
+      body.replaceChildren(...(data.pings.length ? data.pings.map(pingRow) : [notice('empty', 'No games have pings yet.', { compact: true })]));
       games.replaceChildren(...data.games.map((name) => el('option', { value: name })));
       role.replaceChildren(el('option', { value: '' }, 'Make a new role'), ...data.roles.map((r) => el('option', { value: r.id }, `@${r.name}`)));
     }
@@ -445,7 +454,7 @@ export function renderSettings(main) {
                 ),
               ),
             )
-          : [el('p', { className: 'card-note empty-note' }, 'Nobody has one yet. People can pick their own with /sound join, or you can set one here.')]),
+          : [notice('empty', 'Nobody has one yet. People can pick their own with /sound join, or you can set one here.', { compact: true })]),
       );
     const set = adder('Set a join sound', 'This replaces any they have.', [who, sound, el('button', { type: 'submit' }, 'Set')], async () => {
       const person = who.selectedOptions[0].textContent;

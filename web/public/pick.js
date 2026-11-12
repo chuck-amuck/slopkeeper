@@ -1,4 +1,4 @@
-import { ago, api, attempt, el, openDialog, request, RequestError, state, toast, undoToast } from './lib.js';
+import { ago, api, attempt, el, formProblem, notice, openDialog, request, RequestError, state, toast, undoToast } from './lib.js';
 import { achievementsView } from './achievements.js';
 import { duration } from './stats.js';
 
@@ -40,7 +40,7 @@ const VOTE_OPTIONS = 10;
 function voteDialog(main, options, voice, games) {
   const channel = el('select', { ariaLabel: 'Post it in' }, options.channels.map((c) => el('option', { value: c.id, selected: c.id === options.announceChannel }, `#${c.name}`)));
   const minutes = el('input', { type: 'number', min: 1, max: 10, step: 1, required: true, value: 1, ariaLabel: 'Minutes' });
-  const problem = el('div', { className: 'bad-text plan-problem', hidden: true });
+  const problem = formProblem();
   const submit = el('button', { className: 'primary', type: 'submit' }, 'Start vote');
   const node = openDialog(
     main,
@@ -97,7 +97,7 @@ export function renderPick(main) {
   const voteButton = el('button', { disabled: true, onclick: () => voteDialog(main, options, voice(), filtered() ? shownReady().map((g) => g.name) : null) }, 'Start a vote');
   const people = el('div', { className: 'pick-people', hidden: true });
   const voteNote = el('p', { className: 'hint', hidden: true }, 'A vote needs a voice channel, as only the people in it can vote.');
-  const content = el('div', { className: 'stack' }, el('div', { className: 'empty' }, 'Loading…'));
+  const content = el('div', { className: 'stack' }, notice('loading', 'Loading…'));
   const search = el('input', {
     type: 'search',
     placeholder: 'Search these games',
@@ -260,7 +260,7 @@ export function renderPick(main) {
       { className: 'card' },
       el('div', { className: 'card-head' }, el('h2', {}, `${title} (${sorted.length})`), ...head),
       sorted.slice(0, SHOWN).map(gameRow),
-      sorted.length > SHOWN && el('p', { className: 'card-note' }, `Showing ${SHOWN} of ${sorted.length}. Search to find the rest.`),
+      sorted.length > SHOWN && notice('more', `Showing ${SHOWN} of ${sorted.length}. Search to find the rest.`, { compact: true }),
     );
   }
 
@@ -268,7 +268,7 @@ export function renderPick(main) {
     const ready = shownReady();
     const almost = data.almost.filter(shown);
     lists.replaceChildren(
-      ready.length || filtered() ? listCard('Everyone can play these', ready) : el('div', { className: 'empty' }, 'No game fits everyone here.'),
+      ready.length || filtered() ? listCard('Everyone can play these', ready) : notice('empty', 'No game fits everyone here.'),
       ...(almost.length ? [listCard('One purchase away', almost)] : []),
     );
     pickButton.disabled = !ready.length;
@@ -286,12 +286,12 @@ export function renderPick(main) {
     if (data.counted) paintLists();
   }
 
-  function clear(text) {
+  function clear(text, kind = 'empty') {
     data = null;
     picked = null;
     pickButton.disabled = true;
     voteButton.disabled = true;
-    content.replaceChildren(el('div', { className: 'empty' }, text));
+    content.replaceChildren(notice(kind, text));
   }
 
   async function show() {
@@ -303,7 +303,7 @@ export function renderPick(main) {
       data = fresh;
       render();
     } catch (err) {
-      if (ticket === latest) clear(err.message);
+      if (ticket === latest) clear(err.message, 'error');
       throw err;
     }
   }
@@ -313,7 +313,7 @@ export function renderPick(main) {
     voteNote.hidden = !byHand();
     picked = null;
     if (byHand() && !ticked.size) return clear('Tick who’s playing.');
-    clear('Checking what everyone owns…');
+    clear('Checking what everyone owns…', 'loading');
     return attempt(show);
   }
 
@@ -322,7 +322,7 @@ export function renderPick(main) {
     try {
       options = await request(api('/pick/options'));
     } catch (err) {
-      clear(err.message);
+      clear(err.message, 'error');
       throw err;
     }
     if (guildId !== state.guildId || !main.isConnected) return;

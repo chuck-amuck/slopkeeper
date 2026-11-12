@@ -1,4 +1,4 @@
-import { api, attempt, confirmButton, el, pickedVoice, poll, RequestError, request, session, state, toast, undoToast, volumeControl } from './lib.js';
+import { api, attempt, confirmButton, el, keepFocus, notice, pickedVoice, poll, request, RequestError, session, state, toast, undoToast, volumeControl } from './lib.js';
 
 const REFRESH_MS = 3000;
 // A playlist adds this many songs, the first or at random
@@ -240,11 +240,11 @@ export function renderMusic(main) {
   async function loadPlaylists() {
     if (!playlists) {
       results.hidden = false;
-      results.replaceChildren(el('div', { className: 'empty-note' }, 'Loading your playlists…'));
+      results.replaceChildren(notice('loading', 'Loading your playlists…', { compact: true }));
       const fresh = await attempt(() => request(api('/music/playlists')));
       if (guildId !== state.guildId || mode !== 'playlists') return;
       if (!fresh) return void (results.hidden = true);
-      if (fresh.problem) return results.replaceChildren(el('div', { className: 'empty-note' }, fresh.problem));
+      if (fresh.problem) return results.replaceChildren(notice('error', fresh.problem, { compact: true }));
       playlists = fresh.playlists;
     }
     showPlaylists();
@@ -289,8 +289,8 @@ export function renderMusic(main) {
           el('div', { className: 'song-actions' }, add('Play next', true, false), add('Add', false, false), long && add('Shuffle', false, true)),
         );
       }),
-      ...(matching.length > PLAYLISTS_SHOWN ? [el('div', { className: 'empty-note' }, `…and ${matching.length - PLAYLISTS_SHOWN} more. Type to narrow them down.`)] : []),
-      ...(matching.length ? [] : [el('div', { className: 'empty-note' }, playlists.length ? `None of your playlists are called “${query.value.trim()}”.` : 'This Spotify account has no playlists of its own.')]),
+      ...(matching.length > PLAYLISTS_SHOWN ? [notice('more', `…and ${matching.length - PLAYLISTS_SHOWN} more. Type to narrow them down.`, { compact: true })] : []),
+      ...(matching.length ? [] : [notice('empty', playlists.length ? `None of your playlists are called “${query.value.trim()}”.` : 'This Spotify account has no playlists of its own.', { compact: true })]),
     );
   }
 
@@ -308,7 +308,7 @@ export function renderMusic(main) {
               el('div', { className: 'song-actions' }, el('button', { onclick: () => void addFrom({ track: t }, true) }, 'Play next'), el('button', { onclick: () => void addFrom({ track: t }, false) }, 'Add')),
             ),
           )
-        : [el('div', { className: 'empty-note' }, `Nothing on Spotify matches “${text}”.`)]),
+        : [notice('empty', `Nothing on Spotify matches “${text}”.`, { compact: true })]),
     );
   }
 
@@ -516,7 +516,7 @@ export function renderMusic(main) {
     queueCount.textContent = rows.length ? `${rows.length} song${rows.length === 1 ? '' : 's'}` : '';
     clearButton.hidden = !rows.length;
     shuffleButton.hidden = rows.length < 2;
-    list.replaceChildren(...(rows.length ? rows.map((row, n) => queueRow(row, n + held())) : [el('li', { className: 'empty-note' }, 'Nothing queued. Search for a song above.')]));
+    keepFocus(list, () => list.replaceChildren(...(rows.length ? rows.map((row, n) => queueRow(row, n + held())) : [notice('empty', 'Nothing queued. Search for a song above.', { compact: true, tag: 'li' })])));
   }
 
   // ---------- painting ----------
@@ -594,7 +594,7 @@ export function renderMusic(main) {
   const refresh = async () => show(await request(api('/music')));
 
   main.append(problem, now, searchCard, fileCard, queueCard);
-  list.append(el('li', { className: 'empty-note' }, 'Loading the queue…'));
+  list.append(notice('loading', 'Loading the queue…', { compact: true, tag: 'li' }));
   void attempt(async () => {
     await refresh();
     await loadChannels();

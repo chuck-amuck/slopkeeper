@@ -1,6 +1,6 @@
 import { pickClip } from './clip.js';
 import { emojiPicker } from './emojipicker.js';
-import { api, attempt, confirmButton, el, emojiNode, openDialog, player, recall, remember, request, RequestError, soundPath, state, toast, undoToast, volumeControl } from './lib.js';
+import { api, attempt, confirmButton, el, emojiNode, keepFocus, notice, openDialog, player, recall, remember, request, RequestError, soundPath, state, toast, undoToast, volumeControl } from './lib.js';
 import { pickTrim } from './trim.js';
 import { voiceBar } from './voice.js';
 
@@ -140,7 +140,7 @@ export function renderLibrary(main) {
     list,
     bin,
   );
-  list.append(el('div', { className: 'empty' }, 'Loading sounds…'));
+  list.append(notice('loading', 'Loading sounds…'));
 
   function report({ added, tooLong, failed, waiting, blocker }) {
     const lines = [added.length ? `Added to Discord: ${added.join(', ')}` : 'Nothing new to add to Discord.'];
@@ -362,13 +362,13 @@ export function renderLibrary(main) {
     const unsaved = sounds.filter((s) => !s.library);
     boardPreviews.clear();
     boardPlayers.clear();
-    boardBody.replaceChildren(
-      ...(sounds.length ? [el('div', { className: 'list' }, sounds.map(discordRow))] : [el('div', { className: 'empty' }, data.slots ? 'Nothing on Discord’s soundboard yet.' : 'Discord’s soundboard couldn’t be read.')]),
+    keepFocus(boardBody, () => boardBody.replaceChildren(
+      ...(sounds.length ? [el('div', { className: 'list' }, sounds.map(discordRow))] : [data.slots ? notice('empty', 'Nothing on Discord’s soundboard yet.') : notice('error', 'Discord’s soundboard couldn’t be read.')]),
       ...(sounds.some((s) => !s.removable)
         ? [el('p', { className: 'hint' }, 'Some of these were added by other people. To swap them or take them off, give the bot’s role the Manage Expressions permission.')]
         : []),
       ...(unsaved.length ? [el('div', { className: 'toolbar end' }, el('button', { onclick: (e) => ((e.target.disabled = true), saveAll(unsaved)) }, 'Save all to library'))] : []),
-    );
+    ));
   }
 
   function renderList() {
@@ -376,9 +376,9 @@ export function renderLibrary(main) {
     const shown = data.sounds.filter((s) => s.name.includes(filter));
     previews.clear();
     players.clear();
-    if (!data.sounds.length) return list.replaceChildren(el('div', { className: 'empty' }, 'No sounds yet. Drop some files above.'));
-    if (!shown.length) return list.replaceChildren(el('div', { className: 'empty' }, `Nothing matches “${filter}”.`));
-    list.replaceChildren(...shown.map(soundRow));
+    if (!data.sounds.length) return list.replaceChildren(notice('empty', 'No sounds yet. Drop some files above.'));
+    if (!shown.length) return list.replaceChildren(notice('empty', `Nothing matches “${filter}”.`));
+    keepFocus(list, () => list.replaceChildren(...shown.map(soundRow)));
   }
 
   // Only these change when a preview starts or stops, since redrawing the list would lose a rename being typed
@@ -439,7 +439,9 @@ export function renderLibrary(main) {
       ariaLabel: `${sound.name} on Discord’s soundboard`,
       onchange: () =>
         attempt(async () => {
-          toggle.disabled = true;
+          // Busy rather than disabled, so focus stays on it while the list is redrawn
+          if (toggle.ariaBusy === 'true') return;
+          toggle.ariaBusy = 'true';
           try {
             if (!toggle.checked) await request(soundPath(sound.name, '/discord'), { method: 'DELETE' });
             else if (isFull()) {
@@ -660,7 +662,7 @@ export function renderLibrary(main) {
     const ready = queue.filter((item) => !problemWith(item) && !item.busy);
     const waiting = ready.filter(undecided).length;
     const uploading = queue.filter((item) => item.busy).length;
-    queueBox.replaceChildren(
+    keepFocus(queueBox, () => queueBox.replaceChildren(
       ...rows,
       el(
         'div',
@@ -697,7 +699,7 @@ export function renderLibrary(main) {
           uploading ? `Uploading, ${uploading} to go…` : ready.length > 1 ? `Upload ${ready.length} sounds` : 'Upload',
         ),
       ),
-    );
+    ));
   }
 
   /** One message for the whole batch, however many sounds it was */
@@ -744,7 +746,7 @@ export function renderLibrary(main) {
     try {
       await load();
     } catch (err) {
-      list.replaceChildren(el('div', { className: 'empty' }, err.message));
+      list.replaceChildren(notice('error', err.message));
       throw err;
     }
   });

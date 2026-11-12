@@ -1,7 +1,7 @@
 import { renderActivity } from './activity.js';
 import { renderBoard } from './board.js';
 import { renderGames } from './games.js';
-import { api, attempt, el, openDialog, player, recall, remember, request, RequestError, session, state, toast } from './lib.js';
+import { api, attempt, el, formProblem, notice, openDialog, player, recall, remember, request, RequestError, session, state, toast } from './lib.js';
 import { renderLibrary } from './library.js';
 import { renderMusic } from './music.js';
 import { renderNights } from './nights.js';
@@ -25,8 +25,8 @@ let tab = TABS.some(([id]) => id === recall('tab')) ? recall('tab') : 'board';
 
 function showLogin() {
   player.stop();
-  const password = el('input', { type: 'password', autocomplete: 'current-password', required: true, placeholder: 'Password', ariaLabel: 'Password' });
-  const error = el('div', { className: 'bad-text', hidden: true });
+  const password = el('input', { type: 'password', autocomplete: 'current-password', required: true, placeholder: 'Password', ariaLabel: 'Password', 'aria-describedby': 'login-error' });
+  const error = el('div', { className: 'bad-text', id: 'login-error', role: 'alert', hidden: true });
   const submit = el('button', { className: 'primary', type: 'submit' }, 'Log in');
   const form = el(
     'form',
@@ -35,12 +35,14 @@ function showLogin() {
         e.preventDefault();
         submit.disabled = true;
         error.hidden = true;
+        password.ariaInvalid = null;
         try {
           await request('/auth/login', { method: 'POST', json: { password: password.value } });
           await start();
         } catch (err) {
           error.textContent = err.message;
           error.hidden = false;
+          password.ariaInvalid = 'true';
           submit.disabled = false;
           password.select();
         }
@@ -73,7 +75,7 @@ async function loadMe() {
 /** Lets someone signed in through Pangolin say which Discord member they are, so their changes show under that name */
 function meDialog(main) {
   const who = el('select', { ariaLabel: 'Discord member' }, el('option', { value: '' }, 'Not linked'));
-  const problem = el('div', { className: 'bad-text plan-problem', hidden: true });
+  const problem = formProblem();
   const submit = el('button', { className: 'primary', type: 'submit', disabled: true }, 'Save');
   const node = openDialog(
     main,
@@ -131,12 +133,29 @@ function fitNav() {
 }
 addEventListener('resize', fitNav);
 
+/** Set when a tab is picked, so its heading takes focus once it's drawn, as the button pressed is gone */
+let focusTitle = false;
+
 function renderFrame() {
   const main = el('main');
   const guild = state.guilds.find((g) => g.id === state.guildId);
   const icon = guild?.icon ? el('img', { src: guild.icon, alt: '' }) : null;
+  // Outside main, as a page may redraw all of main. Only screen readers see it
+  const title = el('h1', { className: 'visually-hidden', tabIndex: -1, id: 'page-title' }, TABS.find(([id]) => id === tab)[1]);
 
   app.replaceChildren(
+    el(
+      'a',
+      {
+        className: 'skip-link',
+        href: '#page-title',
+        onclick: (e) => {
+          e.preventDefault();
+          title.focus();
+        },
+      },
+      'Skip to content',
+    ),
     el(
       'header',
       {},
@@ -172,6 +191,7 @@ function renderFrame() {
               onclick: () => {
                 tab = id;
                 remember('tab', id);
+                focusTitle = true;
                 renderFrame();
               },
             },
@@ -194,6 +214,7 @@ function renderFrame() {
         'Log out',
       ),
     ),
+    title,
     main,
     // In the corner of every page, so it's always in reach
     guild &&
@@ -219,14 +240,16 @@ function renderFrame() {
   );
 
   fitNav();
+  if (focusTitle) title.focus();
+  focusTitle = false;
   player.stop();
-  if (!guild) main.append(el('div', { className: 'empty' }, 'The bot isn’t in any servers yet.'));
+  if (!guild) main.append(notice('empty', 'The bot isn’t in any servers yet.'));
   else TABS.find(([id]) => id === tab)[2](main);
 }
 
 // A 401 on the first request is how the page learns nobody is logged in
 start().catch((err) => {
   if (!(err instanceof RequestError) || err.message !== 'Log in again.') {
-    app.replaceChildren(el('div', { className: 'empty' }, err.message));
+    app.replaceChildren(notice('error', err.message));
   }
 });

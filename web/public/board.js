@@ -1,4 +1,4 @@
-import { attempt, el, emojiNode, postDialog, request, soundPath, state, api, toast, undoToast } from './lib.js';
+import { api, attempt, el, emojiNode, keepFocus, notice, postDialog, request, soundPath, state, toast, undoToast } from './lib.js';
 import { voiceBar } from './voice.js';
 
 const byUse = (a, b) => b.plays - a.plays || a.name.localeCompare(b.name);
@@ -122,7 +122,7 @@ export function renderBoard(main) {
     });
   const say = sayBox(voice);
   main.append(voice.node, say.node, el('div', { className: 'toolbar' }, search, el('button', { onclick: postPanel }, 'Post panel')), board);
-  board.append(el('div', { className: 'empty' }, 'Loading sounds…'));
+  board.append(notice('loading', 'Loading sounds…'));
 
   function paint() {
     const channel = voice.channel();
@@ -171,15 +171,15 @@ export function renderBoard(main) {
 
   function render() {
     tiles.length = 0;
-    if (!sounds.length) return board.replaceChildren(el('div', { className: 'empty' }, 'No sounds yet. Add some on the Sounds tab.'));
+    if (!sounds.length) return board.replaceChildren(notice('empty', 'No sounds yet. Add some on the Sounds tab.'));
     const shown = sounds.filter((s) => s.name.includes(filter));
-    if (!shown.length) return board.replaceChildren(el('div', { className: 'empty' }, `Nothing matches “${filter}”.`));
+    if (!shown.length) return board.replaceChildren(notice('empty', `Nothing matches “${filter}”.`));
     const starred = shown.filter((s) => s.favourite);
     const others = shown.filter((s) => !s.favourite);
-    board.replaceChildren(
+    keepFocus(board, () => board.replaceChildren(
       ...(starred.length ? [el('h2', {}, 'Favourites'), el('div', { className: 'tiles' }, starred.map(tile))] : []),
       ...(others.length ? [...(starred.length ? [el('h2', {}, 'Everything else')] : []), el('div', { className: 'tiles' }, others.map(tile))] : []),
-    );
+    ));
     paint();
   }
 
@@ -190,7 +190,7 @@ export function renderBoard(main) {
       sounds = fresh.sounds.sort(byUse);
       render();
     } catch (err) {
-      board.replaceChildren(el('div', { className: 'empty' }, err.message));
+      board.replaceChildren(notice('error', err.message));
       throw err;
     }
   });

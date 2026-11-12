@@ -1,4 +1,4 @@
-import { api, attempt, confirmButton, el, openDialog, request, RequestError, state, toast } from './lib.js';
+import { api, attempt, confirmButton, el, formProblem, notice, openDialog, request, RequestError, state, toast } from './lib.js';
 
 const FILTERS = [
   ['all', 'All games'],
@@ -23,7 +23,7 @@ function addDialog(main, onAdded) {
   let owned = null;
   const name = el('input', { required: true, maxLength: 200, autocomplete: 'off', placeholder: 'Search, or type a name or Steam link', ariaLabel: 'Search, or type a name or Steam link', oninput: () => paint() });
   const submit = el('button', { className: 'primary', type: 'submit' }, 'Add it');
-  const problem = el('div', { className: 'bad-text plan-problem', hidden: true });
+  const problem = formProblem();
   const added = el('div', { className: 'form-note', hidden: true });
   const list = el('div', { className: 'merge-list' }, el('p', {}, 'Loading members’ games…'));
 
@@ -62,7 +62,7 @@ function addDialog(main, onAdded) {
     list.replaceChildren(...shown.slice(0, SHOWN_GAMES).map(gameRow));
     if (!owned.length) list.append(el('p', {}, 'No games to pick from. Linked Steam libraries show up here.'));
     else if (!shown.length) list.append(el('p', {}, 'Nobody here owns a game called that on Steam. You can still add it.'));
-    else if (shown.length > SHOWN_GAMES) list.append(el('p', {}, `Showing ${SHOWN_GAMES} of ${shown.length}. Search to find the rest.`));
+    else if (shown.length > SHOWN_GAMES) list.append(notice('more', `Showing ${SHOWN_GAMES} of ${shown.length}. Search to find the rest.`, { compact: true }));
   }
 
   const node = openDialog(
@@ -113,7 +113,7 @@ function addDialog(main, onAdded) {
 function manageDialog(main, gameId, data, reload) {
   const find = () => data().games.find((g) => g.id === gameId);
   const start = find();
-  const problem = el('div', { className: 'bad-text plan-problem', hidden: true });
+  const problem = formProblem();
   const say = (text) => {
     problem.textContent = text ?? '';
     problem.hidden = !text;
@@ -245,7 +245,7 @@ const PRIVACY_HELP = 'To fix a private library, in Steam go to Profile → Edit 
 function accountsDialog(main, onChanged) {
   let data = null;
   let editing = null;
-  const problem = el('div', { className: 'bad-text plan-problem', hidden: true });
+  const problem = formProblem();
   const done = el('div', { className: 'form-note', hidden: true });
   const search = el('input', { type: 'search', placeholder: 'Search people', ariaLabel: 'Search people', oninput: () => paint() });
   const list = el('div', { className: 'merge-list' }, el('p', {}, 'Loading members…'));
@@ -450,7 +450,7 @@ export function renderGames(main) {
   let filter = 'all';
   let query = '';
 
-  const box = el('div', { className: 'stack' }, el('div', { className: 'empty' }, 'Loading games…'));
+  const box = el('div', { className: 'stack' }, notice('loading', 'Loading games…'));
   const search = el('input', {
     type: 'search',
     placeholder: 'Search games',
@@ -498,9 +498,9 @@ export function renderGames(main) {
     );
 
   function library() {
-    if (!data.games.length) return el('div', { className: 'empty' }, 'The library is empty. Add a game to start it off.');
+    if (!data.games.length) return notice('empty', 'The library is empty. Add a game to start it off.');
     const shown = data.games.filter((g) => g.name.toLowerCase().includes(query) && (filter === 'all' || (filter === 'wanted' ? g.wanted.length > 0 : g.sale)));
-    if (!shown.length) return el('div', { className: 'empty' }, 'No games match that.');
+    if (!shown.length) return notice('empty', 'No games match that.');
     return el('section', { className: 'card' }, shown.map(gameRow));
   }
 
@@ -546,7 +546,7 @@ export function renderGames(main) {
     try {
       await load();
     } catch (err) {
-      box.replaceChildren(el('div', { className: 'empty' }, err.message));
+      box.replaceChildren(notice('error', err.message));
       throw err;
     }
   });

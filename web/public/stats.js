@@ -1,5 +1,5 @@
 import { achievementsView } from './achievements.js';
-import { ago, api, attempt, el, openDialog, recall, remember, request, state, toast } from './lib.js';
+import { ago, api, attempt, el, formProblem, notice, openDialog, recall, remember, request, state, toast } from './lib.js';
 
 const PERIODS = [
   ['week', 'Past week'],
@@ -147,7 +147,7 @@ function compare(main) {
   }
 
   function show() {
-    if (first.value === second.value) return content.replaceChildren(el('div', { className: 'empty' }, 'Pick two different people.'));
+    if (first.value === second.value) return content.replaceChildren(notice('empty', 'Pick two different people.'));
     const query = new URLSearchParams({ a: first.value, b: second.value });
     return attempt(async () => {
       const data = await request(api(`/compare?${query}`));
@@ -158,7 +158,7 @@ function compare(main) {
   void attempt(async () => {
     const { members } = await request(api('/pick/options'));
     if (guildId !== state.guildId || !main.isConnected) return;
-    if (members.length < 2) return content.replaceChildren(el('div', { className: 'empty' }, 'It takes two people to compare.'));
+    if (members.length < 2) return content.replaceChildren(notice('empty', 'It takes two people to compare.'));
     // Whoever's signed in goes first, so the comparison starts with them
     const mine = members.findIndex((m) => m.id === state.me?.userId);
     const starts = mine < 0 ? [0, 1] : [mine, mine === 0 ? 1 : 0];
@@ -169,7 +169,7 @@ function compare(main) {
 
 function recap(main) {
   const guildId = state.guildId;
-  const content = el('div', { className: 'stack' }, el('div', { className: 'empty' }, 'Loading the recap…'));
+  const content = el('div', { className: 'stack' }, notice('loading', 'Loading the recap…'));
   const month = el(
     'select',
     { ariaLabel: 'Month', onchange: () => show() },
@@ -183,7 +183,7 @@ function recap(main) {
     return attempt(async () => {
       const { recap: found } = await request(api(`/recap?month=${asked}`));
       if (guildId !== state.guildId || !main.isConnected || asked !== month.value) return;
-      if (!found) return content.replaceChildren(el('div', { className: 'empty' }, 'Nothing to recap for that month yet.'));
+      if (!found) return content.replaceChildren(notice('empty', 'Nothing to recap for that month yet.'));
       content.replaceChildren(
         el(
           'section',
@@ -207,7 +207,7 @@ function overview(main) {
   let latest = 0;
 
   const chips = el('div', { className: 'chips' });
-  const content = el('div', { className: 'stack' }, el('div', { className: 'empty' }, 'Loading stats…'));
+  const content = el('div', { className: 'stack' }, notice('loading', 'Loading stats…'));
   const picker = el(
     'select',
     {
@@ -237,7 +237,7 @@ function overview(main) {
       let games = [];
       let kept = null;
       const ticked = new Set();
-      const problem = el('div', { className: 'bad-text plan-problem', hidden: true });
+      const problem = formProblem();
       const list = el('div', { className: 'merge-list' }, el('p', {}, 'Loading games…'));
       const keep = el('select', { ariaLabel: 'Name to keep' });
       const merge = el('button', { className: 'primary', type: 'submit', disabled: true }, 'Merge');
@@ -343,7 +343,7 @@ function overview(main) {
       ...(game ? [chip(game, () => ((game = null), void show()))] : []),
     );
     const { totals, activity, timeZone } = data;
-    if (!totals.gameMs && !totals.voiceMs) return content.replaceChildren(el('div', { className: 'empty' }, 'Nothing recorded for this period yet.'));
+    if (!totals.gameMs && !totals.voiceMs) return content.replaceChildren(notice('empty', 'Nothing recorded for this period yet.'));
 
     content.replaceChildren(
       el(
@@ -390,7 +390,7 @@ function overview(main) {
         // Only the newest answer counts, if filters were clicked quickly
         if (ticket === latest && guildId === state.guildId && main.isConnected) render(data);
       } catch (err) {
-        content.replaceChildren(el('div', { className: 'empty' }, err.message));
+        content.replaceChildren(notice('error', err.message));
         throw err;
       }
     });

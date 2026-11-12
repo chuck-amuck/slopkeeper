@@ -19,7 +19,8 @@ export function el(tag, props = {}, ...children) {
  * and stays while the pointer or focus is on it, so there's time to reach it
  */
 export function toast(text, bad = false, action = null) {
-  const node = el('div', { className: `toast${bad ? ' bad' : ''}${action ? ' with-action' : ''}` }, el('span', {}, text));
+  // An error is read out at once, rather than after whatever is being read
+  const node = el('div', { className: `toast${bad ? ' bad' : ''}${action ? ' with-action' : ''}`, role: bad ? 'alert' : undefined }, el('span', {}, text));
   let timer;
   const close = () => node.remove();
   const wait = () => {
@@ -43,9 +44,55 @@ export function toast(text, bad = false, action = null) {
     node.addEventListener('focusin', hold);
     node.addEventListener('focusout', wait);
   }
+  // A dialog it was in may have gone without closing, when the page was redrawn under it
+  if (!toasts.isConnected) document.body.append(toasts);
   toasts.append(node);
   wait();
 }
+
+/** Says something to screen readers only, such as a change that's only shown by colour */
+export function announce(text) {
+  let region = document.getElementById('announcer');
+  if (!region) {
+    region = el('div', { id: 'announcer', className: 'visually-hidden', role: 'status' });
+    document.body.append(region);
+  }
+  // Emptied first, so saying the same thing twice is still heard
+  region.textContent = '';
+  setTimeout(() => (region.textContent = text), 50);
+}
+
+/**
+ * What a list or page says in place of its contents: 'loading', 'empty', 'error' (read out at once) or 'more' (a
+ * list cut short). One look for each, so an error never passes for an empty list
+ */
+export function notice(kind, text, { compact = false, tag = 'div' } = {}) {
+  return el(tag, { className: `notice ${kind}${compact ? ' compact' : ''}`, role: kind === 'error' ? 'alert' : undefined }, text);
+}
+
+/** The line in a form that says why it didn't go through. Read out when it's shown */
+export const formProblem = () => el('div', { className: 'bad-text plan-problem', role: 'alert', hidden: true });
+
+/**
+ * Rebuilds part of the page without losing the keyboard's place: if focus was on a button or field in `container`,
+ * it goes to the one with the same name afterwards
+ */
+export function keepFocus(container, rebuild) {
+  const focused = document.activeElement;
+  const inside = container.contains(focused) && focused !== container;
+  const key = inside ? nameOf(focused) : null;
+  // Where it was, for when the same one isn't there any more: the next one along is the most useful place
+  const at = inside ? focusables(container).indexOf(focused) : -1;
+  rebuild();
+  if (!inside || container.contains(document.activeElement)) return;
+  const same = [...container.querySelectorAll(focused.tagName)].find((node) => nameOf(node) === key);
+  const after = focusables(container);
+  (same ?? after[Math.min(at, after.length - 1)])?.focus();
+}
+
+const focusables = (container) => [...container.querySelectorAll('button, input, select, textarea, a[href], summary')].filter((node) => !node.disabled && !node.hidden);
+
+const nameOf = (node) => `${node.tagName}|${node.getAttribute('aria-label') ?? node.title ?? ''}|${node.textContent.trim().slice(0, 80)}`;
 
 /** A toast with Undo, for something that's quick to do by accident */
 export const undoToast = (text, undo) => toast(text, false, { label: 'Undo', run: undo });
@@ -211,17 +258,45 @@ export function emojiNode(code, label) {
 }
 
 /** Opens a dialog, which removes itself when closed */
+let dialogs = 0;
+
+/**
+ * Opens a modal dialog, named by its first heading. Toasts show inside it while it's open, as the page behind is
+ * hidden from screen readers. On closing, focus goes back to what opened it, or to its replacement if the page was
+ * redrawn meanwhile
+ */
 export function openDialog(parent, ...children) {
-  const node = el('dialog', { onclose: () => node.remove() }, ...children);
+  const opener = document.activeElement;
+  const openerKey = opener && opener !== document.body ? nameOf(opener) : null;
+  const node = el(
+    'dialog',
+    {
+      onclose: () => {
+        node.remove();
+        const under = [...document.querySelectorAll('dialog[open]')].at(-1);
+        (under ?? document.body).append(toasts);
+        if (opener?.isConnected || !openerKey) return;
+        const stand = [...document.querySelectorAll(opener.tagName)].find((n) => nameOf(n) === openerKey);
+        stand?.focus();
+      },
+    },
+    ...children,
+  );
+  const heading = node.querySelector('h2');
+  if (heading) {
+    heading.id ||= `dialog-title-${++dialogs}`;
+    node.setAttribute('aria-labelledby', heading.id);
+  }
   parent.append(node);
   node.showModal();
+  node.append(toasts);
   return node;
 }
 
 /** Asks which channel to post something in, starting on the announce channel */
 export function postDialog(parent, title, text, post) {
   const channel = el('select', { required: true, ariaLabel: 'Channel' });
-  const problem = el('div', { className: 'bad-text plan-problem', hidden: true });
+  const problem = formProblem();
   const submit = el('button', { className: 'primary', type: 'submit', disabled: true }, 'Post');
   const node = openDialog(
     parent,
@@ -269,25 +344,44 @@ export function confirmButton(props, label, armedLabel, action) {
   let armed = false;
   let timer;
   const plain = `${props.className ?? ''} confirm`.trim();
+  const name = props.ariaLabel ?? label;
+  const disarm = () => {
+    armed = false;
+    button.className = plain;
+    button.ariaLabel = props.ariaLabel ?? null;
+  };
+  // Not while it has focus, so someone reading it with a screen reader or keyboard isn't rushed
+  const later = () => {
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      if (document.activeElement !== button) disarm();
+    }, 3000);
+  };
   const button = el(
     'button',
     {
       ...props,
       className: plain,
+      onblur: () => {
+        if (armed) later();
+      },
       onclick: () => {
+        if (button.ariaDisabled === 'true') return;
         if (!armed) {
           armed = true;
           button.className = `${plain} danger`;
-          timer = setTimeout(() => {
-            armed = false;
-            button.className = plain;
-          }, 3000);
+          // Only the colour and the hidden label change, so say it too
+          button.ariaLabel = `${name}. ${armedLabel} Press again to confirm.`;
+          announce(`${armedLabel} Press again to confirm.`);
+          later();
           return;
         }
         clearTimeout(timer);
-        button.disabled = true;
+        disarm();
+        // Not disabled, which would throw focus off it and lose the keyboard's place
+        button.ariaDisabled = 'true';
         void attempt(action).finally(() => {
-          button.disabled = false;
+          button.ariaDisabled = null;
         });
       },
     },
