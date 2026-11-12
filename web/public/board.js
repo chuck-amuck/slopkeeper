@@ -1,4 +1,4 @@
-import { attempt, el, emojiNode, postDialog, request, soundPath, state, api, toast } from './lib.js';
+import { attempt, el, emojiNode, postDialog, request, soundPath, state, api, toast, undoToast } from './lib.js';
 import { voiceBar } from './voice.js';
 
 const byUse = (a, b) => b.plays - a.plays || a.name.localeCompare(b.name);
@@ -34,7 +34,11 @@ function sayBox(voice) {
               className: 'phrase-remove',
               ariaLabel: `Remove “${phrase.text}”`,
               title: 'Remove',
-              onclick: () => void attempt(async () => remember((await request(api(`/phrases/${phrase.id}`), { method: 'DELETE' })).phrases)),
+              onclick: () =>
+                void attempt(async () => {
+                  remember((await request(api(`/phrases/${phrase.id}`), { method: 'DELETE' })).phrases);
+                  undoToast(`Removed “${phrase.text}”.`, async () => remember((await request(api('/phrases'), { method: 'POST', json: { text: phrase.text } })).phrases));
+                }),
             },
             '×',
           ),

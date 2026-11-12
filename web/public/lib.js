@@ -14,11 +14,41 @@ export function el(tag, props = {}, ...children) {
   return node;
 }
 
-export function toast(text, bad = false) {
-  const node = el('div', { className: bad ? 'toast bad' : 'toast' }, text);
+/**
+ * A short note in the corner. `action` ({ label, run }) adds a button, such as Undo; a toast with one stays longer,
+ * and stays while the pointer or focus is on it, so there's time to reach it
+ */
+export function toast(text, bad = false, action = null) {
+  const node = el('div', { className: `toast${bad ? ' bad' : ''}${action ? ' with-action' : ''}` }, el('span', {}, text));
+  let timer;
+  const close = () => node.remove();
+  const wait = () => {
+    clearTimeout(timer);
+    timer = setTimeout(close, bad || action ? 8000 : 4000);
+  };
+  if (action) {
+    node.append(
+      el('button', {
+        type: 'button',
+        className: 'toast-action',
+        onclick: () => {
+          close();
+          void attempt(action.run);
+        },
+      }, action.label),
+    );
+    const hold = () => clearTimeout(timer);
+    node.addEventListener('pointerenter', hold);
+    node.addEventListener('pointerleave', wait);
+    node.addEventListener('focusin', hold);
+    node.addEventListener('focusout', wait);
+  }
   toasts.append(node);
-  setTimeout(() => node.remove(), bad ? 8000 : 4000);
+  wait();
 }
+
+/** A toast with Undo, for something that's quick to do by accident */
+export const undoToast = (text, undo) => toast(text, false, { label: 'Undo', run: undo });
 
 export function remember(key, value) {
   try {

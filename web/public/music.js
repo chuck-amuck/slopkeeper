@@ -1,4 +1,4 @@
-import { api, attempt, confirmButton, el, pickedVoice, poll, RequestError, request, session, state, toast, volumeControl } from './lib.js';
+import { api, attempt, confirmButton, el, pickedVoice, poll, RequestError, request, session, state, toast, undoToast, volumeControl } from './lib.js';
 
 const REFRESH_MS = 3000;
 // A playlist adds this many songs, the first or at random
@@ -437,6 +437,22 @@ export function renderMusic(main) {
 
   const move = (row, to) => void act(() => request(api(`/music/queue/${row.id}/move`), { method: 'POST', json: { to } }));
 
+  /** Takes a song out, with Undo putting it back where it was */
+  const remove = (row, index) =>
+    act(async () => {
+      const fresh = await request(api(`/music/queue/${row.id}`), { method: 'DELETE' });
+      undoToast(`Removed ${row.title}.`, async () => {
+        const { uri, title, artist, album, cover, durationMs } = row;
+        // A YouTube or SoundCloud song is added again from its link
+        const json = uri.startsWith('spotify:') ? { track: { uri, title, artist, album, cover, durationMs } } : { query: uri };
+        const added = await request(api('/music/queue'), { method: 'POST', json });
+        // It goes on the end, so it's the newest row with that song
+        const back = added.queue.findLast((r) => r.uri === uri);
+        show(back && index < added.queue.length - 1 ? await request(api(`/music/queue/${back.id}/move`), { method: 'POST', json: { to: index } }) : added);
+      });
+      return fresh;
+    });
+
   function queueRow(row, index) {
     const first = held();
     const last = data.queue.length - 1;
@@ -485,7 +501,7 @@ export function renderMusic(main) {
         { className: 'song-actions' },
         el('button', { className: 'icon', ariaLabel: `Move ${row.title} up`, title: 'Move up', disabled: index <= first, onclick: () => move(row, index - 1) }, '↑'),
         el('button', { className: 'icon', ariaLabel: `Move ${row.title} down`, title: 'Move down', disabled: index >= last, onclick: () => move(row, index + 1) }, '↓'),
-        el('button', { className: 'icon', ariaLabel: `Remove ${row.title}`, title: 'Remove', onclick: () => void act(() => request(api(`/music/queue/${row.id}`), { method: 'DELETE' })) }, '×'),
+        el('button', { className: 'icon', ariaLabel: `Remove ${row.title}`, title: 'Remove', onclick: () => void remove(row, index) }, '×'),
       ),
     );
     return item;

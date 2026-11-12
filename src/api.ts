@@ -564,10 +564,11 @@ async function handleDiscordSound(client: Client<true>, guild: Guild, req: Incom
     return { name };
   }
   if (key === 'DELETE ') {
-    await takeOffDiscord(guild, sound).catch(cantDo);
+    const name = await takeOffDiscord(guild, sound).catch(cantDo);
     logActivity(guild.id, by(), `Took **${sound.name}** off Discord’s soundboard`);
     await refreshPanels(client, guild.id);
-    return {};
+    // The library name, so the page can put it back
+    return { name };
   }
   throw new Refused(404, 'Not found.');
 }
@@ -680,10 +681,11 @@ async function handleSounds(client: Client<true>, guild: Guild, req: IncomingMes
   }
 
   if (method === 'DELETE') {
-    const problem = await removeSound(guild, soundOf(guild, name));
+    const { problem, binId } = await removeSound(guild, soundOf(guild, name));
     note(`Removed sound **${name}**`);
     await refresh();
-    return { discordProblem: problem };
+    // The bin id lets the page undo it
+    return { discordProblem: problem, binId };
   }
   throw new Refused(405, 'Not here.');
 }
@@ -1280,7 +1282,7 @@ async function handle(client: Client<true>, req: IncomingMessage, res: ServerRes
   if (section === 'stop' && !rest.length && req.method === 'POST') {
     // Sounds and speech only: the music has its own controls
     stopPlayback(guild.id, true);
-    return {};
+    return { musicPlaying: musicState(guild.id).phase === 'playing' };
   }
   if (section === 'discord-sync' && !rest.length && req.method === 'POST') {
     const result = await syncToDiscord(guild);

@@ -1650,6 +1650,27 @@ textarea {
   color: #fff;
 }
 
+.toast.with-action {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  pointer-events: auto;
+}
+
+/* Inverted like the toast, so it reads as part of it */
+.toast-action {
+  flex: none;
+  min-height: 32px;
+  border-color: currentColor;
+  background: transparent;
+  color: inherit;
+  font-weight: 600;
+}
+
+.toast-action:hover:not(:disabled) {
+  background: color-mix(in srgb, currentColor 15%, transparent);
+}
+
 .bad-text {
   color: var(--bad);
 }

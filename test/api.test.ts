@@ -439,11 +439,12 @@ test('sets and clears emoji, with the same rules as /sound emoji', async () => {
   assert.equal((await sounds())[0].emoji, null);
 });
 
-test('deletes a sound from the bot and from Discord', async () => {
+test('deletes a sound from the bot and from Discord, saying where it is in the bin', async () => {
   await upload('horn');
-  await ok(`/guilds/${GUILD}/sounds/horn`, { method: 'DELETE' });
+  const { binId } = await ok(`/guilds/${GUILD}/sounds/horn`, { method: 'DELETE' });
   assert.equal((await sounds()).length, 0);
   assert.equal(discordSounds.size, 0);
+  assert.deepEqual((await ok(`/guilds/${GUILD}/deleted-sounds`)).sounds.map((s: any) => s.id), [binId]);
   await refused(404, `/guilds/${GUILD}/sounds/horn`, { method: 'DELETE' });
 });
 
@@ -593,7 +594,7 @@ test('says why it can’t join, in plain text, without counting the play', async
 });
 
 test('stop works with nothing playing', async () => {
-  assert.deepEqual(await ok(`/guilds/${GUILD}/stop`, { method: 'POST' }), {});
+  assert.deepEqual(await ok(`/guilds/${GUILD}/stop`, { method: 'POST' }), { musicPlaying: false });
 });
 
 test('stars a sound and reports how often it’s been played', async () => {
@@ -1574,7 +1575,8 @@ test('a download that fails or isn’t audio saves nothing', async (t) => {
 test('taking off a sound that isn’t saved saves it first', async (t) => {
   discordCdn(t);
   discordSounds.set('theirs', { name: 'Horn' });
-  await ok(takeOff('theirs'), { method: 'DELETE' });
+  // The library name comes back, so the page can put it back on
+  assert.deepEqual(await ok(takeOff('theirs'), { method: 'DELETE' }), { name: 'horn' });
   assert.equal(discordSounds.size, 0);
   const [sound] = await sounds();
   assert.equal(sound.name, 'horn');

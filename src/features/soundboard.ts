@@ -288,7 +288,8 @@ export async function addSound(guild: Guild, name: string, ext: string, data: Bu
   return { replaced, problem };
 }
 
-function moveToBin(guildId: string, sound: Sound) {
+/** Returns its id in the bin */
+function moveToBin(guildId: string, sound: Sound): number {
   const level = soundLevels(guildId).get(sound.name);
   const { lastInsertRowid } = db
     .prepare('INSERT INTO deleted_sounds (guild_id, name, emoji, favourite, gain_db, percent, deleted_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
@@ -298,6 +299,7 @@ function moveToBin(guildId: string, sound: Sound) {
   const original = originalOf(guildId, sound.name);
   if (original) renameSync(original, path.join(dir, 'originals', path.basename(original)));
   renameSync(sound.file, path.join(dir, path.basename(sound.file)));
+  return Number(lastInsertRowid);
 }
 
 export interface DeletedSound {
@@ -428,15 +430,15 @@ async function storeUpload(guild: Guild, userId: string, upload: Upload): Promis
   return `${added.replaced ? '♻️ Replaced' : '➕ Added'} sound ${upload.emoji ? upload.emoji + ' ' : ''}**${upload.name}**.${note}${binned}`;
 }
 
-/** Moves a sound to the bin. Returns why it couldn't come off Discord's soundboard, if it couldn't */
-export async function removeSound(guild: Guild, sound: Sound): Promise<string | null> {
+/** Moves a sound to the bin. Returns its id there, and why it couldn't come off Discord's soundboard if it couldn't */
+export async function removeSound(guild: Guild, sound: Sound): Promise<{ problem: string | null; binId: number }> {
   const problem = await discordBoard.remove(guild, sound.name).then(
     () => null,
     (err: Error) => err.message,
   );
   // Whatever's still on Discord is no longer this sound
   if (problem) discordBoard.forget(discordBoard.synced(guild.id).get(sound.name)!);
-  moveToBin(guild.id, sound);
+  const binId = moveToBin(guild.id, sound);
   setEmoji(guild.id, sound.name, null);
   setFavourite(guild.id, sound.name, false);
   db.prepare('DELETE FROM sound_levels WHERE guild_id = ? AND name = ?').run(guild.id, sound.name);
@@ -446,7 +448,7 @@ export async function removeSound(guild: Guild, sound: Sound): Promise<string | 
     setSetting(guild.id, 'loopSound', '');
     await refreshLoopRoom(guild);
   }
-  return problem;
+  return { problem, binId };
 }
 
 /** Favourites sit at the top of the web UI's soundboard */
@@ -555,9 +557,11 @@ export async function saveFromDiscord(guild: Guild, sound: DiscordSound): Promis
   return name;
 }
 
-/** Frees a sound's slot, saving it to the library first so it can't be lost */
-export async function takeOffDiscord(guild: Guild, sound: DiscordSound) {
-  await discordBoard.remove(guild, await saveFromDiscord(guild, sound));
+/** Frees a sound's slot, saving it to the library first so it can't be lost. Returns its library name */
+export async function takeOffDiscord(guild: Guild, sound: DiscordSound): Promise<string> {
+  const name = await saveFromDiscord(guild, sound);
+  await discordBoard.remove(guild, name);
+  return name;
 }
 
 /** Puts a library sound in another's slot. Returns why it couldn't, with the old sound back in place */
@@ -1363,7 +1367,7 @@ async function onSetting(i: ButtonInteraction<'cached'>) {
 
   await i.deferUpdate();
   if (action === 'confirm') {
-    const problem = await removeSound(i.guild, sound);
+    const { problem } = await removeSound(i.guild, sound);
     logActivity(i.guildId, i.user.id, `Removed sound **${sound.name}**`);
     await notify();
     const removed = `🗑️ Removed **${sound.name}**. Bring it back within ${BIN_DAYS} days with ${commandMention(i.guildId, 'sound restore')}.${problem ? ` Couldn’t remove it from Discord’s soundboard: ${problem}.` : ''}`;
@@ -1573,7 +1577,7 @@ export const soundboard: Feature = {
         if (sub === 'remove') {
           const sound = findSound(i.guildId, i.options.getString('name', true));
           if (!sound) return i.reply({ content: 'No sound by that name.', ...ephemeral });
-          const problem = await removeSound(i.guild, sound);
+          const { problem } = await removeSound(i.guild, sound);
           logActivity(i.guildId, i.user.id, `Removed sound **${sound.name}**`);
           await i.reply(`🗑️ Removed sound **${sound.name}**. Bring it back within ${BIN_DAYS} days with ${commandMention(i.guildId, 'sound restore')}.${problem ? `\nCouldn’t remove it from Discord’s soundboard: ${problem}.` : ''}`);
           return refreshPanels(i.client, i.guildId);

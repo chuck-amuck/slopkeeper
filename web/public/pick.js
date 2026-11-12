@@ -1,4 +1,4 @@
-import { ago, api, attempt, el, openDialog, request, RequestError, state, toast } from './lib.js';
+import { ago, api, attempt, el, openDialog, request, RequestError, state, toast, undoToast } from './lib.js';
 import { achievementsView } from './achievements.js';
 import { duration } from './stats.js';
 
@@ -194,7 +194,11 @@ export function renderPick(main) {
   const hide = (game) =>
     attempt(async () => {
       await request(api(`/hidden-games/${game.appid}`), { method: 'PUT', json: { name: game.name } });
-      toast(`${game.name} won’t be suggested again.`);
+      undoToast(`${game.name} won’t be suggested again.`, async () => {
+        await request(api(`/hidden-games/${game.appid}`), { method: 'DELETE' });
+        toast(`${game.name} can be suggested again.`);
+        await show();
+      });
       if (picked?.name === game.name) picked = null;
       await show();
     });

@@ -621,7 +621,8 @@ One running bot can serve several servers. Each server gets its own:
 
 A page in [`web/`](web) that runs as a second container next to the bot, for your home network or behind a sign-in proxy like [Pangolin](#signing-in-through-pangolin):
 
-- **Stop:** the red button in the bottom corner of every page silences every sound and line of speech. The music carries on: it has its own controls on the Music tab.
+- **Stop sounds:** the red button in the bottom corner of every page silences every sound and line of speech. The music carries on: it has its own controls on the Music tab, and while it plays the toast after Stop offers **Pause music**.
+- **Undo:** removing a song from the queue, deleting a sound or a saved phrase, taking a sound off Discord, **Never suggest this** and a setting's **Reset** each show a toast with **Undo** for 8 seconds, longer while the pointer or focus is on it.
 - **Soundboard:** big buttons that play in voice, with favourites first and then whatever gets played most, and a box for having the bot say something.
 - **Music:** what's playing, Spotify search, and the queue to add to, reorder and clear. See [Music](#music).
 - **Sounds:** upload files or whole folders, preview, rename and delete sounds, set a sound's volume, trim it with a way back to the original, and choose what's on Discord's soundboard, with a waveform for picking part of a long sound. A file named like an existing sound waits until you choose **Replace it** or **Keep both**. **Recently deleted** restores a deleted or replaced sound, or erases it for good.
@@ -705,7 +706,7 @@ It applies the same rules as `/sound` and `/setup`, and every request needs an `
 | `GET /guilds/:id/sounds` | Lists sounds, Discord slots and the server's emoji |
 | `PUT /guilds/:id/sounds/:name?file=<filename>` | Adds a sound; the body is the file. A taken name gets 409 unless `&replace=1`, which moves the old sound to Recently deleted, or `&keep=1`, which adds it under the next free name. The reply gives the name it's under. `&discord=0` keeps a new sound off Discord's soundboard |
 | `PATCH /guilds/:id/sounds/:name` | Renames it, sets its emoji, volume or star: `{ "name": "..." }`, `{ "emoji": "..." }`, `{ "volume": 50 }`, `{ "favourite": true }` |
-| `DELETE /guilds/:id/sounds/:name` | Moves it to the bin for 30 days |
+| `DELETE /guilds/:id/sounds/:name` | Moves it to the bin for 30 days. Returns `binId`, its id in the bin |
 | `GET /guilds/:id/sounds/:name/audio` | Downloads its audio |
 | `POST /guilds/:id/sounds/:name/play` | Plays it in a voice channel with people in it: `{ "channelId": "..." }` |
 | `GET /guilds/:id/deleted-sounds` | Lists what's in the bin, newest first |
@@ -722,7 +723,7 @@ It applies the same rules as `/sound` and `/setup`, and every request needs an `
 | `GET /guilds/:id/discord-sounds/:soundId/audio` | Downloads the audio of a sound on Discord's soundboard |
 | `POST /guilds/:id/discord-sounds/:soundId/play` | Plays it in a voice channel: `{ "channelId": "..." }` |
 | `POST /guilds/:id/discord-sounds/:soundId/save` | Saves it to the library and links the two |
-| `DELETE /guilds/:id/discord-sounds/:soundId` | Takes it off Discord's soundboard, saving it to the library first |
+| `DELETE /guilds/:id/discord-sounds/:soundId` | Takes it off Discord's soundboard, saving it to the library first. Returns its library `name` |
 | `GET /guilds/:id/sales` | Lists what's watched and on sale, from the last check, with why |
 | `GET /guilds/:id/games` | Lists the game library with owners, who needs each game, who wants it and any sale, plus the server's members |
 | `GET /guilds/:id/steam-links` | Lists the server's members with their linked Steam account, if any, and whether Steam is set up |
@@ -738,7 +739,7 @@ It applies the same rules as `/sound` and `/setup`, and every request needs an `
 | `DELETE /guilds/:id/steam-links/:user/family` | Takes someone out of their Steam family |
 | `GET /guilds/:id/free-games` | Lists what's free right now, with whether each game is posted and why |
 | `GET /guilds/:id/voice` | Lists voice channels with people in them, busiest first |
-| `POST /guilds/:id/stop` | Stops whatever is playing, and any spoken lines waiting |
+| `POST /guilds/:id/stop` | Stops every sound and any spoken lines waiting, leaving the music playing. Returns `musicPlaying` |
 | `GET /guilds/:id/say` | Whether text to speech is `on`, the `voices`, the default `voice`, the `longest` line and the saved `phrases` |
 | `POST /guilds/:id/say` | Reads out `text` in `channelId`, with an optional `voice`. Answers once the line starts |
 | `POST /guilds/:id/phrases` | Saves `text`, and answers with the `phrases` |

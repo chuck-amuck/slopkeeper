@@ -1,4 +1,4 @@
-import { api, attempt, confirmButton, el, openDialog, postDialog, request, RequestError, state, toast } from './lib.js';
+import { api, attempt, confirmButton, el, openDialog, postDialog, request, RequestError, state, toast, undoToast } from './lib.js';
 
 const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
@@ -175,11 +175,11 @@ export function renderSettings(main) {
         await refresh();
       });
 
-    const reset = () =>
+    const reset = (previous) =>
       attempt(async () => {
         say(null);
         await request(api(`/settings/${setting.key}`), { method: 'DELETE' });
-        toast(`${setting.label} is back to the default.`);
+        undoToast(`${setting.label} is back to the default.`, () => save(previous));
         await refresh();
       });
 
@@ -196,7 +196,7 @@ export function renderSettings(main) {
         drawn = from;
       }
       status.replaceChildren(el('span', {}, current.source === 'set here' ? 'Set for this server' : current.source === 'default' ? 'Default' : `From ${current.source}`));
-      if (current.source === 'set here') status.append(el('button', { className: 'link', onclick: reset }, 'Reset'));
+      if (current.source === 'set here') status.append(el('button', { className: 'link', onclick: () => reset(current.value) }, 'Reset'));
     };
 
     update(setting, data);

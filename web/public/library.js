@@ -1,6 +1,6 @@
 import { pickClip } from './clip.js';
 import { emojiPicker } from './emojipicker.js';
-import { api, attempt, confirmButton, el, emojiNode, openDialog, player, recall, remember, request, RequestError, soundPath, state, toast, volumeControl } from './lib.js';
+import { api, attempt, confirmButton, el, emojiNode, openDialog, player, recall, remember, request, RequestError, soundPath, state, toast, undoToast, volumeControl } from './lib.js';
 import { pickTrim } from './trim.js';
 import { voiceBar } from './voice.js';
 
@@ -333,8 +333,13 @@ export function renderLibrary(main) {
           title: whyNot,
           onclick: () =>
             change(async () => {
-              await request(api(`/discord-sounds/${sound.id}`), { method: 'DELETE' });
-              toast(saved ? `Took ${sound.name} off Discord.` : `Took ${sound.name} off Discord and saved it to the library.`);
+              const { name } = await request(api(`/discord-sounds/${sound.id}`), { method: 'DELETE' });
+              const undo = async () => {
+                await request(soundPath(name, '/discord'), { method: 'PUT', json: {} });
+                toast(`Put ${name} back on Discord.`);
+                await load();
+              };
+              undoToast(saved ? `Took ${sound.name} off Discord.` : `Took ${sound.name} off Discord and saved it to the library.`, undo);
             }),
         },
         'Take off',
@@ -448,9 +453,16 @@ export function renderLibrary(main) {
         }),
     });
     const remove = confirmButton({ className: 'quiet icon', title: 'Delete', ariaLabel: `Delete ${sound.name}` }, '✕', 'Delete?', async () => {
-      const { discordProblem } = await request(soundPath(sound.name), { method: 'DELETE' });
+      const { discordProblem, binId } = await request(soundPath(sound.name), { method: 'DELETE' });
       if (player.name === sound.name) player.stop();
-      toast(discordProblem ? `Deleted ${sound.name}, but it’s still on Discord: ${discordProblem}` : `Deleted ${sound.name}.`, !!discordProblem);
+      if (discordProblem) toast(`Deleted ${sound.name}, but it’s still on Discord: ${discordProblem}`, true);
+      else {
+        undoToast(`Deleted ${sound.name}.`, async () => {
+          const { name } = await request(api(`/deleted-sounds/${binId}/restore`), { method: 'POST' });
+          toast(sound.onDiscord ? `Restored ${name}. Turn on its Discord switch to put it back on Discord.` : `Restored ${name}.`);
+          await load();
+        });
+      }
       await load();
     });
 

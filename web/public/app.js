@@ -204,11 +204,17 @@ function renderFrame() {
           title: 'Stops every sound and line of speech. The music carries on',
           onclick: () =>
             attempt(async () => {
-              await request(api('/stop'), { method: 'POST' });
-              toast('Stopped.');
+              const { musicPlaying } = await request(api('/stop'), { method: 'POST' });
+              // The music has its own controls, but it's often what someone wanted quiet too
+              const pause = { label: 'Pause music', run: async () => {
+                await request(api('/music/pause'), { method: 'POST' });
+                toast('Music paused.');
+              } };
+              toast('Stopped sounds and speech.', false, musicPlaying ? pause : null);
             }),
         },
-        '■ Stop',
+        el('span', { ariaHidden: 'true' }, '■ '),
+        'Stop sounds',
       ),
   );
 
