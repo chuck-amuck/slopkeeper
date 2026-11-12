@@ -1,6 +1,6 @@
 import { pickClip } from './clip.js';
 import { emojiPicker } from './emojipicker.js';
-import { api, attempt, confirmButton, el, emojiNode, keepFocus, notice, openDialog, player, recall, remember, request, RequestError, soundPath, state, toast, undoToast, volumeControl } from './lib.js';
+import { api, attempt, confirmButton, el, emojiNode, icon, keepFocus, notice, openDialog, player, recall, remember, request, RequestError, soundPath, state, toast, undoToast, volumeControl } from './lib.js';
 import { pickTrim } from './trim.js';
 import { voiceBar } from './voice.js';
 
@@ -279,7 +279,7 @@ export function renderLibrary(main) {
     });
     boardPreviews.set(key, { name: label, button: preview });
     paintPreview(label, preview, key);
-    const play = el('button', { className: 'icon', onclick: () => attempt(() => voice.playDiscord(sound.id)) }, '▶');
+    const play = el('button', { className: 'icon', onclick: () => attempt(() => voice.playDiscord(sound.id)) }, icon('play'));
     boardPlayers.set(label, play);
     paintPlay(label, play);
     const whyNot = sound.removable ? undefined : 'The bot needs Manage Expressions to change sounds it didn’t add';
@@ -386,7 +386,10 @@ export function renderLibrary(main) {
     const action = player.name === key ? 'Stop' : 'Preview';
     button.title = action;
     button.ariaLabel = `${action} ${name}`;
-    button.textContent = action === 'Stop' ? '■' : '🎧';
+    // A list of hundreds repaints on every change, so only the buttons whose state changed
+    if (button.dataset.action === action) return;
+    button.dataset.action = action;
+    button.replaceChildren(icon(action === 'Stop' ? 'stop' : 'headphones'));
   }
 
   function paintPlay(name, button) {
@@ -454,7 +457,7 @@ export function renderLibrary(main) {
           }
         }),
     });
-    const remove = confirmButton({ className: 'quiet icon', title: 'Delete', ariaLabel: `Delete ${sound.name}` }, '✕', 'Delete?', async () => {
+    const remove = confirmButton({ className: 'quiet icon', title: 'Delete', ariaLabel: `Delete ${sound.name}` }, icon('x'), 'Delete?', async () => {
       const { discordProblem, binId } = await request(soundPath(sound.name), { method: 'DELETE' });
       if (player.name === sound.name) player.stop();
       if (discordProblem) toast(`Deleted ${sound.name}, but it’s still on Discord: ${discordProblem}`, true);
@@ -472,7 +475,7 @@ export function renderLibrary(main) {
     previews.set(sound.name, preview);
     paintPreview(sound.name, preview);
     // Not disabled while a request is out, so spamming a sound works as it does on a panel
-    const play = el('button', { className: 'icon', onclick: () => attempt(() => voice.play(sound.name)) }, '▶');
+    const play = el('button', { className: 'icon', onclick: () => attempt(() => voice.play(sound.name)) }, icon('play'));
     players.set(sound.name, play);
     paintPlay(sound.name, play);
 
@@ -484,11 +487,11 @@ export function renderLibrary(main) {
       el(
         'button',
         { className: 'quiet icon emoji', title: 'Set emoji', ariaLabel: `Emoji for ${sound.name}`, onclick: () => pickEmoji(sound) },
-        sound.emoji ? emojiNode(sound.emoji, 'emoji') : el('span', { className: 'none' }, '＋'),
+        sound.emoji ? emojiNode(sound.emoji, 'emoji') : el('span', { className: 'none' }, icon('plus')),
       ),
       nameBox,
-      el('button', { className: 'quiet icon', title: 'Volume', ariaLabel: `Volume for ${sound.name}`, onclick: () => pickVolume(sound) }, '🔉'),
-      el('button', { className: 'quiet icon', title: 'Trim', ariaLabel: `Trim ${sound.name}`, onclick: () => attempt(() => trim(sound)) }, '✂'),
+      el('button', { className: 'quiet icon', title: 'Volume', ariaLabel: `Volume for ${sound.name}`, onclick: () => pickVolume(sound) }, icon('volume')),
+      el('button', { className: 'quiet icon', title: 'Trim', ariaLabel: `Trim ${sound.name}`, onclick: () => attempt(() => trim(sound)) }, icon('scissors')),
       el('label', { className: 'toggle' }, toggle, el('span', {}, 'On Discord')),
       remove,
     );
@@ -654,7 +657,7 @@ export function renderLibrary(main) {
               renderQueue();
             },
           },
-          '✕',
+          icon('x'),
         ),
         note,
       );

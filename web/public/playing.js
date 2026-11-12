@@ -1,4 +1,4 @@
-import { api, attempt, el, request, state, toast } from './lib.js';
+import { api, attempt, el, icon, request, state, toast } from './lib.js';
 
 // After a failed request, how long before asking again
 const RETRY_MS = 5000;
@@ -85,7 +85,7 @@ export function stopDock() {
   const button = el(
     'button',
     {
-      className: 'stop-all',
+      className: 'stop-all with-icon',
       title: 'Stops every sound and line of speech. The music carries on',
       onclick: () =>
         attempt(async () => {
@@ -101,7 +101,7 @@ export function stopDock() {
           toast('Stopped sounds and speech.', false, musicPlaying ? pause : null);
         }),
     },
-    el('span', { ariaHidden: 'true' }, '■ '),
+    icon('stop'),
     label,
   );
   const node = el('div', { className: 'stop-dock' }, list, button);
@@ -140,7 +140,7 @@ export function stopDock() {
             },
             el('span', { className: 'now-name' }, nameOf(p)),
             p.loop && el('span', { className: 'now-loop' }, 'looping'),
-            el('span', { className: 'now-x', ariaHidden: 'true' }, '×'),
+            el('span', { className: 'now-x' }, icon('x')),
           ),
         ),
       ),

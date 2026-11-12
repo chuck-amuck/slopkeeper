@@ -263,11 +263,6 @@ button.confirm.icon > span:last-child {
   font-size: var(--text-xs);
 }
 
-.now-x {
-  font-size: 16px;
-  line-height: 1;
-}
-
 .stop-label {
   display: inline-block;
   max-width: 14em;
@@ -306,6 +301,61 @@ button.icon {
   display: inline-grid;
   place-items: center;
   flex: none;
+}
+
+/* Icons: line drawings in the text colour, sized to the text unless a control sets otherwise */
+.ico {
+  width: 1.25em;
+  height: 1.25em;
+  flex: none;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  vertical-align: -0.25em;
+}
+
+button.icon .ico,
+.star .ico {
+  display: block;
+  width: 18px;
+  height: 18px;
+}
+
+.chip .ico {
+  width: 14px;
+  height: 14px;
+}
+
+.sound .emoji .none .ico {
+  display: block;
+}
+
+/* A button with an icon and words */
+button.with-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+}
+
+.star[aria-pressed='true'] .ico {
+  fill: currentColor;
+}
+
+.tile-emoji .ico {
+  width: 30px;
+  height: 30px;
+  color: var(--muted);
+}
+
+.grip .ico,
+.now-x .ico,
+.phrase-remove .ico {
+  display: block;
+  width: 16px;
+  height: 16px;
 }
 
 button.link {
@@ -1087,7 +1137,6 @@ dialog .actions {
   border: 0;
   background: none;
   color: var(--muted);
-  font-size: 16px;
 }
 
 .star[aria-pressed='true'] {
@@ -1249,6 +1298,26 @@ dialog .actions button:first-child:not(.primary):has(+ button) {
   margin-right: 6px;
   color: var(--muted);
   font-size: var(--text-sm);
+}
+
+/* Each answer in one column and the names beside it, wrapping under themselves */
+.rsvps {
+  display: grid;
+  align-items: baseline;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: var(--space-1) var(--space-3);
+  margin: 0;
+  font-size: var(--text-md);
+}
+
+.rsvps dt {
+  color: var(--muted);
+  font-size: var(--text-sm);
+}
+
+.rsvps dd {
+  margin: 0;
+  overflow-wrap: anywhere;
 }
 
 .night-actions {
@@ -1574,10 +1643,9 @@ textarea {
 
 .grip {
   flex: none;
-  width: 14px;
+  width: 16px;
   color: var(--muted);
   cursor: grab;
-  letter-spacing: -3px;
   user-select: none;
 }
 

@@ -1,4 +1,4 @@
-import { api, attempt, el, emojiNode, keepFocus, notice, postDialog, request, soundPath, state, toast, undoToast } from './lib.js';
+import { api, attempt, el, emojiNode, icon, keepFocus, notice, postDialog, request, soundPath, state, toast, undoToast } from './lib.js';
 import { elapsed, onPlaying } from './playing.js';
 import { voiceBar } from './voice.js';
 
@@ -41,7 +41,7 @@ function sayBox(voice) {
                   undoToast(`Removed “${phrase.text}”.`, async () => remember((await request(api('/phrases'), { method: 'POST', json: { text: phrase.text } })).phrases));
                 }),
             },
-            '×',
+            icon('x'),
           ),
         ),
       ),
@@ -151,7 +151,7 @@ export function renderBoard(main, openManage) {
           void attempt(() => voice.play(sound.name));
         },
       },
-      el('span', { className: 'tile-emoji' }, sound.emoji ? emojiNode(sound.emoji, '') : '🔊'),
+      el('span', { className: 'tile-emoji' }, sound.emoji ? emojiNode(sound.emoji, '') : icon('speaker')),
       el('span', { className: 'tile-name' }, sound.name),
     );
     tiles.push(button);
@@ -171,7 +171,7 @@ export function renderBoard(main, openManage) {
             render();
           }),
       },
-      sound.favourite ? '★' : '☆',
+      icon('star'),
     );
     return el('div', { className: 'tile-box' }, button, progress, star);
   }

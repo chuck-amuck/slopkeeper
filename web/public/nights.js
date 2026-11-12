@@ -7,7 +7,17 @@ function when(ms, timeZone) {
   return new Date(ms).toLocaleString(undefined, { timeZone, weekday: 'long', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZoneName: 'short' });
 }
 
-const answer = (label, names) => el('div', { className: 'rsvp' }, el('span', { className: 'rsvp-label' }, `${label} (${names.length})`), names.join(', ') || '—');
+/** Who's in, maybe and out, as a grid of answer and names */
+const answers = (night) =>
+  el(
+    'dl',
+    { className: 'rsvps' },
+    ...[
+      ['In', night.in],
+      ['Maybe', night.maybe],
+      ['Can’t', night.out],
+    ].flatMap(([label, names]) => [el('dt', {}, `${label} (${names.length})`), el('dd', {}, names.join(', ') || '—')]),
+  );
 
 /** Who still needs to add who on Steam before a night. Friends lists come from Steam, so this fills in after the page */
 function friendsNote(night) {
@@ -149,9 +159,7 @@ export function renderNights(main) {
           el('div', { className: 'night-when' }, when(n.startsAt, data.timeZone)),
           el('div', { className: 'hint' }, [n.voiceChannel, `Hosted by ${n.host}`, n.repeats].filter(Boolean).join(' · ')),
           n.details && el('p', {}, n.details),
-          answer('In', n.in),
-          answer('Maybe', n.maybe),
-          answer('Can’t', n.out),
+          answers(n),
           n.in.length > 1 && friendsNote(n),
           el(
             'div',

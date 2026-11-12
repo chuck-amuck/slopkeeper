@@ -1,4 +1,4 @@
-import { api, attempt, confirmButton, el, keepFocus, notice, pickedVoice, poll, request, RequestError, session, state, toast, undoToast, volumeControl } from './lib.js';
+import { api, attempt, confirmButton, el, icon, keepFocus, notice, pickedVoice, poll, request, RequestError, session, state, toast, undoToast, volumeControl } from './lib.js';
 
 const REFRESH_MS = 3000;
 // A playlist adds this many songs, the first or at random
@@ -443,7 +443,7 @@ export function renderMusic(main) {
   const list = el('ol', { className: 'music-queue' });
   const queueCount = el('span', { className: 'voice-label' });
   const clearButton = confirmButton({}, 'Clear', 'Clear the queue?', async () => show(await request(api('/music/queue'), { method: 'DELETE' })));
-  const shuffleButton = el('button', { title: 'Put the songs waiting in a random order', onclick: () => void act(() => request(api('/music/queue/shuffle'), { method: 'POST' })) }, '🔀 Shuffle');
+  const shuffleButton = el('button', { className: 'with-icon', title: 'Put the songs waiting in a random order', onclick: () => void act(() => request(api('/music/queue/shuffle'), { method: 'POST' })) }, icon('shuffle'), 'Shuffle');
   const queueCard = el('section', { className: 'card music' }, el('div', { className: 'card-head' }, el('h2', {}, 'Up next'), el('div', { className: 'toolbar' }, queueCount, shuffleButton, clearButton)), list);
 
   /** The first song stays put while it's playing or paused, so the list starts after it */
@@ -505,7 +505,7 @@ export function renderMusic(main) {
           if (to !== from) move(dragging, to);
         },
       },
-      el('span', { className: 'grip', ariaHidden: 'true', title: 'Drag to move' }, '⋮⋮'),
+      el('span', { className: 'grip', ariaHidden: 'true', title: 'Drag to move' }, icon('grip')),
       el('span', { className: 'song-number' }, String(index - first + 1)),
       cover(row.cover, 40),
       el('div', { className: 'song-text' }, el('div', { className: 'song-title' }, row.title), el('div', { className: 'song-sub' }, `${row.artist} · added by ${row.addedBy}`)),
@@ -514,10 +514,10 @@ export function renderMusic(main) {
         'div',
         { className: 'song-actions' },
         // Straight to the top, which on a phone beats pressing ↑ over and over
-        el('button', { className: 'icon', ariaLabel: `Play ${row.title} next`, title: 'Play next', disabled: index <= first, onclick: () => move(row, first) }, '⤒'),
-        el('button', { className: 'icon', ariaLabel: `Move ${row.title} up`, title: 'Move up', disabled: index <= first, onclick: () => move(row, index - 1) }, '↑'),
-        el('button', { className: 'icon', ariaLabel: `Move ${row.title} down`, title: 'Move down', disabled: index >= last, onclick: () => move(row, index + 1) }, '↓'),
-        el('button', { className: 'icon', ariaLabel: `Remove ${row.title}`, title: 'Remove', onclick: () => void remove(row, index) }, '×'),
+        el('button', { className: 'icon', ariaLabel: `Play ${row.title} next`, title: 'Play next', disabled: index <= first, onclick: () => move(row, first) }, icon('top')),
+        el('button', { className: 'icon', ariaLabel: `Move ${row.title} up`, title: 'Move up', disabled: index <= first, onclick: () => move(row, index - 1) }, icon('up')),
+        el('button', { className: 'icon', ariaLabel: `Move ${row.title} down`, title: 'Move down', disabled: index >= last, onclick: () => move(row, index + 1) }, icon('down')),
+        el('button', { className: 'icon', ariaLabel: `Remove ${row.title}`, title: 'Remove', onclick: () => void remove(row, index) }, icon('x')),
       ),
     );
     return item;

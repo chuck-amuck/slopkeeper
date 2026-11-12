@@ -1,5 +1,5 @@
 import { achievementsView } from './achievements.js';
-import { ago, api, attempt, el, formProblem, notice, openDialog, recall, remember, request, state, toast } from './lib.js';
+import { ago, api, attempt, el, formProblem, icon, notice, openDialog, recall, remember, request, state, toast } from './lib.js';
 
 const PERIODS = [
   ['week', 'Past week'],
@@ -334,7 +334,7 @@ function overview(main) {
     });
 
   function chip(label, clear) {
-    return el('button', { className: 'chip', title: `Stop filtering by ${label}`, onclick: clear }, `${label} ✕`);
+    return el('button', { className: 'chip with-icon', title: `Stop filtering by ${label}`, onclick: clear }, label, icon('x'));
   }
 
   function render(data) {

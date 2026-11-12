@@ -14,6 +14,40 @@ export function el(tag, props = {}, ...children) {
   return node;
 }
 
+// One set of line icons, drawn on a 24-unit grid in the text colour, so they look the same on every device
+const ICONS = {
+  play: '<path d="M8 5.5v13l10.5-6.5z" fill="currentColor"/>',
+  stop: '<rect x="6.5" y="6.5" width="11" height="11" rx="1.5" fill="currentColor"/>',
+  headphones: '<path d="M4 15v-3a8 8 0 0 1 16 0v3"/><rect x="3.5" y="14" width="4" height="6.5" rx="1.5"/><rect x="16.5" y="14" width="4" height="6.5" rx="1.5"/>',
+  volume: '<path d="M4 9.5h3l5-4v13l-5-4H4z"/><path d="M15.5 9.5a3.5 3.5 0 0 1 0 5"/>',
+  speaker: '<path d="M3.5 9.5h3l5-4v13l-5-4h-3z"/><path d="M15 9.5a3.5 3.5 0 0 1 0 5"/><path d="M17.5 6.5a7.5 7.5 0 0 1 0 11"/>',
+  scissors: '<circle cx="6" cy="7" r="2.5"/><circle cx="6" cy="17" r="2.5"/><path d="M8.2 8.3 19 17M8.2 15.7 19 7"/>',
+  x: '<path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/>',
+  up: '<path d="M12 19V5M6.5 10.5 12 5l5.5 5.5"/>',
+  down: '<path d="M12 5v14M6.5 13.5 12 19l5.5-5.5"/>',
+  top: '<path d="M5 4.5h14M12 20V9M7 13.5l5-5 5 5"/>',
+  shuffle: '<path d="M16 4h4v4M4 20 20 4M20 16v4h-4M15 15l5 5M4 4l5 5"/>',
+  star: '<path d="M12 3.5l2.6 5.4 5.9.8-4.3 4.1 1.1 5.8L12 16.8l-5.3 2.8 1.1-5.8-4.3-4.1 5.9-.8z"/>',
+  plus: '<path d="M12 5v14M5 12h14"/>',
+  grip: '<g fill="currentColor" stroke="none"><circle cx="9" cy="6" r="1.6"/><circle cx="15" cy="6" r="1.6"/><circle cx="9" cy="12" r="1.6"/><circle cx="15" cy="12" r="1.6"/><circle cx="9" cy="18" r="1.6"/><circle cx="15" cy="18" r="1.6"/></g>',
+};
+
+const drawn = new Map();
+
+/** One of the icons above, hidden from screen readers: the button or text around it says what it is */
+export function icon(name) {
+  if (!(name in ICONS)) throw new Error(`There’s no icon called ${name}`);
+  let svg = drawn.get(name);
+  // Each is drawn once, and copied after that, as lists of hundreds of rows redraw often
+  if (!svg) {
+    svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    for (const [key, value] of Object.entries({ viewBox: '0 0 24 24', class: `ico ico-${name}`, 'aria-hidden': 'true', focusable: 'false' })) svg.setAttribute(key, value);
+    svg.innerHTML = ICONS[name];
+    drawn.set(name, svg);
+  }
+  return svg.cloneNode(true);
+}
+
 /**
  * A short note in the corner. `action` ({ label, run }) adds a button, such as Undo; a toast with one stays longer,
  * and stays while the pointer or focus is on it, so there's time to reach it
@@ -364,7 +398,8 @@ export function confirmButton(props, label, armedLabel, action) {
   let armed = false;
   let timer;
   const plain = `${props.className ?? ''} confirm`.trim();
-  const name = props.ariaLabel ?? label;
+  // An icon has no words of its own, so one needs an ariaLabel
+  const name = props.ariaLabel ?? (typeof label === 'string' ? label : props.title);
   const disarm = () => {
     armed = false;
     button.className = plain;
