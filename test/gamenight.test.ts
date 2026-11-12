@@ -4,7 +4,7 @@ import { mock, test } from 'node:test';
 import { recentActivity } from '../src/activity.ts';
 import { config } from '../src/config.ts';
 import { db } from '../src/db.ts';
-import { gameNights, nextOccurrence, parseWhen, tick } from '../src/features/gamenight.ts';
+import { gameNights, nextOccurrence, parseWhen, tick, whenText } from '../src/features/gamenight.ts';
 import { setSetting } from '../src/settings.ts';
 
 const zone = 'America/Chicago';
@@ -163,7 +163,9 @@ async function press(customId: string, user: string, manageEvents = false) {
   let reply: (Parameters<typeof buttonIds>[0] & { content: string }) | undefined;
   // The card itself, redrawn when a private confirmation is pressed
   let card: Parameters<typeof buttonIds>[0] | undefined;
+  let modal: { toJSON(): any } | undefined;
   await gameNights.onButton!({
+    showModal: async (m: typeof modal) => (modal = m),
     customId,
     inCachedGuild: () => true,
     user: { id: user },
@@ -176,7 +178,32 @@ async function press(customId: string, user: string, manageEvents = false) {
     reply: async (r: typeof reply) => (reply = r),
     followUp: async () => {},
   } as never);
-  return { update, reply, card };
+  return { update, reply, card, modal };
+}
+
+/** Sends a card's Edit form */
+async function submitEdit(id: number, user: string, fields: Record<string, string>) {
+  let answer: string | undefined;
+  const posted: { content: string; allowedMentions: unknown }[] = [];
+  let card: Parameters<typeof buttonIds>[0] | undefined;
+  await gameNights.onModal!({
+    customId: `gn:edit:${id}`,
+    inCachedGuild: () => true,
+    guildId: 'edits',
+    user: { id: user },
+    guild: { id: 'edits' },
+    memberPermissions: { has: () => false },
+    fields: { getTextInputValue: (name: string) => fields[name] },
+    client: {
+      channels: {
+        fetch: async () => ({ isTextBased: () => true, isSendable: () => true, send: async (m: (typeof posted)[0]) => posted.push(m), messages: { edit: async (_id: string, r: typeof card) => (card = r) } }),
+      },
+    },
+    reply: async (r: { content: string }) => (answer = r.content),
+    deferReply: async () => {},
+    editReply: async (r: string) => (answer = r),
+  } as never);
+  return { answer, posted, card };
 }
 
 /** Presses a card's Cancel night or Stop repeating, then the confirmation it asks for */
@@ -307,4 +334,33 @@ test('only the host or Manage Events can stop a series', async () => {
   const sent: unknown[] = [];
   await tick(fakeClient([{ id: 'perms', name: 'Perms' }], async (_g, m) => sent.push(m)));
   assert.equal(sent.length, 0);
+});
+
+test('the host edits a night from its card, and people who are in hear when it moves', async () => {
+  setSetting('edits', 'timezone', zone);
+  await plan('edits', null);
+  const night = allNights('edits')[0];
+  db.prepare(`INSERT INTO game_night_rsvps (night_id, user_id, status) VALUES (?, 'friend', 'maybe'), (?, 'nope', 'out')`).run(night.id, night.id);
+  db.prepare('UPDATE game_nights SET reminded = 1 WHERE id = ?').run(night.id);
+
+  assert.match((await press(`gn:edit:${night.id}`, 'stranger')).reply!.content, /Only the host/);
+  assert.match((await submitEdit(night.id, 'stranger', { game: 'x', when: 'fri 8pm', details: '' })).answer!, /Only the host/, 'the form checks too');
+  const { modal } = await press(`gn:edit:${night.id}`, 'host');
+  const inputs = modal!.toJSON().components.map((row: any) => row.components[0]);
+  assert.deepEqual(inputs.map((c: any) => [c.custom_id, c.value]), [['game', 'Valheim'], ['when', whenText(night.starts_at, zone)], ['details', undefined]]);
+  assert.equal(parseWhen(inputs[1].value, Date.now(), zone), night.starts_at, 'the form’s time reads back as the same time');
+
+  assert.equal((await submitEdit(night.id, 'host', { game: 'Valheim', when: inputs[1].value, details: '' })).answer, 'Nothing changed.');
+  const bad = await submitEdit(night.id, 'host', { game: 'Valheim', when: 'someday', details: '' });
+  assert.match(bad.answer!, /couldn’t tell when someday is/);
+
+  const later = whenText(night.starts_at + DAY, zone);
+  const { answer, posted, card } = await submitEdit(night.id, 'host', { game: 'Valheim', when: later, details: 'Bring mead' });
+  assert.equal(answer, '✏️ Changed the time, details.');
+  const changed = allNights('edits')[0];
+  assert.deepEqual([changed.starts_at, changed.details, changed.reminded], [night.starts_at + DAY, 'Bring mead', 0]);
+  assert.equal(card!.components.length, 2, 'redrawn with the answers and the host’s buttons on separate rows');
+  assert.equal(posted.length, 1);
+  assert.deepEqual(posted[0].allowedMentions, { users: ['friend'] }, 'not the host, who did it, nor anyone who can’t come');
+  assert.equal(recentActivity('edits', 1)[0].action, 'Changed the time, details of **Valheim** night');
 });

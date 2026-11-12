@@ -39,6 +39,7 @@ let panelEdits: unknown[][];
 let permitted: bigint[];
 let sent: { channelId: string; message: any }[];
 let deletedEvents: string[];
+let editedEvents: [string, any][];
 let createdEvents: any[];
 let failSend: boolean;
 
@@ -111,6 +112,7 @@ const guild = {
       return { id: `new-event-${createdEvents.length}` };
     },
     delete: async (id: string) => void deletedEvents.push(id),
+    edit: async (id: string, changes: unknown) => void editedEvents.push([id, changes]),
   },
   channels: {
     cache: new Map([
@@ -204,6 +206,7 @@ beforeEach(() => {
   panelEdits = [];
   sent = [];
   deletedEvents = [];
+  editedEvents = [];
   createdEvents = [];
   failSend = false;
   permitted = [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.EmbedLinks];
@@ -694,9 +697,10 @@ test('lists this server’s upcoming nights, with names', async () => {
   const { nights, series: repeating, timeZone } = await ok(`/guilds/${GUILD}/game-nights`);
   assert.equal(timeZone, setting(GUILD, 'timezone'));
   assert.equal(nights.length, 1);
-  const { startsAt, ...rest } = nights[0];
+  const { startsAt, when, ...rest } = nights[0];
   assert.ok(startsAt > Date.now());
-  assert.deepEqual(rest, { id, game: 'Halo', details: 'Bring snacks', voiceChannel: 'General', host: 'Ana', in: ['Ana'], maybe: ['Ben'], out: ['Someone who left'], repeats: 'Every week' });
+  assert.match(when, /^\d{4}-\d\d-\d\d \d\d:\d\d$/);
+  assert.deepEqual(rest, { id, game: 'Halo', details: 'Bring snacks', voiceChannel: 'General', voiceChannelId: '701', hostId: 'u1', host: 'Ana', in: ['Ana'], maybe: ['Ben'], out: ['Someone who left'], repeats: 'Every week' });
   assert.deepEqual(repeating.map((s: any) => [s.id, s.repeats, s.host]), [[series, 'Every week', 'Ana']]);
 });
 
@@ -717,6 +721,38 @@ test('cancelling removes the event, redraws the card and tells only the people w
   assert.equal(sent[0].channelId, '111');
   assert.match(sent[0].message.content, /Halo night\*\* is off/);
   assert.deepEqual(sent[0].message.allowedMentions, { users: ['u1'] });
+});
+
+test('editing a night moves its event and card, and tells whoever’s in or maybe', async () => {
+  const id = addNight();
+  const edit = (json: unknown) => ok(`/guilds/${GUILD}/game-nights/${id}`, { method: 'PATCH', json });
+  const { night: before } = await edit({});
+  assert.match(before.when, /^\d{4}-\d\d-\d\d \d\d:\d\d$/);
+  assert.deepEqual([before.voiceChannelId, before.hostId], ['701', 'u1']);
+  assert.equal(sent.length + editedEvents.length + panelEdits.length, 0, 'nothing changed, so nothing happens');
+
+  const { changed, night } = await edit({ game: 'Halo 3', when: 'tomorrow 9pm', details: '', voiceChannelId: '702' });
+  assert.deepEqual(changed, ['game', 'time', 'details', 'voice channel']);
+  assert.deepEqual([night.game, night.details, night.voiceChannel], ['Halo 3', null, 'Gaming']);
+  const [[eventId, event]] = editedEvents;
+  assert.equal(eventId, 'event');
+  assert.deepEqual([event.name, event.description, event.channel, +event.scheduledStartTime], ['Halo 3 night', '', '702', night.startsAt]);
+  assert.equal((panelEdits[0] as [string, any])[0], 'card');
+  assert.equal(sent.length, 1);
+  assert.match(sent[0].message.content, /Halo 3 night\*\* now starts <t:\d+:F> .* and meets in <#702>/);
+  assert.deepEqual(sent[0].message.allowedMentions, { users: ['u1', 'u2'] });
+  assert.equal(recentActivity(GUILD, 1)[0].action, 'Changed the game, time, details, voice channel of **Halo 3** night');
+
+  await edit({ voiceChannelId: null });
+  assert.deepEqual(editedEvents[1][1].entityMetadata, { location: 'Voice chat' }, 'no voice channel makes it an outside event, which needs an end');
+  assert.ok(editedEvents[1][1].scheduledEndTime);
+
+  assert.equal(await refused(400, `/guilds/${GUILD}/game-nights/${id}`, { method: 'PATCH', json: { when: 'whenever' } }), 'I couldn’t tell when whenever is. Try something like fri 8pm, tomorrow 20:30 or nov 3 7pm.');
+  assert.equal(await refused(400, `/guilds/${GUILD}/game-nights/${id}`, { method: 'PATCH', json: { game: ' ' } }), 'Say what you’re playing, in 90 characters or fewer.');
+  assert.equal(await refused(400, `/guilds/${GUILD}/game-nights/${id}`, { method: 'PATCH', json: { voiceChannelId: '111' } }), 'Pick a voice channel.');
+  await refused(404, `/guilds/${GUILD}/game-nights/99999`, { method: 'PATCH', json: {} });
+  const started = addNight({ startsIn: -60_000 });
+  assert.equal(await refused(400, `/guilds/${GUILD}/game-nights/${started}`, { method: 'PATCH', json: { when: 'tomorrow 9pm' } }), 'It’s already started, so its time can’t change.');
 });
 
 test('cancelling twice doesn’t ping twice', async () => {

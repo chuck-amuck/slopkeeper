@@ -8,8 +8,11 @@ import {
   GuildScheduledEventPrivacyLevel,
   GuildScheduledEventStatus,
   MessageFlags,
+  ModalBuilder,
   PermissionFlagsBits,
   SlashCommandBuilder,
+  TextInputBuilder,
+  TextInputStyle,
   type Client,
   type Guild,
 } from 'discord.js';
@@ -197,9 +200,13 @@ function view(night: Night) {
   const buttons = (Object.keys(RSVP) as Status[]).map((status) =>
     new ButtonBuilder().setCustomId(`gn:${status}:${night.id}`).setLabel(RSVP[status].label).setEmoji(RSVP[status].emoji).setStyle(RSVP[status].style),
   );
-  buttons.push(new ButtonBuilder().setCustomId(`gn:cancel:${night.id}`).setLabel('Cancel night').setStyle(ButtonStyle.Danger));
-  if (series) buttons.push(stop);
-  return { embeds: [embed], components: [new ActionRowBuilder<ButtonBuilder>().addComponents(buttons)] };
+  // The host's buttons go on their own row, under the answers everyone uses
+  const manage = [
+    new ButtonBuilder().setCustomId(`gn:edit:${night.id}`).setLabel('Edit').setEmoji('✏️').setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId(`gn:cancel:${night.id}`).setLabel('Cancel night').setStyle(ButtonStyle.Danger),
+  ];
+  if (series) manage.push(stop);
+  return { embeds: [embed], components: [new ActionRowBuilder<ButtonBuilder>().addComponents(buttons), new ActionRowBuilder<ButtonBuilder>().addComponents(manage)] };
 }
 
 async function createEvent(guild: Guild, night: NewNight): Promise<string | null> {
@@ -433,6 +440,125 @@ export async function stopSeries(client: Client<true>, guild: Guild, id: number)
   return series.game;
 }
 
+/** A night's time as text parseWhen reads back exactly, for the Edit form to start from */
+export function whenText(ms: number, timeZone: string) {
+  const t = zonedParts(ms, timeZone);
+  const two = (n: number) => String(n).padStart(2, '0');
+  return `${t.year}-${two(t.month)}-${two(t.day)} ${two(t.hour)}:${two(t.minute)}`;
+}
+
+/** What can change about a night. Anything left out stays as it is */
+export interface NightEdit {
+  game?: unknown;
+  when?: unknown;
+  details?: unknown;
+  voiceChannelId?: string | null;
+}
+
+const CHANGE_NAMES = { game: 'game', starts_at: 'time', details: 'details', voice_channel_id: 'voice channel' } as const;
+
+/**
+ * Changes a night from its Edit button or the web UI, by the same rules as planning one, then moves its Discord event
+ * to match, redraws its card and tells whoever's in or maybe if its time or place moved (apart from `byUserId`).
+ * Returns what changed, what's wrong, or undefined when this server has no such night
+ */
+export async function editNight(client: Client<true>, guild: Guild, id: number, edit: NightEdit, byUserId?: string): Promise<{ game: string; changed: string[]; eventNote: string } | string | undefined> {
+  const night = getNight(id);
+  if (!night || night.guild_id !== guild.id) return undefined;
+  if (night.cancelled) return 'This game night was cancelled.';
+  if (night.starts_at < Date.now() - 12 * HOUR) return 'This game night is over.';
+  const timeZone = setting(guild.id, 'timezone');
+  const next = { game: night.game, starts_at: night.starts_at, details: night.details, voice_channel_id: night.voice_channel_id };
+  if (edit.game !== undefined) {
+    const game = typeof edit.game === 'string' ? edit.game.trim() : '';
+    if (!game || game.length > 90) return 'Say what you’re playing, in 90 characters or fewer.';
+    next.game = game;
+  }
+  if (edit.when !== undefined) {
+    const text = typeof edit.when === 'string' ? edit.when.trim().slice(0, 100) : '';
+    const at = text ? parseWhen(text, Date.now(), timeZone) : null;
+    if (at === null) return `I couldn’t tell when ${text || 'that'} is. Try something like fri 8pm, tomorrow 20:30 or nov 3 7pm.`;
+    if (at !== night.starts_at) {
+      if (night.starts_at <= Date.now()) return 'It’s already started, so its time can’t change.';
+      if (at < Date.now() + 60_000) return `${describe(at, timeZone)} has already passed.`;
+      next.starts_at = at;
+    }
+  }
+  if (edit.details !== undefined) {
+    if (edit.details !== null && typeof edit.details !== 'string') return 'Details have to be text.';
+    const details = edit.details?.trim() ?? '';
+    if (details.length > 1000) return 'Details have to fit in 1000 characters.';
+    next.details = details || null;
+  }
+  if (edit.voiceChannelId !== undefined) next.voice_channel_id = edit.voiceChannelId;
+  const keys = (Object.keys(next) as (keyof typeof next)[]).filter((key) => next[key] !== night[key]);
+  if (!keys.length) return { game: night.game, changed: [], eventNote: '' };
+
+  const moved = keys.includes('starts_at');
+  const placed = keys.includes('voice_channel_id');
+  // A moved night is reminded again, at its new time
+  db.prepare(`UPDATE game_nights SET game = ?, starts_at = ?, details = ?, voice_channel_id = ?${moved ? ', reminded = 0' : ''} WHERE id = ?`).run(
+    next.game,
+    next.starts_at,
+    next.details,
+    next.voice_channel_id,
+    id,
+  );
+  let eventNote = '';
+  if (night.event_id) {
+    const external = !next.voice_channel_id;
+    const end = { scheduledEndTime: new Date(next.starts_at + EVENT_LENGTH) };
+    await guild.scheduledEvents
+      .edit(night.event_id, {
+        name: `${next.game} night`.slice(0, 100),
+        description: next.details?.slice(0, 1000) ?? '',
+        ...(moved && { scheduledStartTime: new Date(next.starts_at) }),
+        ...(placed
+          ? external
+            ? { entityType: GuildScheduledEventEntityType.External, channel: null, entityMetadata: { location: 'Voice chat' }, ...end }
+            : { entityType: GuildScheduledEventEntityType.Voice, channel: next.voice_channel_id }
+          : external && moved && end),
+      })
+      .catch((err) => {
+        console.error(`Game night ${id} event edit:`, err.message);
+        eventNote = 'The Discord event couldn’t be changed to match, so it may show the old details.';
+      });
+  }
+  const changedNight = getNight(id)!;
+  await refreshCard(client, changedNight);
+
+  if (moved || placed) {
+    const people = rsvps(id);
+    const told = [...people.in, ...people.maybe].filter((user) => user !== byUserId);
+    const channel = await client.channels.fetch(night.channel_id).catch(() => null);
+    if (told.length && channel?.isSendable()) {
+      const seconds = Math.floor(next.starts_at / 1000);
+      const what = [moved && `now starts <t:${seconds}:F> (<t:${seconds}:R>)`, placed && (next.voice_channel_id ? `meets in <#${next.voice_channel_id}>` : 'has no voice channel set')].filter(Boolean).join(' and ');
+      const card = night.message_id ? ` · [RSVP](https://discord.com/channels/${night.guild_id}/${night.channel_id}/${night.message_id})` : '';
+      await channel
+        .send({ content: `📅 **${next.game} night** ${what}: ${told.map((user) => `<@${user}>`).join(' ')}${card}`, allowedMentions: { users: told } })
+        .catch((err) => console.error(`Game night ${id} change notice:`, err.message));
+    }
+  }
+  return { game: next.game, changed: keys.map((key) => CHANGE_NAMES[key]), eventNote };
+}
+
+/** The Edit button's form, filled in with how the night is now */
+function editForm(night: Night, timeZone: string) {
+  const input = (id: string, label: string, style: TextInputStyle, max: number, value: string | null, required: boolean) => {
+    const box = new TextInputBuilder().setCustomId(id).setLabel(label).setStyle(style).setMaxLength(max).setRequired(required);
+    return new ActionRowBuilder<TextInputBuilder>().addComponents(value ? box.setValue(value) : box);
+  };
+  return new ModalBuilder()
+    .setCustomId(`gn:edit:${night.id}`)
+    .setTitle(`Edit ${night.game} night`.slice(0, 45))
+    .addComponents(
+      input('game', 'Game', TextInputStyle.Short, 90, night.game, true),
+      input('when', 'When (like fri 8pm, or keep this)', TextInputStyle.Short, 100, whenText(night.starts_at, timeZone), true),
+      input('details', 'Details', TextInputStyle.Paragraph, 1000, night.details, false),
+    );
+}
+
 export function gameNames(guildId: string): string[] {
   const played = db.prepare('SELECT DISTINCT game FROM named_plays WHERE guild_id = ?').all(guildId) as { game: string }[];
   return [...new Set([...allGames(guildId).map((g) => g.name), ...played.map((r) => r.game)])].sort();
@@ -529,6 +655,12 @@ export const gameNights: Feature = {
     const canManage = i.user.id === night.created_by || i.memberPermissions.has(PermissionFlagsBits.ManageEvents);
     const [what, sure] = action.split('-');
 
+    if (what === 'edit') {
+      if (!canManage) return i.reply({ content: 'Only the host or someone with Manage Events can edit this.', flags: MessageFlags.Ephemeral });
+      if (night.cancelled) return i.update({ components: [] });
+      return i.showModal(editForm(night, setting(night.guild_id, 'timezone')));
+    }
+
     if (what === 'stop' || what === 'cancel') {
       if (!canManage) return i.reply({ content: `Only the host or someone with Manage Events can ${what} this.`, flags: MessageFlags.Ephemeral });
       // Asked first, privately, as neither can be undone from the card
@@ -565,6 +697,23 @@ export const gameNights: Feature = {
       'INSERT INTO game_night_rsvps (night_id, user_id, status) VALUES (?, ?, ?) ON CONFLICT(night_id, user_id) DO UPDATE SET status = excluded.status',
     ).run(night.id, i.user.id, action);
     return i.update(view(night));
+  },
+  async onModal(i) {
+    if (!i.inCachedGuild()) return;
+    const [, action, idText] = i.customId.split(':');
+    if (action !== 'edit') return;
+    const night = getNight(Number(idText));
+    const canManage = night && (i.user.id === night.created_by || i.memberPermissions.has(PermissionFlagsBits.ManageEvents));
+    if (!canManage) return i.reply({ content: 'Only the host or someone with Manage Events can edit this.', flags: MessageFlags.Ephemeral });
+    // Moving the Discord event can take longer than the 3 s Discord waits for an answer
+    await i.deferReply({ flags: MessageFlags.Ephemeral });
+    const field = (id: string) => i.fields.getTextInputValue(id);
+    const result = await editNight(i.client, i.guild, night.id, { game: field('game'), when: field('when'), details: field('details') }, i.user.id);
+    if (result === undefined) return i.editReply('That game night is gone.');
+    if (typeof result === 'string') return i.editReply(result);
+    if (!result.changed.length) return i.editReply('Nothing changed.');
+    logActivity(i.guildId, i.user.id, `Changed the ${result.changed.join(', ')} of **${result.game}** night`);
+    return i.editReply([`✏️ Changed the ${result.changed.join(', ')}.`, result.eventNote].filter(Boolean).join(' '));
   },
   setup(client) {
     setInterval(() => void tick(client).catch(console.error), 60_000);

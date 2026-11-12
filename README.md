@@ -96,11 +96,12 @@ What happens after that:
 - The game's [ping role](#game-pings) is pinged when the night is planned.
 - 15 minutes before the start, the bot posts in the same channel, with a link to the card, and pings everyone who's **In** or **Maybe**. Change or turn this off with `/setup gamenight-reminder`.
 - At the start time, the Discord event goes live. It ends 3 hours later, or once its voice channel empties, whichever is later.
+- **Edit** (host, or anyone with Manage Events) opens a form to change the game, time or details. The card and the Discord event follow, and if the time moves, everyone who's **In** or **Maybe** is told and reminded again before the new time. A night that has started keeps its time.
 - **Cancel night** (host, or anyone with Manage Events) asks first, privately, then greys out the card, deletes the event and lets the people who were in know.
 
 **Repeating nights:** add `repeat` to plan a night every week or every 2 weeks. The bot posts each new card, with its own Discord event and game role ping, 6 days before that night, so a weekly night's next card goes up the day after the last one. It stays at the same local time when the clocks change.
 
-**Cancel night** only skips that night. To end the whole series, press **Stop repeating** on any of its cards (host, or anyone with Manage Events), and confirm.
+**Edit** and **Cancel night** change only that night. To end the whole series, press **Stop repeating** on any of its cards (host, or anyone with Manage Events), and confirm.
 
 | Command | What it does |
 | --- | --- |
@@ -631,7 +632,7 @@ A page in [`web/`](web) that runs as a second container next to the bot, for you
 - **Undo:** removing a song from the queue, deleting a sound or a saved phrase, taking a sound off Discord, **Never suggest this** and a setting's **Reset** each show a toast with **Undo** for 8 seconds, longer while the pointer or focus is on it.
 - **Soundboard:** **Play** has big buttons that play in voice, with favourites first and then whatever gets played most, and a box for having the bot say something. **Manage** uploads files or whole folders, previews, renames and deletes sounds, sets a sound's volume, trims it with a way back to the original, and chooses what's on Discord's soundboard, with a waveform for picking part of a long sound. A file named like an existing sound waits until you choose **Replace it** or **Keep both**. **Recently deleted** restores a deleted or replaced sound, or erases it for good. The tab opens on whichever was used last on that device.
 - **Music:** what's playing, Spotify search, and the queue to add to, reorder and clear. See [Music](#music).
-- **Game nights:** plan a night, see what's coming up and who still needs to add each other on Steam, cancel one or stop a repeating one.
+- **Game nights:** plan a night, see what's coming up and who still needs to add each other on Steam, edit or cancel one, or stop a repeating one. Editing there can also change the voice channel.
 - **Games:** the game library, with who has each game, who needs it, who wants it and any sale. Add games from a searchable list of what members own on Steam, or by name or store link. **Steam accounts** links, changes and unlinks anyone's Steam account, says who shares a Steam family, and refreshes libraries. Each game's **Manage** has its details (player limit and Steam link, kept with **Save**), **Never suggest this** to hide it from `/whatdoweplay` or let it back in, and who owns or wants it, which saves as you tick, with **Remove game** at the bottom. Ownership from a Steam library is locked.
 - **Pick a game:** choose a voice channel, or tick people to plan before anyone's in voice, and see the games everyone owns and those one purchase away, using the same rules as `/whatdoweplay`. Each game shows time played here, Steam hours, its last two weeks on Steam and when it was last played, in total and per person, plus who'd play on a family copy. Opening one shows how many are playing it on Steam right now and its latest patch, and **Achievements** compares everyone's progress with goals nobody has yet. Sort them, with **Hot right now** for the last two weeks, search them, or filter to co-op, PvP or Steam Deck. **Pick for us** chooses one at random, and **Start a vote** posts the usual `/gamevote` card in a channel. Both go by the search and filters, so a vote offers only the games shown. Anyone in a joinable Steam lobby shows at the top with a link to join.
 - **Stats:** **Overview** has game and voice time, overall or for one person or game, with sessions, rank and when it was last played. **Compare** is `/compare` with every game two people both own and their achievements in any of them, and **Monthly recap** is `/recap`.
@@ -767,6 +768,7 @@ It applies the same rules as `/sound` and `/setup`, and every request needs an `
 | `GET /guilds/:id/game-nights/:night/friends` | Who's going but isn't Steam friends yet, with profile links: `strangers`, `unknown` where both lists are private, and `unlinked` |
 | `GET /guilds/:id/game-nights/when?text=<time>` | Says how a typed time reads, without planning anything |
 | `POST /guilds/:id/game-nights/:night/rsvp` | Answers `{ "answer": "in" \| "maybe" \| "out", "userId" }` as the card's buttons do, and redraws the card. Someone signed in who has said who they are always answers for themselves |
+| `PATCH /guilds/:id/game-nights/:night` | Changes a night as its Edit button does: any of `{ "game", "when", "details", "voiceChannelId" }`, where null clears details or the voice channel. Returns what `changed`, an `eventNote` if the Discord event couldn't follow, and the `night` as listed. The listing's `when` is the night's time in a form that reads back exactly |
 | `POST /guilds/:id/game-nights/:night/cancel` | Cancels a night, as its Cancel button does |
 | `DELETE /guilds/:id/game-night-series/:series` | Stops a series; nights already posted stay on |
 | `GET /guilds/:id/join-sounds` | Lists who has a join sound |

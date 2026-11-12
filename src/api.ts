@@ -8,7 +8,7 @@ import path from 'node:path';
 import { FROM_WEB, fromWebUser, linkWebUser, logActivity, recentActivity, seeWebUser, webUser, webUserFor } from './activity.ts';
 import { config } from './config.ts';
 import * as discordBoard from './discordSounds.ts';
-import { answerFor, cancelNight, gameNames, planNight, readWhen, stopSeries, upcomingNights } from './features/gamenight.ts';
+import { answerFor, cancelNight, editNight, gameNames, planNight, readWhen, stopSeries, upcomingNights, whenText } from './features/gamenight.ts';
 import { reviewGiveaways } from './features/freegames.ts';
 import { achievementProgress } from './features/achievements.ts';
 import { addGameRole, canHandOut, gameRoles, pingableGames, pingChoices, pingMenu, removeGameRole } from './features/gameroles.ts';
@@ -275,7 +275,11 @@ function nightList(guild: Guild) {
       game: n.game,
       details: n.details,
       startsAt: n.starts_at,
+      // What the edit form's When starts as, in a form that reads back as the same time
+      when: whenText(n.starts_at, setting(guild.id, 'timezone')),
       voiceChannel: channelName(n.voice_channel_id),
+      voiceChannelId: n.voice_channel_id,
+      hostId: n.created_by,
       host: nameOf(guild, n.created_by),
       in: n.people.in.map((id) => nameOf(guild, id)),
       maybe: n.people.maybe.map((id) => nameOf(guild, id)),
@@ -1268,6 +1272,22 @@ async function handle(client: Client<true>, req: IncomingMessage, res: ServerRes
     if (typeof result === 'string') throw new Refused(409, result);
     logActivity(guild.id, by(), `Answered **${result.label}** for ${member.displayName} to **${result.game}** night`);
     return { night: nightList(guild).nights.find((n) => n.id === Number(rest[0])) ?? null };
+  }
+  if (section === 'game-nights' && rest.length === 1 && req.method === 'PATCH') {
+    const { game, when, details, voiceChannelId } = await readJson(req);
+    let voice: string | null | undefined;
+    if (voiceChannelId === null || voiceChannelId === '') voice = null;
+    else if (voiceChannelId !== undefined) {
+      const channel = guild.channels.cache.get(String(voiceChannelId));
+      if (channel?.type !== ChannelType.GuildVoice) throw new Refused(400, 'Pick a voice channel.');
+      voice = channel.id;
+    }
+    const who = asking.getStore();
+    const result = await editNight(client, guild, Number(rest[0]), { game, when, details, voiceChannelId: voice }, (who && webUser(who.email)?.userId) || undefined);
+    if (result === undefined) throw new Refused(404, 'No such game night.');
+    if (typeof result === 'string') throw new Refused(400, result);
+    if (result.changed.length) logActivity(guild.id, by(), `Changed the ${result.changed.join(', ')} of **${result.game}** night`);
+    return { changed: result.changed, eventNote: result.eventNote || null, night: nightList(guild).nights.find((n) => n.id === Number(rest[0])) ?? null };
   }
   if (section === 'game-nights' && rest.length === 2 && rest[1] === 'cancel' && req.method === 'POST') {
     const game = await cancelNight(client, guild, Number(rest[0]));

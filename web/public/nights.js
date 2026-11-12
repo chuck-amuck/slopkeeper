@@ -39,8 +39,11 @@ function pickOne(options, chosen, props = {}) {
   return el('select', { required: true, ...props }, options.map(([value, label]) => el('option', { value, selected: value === chosen }, label)));
 }
 
-/** Plans a night by the same rules as /gamenight plan. Asks who's hosting, starting on whoever's signed in */
-function planDialog(main, data, onPlanned) {
+/**
+ * Plans a night by the same rules as /gamenight plan, asking who's hosting, starting on whoever's signed in. Given a
+ * night, changes that one instead, as its card's Edit button does
+ */
+function planDialog(main, data, onPlanned, night = null) {
   const whenNote = el('span', { className: 'form-note' }, WHEN_HINT);
   let timer;
   let asked = 0;
@@ -59,37 +62,43 @@ function planDialog(main, data, onPlanned) {
     }, READ_DELAY_MS);
   }
 
-  const game = el('input', { required: true, maxLength: 90, list: 'night-games', autocomplete: 'off' });
-  const when_ = el('input', { required: true, maxLength: 100, autocomplete: 'off', placeholder: 'fri 8pm', oninput: readWhen });
+  const game = el('input', { required: true, maxLength: 90, list: 'night-games', autocomplete: 'off', value: night?.game ?? '' });
+  const when_ = el('input', { required: true, maxLength: 100, autocomplete: 'off', placeholder: 'fri 8pm', oninput: readWhen, value: night?.when ?? '' });
   const channel = pickOne(
     data.channels.map((c) => [c.id, `#${c.name}`]),
     data.defaultChannel,
   );
-  const voiceChannel = pickOne([['', 'None'], ...data.voiceChannels.map((c) => [c.id, c.name])], '', { required: false });
+  const voiceChannel = pickOne([['', 'None'], ...data.voiceChannels.map((c) => [c.id, c.name])], night?.voiceChannelId ?? '', { required: false });
   const host = pickOne(
     data.members.map((m) => [m.id, m.name]),
     state.me?.userId ?? recall('nightHost'),
   );
   const repeat = pickOne([['', 'Just this once'], ['7', 'Every week'], ['14', 'Every 2 weeks']], '', { required: false });
-  const details = el('textarea', { maxLength: 1000, rows: 2 });
-  const submit = el('button', { className: 'primary', type: 'submit' }, 'Plan it');
+  const details = el('textarea', { maxLength: 1000, rows: 2, value: night?.details ?? '' });
+  const submit = el('button', { className: 'primary', type: 'submit' }, night ? 'Save' : 'Plan it');
   // In the dialog, since it would cover a toast
   const problem = formProblem();
 
   const node = openDialog(main, {
-    title: 'Plan a game night',
+    title: night ? `Edit ${night.game} night` : 'Plan a game night',
     body: [
-      el('p', {}, 'Posts the card and a Discord event, and pings anyone following the game, just like /gamenight plan.'),
+      el(
+        'p',
+        {},
+        night
+          ? 'Changes the card and the Discord event. If the time or voice channel moves, everyone who’s in or maybe is told.'
+          : 'Posts the card and a Discord event, and pings anyone following the game, just like /gamenight plan.',
+      ),
       el('datalist', { id: 'night-games' }, data.games.map((name) => el('option', { value: name }))),
       row('Game', game),
       row('When', when_, whenNote),
-      row('Host', host),
-      row('Post in', channel),
+      !night && row('Host', host),
+      !night && row('Post in', channel),
       row('Voice channel', voiceChannel),
-      row('Repeats', repeat),
+      !night && row('Repeats', repeat),
       row('Details', details),
       problem,
-    ],
+    ].filter(Boolean),
     actions: [submit],
     close: 'Cancel',
     onsubmit: (e) => {
@@ -98,6 +107,16 @@ function planDialog(main, data, onPlanned) {
         submit.disabled = true;
         problem.hidden = true;
         try {
+          if (night) {
+            const { changed, eventNote } = await request(api(`/game-nights/${night.id}`), {
+              method: 'PATCH',
+              json: { game: game.value, when: when_.value, voiceChannelId: voiceChannel.value || null, details: details.value.trim() || null },
+            });
+            toast(changed.length ? `Changed the ${changed.join(', ')}.` : 'Nothing changed.');
+            if (eventNote) toast(eventNote, true);
+            node.close();
+            return await onPlanned();
+          }
           const { eventNote } = await request(api('/game-nights'), {
             method: 'POST',
             json: {
@@ -125,6 +144,7 @@ function planDialog(main, data, onPlanned) {
       });
     },
   });
+  if (night) readWhen();
   game.focus();
 }
 
@@ -160,6 +180,7 @@ export function renderNights(main) {
           el(
             'div',
             { className: 'night-actions' },
+            el('button', { onclick: () => planDialog(main, data, load, n) }, 'Edit'),
             confirmButton({ ariaLabel: `Cancel ${n.game} night` }, 'Cancel night', 'Cancel it?', async () => {
               await request(api(`/game-nights/${n.id}/cancel`), { method: 'POST' });
               toast(n.in.length ? `${n.game} night is off, and everyone who’s in has been told.` : `${n.game} night is off.`);
