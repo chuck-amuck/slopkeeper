@@ -3,17 +3,16 @@ import { Events, PermissionFlagsBits } from 'discord.js';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { readFileSync } from 'node:fs';
-import { request } from 'node:http';
-import { after, before, mock, test } from 'node:test';
+import { mock, test } from 'node:test';
 import path from 'node:path';
-import { followVoice, webApi } from '../src/api.ts';
+import { webApi } from '../src/api.ts';
+import { followVoice } from '../src/api/live.ts';
 import { config } from '../src/config.ts';
 import { db } from '../src/db.ts';
 import { logActivity } from '../src/activity.ts';
-import { activity } from '../src/features/gamestats.ts';
 import { soundGain } from '../src/features/soundboard.ts';
 import { setting, setSetting } from '../src/settings.ts';
-import { GUILD, TOKEN, as, base, channel, client, guild, listed, me, member, ok, onlyOnDiscord, panelEdits, permitted, quietWav, refused, role, roles, server, setFake, soundFolder, sounds, upload, wav } from './apiFixture.ts';
+import { GUILD, TOKEN, as, base, client, guild, ok, onlyOnDiscord, panelEdits, quietWav, refused, setFake, soundFolder, sounds, upload } from './apiFixture.ts';
 
 // Signing in, who’s who, settings, activity, voice channels, live updates and the API server itself
 

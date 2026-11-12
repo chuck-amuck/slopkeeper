@@ -43,7 +43,8 @@ same static ffmpeg as the image and CI. Without ffmpeg the audio tests skip sile
   setting living only in the web UI (the default and looping speech voices do), marked "web UI only" in the README
   "Settings and defaults" table. A new per-server setting touches src/settings.ts DEFAULTS (an env var only sets the
   default), web/public/settings.js, `.env.example`, that README table and the tests.
-- Rules live in the bot (src/features, src/api.ts). `web/` stores nothing and proxies to the management API.
+- Rules live in the bot (src/features, src/api.ts and its areas in src/api/). `web/` stores nothing and proxies to
+  the management API.
 - Spotify stays search-only: no `SPOTIFY_REFRESH_TOKEN` in the deployment and no personal playlists. Soloist
   playback was removed in fec6b23; bring it back only if asked.
 - `test/helpers.ts` is the first import in every test file: it sets DATA_DIR, DISCORD_TOKEN and TZ before db.ts

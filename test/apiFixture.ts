@@ -4,13 +4,11 @@ import { ChannelType, Collection, PermissionFlagsBits } from 'discord.js';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { existsSync, readdirSync } from 'node:fs';
-import { after, before, beforeEach, mock, test, type TestContext } from 'node:test';
+import { after, before, beforeEach, mock, type TestContext } from 'node:test';
 import path from 'node:path';
 import type { AddressInfo } from 'node:net';
 import { createApi } from '../src/api.ts';
 import { db } from '../src/db.ts';
-import { activity } from '../src/features/gamestats.ts';
-import { steam } from '../src/features/steam.ts';
 
 export const TOKEN = 'secret';
 export const GUILD = 'g1';

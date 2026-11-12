@@ -3,14 +3,14 @@ import { joinVoiceChannel, VoiceConnectionStatus } from '@discordjs/voice';
 import { PermissionFlagsBits } from 'discord.js';
 import assert from 'node:assert/strict';
 import { existsSync, readdirSync } from 'node:fs';
-import { after, mock, test } from 'node:test';
+import { test } from 'node:test';
 import path from 'node:path';
 import { config } from '../src/config.ts';
 import { recentActivity } from '../src/activity.ts';
 import { Mixer } from '../src/mixer.ts';
 import { soundboard } from '../src/features/soundboard.ts';
 import { resetSpotify } from '../src/spotify.ts';
-import { GUILD, account, accounts, as, call, guild, me, ok, permitted, play, plays, realFetch, refused, sounds, wav } from './apiFixture.ts';
+import { GUILD, call, guild, ok, permitted, refused, wav } from './apiFixture.ts';
 
 // The music queue
 

@@ -1,8 +1,7 @@
 import './helpers.ts';
 import { PermissionFlagsBits } from 'discord.js';
 import assert from 'node:assert/strict';
-import { after, before, mock, test, type TestContext } from 'node:test';
-import path from 'node:path';
+import { mock, test, type TestContext } from 'node:test';
 import { candidatesFor } from '../src/features/games.ts';
 import { config } from '../src/config.ts';
 import { db } from '../src/db.ts';
@@ -10,7 +9,7 @@ import { noteGame } from '../src/gameNames.ts';
 import { activity, stats } from '../src/features/gamestats.ts';
 import { steam, unlinkSteam } from '../src/features/steam.ts';
 import { setSetting } from '../src/settings.ts';
-import { GUILD, HOUR, account, accounts, activityText, as, base, call, channel, discordCdn, discordSounds, failRoles, failSend, guild, heldRoles, hours, library, listed, manageRoles, me, member, mentionEveryone, ok, permitted, pick, refuseDiscord, refused, role, roles, save, sent, server, setFake } from './apiFixture.ts';
+import { GUILD, HOUR, account, accounts, activityText, as, base, call, discordCdn, discordSounds, guild, heldRoles, hours, library, me, member, ok, pick, refused, role, roles, save, sent, setFake } from './apiFixture.ts';
 
 // Games, Steam accounts, picking and voting, stats, sales, free games and game pings
 

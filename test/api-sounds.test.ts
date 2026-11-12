@@ -6,7 +6,7 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { request } from 'node:http';
-import { after, before, mock, test, type TestContext } from 'node:test';
+import { mock, test, type TestContext } from 'node:test';
 import path from 'node:path';
 import { config } from '../src/config.ts';
 import { db } from '../src/db.ts';
@@ -16,7 +16,7 @@ import { activity } from '../src/features/gamestats.ts';
 import { BIN_DAYS, clearBin, levelLibrary, setJoinSound, soundboard, soundGain } from '../src/features/soundboard.ts';
 import { lengthFor } from '../src/features/say.ts';
 import { setting, setSetting } from '../src/settings.ts';
-import { GUILD, HOUR, TOKEN, activityText, as, base, call, channel, client, discordCdn, discordSounds, guild, library, listed, me, member, ok, onlyOnDiscord, panelEdits, permitted, pick, planned, play, plays, postNight, quietWav, refuseDiscord, refused, restore, role, save, sent, server, setFake, soundFolder, sounds, upload, wav } from './apiFixture.ts';
+import { GUILD, HOUR, TOKEN, activityText, base, call, client, discordCdn, discordSounds, guild, listed, me, member, ok, onlyOnDiscord, panelEdits, permitted, planned, play, plays, postNight, quietWav, refused, restore, save, sent, setFake, soundFolder, sounds, upload, wav } from './apiFixture.ts';
 
 // The sound library, Discord’s soundboard, the bin, join sounds, panels, what’s playing and speech
 

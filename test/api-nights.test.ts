@@ -1,13 +1,12 @@
 import './helpers.ts';
 import { PermissionFlagsBits } from 'discord.js';
 import assert from 'node:assert/strict';
-import { after, before, mock, test } from 'node:test';
+import { mock, test } from 'node:test';
 import { config } from '../src/config.ts';
 import { db } from '../src/db.ts';
 import { recentActivity } from '../src/activity.ts';
-import { activity } from '../src/features/gamestats.ts';
 import { setting, setSetting } from '../src/settings.ts';
-import { GUILD, as, base, channel, createdEvents, deletedEvents, editedEvents, failSend, guild, hours, member, ok, panelEdits, permitted, planned, postNight, refused, restore, sent, server, setFake } from './apiFixture.ts';
+import { GUILD, base, createdEvents, deletedEvents, editedEvents, guild, member, ok, panelEdits, planned, postNight, refused, sent, setFake } from './apiFixture.ts';
 
 // Game nights
 
