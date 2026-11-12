@@ -1,11 +1,11 @@
 #!/bin/sh
 set -e
 
-# One model holds every numbered voice the bot offers. It's fetched here instead of being built into the image, as the image is public
+# The default model, whose speakers the effect styles are built on. It's fetched here instead of being built into the image, as the image is public
 MODEL=en_US-libritts_r-medium
 [ -f "/voices/$MODEL.onnx" ] || python3 -m piper.download_voices --data-dir /voices "$MODEL"
 
-# Community models for single character voices, pinned to a commit and checked against their hashes. One that can't be fetched
+# Every other voice's model, pinned to a commit and checked against their hashes. One that can't be fetched
 # leaves its voice speaking with the default model, so the rest still start
 fetch() {
   name=$1 repo=$2 commit=$3 model=$4 model_sha=$5 config=$6 config_sha=$7
@@ -43,14 +43,19 @@ fetch kronk russdill/kronk 9403433305b256e73bc0fe1c685a80dbd88a1f87 \
 fetch tiktok fox3000foxy/piper-voices-collection 0ce0fe21f3dfc87a8e318030b28b753cacfbbcf3 \
   cosycove--BeefStew/src_data_tts_voices_tiktok_lady.onnx.onnx 8f329dc194051481ff141153444098975c052dfef6fa39f376fbcf0748c7a32c \
   cosycove--BeefStew/src_data_tts_voices_tiktok_lady.onnx.onnx.json 108c16883ad72e74f8c1894dd75b045fc955d4c3b338e4a501737cf6c85ce99e
-# Official Piper models the style voices are built on: a British model with many speakers, and a Korean one that serve.py
-# gives English a Korean accent in
-fetch vctk rhasspy/piper-voices ae9d8352b73c1b1750748843e753a504b00e05b0 \
-  en/en_GB/vctk/medium/en_GB-vctk-medium.onnx 4e9fc85ab9009385319fc6bae7f55577f8a2d7ee77fd9159a5500eb6531f41e6 \
-  en/en_GB/vctk/medium/en_GB-vctk-medium.onnx.json 7f85e6391ed0f7f46e4abd19345929a16be931a0c9945086f96692dce2087fa8
+# Official Piper models in other languages, which serve.py has read English with an accent (see accent.py)
 fetch kss rhasspy/piper-voices ae9d8352b73c1b1750748843e753a504b00e05b0 \
   ko/ko_KR/kss/medium/ko_KR-kss-medium.onnx 624fd774e26895f24bebae1bd9a3379e3394baeade4b584924f83e414096e2c9 \
   ko/ko_KR/kss/medium/ko_KR-kss-medium.onnx.json 153b5619d0580f824a59108d83ca19434de410eb8e4fe80325b58684fdc8a1df
+fetch dmitri rhasspy/piper-voices ae9d8352b73c1b1750748843e753a504b00e05b0 \
+  ru/ru_RU/dmitri/medium/ru_RU-dmitri-medium.onnx f073356ebc4bd0f80c5af58df2953a5988bd5bdab1eb38635ce960b071fbefcb \
+  ru/ru_RU/dmitri/medium/ru_RU-dmitri-medium.onnx.json 667ef3117bc642c2892dff7690d8bdc8ca4228aeaa783b2dc1416df632855e0d
+fetch davefx rhasspy/piper-voices ae9d8352b73c1b1750748843e753a504b00e05b0 \
+  es/es_ES/davefx/medium/es_ES-davefx-medium.onnx d2c9224e122321aac3c33343957fff4d0f465226cb74c66b0f520ca3f8c0dd07 \
+  es/es_ES/davefx/medium/es_ES-davefx-medium.onnx.json 531c4051502e1acbc10b42437f11679bfce9e3919e1796e51fabd73e01e7fd2e
+fetch thorsten rhasspy/piper-voices ae9d8352b73c1b1750748843e753a504b00e05b0 \
+  de/de_DE/thorsten_emotional/medium/de_DE-thorsten_emotional-medium.onnx c1764e652266cd6dcebf1b95c61973df5970a5f5272e94b655ff1ddf9a99d1ff \
+  de/de_DE/thorsten_emotional/medium/de_DE-thorsten_emotional-medium.onnx.json 92895b9e99f7cfc13f4a9879da615c3d6e0baa4d660e26d7b685abdd27a6d1d3
 
 # serve.py is piper.http_server with less memory kept between lines
 exec python3 /serve.py --host 0.0.0.0 --port 5000 --data-dir /voices -m "$MODEL"

@@ -1,9 +1,10 @@
-"""Runs Piper's HTTP server with ONNX Runtime's memory pool off, and English in a Korean model given a Korean accent.
+"""Runs Piper's HTTP server with ONNX Runtime's memory pool off, and English in a Korean, Russian, Spanish or German model given an accent.
 
 The pool keeps the most a model ever needed, which grows with the longest line it's said, and each model has its own. With it on,
 one long slow line takes the default model past 500 MB, and three models past 1 GB. With it off, memory goes back after each line.
 
-A Korean model reads English as noise, so accent.py turns English into the nearest Korean sounds first (see there).
+A Korean, Russian, Spanish or German model reads English as noise or by its own spelling, so accent.py turns English into the nearest
+sounds of that language first (see there).
 """
 
 import runpy
@@ -28,7 +29,7 @@ _phonemize = PiperVoice.phonemize
 
 def _phonemize_accented(self, text):
     # Piper's [[ raw phonemes ]] go through as they are, as they do for the other voices
-    if self.config.espeak_voice != "ko" or "[[" in text:
+    if not accent.accented(self.config.espeak_voice) or "[[" in text:
         return _phonemize(self, text)
     return accent.phonemize(self, text, _phonemize)
 

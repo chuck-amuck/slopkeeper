@@ -2618,9 +2618,13 @@ test('tells the page what text to speech offers', async () => {
   config.voiceUrl = 'http://voice.test';
   try {
     const data = await ok(`/guilds/${GUILD}/say`);
-    assert.deepEqual(data.voices.map((v: { name: string }) => v.name), ['Voice 1', 'Voice 2', 'Voice 5', 'Voice 9', 'GLaDOS', 'HAL 9000', 'Bender', 'Optimus Prime', 'Kronk', 'TikTok', 'Protocol droid', 'State broadcast']);
+    assert.deepEqual(data.voices.map((v: { name: string }) => v.name), [
+      ...['GLaDOS', 'HAL 9000', 'Bender', 'Optimus Prime', 'Kronk', 'TikTok', 'State broadcast', 'Russian', 'Spanish', 'German'],
+      ...['Demon', 'Helium', 'Giant', 'Robot', 'Alien', 'Walkie-talkie', 'Phone call', 'Megaphone', 'Stadium PA', 'Newsreel'],
+      ...['Cathedral', 'Underwater', 'Ghost', 'Trailer narrator'],
+    ]);
     assert.deepEqual(Object.keys(data.voices[0]), ['id', 'name']);
-    assert.deepEqual([data.on, data.voice, data.volume, data.longest], [true, '5', 100, 200]);
+    assert.deepEqual([data.on, data.voice, data.volume, data.longest], [true, 'tiktok', 100, 200]);
     setSetting(GUILD, 'tts', false);
     assert.equal((await ok(`/guilds/${GUILD}/say`)).on, false);
   } finally {
@@ -2656,8 +2660,8 @@ test('the page’s lines go through the voice container and show as coming from 
     return new Response('not audio', { status: 500 });
   });
   t.mock.method(console, 'error', () => {});
-  await refused(400, `/guilds/${GUILD}/say`, { method: 'POST', json: { channelId: '702', text: 'hello <@123>', voice: '2' } });
-  assert.deepEqual(asked, { text: 'hello someone', speaker_id: 100, length_scale: lengthFor(85) });
+  await refused(400, `/guilds/${GUILD}/say`, { method: 'POST', json: { channelId: '702', text: 'hello <@123>', voice: 'alien' } });
+  assert.deepEqual(asked, { text: 'hello someone', speaker_id: 0, length_scale: lengthFor(85) });
 });
 
 test('the page saves lines and removes them', async () => {

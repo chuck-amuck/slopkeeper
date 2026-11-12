@@ -11,9 +11,9 @@ import { PermissionFlagsBits } from 'discord.js';
 import { recentActivity } from '../src/activity.ts';
 import { config } from '../src/config.ts';
 import { Mixer } from '../src/mixer.ts';
-import { announceAloud, lengthFor, phrases, readMessage, removePhrase, savePhrase, say, sayOut, speak, speechFor } from '../src/features/say.ts';
+import { announceAloud, forgetRemovedVoices, lengthFor, phrases, readMessage, removePhrase, savePhrase, say, sayOut, serverVoice, speak, speechFor } from '../src/features/say.ts';
 import { applySpeechVolume, loopSpeechProblem, playJoinSound, saveUpload, setJoinSound, soundboard, stopPlayback } from '../src/features/soundboard.ts';
-import { setSetting } from '../src/settings.ts';
+import { setSetting, storedSetting } from '../src/settings.ts';
 
 const hasFfmpeg = spawnSync('ffmpeg', ['-version']).status === 0;
 const dir = mkdtempSync(path.join(process.env.DATA_DIR!, 'speech-'));
@@ -59,11 +59,11 @@ function channel(options: { missing?: bigint[] } = {}) {
 
 /** A voice container, which keeps what it was asked for */
 function fakeVoice(t: TestContext, answer?: (text: string, signal: AbortSignal) => Promise<Response>) {
-  const asked: { text: string; speaker: number; length: number }[] = [];
+  const asked: { text: string; model?: string; speaker?: number; length: number }[] = [];
   t.mock.method(globalThis, 'fetch', async (url: string, init: RequestInit) => {
     assert.equal(url, 'http://voice.test/synthesize');
-    const body = JSON.parse(init.body as string) as { text: string; speaker_id: number; length_scale: number };
-    asked.push({ text: body.text, speaker: body.speaker_id, length: body.length_scale });
+    const body = JSON.parse(init.body as string) as { text: string; voice?: string; speaker_id?: number; length_scale: number };
+    asked.push({ text: body.text, model: body.voice, speaker: body.speaker_id, length: body.length_scale });
     return answer ? answer(body.text, init.signal!) : new Response(readFileSync(speechFile));
   });
   return asked;
@@ -84,9 +84,12 @@ test('reads out a line in the server’s voice, or the one asked for, and logs w
   const voice = channel();
   assert.equal(await say(voice, 'hello there', undefined, 'ana'), null);
   await sleep(300);
-  assert.equal(await say(voice, 'and again', '1', 'ben'), null);
+  assert.equal(await say(voice, 'and again', 'robot', 'ben'), null);
   await sleep(300);
-  assert.deepEqual(asked, [{ text: 'hello there', speaker: 400, length: lengthFor(85) }, { text: 'and again', speaker: 0, length: lengthFor(85) }]);
+  assert.deepEqual(asked, [
+    { text: 'hello there', model: 'tiktok', speaker: undefined, length: 1.25 },
+    { text: 'and again', model: undefined, speaker: 400, length: lengthFor(85) },
+  ]);
   const lines = recentActivity(voice.guild.id, 5).map((r) => `${r.actor}: ${r.action}`).toReversed();
   assert.deepEqual(lines, ['ana: Said “hello there” in <#voice>', 'ben: Said “and again” in <#voice>']);
   assert.deepEqual(leftovers(), []);
@@ -99,7 +102,7 @@ test('the character voices ask for their own model, delivery and speed', { skip:
     return new Response(readFileSync(speechFile));
   });
   const voice = channel();
-  for (const id of ['glados', 'hal', 'bender', 'optimus', 'kronk', 'tiktok', 'droid', 'broadcast']) {
+  for (const id of ['glados', 'hal', 'bender', 'optimus', 'kronk', 'tiktok', 'broadcast', 'russian', 'spanish', 'german', 'demon', 'giant']) {
     assert.equal(await say(voice, 'good news everyone', id, id), null);
     await sleep(300);
   }
@@ -112,10 +115,17 @@ test('the character voices ask for their own model, delivery and speed', { skip:
     // Kronk stretches like the default model, then 15% slower and with steadier timing
     { text: 'good news everyone', voice: 'kronk', length_scale: 1.56, noise_scale: 0.667, noise_w_scale: 0.333 },
     { text: 'good news everyone', voice: 'tiktok', length_scale: 1.25 },
-    // The styles: one VCTK speaker 8% quicker than the default curve, and KSS 15% slower than the character one
-    { text: 'good news everyone', voice: 'vctk', speaker_id: 57, length_scale: 1.25 },
+    // The accents: KSS 15% slower than the character curve, Dmitri on its own curve, and the German model's neutral speaker
     { text: 'good news everyone', voice: 'kss', length_scale: 1.44 },
+    { text: 'good news everyone', voice: 'dmitri', length_scale: 1.31 },
+    { text: 'good news everyone', voice: 'davefx', length_scale: 1.25 },
+    { text: 'good news everyone', voice: 'thorsten', speaker_id: 4, length_scale: 1.25 },
+    // Effect styles are the default model's speakers, at their own pace
+    { text: 'good news everyone', speaker_id: 499, length_scale: 1.5 },
+    { text: 'good news everyone', speaker_id: 499, length_scale: 1.63 },
   ]);
+  // Effects take a moment longer to run than the 300 ms above
+  for (let tries = 0; leftovers().length && tries < 30; tries++) await sleep(100);
   assert.deepEqual(leftovers(), []);
 });
 
@@ -128,12 +138,40 @@ test('a server whose voice was removed talks in the default voice, but asking fo
   assert.equal(await sayOut(voice, 'and here'), null);
   await sleep(300);
   assert.equal(await say(voice, 'not this', 'racer', 'b'), 'Pick a voice from the list.');
-  assert.deepEqual(asked.map((a) => [a.text, a.speaker]), [['still here', 400], ['and here', 400]]);
+  assert.deepEqual(asked.map((a) => [a.text, a.model]), [['still here', 'tiktok'], ['and here', 'tiktok']]);
+});
+
+test('picks of removed voices are cleared at startup, and a removed one falls back to the server’s own default', () => {
+  setSetting('old-numbered', 'ttsVoice', '5');
+  setSetting('old-loop', 'ttsVoice', 'glados');
+  setSetting('old-loop', 'loopVoice', '9');
+  setSetting('same-as-default', 'loopVoice', null);
+  setSetting('kept', 'ttsVoice', 'demon');
+  assert.equal(serverVoice('old-loop', '9').id, 'glados', 'the server’s default, not the bot’s');
+  // At least these two, plus any an earlier test left behind
+  assert.ok(forgetRemovedVoices() >= 2);
+  assert.equal(forgetRemovedVoices(), 0, 'nothing left the second time');
+  assert.deepEqual(
+    [storedSetting('old-numbered', 'ttsVoice'), storedSetting('old-loop', 'loopVoice'), storedSetting('same-as-default', 'loopVoice'), storedSetting('kept', 'ttsVoice')],
+    [undefined, undefined, '', 'demon'],
+  );
+  assert.equal(serverVoice('old-numbered').id, 'tiktok');
+});
+
+test('a voice typed by its name instead of picked from the list still works', { skip: !hasFfmpeg }, async (t) => {
+  const asked = fakeVoice(t);
+  const voice = channel();
+  assert.equal(await say(voice, 'boo', 'Demon', 'a'), null);
+  await sleep(300);
+  assert.equal(await say(voice, 'over', ' walkie-talkie ', 'a'), null);
+  await sleep(300);
+  assert.deepEqual(asked.map((a) => a.speaker), [499, 400]);
 });
 
 test('a server’s speed setting changes how long speech takes', { skip: !hasFfmpeg }, async (t) => {
   const asked = fakeVoice(t);
   const voice = channel();
+  setSetting(voice.guild.id, 'ttsVoice', 'robot');
   for (const speed of [100, 50, 150]) {
     setSetting(voice.guild.id, 'ttsSpeed', speed);
     assert.equal(await say(voice, 'hello', undefined, String(speed)), null);
@@ -354,8 +392,8 @@ test('/say needs a voice channel', async (t) => {
 test('/say says it, or says why not', { skip: !hasFfmpeg }, async (t) => {
   const asked = fakeVoice(t);
   const voice = channel();
-  assert.equal(await run(t, voice, { pick: '9' }), 'Said it.');
-  assert.equal(asked[0].speaker, 800);
+  assert.equal(await run(t, voice, { pick: 'demon' }), 'Said it.');
+  assert.equal(asked[0].speaker, 499);
   setSetting(voice.guild.id, 'tts', false);
   assert.equal(await run(t, voice), 'Text to speech is off in this server.');
 });
@@ -748,24 +786,25 @@ test('/say picks a saved line, in the voice picked or the server’s, under the 
   assert.equal(await run(t, voice, { text: null }), 'Type something to say, or pick a saved line.');
   assert.equal(await run(t, voice, { text: null, saved: 'something typed' }), 'Pick a saved line from the list.');
   assert.equal(await run(t, voice, { text: null, saved }), 'Said it.');
-  assert.equal(await run(t, voice, { text: null, saved, pick: '9' }), 'Said it.');
+  assert.equal(await run(t, voice, { text: null, saved, pick: 'demon' }), 'Said it.');
   assert.equal(await run(t, voice, { text: 'typed wins', saved }), 'Said it.');
   await sleep(200);
-  assert.deepEqual(asked.map((a) => [a.text, a.speaker]), [['good game', 400], ['good game', 800], ['typed wins', 400]]);
+  assert.deepEqual(asked.map((a) => [a.text, a.model ?? a.speaker]), [['good game', 'tiktok'], ['good game', 499], ['typed wins', 'tiktok']]);
   setSetting(voice.guild.id, 'ttsCooldownSec', 3600);
   await run(t, voice, { text: null, saved });
   assert.match(await run(t, voice, { text: null, saved }), /^Wait /);
   assert.ok(recentActivity(voice.guild.id, 5).some((r) => r.action.includes('Said “good game”')));
 });
 
-test('/say suggests saved lines as you type', async () => {
+test('/say suggests saved lines and voices as you type', async () => {
   const voice = channel();
   savePhrase(voice.guild, 'Good game');
   savePhrase(voice.guild, 'gotta go');
   savePhrase(voice.guild, 'y'.repeat(150));
-  const suggest = async (typed: string, guildId: string | null = voice.guild.id) => {
+  const suggest = async (typed: string, guildId: string | null = voice.guild.id, name = 'saved') => {
     let answer: { name: string; value: string }[] = [];
-    await speak.commands![0].autocomplete!({ guildId, options: { getFocused: () => typed }, respond: async (a: typeof answer) => (answer = a) } as never);
+    const focused = (full?: boolean) => (full ? { name, value: typed } : typed);
+    await speak.commands![0].autocomplete!({ guildId, options: { getFocused: focused }, respond: async (a: typeof answer) => (answer = a) } as never);
     return answer;
   };
   assert.deepEqual((await suggest('GOOD')).map((a) => a.name), ['Good game']);
@@ -773,6 +812,14 @@ test('/say suggests saved lines as you type', async () => {
   assert.equal((await suggest('yyy'))[0].name.length, 100);
   assert.equal((await suggest('gotta'))[0].value, String(phrases(voice.guild.id)[1].id));
   assert.deepEqual(await suggest('good', null), []);
+  // Voices are searched, as there are more than Discord's 25 choices would allow to grow
+  assert.deepEqual(await suggest('RO', voice.guild.id, 'voice'), [
+    { name: 'Kronk', value: 'kronk' },
+    { name: 'State broadcast', value: 'broadcast' },
+    { name: 'Robot', value: 'robot' },
+  ]);
+  assert.equal((await suggest('', voice.guild.id, 'voice')).length, 24);
+  assert.deepEqual(await suggest('radio', voice.guild.id, 'voice'), [{ name: 'Walkie-talkie', value: 'radio' }], 'and by id');
 });
 
 test('the looping room’s speech is made once in its own voice, and remade when the line, voice or speed changes', { skip: !hasFfmpeg }, async (t) => {
@@ -781,16 +828,16 @@ test('the looping room’s speech is made once in its own voice, and remade when
   const guild = server as never as import('discord.js').Guild;
   assert.equal(await loopSpeechProblem(guild), null, 'nothing to make without a line');
   setSetting(id, 'loopText', 'stay a while');
-  setSetting(id, 'ttsVoice', '2');
+  setSetting(id, 'ttsVoice', 'alien');
   assert.equal(await loopSpeechProblem(guild), null);
-  assert.deepEqual(asked.map((a) => [a.text, a.speaker]), [['stay a while', 100]], 'the default voice until one’s picked');
+  assert.deepEqual(asked.map((a) => [a.text, a.speaker]), [['stay a while', 0]], 'the default voice until one’s picked');
   assert.equal(await loopSpeechProblem(guild), null);
   assert.equal(asked.length, 1, 'made once, then reused');
-  setSetting(id, 'loopVoice', '9');
+  setSetting(id, 'loopVoice', 'demon');
   await loopSpeechProblem(guild);
   setSetting(id, 'ttsSpeed', 120);
   await loopSpeechProblem(guild);
-  assert.deepEqual(asked.slice(1).map((a) => a.speaker), [800, 800]);
+  assert.deepEqual(asked.slice(1).map((a) => a.speaker), [499, 499]);
   assert.ok(asked[2].length < asked[1].length, 'faster');
   const kept = readdirSync(path.join(config.dataDir, 'loop-speech')).filter((f) => f.startsWith(`${id}-`));
   assert.equal(kept.length, 1, 'only the line in use is kept');

@@ -895,7 +895,11 @@ const loopSpeechDir = () => path.join(config.dataDir, 'loop-speech');
 async function loopSpeechFile(guild: Guild): Promise<string> {
   const text = setting(guild.id, 'loopText') ?? '';
   const voice = setting(guild.id, 'loopVoice') || setting(guild.id, 'ttsVoice');
-  const made = createHash('sha256').update(JSON.stringify([text, voice, setting(guild.id, 'ttsSpeed')])).digest('hex').slice(0, 16);
+  // Keyed on how the voice is made as well as its name, so a voice that's been retuned or removed is made again
+  const made = createHash('sha256')
+    .update(JSON.stringify([text, voice, loopVoiceDetails?.(guild, voice), setting(guild.id, 'ttsSpeed')]))
+    .digest('hex')
+    .slice(0, 16);
   const file = path.join(loopSpeechDir(), `${guild.id}-${made}.wav`);
   if (existsSync(file)) return file;
   mkdirSync(loopSpeechDir(), { recursive: true });
@@ -1152,10 +1156,13 @@ export async function playJoinSound(oldState: VoiceState, newState: VoiceState) 
 let greeter: { line(member: GuildMember): string | null; say(channel: VoiceBasedChannel, line: string): Promise<string | null> } | undefined;
 
 let loopSpeaker: ((guild: Guild, text: string, voiceId: string, file: string) => Promise<void>) | undefined;
+/** How a voice is made, which changes when it's retuned */
+let loopVoiceDetails: ((guild: Guild, voiceId: string) => unknown) | undefined;
 
 /** How text to speech makes the looping room's speech, handed over like the greeter */
-export function setLoopSpeaker(speak: (guild: Guild, text: string, voiceId: string, file: string) => Promise<void>) {
+export function setLoopSpeaker(speak: (guild: Guild, text: string, voiceId: string, file: string) => Promise<void>, voiceDetails: (guild: Guild, voiceId: string) => unknown) {
   loopSpeaker = speak;
+  loopVoiceDetails = voiceDetails;
 }
 
 /** How text to speech greets people, kept here by being handed over since it already depends on this file */

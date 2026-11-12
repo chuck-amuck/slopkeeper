@@ -108,8 +108,9 @@ test('patch notes start off, take a mode and a channel, and refuse anything else
 test('text to speech settings take a known voice, a role and sensible limits', () => {
   const guild = { channels: { cache: new Map() }, roles: { cache: new Map([['talkers', { id: 'talkers' }]]) } } as never;
   assert.equal(setting('speech', 'tts'), true);
-  assert.equal(setting('speech', 'ttsVoice'), '5');
-  assert.deepEqual(checkSetting(guild, 'ttsVoice', '9'), { value: '9' });
+  assert.equal(setting('speech', 'ttsVoice'), 'tiktok');
+  assert.deepEqual(checkSetting(guild, 'ttsVoice', 'demon'), { value: 'demon' });
+  assert.deepEqual(checkSetting(guild, 'ttsVoice', '5'), { error: 'Pick a voice from the list.' }, 'the numbered voices are gone');
   assert.deepEqual(checkSetting(guild, 'ttsVoice', '3'), { error: 'Pick a voice from the list.' });
   assert.deepEqual(checkSetting(guild, 'ttsRole', 'talkers'), { value: 'talkers' });
   assert.deepEqual(checkSetting(guild, 'ttsRole', 'nope'), { error: 'Pick a role.' });
@@ -234,12 +235,13 @@ test('looping speech takes up to 500 characters, a voice of its own, and its own
   assert.deepEqual(checkSetting(guild, 'loopText', '  stay a while  '), { value: 'stay a while' });
   assert.match((checkSetting(guild, 'loopText', '   ') as { error: string }).error, /Type something/);
   assert.match((checkSetting(guild, 'loopText', 'a'.repeat(501)) as { error: string }).error, /up to 500/);
-  assert.deepEqual(checkSetting(guild, 'loopVoice', '9'), { value: '9' });
+  assert.deepEqual(checkSetting(guild, 'loopVoice', 'demon'), { value: 'demon' });
   assert.match((checkSetting(guild, 'loopVoice', '7') as { error: string }).error, /Pick a voice/);
   assert.deepEqual(checkSetting(guild, 'loopTextEvery', 2.5), { value: 2.5 });
   await run('loop-speech', 'loop-room', { channel: { id: 'therapy', type: ChannelType.GuildVoice, joinable: true, guild: { members: { me: {} } }, permissionsFor: () => ({ has: () => true }) } });
-  await run('loop-speech', 'loop-room', { speech: 'stay a while', speech_voice: '9', speech_every: 4 });
-  assert.deepEqual([setting('loop-speech', 'loopText'), setting('loop-speech', 'loopVoice'), setting('loop-speech', 'loopTextEvery'), setting('loop-speech', 'loopRoom')], ['stay a while', '9', 4, 'therapy']);
+  // Its voice is picked in the web UI, not here
+  await run('loop-speech', 'loop-room', { speech: 'stay a while', speech_every: 4 });
+  assert.deepEqual([setting('loop-speech', 'loopText'), setting('loop-speech', 'loopTextEvery'), setting('loop-speech', 'loopRoom')], ['stay a while', 4, 'therapy']);
   assert.ok(log('loop-speech').includes('Set Looping speech to “stay a while”'));
   await run('loop-speech', 'loop-room', { no_speech: true });
   assert.equal(setting('loop-speech', 'loopText'), '');

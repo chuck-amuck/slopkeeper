@@ -20,7 +20,7 @@ import { postVote } from './features/gamevote.ts';
 import { recapFor } from './features/recap.ts';
 import { gameName, gameSpellings, mergeGames, separateGame } from './gameNames.ts';
 import { addTracks, clearQueue, fileProblem, fileUploadPath, MOST_FILE_BYTES, moveTrack, musicChannelFor, musicState, pauseMusic, playFile, queueFrom, queueOf, removeTrack, seekFile, seekMusic, shuffleQueue, skipMusic, startMusic, stopFile, stopMusic } from './features/music.ts';
-import { phrases, removePhrase, savePhrase, say, VOICES } from './features/say.ts';
+import { phrases, removePhrase, savePhrase, say, serverVoice, VOICES } from './features/say.ts';
 import { voiceTotals } from './features/sessions.ts';
 import { checkSetting, LABELS, LIMITS, show, source, STEPS } from './features/setup.ts';
 import { addSound, addToDiscord, afterSettingsChanged, BIN_DAYS, changeEmoji, deletedSounds, eraseDeleted, expiresAt, favourites, findSound, joinSounds, listSounds, loopBotStatus, loopSpeechProblem, parseEmoji, playCounts, playDiscordSound, playFromWeb, playingChange, playingNow, playingVersion, postPanel, refreshPanels, removeSound, renameSound, restoreDeleted, restoreSound, saveFromDiscord, setFavourite, setJoinSound, setSoundVolume, type Sound, soundLevels, soundVolumes, stopPlayback, stopPlayingOne, swapOnDiscord, syncToDiscord, takeOffDiscord, trimmedSounds, trimProblem, trimSound, untaken, uploadProblem, volumeProblem } from './features/soundboard.ts';
@@ -1256,7 +1256,7 @@ async function handle(client: Client<true>, req: IncomingMessage, res: ServerRes
     return {};
   }
   if (section === 'say' && !rest.length && req.method === 'GET') {
-    return { on: Boolean(config.voiceUrl) && setting(guild.id, 'tts'), voices: VOICES.map(({ id, name }) => ({ id, name })), voice: setting(guild.id, 'ttsVoice'), volume: setting(guild.id, 'ttsVolume'), longest: setting(guild.id, 'ttsMaxChars'), phrases: phrases(guild.id) };
+    return { on: Boolean(config.voiceUrl) && setting(guild.id, 'tts'), voices: VOICES.map(({ id, name }) => ({ id, name })), voice: serverVoice(guild.id).id, volume: setting(guild.id, 'ttsVolume'), longest: setting(guild.id, 'ttsMaxChars'), phrases: phrases(guild.id) };
   }
   if (section === 'say' && !rest.length && req.method === 'POST') {
     const { channelId, text, voice } = await readJson(req);

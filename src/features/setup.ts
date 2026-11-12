@@ -523,7 +523,6 @@ export const setup: Feature = {
               o.setName('every').setDescription('Seconds between fresh copies, layered on top of each other, like 0.5. 0 loops it without a gap').setMinValue(LIMITS.loopEvery[0]).setMaxValue(LIMITS.loopEvery[1]),
             )
             .addStringOption((o) => o.setName('speech').setDescription('Words to say over and over as well as the sound').setMaxLength(LOOP_TEXT_MAX))
-            .addStringOption((o) => o.setName('speech_voice').setDescription('The voice that says them').addChoices(...VOICES.map((v) => ({ name: v.name, value: v.id }))))
             .addNumberOption((o) =>
               o.setName('speech_every').setDescription('Seconds between fresh copies of the speech, layered. 0 says it again straight away').setMinValue(LIMITS.loopTextEvery[0]).setMaxValue(LIMITS.loopTextEvery[1]),
             )
@@ -558,14 +557,8 @@ export const setup: Feature = {
         .addSubcommand((s) =>
           s
             .setName('speech')
-            .setDescription('Text to speech: on or off, the default voice, and the limits on /say')
+            .setDescription('Text to speech: on or off, and the limits on /say. Pick the default voice in the web UI')
             .addBooleanOption((o) => o.setName('enabled').setDescription('Whether /say works here'))
-            .addStringOption((o) =>
-              o
-                .setName('voice')
-                .setDescription('Default voice')
-                .addChoices(...VOICES.map((v) => ({ name: v.name, value: v.id }))),
-            )
             .addIntegerOption((o) => o.setName('speed').setDescription('How fast it talks, as a percentage of the voice’s natural speed').setMinValue(LIMITS.ttsSpeed[0]).setMaxValue(LIMITS.ttsSpeed[1]))
             .addIntegerOption((o) => o.setName('volume').setDescription('How loud it talks. 100 is about as loud as a sound').setMinValue(LIMITS.ttsVolume[0]).setMaxValue(LIMITS.ttsVolume[1]))
             .addIntegerOption((o) => o.setName('max_characters').setDescription('Longest line').setMinValue(LIMITS.ttsMaxChars[0]).setMaxValue(LIMITS.ttsMaxChars[1]))
@@ -752,11 +745,10 @@ export const setup: Feature = {
             if (checked && 'error' in checked) return i.reply({ content: checked.error, flags: MessageFlags.Ephemeral });
           }
           const speech = i.options.getString('speech');
-          const speechVoice = i.options.getString('speech_voice');
           const speechEvery = i.options.getNumber('speech_every');
           const noSpeech = i.options.getBoolean('no_speech');
           const checked: Partial<Record<SettingKey, string | number>> = {};
-          for (const [key, value] of [['loopEvery', every], ['loopText', speech], ['loopVoice', speechVoice], ['loopTextEvery', speechEvery]] as const) {
+          for (const [key, value] of [['loopEvery', every], ['loopText', speech], ['loopTextEvery', speechEvery]] as const) {
             if (value === null) continue;
             const result = checkSetting(i.guild, key, value);
             if ('error' in result) return i.reply({ content: result.error, flags: MessageFlags.Ephemeral });
@@ -768,7 +760,6 @@ export const setup: Feature = {
             ['loopVolume', volume],
             ['loopEvery', checked.loopEvery ?? null],
             ['loopText', noSpeech ? '' : (checked.loopText ?? null)],
-            ['loopVoice', checked.loopVoice ?? null],
             ['loopTextEvery', checked.loopTextEvery ?? null],
             ['loopIntro', noIntro ? '' : intro],
             ['loopIntroDelayMs', introDelay],
@@ -776,7 +767,7 @@ export const setup: Feature = {
             ['loopSoundDelayMs', soundDelay],
             ['loopTextDelayMs', speechDelay],
           ]);
-          const speechProblem = checked.loopText || checked.loopVoice ? await loopSpeechProblem(i.guild) : null;
+          const speechProblem = checked.loopText ? await loopSpeechProblem(i.guild) : null;
           if (speechProblem) await i.followUp({ content: `⚠️ ${speechProblem}`, flags: MessageFlags.Ephemeral });
           return;
         }
@@ -808,7 +799,6 @@ export const setup: Feature = {
             ['ttsNightReminders', i.options.getBoolean('night_reminders')],
             ['ttsHopOn', i.options.getBoolean('hop_on')],
             ['tts', i.options.getBoolean('enabled')],
-            ['ttsVoice', i.options.getString('voice')],
             ['ttsSpeed', i.options.getInteger('speed')],
             ['ttsVolume', i.options.getInteger('volume')],
             ['ttsMaxChars', i.options.getInteger('max_characters')],

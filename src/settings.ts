@@ -75,7 +75,7 @@ export const DEFAULTS = {
   ttsRole: null as string | null,
   ttsMaxChars: num('TTS_MAX_CHARS', 200),
   ttsCooldownSec: num('TTS_COOLDOWN_SEC', 5),
-  ttsVoice: process.env.TTS_VOICE || '5',
+  ttsVoice: process.env.TTS_VOICE || 'tiktok',
   // The voices run a little fast at their natural speed
   ttsSpeed: num('TTS_SPEED', 85),
   // 100 is about as loud as a sound with Even volume on

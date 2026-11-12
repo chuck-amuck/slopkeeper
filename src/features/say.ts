@@ -54,6 +54,23 @@ const CHARACTER_STRETCHES: Stretches = [
   [2.19, 2.5],
 ] as const;
 
+/** Measured on the Russian model reading English with its accent, which stretches between the two */
+const RUSSIAN_STRETCHES: Stretches = [
+  [0.66, 0.5],
+  [0.78, 0.7],
+  [0.88, 0.8],
+  [1, 1],
+  [1.09, 1.2],
+  [1.17, 1.3],
+  [1.26, 1.4],
+  [1.34, 1.5],
+  [1.4, 1.6],
+  [1.57, 1.8],
+  [1.72, 2],
+  [1.86, 2.2],
+  [2.09, 2.5],
+] as const;
+
 interface Voice {
   id: string;
   name: string;
@@ -70,21 +87,110 @@ interface Voice {
   effects?: string;
 }
 
-/**
- * A prim British voice with a thin metallic ring: a semitone up, narrowed, with a 5 ms echo that rings like a tin can, and
- * turned up to match the other voices' loudness
- */
-const DROID_EFFECTS = 'rubberband=pitch=1.06:formant=preserved,highpass=f=280,lowpass=f=7500,equalizer=f=3000:t=q:w=1.4:g=3,aecho=0.8:0.7:5:0.3,volume=4.5dB';
-
 /** An old state TV sound: narrowed, pushed forward, squeezed and with a hall's echo, turned up to match the others */
 const BROADCAST_EFFECTS =
   'highpass=f=170,lowpass=f=6800,equalizer=f=2500:t=q:w=1.2:g=5,acompressor=threshold=0.05:ratio=8:attack=3:release=80:makeup=4,aecho=0.8:0.5:70|140:0.22|0.12,asoftclip=type=tanh,volume=6dB';
 
+/** The default model's speakers the effect styles are built on */
+const DEEP = 499;
+const MAN = 400;
+const WOMAN = 0;
+
+/**
+ * Styles made with ffmpeg effects on one of the default model's speakers, each turned up or down at the end to match that
+ * speaker without them
+ */
+const STYLES: readonly Voice[] = [
+  {
+    id: 'demon',
+    name: 'Demon',
+    speaker: DEEP,
+    pace: 1.1,
+    // An octave and a fifth down, layered, with grit and a short echo
+    effects:
+      'asplit=2[a][b];[a]rubberband=pitch=0.5[a2];[b]rubberband=pitch=0.7[b2];[a2][b2]amix=inputs=2:weights=1 0.7:normalize=0,lowshelf=f=150:g=4,asoftclip=type=tanh,aecho=0.8:0.6:40|90:0.35|0.2,volume=3dB',
+  },
+  // Chipmunk style: the pitch goes up and the voice shrinks with it
+  { id: 'helium', name: 'Helium', speaker: MAN, pace: 0.9, effects: 'rubberband=pitch=1.8' },
+  { id: 'giant', name: 'Giant', speaker: DEEP, pace: 1.2, effects: 'rubberband=pitch=0.7,lowshelf=f=150:g=5,aecho=0.8:0.7:90|180:0.35|0.2,volume=1.6dB' },
+  {
+    id: 'robot',
+    name: 'Robot',
+    speaker: MAN,
+    // Every frequency's phase flattened, which turns speech into a monotone buzz, then a metal ring
+    effects: "afftfilt=real='hypot(re,im)*sin(0)':imag='hypot(re,im)*cos(0)':win_size=512:overlap=0.75,aecho=0.8:0.8:8:0.4,volume=16dB",
+  },
+  {
+    id: 'alien',
+    name: 'Alien',
+    speaker: WOMAN,
+    effects: "rubberband=pitch=1.25,flanger=delay=3:depth=6:speed=0.6:regen=50,vibrato=f=7:d=0.35,aeval='val(0)*(0.65+0.35*sin(2*PI*90*t))',volume=7dB",
+  },
+  {
+    id: 'radio',
+    name: 'Walkie-talkie',
+    speaker: MAN,
+    pace: 0.95,
+    // Narrow, overdriven and squeezed, with hiss
+    effects:
+      "highpass=f=500,lowpass=f=2800,volume=12dB,asoftclip=type=hard,volume=-12dB,acompressor=threshold=0.05:ratio=8:attack=2:release=60:makeup=4,aeval='val(0)+0.012*(random(0)*2-1)',volume=1.3dB",
+  },
+  {
+    id: 'phone',
+    name: 'Phone call',
+    speaker: WOMAN,
+    effects: 'highpass=f=300,lowpass=f=3400,aresample=8000,aresample=22050,equalizer=f=1500:t=q:w=1:g=4,acompressor=threshold=0.1:ratio=4:makeup=2',
+  },
+  {
+    id: 'megaphone',
+    name: 'Megaphone',
+    speaker: MAN,
+    pace: 0.95,
+    effects: 'highpass=f=600,lowpass=f=4000,equalizer=f=1500:t=q:w=1:g=8,volume=10dB,asoftclip=type=atan,volume=-10dB,aecho=0.8:0.3:30:0.3,volume=18dB',
+  },
+  {
+    id: 'stadium',
+    name: 'Stadium PA',
+    speaker: MAN,
+    pace: 1.1,
+    // Slapback from the stands, then a long tail
+    effects: 'highpass=f=250,lowpass=f=6000,equalizer=f=2000:t=q:w=1:g=4,aecho=0.8:0.6:180|360|540:0.4|0.25|0.15,aecho=0.8:0.85:60|117|173:0.3|0.25|0.2,volume=8dB',
+  },
+  {
+    id: 'newsreel',
+    name: 'Newsreel',
+    speaker: MAN,
+    pace: 0.88,
+    // A 1940s film soundtrack: narrow, squeezed, a slow wow, and crackle
+    effects:
+      "highpass=f=250,lowpass=f=4500,equalizer=f=1500:t=q:w=1:g=4,acompressor=threshold=0.08:ratio=6:makeup=3,vibrato=f=0.7:d=0.03,aeval='val(0)+if(lt(random(0),0.0008),0.25*(random(1)*2-1),0)+0.006*(random(2)*2-1)',volume=0.8dB",
+  },
+  { id: 'cathedral', name: 'Cathedral', speaker: MAN, pace: 1.15, effects: 'aecho=0.8:0.9:120|240|370|510|660|820:0.5|0.4|0.32|0.25|0.18|0.12' },
+  {
+    id: 'underwater',
+    name: 'Underwater',
+    speaker: MAN,
+    pace: 1.1,
+    effects: 'lowpass=f=800,rubberband=pitch=0.92,vibrato=f=5:d=0.5,chorus=0.6:0.9:50|60:0.4|0.32:0.25|0.4:2|1.3,volume=2.3dB',
+  },
+  {
+    id: 'ghost',
+    name: 'Ghost',
+    speaker: WOMAN,
+    pace: 1.25,
+    // An echo run backwards, so it swells in before each word, and a tremble
+    effects: 'highpass=f=200,rubberband=pitch=1.08,areverse,aecho=0.8:0.9:80|160|260|400:0.45|0.35|0.25|0.15,areverse,tremolo=f=5:d=0.3,aecho=0.8:0.7:300:0.3,volume=8dB',
+  },
+  {
+    id: 'trailer',
+    name: 'Trailer narrator',
+    speaker: DEEP,
+    pace: 1.15,
+    effects: 'rubberband=pitch=0.85,lowshelf=f=120:g=6,acompressor=threshold=0.1:ratio=4:makeup=2,aecho=0.8:0.6:80|160:0.3|0.2,volume=3.6dB',
+  },
+];
+
 export const VOICES: readonly Voice[] = [
-  { id: '1', name: 'Voice 1', speaker: 0 },
-  { id: '2', name: 'Voice 2', speaker: 100 },
-  { id: '5', name: 'Voice 5', speaker: 400 },
-  { id: '9', name: 'Voice 9', speaker: 800 },
   // Calmer than the model's own 0.667 and 0.8, which wobble in longer lines
   { id: 'glados', name: 'GLaDOS', model: 'glados', noise: [0.333, 0.333], stretches: CHARACTER_STRETCHES },
   { id: 'hal', name: 'HAL 9000', model: 'hal', stretches: CHARACTER_STRETCHES },
@@ -93,17 +199,36 @@ export const VOICES: readonly Voice[] = [
   // Kronk stretches like the default model's voices, but sounded rushed: it's 15% slower, with steadier timing
   { id: 'kronk', name: 'Kronk', model: 'kronk', noise: [0.667, 0.333], pace: 1.15 },
   { id: 'tiktok', name: 'TikTok', model: 'tiktok', stretches: CHARACTER_STRETCHES },
-  // Styles built on official models with effects, not a model of a character or person. VCTK's speaker 258 (p258) stretches
-  // like the default model, and talks 8% quicker, as a fussy droid would
-  { id: 'droid', name: 'Protocol droid', model: 'vctk', speaker: 57, pace: 0.92, effects: DROID_EFFECTS },
-  // The Korean model reads English with a Korean accent (voice/accent.py) and Korean as it is. It stretches like the
-  // character models, and goes 15% slower, as an announcer reads
+  // Models in other languages reading English with an accent (voice/accent.py), turned up or down to match the others.
+  // State broadcast reads Korean as it is, goes 15% slower, as an announcer reads, and has a style's effects
   { id: 'broadcast', name: 'State broadcast', model: 'kss', pace: 1.15, stretches: CHARACTER_STRETCHES, effects: BROADCAST_EFFECTS },
+  { id: 'russian', name: 'Russian', model: 'dmitri', stretches: RUSSIAN_STRETCHES, effects: 'volume=2dB' },
+  { id: 'spanish', name: 'Spanish', model: 'davefx', stretches: CHARACTER_STRETCHES, effects: 'volume=-3dB' },
+  // The emotional model's neutral speaker, which leaves its drunk, whispering and other speakers free to add
+  { id: 'german', name: 'German', model: 'thorsten', speaker: 4, stretches: CHARACTER_STRETCHES, effects: 'volume=4.5dB' },
+  ...STYLES,
 ];
 
-/** The voice a server uses when nobody picks one. A stored voice that's since been removed falls back to the bot's default, then Voice 5 */
+/**
+ * The voice a server uses when nobody picks one, or the one given. One that's since been removed falls back to the server's
+ * default, then the bot's, then TikTok
+ */
 export function serverVoice(guildId: string, id: string | null = setting(guildId, 'ttsVoice')): Voice {
-  return VOICES.find((v) => v.id === id) ?? VOICES.find((v) => v.id === DEFAULTS.ttsVoice) ?? VOICES.find((v) => v.id === '5')!;
+  const find = (wanted: string | null) => VOICES.find((v) => v.id === wanted);
+  return find(id) ?? find(setting(guildId, 'ttsVoice')) ?? find(DEFAULTS.ttsVoice) ?? find('tiktok')!;
+}
+
+/** A voice by its id, or by its name as someone might type it into /say instead of picking it */
+const voiceCalled = (typed: string) => VOICES.find((v) => v.id === typed) ?? VOICES.find((v) => v.name.toLowerCase() === typed.trim().toLowerCase());
+
+/** Clears servers' picks of voices that have since been removed, so Settings shows the voice they really get. Returns how many */
+export function forgetRemovedVoices(): number {
+  const ids = VOICES.map((v) => v.id);
+  return Number(
+    db
+      .prepare(`DELETE FROM guild_settings WHERE key IN ('ttsVoice', 'loopVoice') AND value != '' AND value NOT IN (${ids.map(() => '?').join(', ')})`)
+      .run(...ids).changes,
+  );
 }
 
 const SPEAK_TIMEOUT_MS = 15_000;
@@ -266,7 +391,7 @@ function sayProblem(guild: Guild, text: string, who: string): string | null {
 /** Says something in a channel, after any lines ahead of it. Returns null once it's started, or why it couldn't. `who` is a user id, or who on the web UI (see activity.ts) */
 export async function say(channel: VoiceBasedChannel, typed: string, voiceId: string | undefined, who: string): Promise<string | null> {
   const { guild } = channel;
-  const voice = voiceId === undefined ? serverVoice(guild.id) : VOICES.find((v) => v.id === voiceId);
+  const voice = voiceId === undefined ? serverVoice(guild.id) : voiceCalled(voiceId);
   if (!voice) return 'Pick a voice from the list.';
   const text = speechFor(guild, typed);
   const problem = sayProblem(guild, text, who);
@@ -393,7 +518,7 @@ export const speak: Feature = {
           o
             .setName('voice')
             .setDescription('Which voice (default: this server’s)')
-            .addChoices(...VOICES.map((v) => ({ name: v.name, value: v.id }))),
+            .setAutocomplete(true),
         )
         .addStringOption((o) => o.setName('saved').setDescription('A saved line, instead of typing one').setAutocomplete(true)),
       async run(i) {
@@ -413,16 +538,24 @@ export const speak: Feature = {
         return i.editReply(problem ?? 'Said it.');
       },
       async autocomplete(i) {
-        const search = i.options.getFocused().toLowerCase();
+        const focused = i.options.getFocused(true);
+        const search = focused.value.toLowerCase();
+        // Searched rather than a fixed list, as Discord shows at most 25 choices
+        if (focused.name === 'voice') {
+          const matches = VOICES.filter((v) => v.name.toLowerCase().includes(search) || v.id.includes(search));
+          return i.respond(matches.slice(0, 25).map((v) => ({ name: v.name, value: v.id })));
+        }
         const matches = i.guildId ? phrases(i.guildId).filter((p) => p.text.toLowerCase().includes(search)) : [];
-        return i.respond(matches.map((p) => ({ name: p.text.slice(0, 100), value: String(p.id) })));
+        return i.respond(matches.slice(0, 25).map((p) => ({ name: p.text.slice(0, 100), value: String(p.id) })));
       },
     },
   ],
   setup(client) {
+    const forgotten = forgetRemovedVoices();
+    if (forgotten) console.log(`Text to speech: ${plural(forgotten, 'server voice pick')} of removed voices went back to the default`);
     onPlaybackStop(stopLines);
     setGreeter(greetingFor, sayOut);
-    setLoopSpeaker(speakToFile);
+    setLoopSpeaker(speakToFile, (guild, id) => serverVoice(guild.id, id));
     client.on(Events.MessageCreate, (message) => void readMessage(message).catch(console.error));
   },
 };

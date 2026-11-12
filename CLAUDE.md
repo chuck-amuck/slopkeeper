@@ -36,9 +36,10 @@ ffmpeg. Without ffmpeg the audio tests skip silently and the run looks green.
 
 - Never bump `SCHEMA_VERSION` in src/db.ts: an older database with a `games` table makes the bot refuse to start.
   Add tables with `CREATE TABLE IF NOT EXISTS` and columns with the `pragma_table_info` + `ALTER TABLE` pattern.
-- Every setting is also editable in the web UI. A new per-server setting touches src/settings.ts DEFAULTS (an env
-  var only sets the default), `/setup` (src/features/setup.ts), web/public/settings.js, `.env.example`, the README
-  "Settings and defaults" table and the tests.
+- Every setting is editable in the web UI. `/setup` (src/features/setup.ts) is optional: the owner is fine with a
+  setting living only in the web UI (the default and looping speech voices do), marked "web UI only" in the README
+  "Settings and defaults" table. A new per-server setting touches src/settings.ts DEFAULTS (an env var only sets the
+  default), web/public/settings.js, `.env.example`, that README table and the tests.
 - Rules live in the bot (src/features, src/api.ts). `web/` stores nothing and proxies to the management API.
 - Spotify stays search-only: no `SPOTIFY_REFRESH_TOKEN` in the deployment and no personal playlists. Soloist
   playback was removed in fec6b23; bring it back only if asked.

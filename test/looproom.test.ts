@@ -17,6 +17,7 @@ import {
   findSound,
   leaveIfAlone,
   loopBotStatus,
+  loopSpeechProblem,
   noteLoopRoom,
   play,
   refreshLoopRoom,
@@ -260,8 +261,8 @@ test('looping speech plays alongside the sound, or alone, at the loop volume, wi
   setLoopSpeaker(async (_guild, text, _voice, file) => {
     made.push(text);
     execFileSync('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', 'sine=frequency=300:duration=0.3', file]);
-  });
-  t.after(() => setLoopSpeaker(undefined as never));
+  }, (_guild, voice) => voice);
+  t.after(() => setLoopSpeaker(undefined as never, undefined as never));
   turnOn();
   setSetting(id, 'loopText', 'stay a while');
   setSetting(id, 'loopTextEvery', '2.5');
@@ -282,12 +283,32 @@ test('looping speech plays alongside the sound, or alone, at the loop volume, wi
   assert.deepEqual(loops().slice(3).map((l) => l.file.includes('loop-speech')), [true]);
 });
 
+test('looping speech is made again when its voice is retuned, not only when it’s changed', { skip: !hasFfmpeg }, async (t) => {
+  const { id, guild } = await server(t);
+  let tuning = 'first';
+  const made: string[] = [];
+  setLoopSpeaker(
+    async (_guild, _text, _voice, file) => {
+      made.push(tuning);
+      execFileSync('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', 'sine=frequency=300:duration=0.3', file]);
+    },
+    () => tuning,
+  );
+  t.after(() => setLoopSpeaker(undefined as never, undefined as never));
+  setSetting(id, 'loopText', 'stay a while');
+  assert.equal(await loopSpeechProblem(guild), null);
+  assert.equal(await loopSpeechProblem(guild), null);
+  tuning = 'second';
+  assert.equal(await loopSpeechProblem(guild), null);
+  assert.deepEqual(made, ['first', 'second']);
+});
+
 test('speech that can’t be made leaves the sound playing', { skip: !hasFfmpeg }, async (t) => {
   const { id, guild, therapy, enter, loops, turnOn } = await server(t);
   setLoopSpeaker(async () => {
     throw new Error('The voice container isn’t answering');
-  });
-  t.after(() => setLoopSpeaker(undefined as never));
+  }, (_guild, voice) => voice);
+  t.after(() => setLoopSpeaker(undefined as never, undefined as never));
   const errors = t.mock.method(console, 'error', () => {});
   turnOn();
   setSetting(id, 'loopText', 'stay a while');
@@ -435,8 +456,8 @@ test('the speech has its own volume, apart from the sound’s', { skip: !hasFfmp
   const { id, guild, therapy, enter, loops, turnOn } = await server(t);
   setLoopSpeaker(async (_guild, _text, _voice, file) => {
     execFileSync('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', 'sine=frequency=300:duration=0.3', file]);
-  });
-  t.after(() => setLoopSpeaker(undefined as never));
+  }, (_guild, voice) => voice);
+  t.after(() => setLoopSpeaker(undefined as never, undefined as never));
   turnOn();
   setSetting(id, 'loopText', 'stay a while');
   setSetting(id, 'loopVolume', 80);
@@ -452,8 +473,8 @@ test('the sound and the speech each wait their own delay after the intro', { ski
   const { id, guild, therapy, enter, loops, intros, finish } = await withIntro(t);
   setLoopSpeaker(async (_guild, _text, _voice, file) => {
     execFileSync('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', 'sine=frequency=300:duration=0.3', file]);
-  });
-  t.after(() => setLoopSpeaker(undefined as never));
+  }, (_guild, voice) => voice);
+  t.after(() => setLoopSpeaker(undefined as never, undefined as never));
   setSetting(id, 'loopText', 'stay a while');
   setSetting(id, 'loopSoundDelayMs', 100);
   setSetting(id, 'loopTextDelayMs', 400);
@@ -584,8 +605,8 @@ test('with a loop bot, the speech goes as a part of its own', { skip: !hasFfmpeg
   const { sent } = await fakeLoopBot(t);
   setLoopSpeaker(async (_guild, _text, _voice, file) => {
     execFileSync('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', 'sine=frequency=300:duration=0.3', file]);
-  });
-  t.after(() => setLoopSpeaker(undefined as never));
+  }, (_guild, voice) => voice);
+  t.after(() => setLoopSpeaker(undefined as never, undefined as never));
   setSetting(id, 'loopRoom', 'therapy');
   setSetting(id, 'loopText', 'stay a while');
   setSetting(id, 'loopTextVolume', 70);
