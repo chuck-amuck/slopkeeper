@@ -3,7 +3,9 @@ import { type IncomingMessage } from 'node:http';
 import { linkWebUser, logActivity, recentActivity, webUser, webUserFor } from '../activity.ts';
 import { VOICES } from '../features/say.ts';
 import { checkSetting, GROUPS, LABELS, LIMITS, show, source, STEPS } from '../features/setup.ts';
-import { afterSettingsChanged, listSounds, loopBotStatus, loopSpeechProblem } from '../features/soundboard.ts';
+import { afterSettingsChanged } from '../features/soundboard.ts';
+import { listSounds } from '../features/soundLibrary.ts';
+import { loopBotStatus, loopSpeechProblem } from '../features/loopRoom.ts';
 import { DEFAULTS, setSetting, setting, type SettingKey } from '../settings.ts';
 import { type Ask, Refused, asking, by, channelName, listed, memberIn, nameOf, plain, readJson, textChannels, whoDid } from './common.ts';
 

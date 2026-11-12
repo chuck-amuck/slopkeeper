@@ -14,7 +14,10 @@ import { DEFAULT_ENV, DEFAULTS, idSetting, setSetting, setting, storedSetting, t
 import type { Feature } from '../types.ts';
 import { isTimeZone, pingWarning } from '../util.ts';
 import { serverVoice, VOICES } from './say.ts';
-import { afterSettingsChanged, cantJoin, findSound, listSounds, loopSpeechProblem } from './soundboard.ts';
+import { afterSettingsChanged } from './soundboard.ts';
+import { cantJoin } from './voiceAudio.ts';
+import { findSound, listSounds } from './soundLibrary.ts';
+import { loopSpeechProblem } from './loopRoom.ts';
 import { commandMention } from '../commandIds.ts';
 
 const ANNOUNCE_PERMISSIONS = [

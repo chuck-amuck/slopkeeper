@@ -39,7 +39,8 @@ import {
   stopMusic,
   type PlayerStatus,
 } from '../src/features/music.ts';
-import { soundboard, stopPlayback } from '../src/features/soundboard.ts';
+import { soundboard } from '../src/features/soundboard.ts';
+import { stopPlayback } from '../src/features/voiceAudio.ts';
 import { setSetting } from '../src/settings.ts';
 import type { Track } from '../src/spotify.ts';
 

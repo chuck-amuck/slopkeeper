@@ -28,7 +28,8 @@ import { idSetting } from '../settings.ts';
 import { coverFor, isShortLink, MOST_FROM_LINK, myPlaylists, parseLink, playlistsReady, RateLimited, search, searchReady, SpotifyError, tracksFor, type Track } from '../spotify.ts';
 import type { Feature } from '../types.ts';
 import { humansIn } from '../util.ts';
-import { botChannelId, EXTENSIONS, onMusicCheck, onPlaybackStop, playLong } from './soundboard.ts';
+import { botChannelId, onMusicCheck, onPlaybackStop, playLong } from './voiceAudio.ts';
+import { EXTENSIONS } from './soundLibrary.ts';
 
 // Jumping within a song stops this far short of its end, which would only end it
 const END_SLACK_MS = 6_000;

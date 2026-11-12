@@ -10,7 +10,7 @@ import { followVoice } from '../src/api/live.ts';
 import { config } from '../src/config.ts';
 import { db } from '../src/db.ts';
 import { logActivity } from '../src/activity.ts';
-import { soundGain } from '../src/features/soundboard.ts';
+import { soundGain } from '../src/features/soundLibrary.ts';
 import { setting, setSetting } from '../src/settings.ts';
 import { GUILD, TOKEN, as, base, client, guild, ok, onlyOnDiscord, panelEdits, quietWav, refused, setFake, soundFolder, sounds, upload } from './apiFixture.ts';
 

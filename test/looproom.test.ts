@@ -11,25 +11,10 @@ import { getVoiceConnection, joinVoiceChannel, VoiceConnectionStatus } from '@di
 import { config } from '../src/config.ts';
 import type { LoopProgram } from '../src/loopBot.ts';
 import { Mixer } from '../src/mixer.ts';
-import {
-  applySoundVolume,
-  checkLoopRoom,
-  findSound,
-  leaveIfAlone,
-  loopBotStatus,
-  loopSpeechProblem,
-  noteLoopRoom,
-  play,
-  refreshLoopRoom,
-  removeSound,
-  renameSound,
-  saveUpload,
-  setLoopSpeaker,
-  soundboard,
-  soundGain,
-  stopPlayback,
-  syncLoopBot,
-} from '../src/features/soundboard.ts';
+import { applySoundVolume, leaveIfAlone, play, stopPlayback } from '../src/features/voiceAudio.ts';
+import { checkLoopRoom, loopBotStatus, loopSpeechProblem, noteLoopRoom, refreshLoopRoom, setLoopSpeaker, syncLoopBot } from '../src/features/loopRoom.ts';
+import { findSound, removeSound, renameSound, saveUpload, soundGain } from '../src/features/soundLibrary.ts';
+import { soundboard } from '../src/features/soundboard.ts';
 import { setSetting, setting } from '../src/settings.ts';
 
 const hasFfmpeg = spawnSync('ffmpeg', ['-version']).status === 0;

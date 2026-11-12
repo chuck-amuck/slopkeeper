@@ -8,7 +8,10 @@ import { config } from '../config.ts';
 import * as discordBoard from '../discordSounds.ts';
 import { musicState } from '../features/music.ts';
 import { phrases, previewSpeech, removePhrase, savePhrase, say, serverVoice, TooSoon, voiceGroup, VOICES } from '../features/say.ts';
-import { addSound, addToDiscord, BIN_DAYS, changeEmoji, deletedSounds, eraseDeleted, expiresAt, favourites, findSound, joinSounds, listSounds, parseEmoji, playCounts, playDiscordSound, playFromWeb, playingNow, postPanel, refreshPanels, removeSound, renameSound, restoreDeleted, restoreSound, saveFromDiscord, setFavourite, setJoinSound, setSoundVolume, type Sound, soundLevels, soundVolumes, stopPlayback, stopPlayingOne, swapOnDiscord, syncToDiscord, takeOffDiscord, trimmedSounds, trimProblem, trimSound, untaken, uploadProblem, volumeProblem } from '../features/soundboard.ts';
+import { addSound, addToDiscord, BIN_DAYS, changeEmoji, deletedSounds, eraseDeleted, expiresAt, favourites, findSound, listSounds, parseEmoji, playCounts, removeSound, renameSound, restoreDeleted, restoreSound, saveFromDiscord, setFavourite, setSoundVolume, type Sound, soundLevels, soundVolumes, swapOnDiscord, syncToDiscord, takeOffDiscord, trimmedSounds, trimProblem, trimSound, untaken, uploadProblem, volumeProblem } from '../features/soundLibrary.ts';
+import { joinSounds, setJoinSound } from '../features/joinSounds.ts';
+import { playDiscordSound, playFromWeb, playingNow, stopPlayback, stopPlayingOne } from '../features/voiceAudio.ts';
+import { postPanel, refreshPanels } from '../features/soundPanel.ts';
 import { setting } from '../settings.ts';
 import { type Ask, Refused, by, cantDo, cantPost, memberList, nameOf, plain, postingChannel, readBody, readJson, refuse, untilGone, voiceChannelFor } from './common.ts';
 

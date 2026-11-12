@@ -7,7 +7,9 @@ import path from 'node:path';
 import { mock, test } from 'node:test';
 import { recentActivity } from '../src/activity.ts';
 import { db } from '../src/db.ts';
-import { findSound, listSounds, nameFromFile, refreshPanels, soundboard, soundLevels } from '../src/features/soundboard.ts';
+import { findSound, listSounds, nameFromFile, soundLevels } from '../src/features/soundLibrary.ts';
+import { refreshPanels } from '../src/features/soundPanel.ts';
+import { soundboard } from '../src/features/soundboard.ts';
 import { setSetting, setting } from '../src/settings.ts';
 
 const hasFfmpeg = spawnSync('ffmpeg', ['-version']).status === 0;

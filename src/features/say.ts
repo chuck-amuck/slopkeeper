@@ -25,7 +25,9 @@ import { DEFAULTS, idSetting, setting } from '../settings.ts';
 import type { Feature } from '../types.ts';
 import { canSee, humansIn } from '../util.ts';
 import { plural } from './gamestats.ts';
-import { onPlaybackStop, play, setGreeter, setLoopSpeaker } from './soundboard.ts';
+import { onPlaybackStop, play } from './voiceAudio.ts';
+import { setGreeter } from './joinSounds.ts';
+import { setLoopSpeaker } from './loopRoom.ts';
 
 /** How much longer speech gets, paired with the length_scale that gives it, from fastest to slowest */
 type Stretches = readonly (readonly [number, number])[];

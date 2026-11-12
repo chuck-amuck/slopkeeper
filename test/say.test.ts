@@ -12,7 +12,11 @@ import { recentActivity } from '../src/activity.ts';
 import { config } from '../src/config.ts';
 import { Mixer } from '../src/mixer.ts';
 import { announceAloud, forgetRemovedVoices, forgetSpoken, lengthFor, phrases, readMessage, removePhrase, savePhrase, say, sayOut, serverVoice, speak, speechFor } from '../src/features/say.ts';
-import { applySpeechVolume, loopSpeechProblem, playJoinSound, saveUpload, setJoinSound, soundboard, stopPlayback } from '../src/features/soundboard.ts';
+import { applySpeechVolume, stopPlayback } from '../src/features/voiceAudio.ts';
+import { loopSpeechProblem } from '../src/features/loopRoom.ts';
+import { playJoinSound, setJoinSound } from '../src/features/joinSounds.ts';
+import { saveUpload } from '../src/features/soundLibrary.ts';
+import { soundboard } from '../src/features/soundboard.ts';
 import { setSetting, storedSetting } from '../src/settings.ts';
 
 const hasFfmpeg = spawnSync('ffmpeg', ['-version']).status === 0;

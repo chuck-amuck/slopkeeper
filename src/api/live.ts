@@ -1,6 +1,6 @@
 import { Events, type Client, type Guild, type VoiceBasedChannel } from 'discord.js';
 import { anyChange, type FeedName, feeds } from '../changes.ts';
-import { playingNow } from '../features/soundboard.ts';
+import { playingNow } from '../features/voiceAudio.ts';
 import { setting } from '../settings.ts';
 import { humansIn } from '../util.ts';
 import { type Ask, Refused, untilGone } from './common.ts';

@@ -9,7 +9,10 @@ import { mock, test, type TestContext } from 'node:test';
 import { db } from '../src/db.ts';
 import { link } from '../src/discordSounds.ts';
 import { recentActivity } from '../src/activity.ts';
-import { cantJoin, dropMissingEmoji, recordDiscordPlay, joinSounds, leaveIfAlone, listSounds, onPlaybackStop, play, playJoinSound, saveUpload, setJoinSound, soundboard, soundGain } from '../src/features/soundboard.ts';
+import { cantJoin, leaveIfAlone, onPlaybackStop, play } from '../src/features/voiceAudio.ts';
+import { dropMissingEmoji, recordDiscordPlay, listSounds, saveUpload, soundGain } from '../src/features/soundLibrary.ts';
+import { joinSounds, playJoinSound, setJoinSound } from '../src/features/joinSounds.ts';
+import { soundboard } from '../src/features/soundboard.ts';
 import { Mixer } from '../src/mixer.ts';
 import { setSetting } from '../src/settings.ts';
 
