@@ -368,13 +368,17 @@ export class Mixer extends Readable {
     let heard = false;
     const speaking = this.voices.some((v) => v.group === 'speech' && v.heard);
     this.duck = speaking ? Math.max(DUCKED, this.duck - DUCK_STEP) : Math.min(1, this.duck + DUCK_STEP);
-    const mix = (chunk: Buffer, voice: Source, fadeOut = false) => {
+    const mix = (chunk: Buffer, voice: Source, fade?: 'in' | 'out') => {
       heard = true;
       const gain = voice.gain * (this.groupGains.get(voice.group) ?? 1) * (voice.group === 'music' ? this.duck : 1);
       const samples = chunk.length >> 1;
-      for (let s = 0; s < samples; s++) sum[s] += chunk.readInt16LE(s * 2) * gain * (fadeOut ? 1 - s / samples : 1);
+      for (let s = 0; s < samples; s++) {
+        const ramp = fade === 'in' ? s / samples : fade === 'out' ? 1 - s / samples : 1;
+        sum[s] += chunk.readInt16LE(s * 2) * gain * ramp;
+      }
     };
-    // New sounds first: once a restarted copy has audio, the old one fades out over this frame instead of clicking off
+    // New sounds first: once a restarted copy has audio, it fades in over this frame while the old one fades out, so a
+    // restart neither clicks off nor gets louder than one copy, however fast someone spams it
     const starting = new Set<Source>();
     for (const voice of this.voices) {
       if (voice.heard || voice.ended || !voice.ready()) continue;
@@ -386,14 +390,18 @@ export class Mixer extends Readable {
       if (label) label.startedAt = Date.now();
       if (voice.group !== 'music') this.emit('playing');
       starting.add(voice);
-      mix(chunk, voice);
+      let crossfade = false;
       for (const old of voice.replaces) {
         if (old.ended) continue;
         const last = old.read();
-        if (last) mix(last, old, true);
+        if (last) {
+          mix(last, old, 'out');
+          crossfade = true;
+        }
         old.stop();
       }
       voice.replaces = [];
+      mix(chunk, voice, crossfade ? 'in' : undefined);
     }
     for (const voice of this.voices) {
       if (!voice.heard || voice.ended || starting.has(voice)) continue;

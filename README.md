@@ -347,7 +347,7 @@ Turn the monthly post off with `/setup monthly-recap`. `/recap` keeps working.
 
 ## Soundboard
 
-The bot holds a library of uploaded sounds and plays them in your voice channel. Different sounds layer like Discord's own soundboard: clicking one while another is playing mixes it in instead of cutting the other off. Clicking a sound that's already playing restarts it from the top, with no gap, so spamming one button rapid-fires it instead of stacking copies. Up to 12 sounds play at once; past that, the oldest is dropped. The bot leaves voice after 5 minutes of silence, or as soon as everyone else has left.
+The bot holds a library of uploaded sounds and plays them in your voice channel. Different sounds layer like Discord's own soundboard: clicking one while another is playing mixes it in instead of cutting the other off. Clicking a sound that's already playing restarts it from the top, with no gap and no jump in volume, so spamming one button rapid-fires it instead of stacking copies. Up to 12 sounds play at once; past that, the oldest is dropped. The bot leaves voice after 5 minutes of silence, or as soon as everyone else has left.
 
 ### Playing sounds
 

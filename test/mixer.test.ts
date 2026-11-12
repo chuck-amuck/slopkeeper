@@ -45,8 +45,8 @@ test('spamming a sound restarts it with no gap, and doesn’t stack', { skip: !h
   const heard = peaks.slice(start, end + 1);
   assert.equal(heard.filter((p) => p < level / 2).length, 0, 'no quiet frames');
   assert.ok(heard.length * 20 > 1250, `restarted rather than finishing at 1 s (${heard.length * 20} ms)`);
-  // One frame can hold the crossfade between the two copies
-  assert.ok(heard.filter((p) => p > level * 1.5).length <= 1, 'copies never stack');
+  // The crossfade between two copies is never louder than one copy, however many restarts land
+  assert.equal(heard.filter((p) => p > level * 1.2).length, 0, 'copies never stack');
 });
 
 test('different sounds layer', { skip: !hasFfmpeg }, async () => {
