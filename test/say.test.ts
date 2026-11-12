@@ -11,7 +11,7 @@ import { PermissionFlagsBits } from 'discord.js';
 import { recentActivity } from '../src/activity.ts';
 import { config } from '../src/config.ts';
 import { Mixer } from '../src/mixer.ts';
-import { announceAloud, forgetRemovedVoices, lengthFor, phrases, readMessage, removePhrase, savePhrase, say, sayOut, serverVoice, speak, speechFor } from '../src/features/say.ts';
+import { announceAloud, forgetRemovedVoices, forgetSpoken, lengthFor, phrases, readMessage, removePhrase, savePhrase, say, sayOut, serverVoice, speak, speechFor } from '../src/features/say.ts';
 import { applySpeechVolume, loopSpeechProblem, playJoinSound, saveUpload, setJoinSound, soundboard, stopPlayback } from '../src/features/soundboard.ts';
 import { setSetting, storedSetting } from '../src/settings.ts';
 
@@ -72,7 +72,11 @@ function fakeVoice(t: TestContext, answer?: (text: string, signal: AbortSignal) 
 const leftovers = () => readdirSync(tmpdir()).filter((f) => f.startsWith('slopkeeper-say-')).flatMap((f) => readdirSync(path.join(tmpdir(), f)));
 
 speak.setup!({ on() {} } as never);
-beforeEach(() => void (config.voiceUrl = 'http://voice.test'));
+beforeEach(() => {
+  config.voiceUrl = 'http://voice.test';
+  // Each test counts what the voice container is asked for
+  forgetSpoken();
+});
 afterEach(() => void (config.voiceUrl = NO_URL));
 after(() => {
   clearInterval(discord);
@@ -92,6 +96,32 @@ test('reads out a line in the server’s voice, or the one asked for, and logs w
   ]);
   const lines = recentActivity(voice.guild.id, 5).map((r) => `${r.actor}: ${r.action}`).toReversed();
   assert.deepEqual(lines, ['ana: Said “hello there” in <#voice>', 'ben: Said “and again” in <#voice>']);
+  assert.deepEqual(leftovers(), []);
+});
+
+test('a line said again soon in the same voice and speed is made once, and a new speed makes it again', { skip: !hasFfmpeg }, async (t) => {
+  const asked = fakeVoice(t);
+  const voice = channel();
+  for (const text of ['gg', 'gg', 'gg']) {
+    assert.equal(await say(voice, text, 'tiktok', 'ana'), null);
+    await sleep(300);
+  }
+  assert.equal(asked.length, 1);
+  assert.equal(await say(voice, 'gg', 'hal', 'ana'), null);
+  await sleep(300);
+  setSetting(voice.guild.id, 'ttsSpeed', 120);
+  assert.equal(await say(voice, 'gg', 'tiktok', 'ana'), null);
+  await sleep(300);
+  assert.deepEqual(asked.map((a) => a.model), ['tiktok', 'hal', 'tiktok']);
+  assert.deepEqual(leftovers(), []);
+});
+
+test('the same line asked for in two servers at once is made once', { skip: !hasFfmpeg }, async (t) => {
+  const asked = fakeVoice(t, async () => (await sleep(100), new Response(readFileSync(speechFile))));
+  const [one, two] = [channel(), channel()];
+  assert.deepEqual(await Promise.all([say(one, 'gg', 'hal', 'ana'), say(two, 'gg', 'hal', 'ben')]), [null, null]);
+  await sleep(400);
+  assert.equal(asked.length, 1);
   assert.deepEqual(leftovers(), []);
 });
 
@@ -443,11 +473,15 @@ function chat(options: { writerIn?: string | null; rooms?: Record<string, string
   return { message, id: guild.id, joined, guild };
 }
 
-/** Which voice channels lines went to, and what was said */
+/** What was said, as it reached the call rather than the voice container, as a line said again soon isn't made again */
 function heard(t: TestContext) {
-  const asked = fakeVoice(t);
-  t.mock.method(Mixer.prototype, 'add', (_file: string, _gain?: number, onEnd?: () => void) => onEnd?.());
-  return { said: async () => (await sleep(150), asked.map((a) => a.text)) };
+  fakeVoice(t);
+  const played: string[] = [];
+  t.mock.method(Mixer.prototype, 'add', (_file: string, _gain?: number, onEnd?: () => void, options?: { group?: string; label?: string }) => {
+    if (options?.group === 'speech' && options.label) played.push(options.label);
+    onEnd?.();
+  });
+  return { said: async () => (await sleep(150), [...played]) };
 }
 
 test('reads the chosen channel, saying who it is, and nothing else', { skip: !hasFfmpeg }, async (t) => {

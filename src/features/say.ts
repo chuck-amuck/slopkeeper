@@ -310,15 +310,11 @@ async function speakToFile(guild: Guild, typed: string, voiceId: string, file: s
   const text = speechFor(guild, typed);
   if (!hasWords(text)) throw new Error('There’s nothing in that to say.');
   const voice = serverVoice(guild.id, voiceId);
-  const raw = `${file}.raw.wav`;
-  try {
-    writeFileSync(raw, await speech(text, voice, setting(guild.id, 'ttsSpeed'), new AbortController().signal).catch(() => {
-      throw new Error('The voice container isn’t answering, so the looping speech can’t be made.');
-    }));
-    await levelSpeech(raw, file, voice.effects);
-  } finally {
-    rmSync(raw, { force: true });
-  }
+  const made = await lineAudio(text, voice, setting(guild.id, 'ttsSpeed'), new AbortController().signal).catch((err: unknown) => {
+    // Anything else, like ffmpeg failing, says what it is
+    throw err instanceof VoiceDown ? new Error('The voice container isn’t answering, so the looping speech can’t be made.') : err;
+  });
+  writeFileSync(file, made);
 }
 
 /** The length_scale that gives a speed, as a percentage of the voice's natural speed */
@@ -350,6 +346,91 @@ async function speech(text: string, voice: Voice, speed: number, signal: AbortSi
   return Buffer.from(await res.arrayBuffer());
 }
 
+/** Most of what's said again soon is a saved line, a preview then the same line said, or a looping room's speech */
+const KEEP_SPOKEN_BYTES = 24 * 1024 * 1024;
+const LONGEST_KEPT_BYTES = 4 * 1024 * 1024;
+/**
+ * Kept no longer than this. A voice container still fetching a model answers in its default voice, with no error, and
+ * that shouldn't stick to a line for good
+ */
+const KEEP_SPOKEN_MS = 30 * 60_000;
+/** Lines lately made, levelled and ready to play, oldest first. In memory, so a restart or a change to a voice starts afresh */
+const spoken = new Map<string, { audio: Buffer; at: number }>();
+let spokenBytes = 0;
+/** Lines being made right now, so asking for one twice at once makes it once */
+const making = new Map<string, Promise<Buffer>>();
+
+/** The voice container didn't answer, as opposed to the levelling after it failing */
+class VoiceDown extends Error {}
+
+function forgetLine(key: string) {
+  const old = spoken.get(key);
+  if (!old) return;
+  spoken.delete(key);
+  spokenBytes -= old.audio.length;
+}
+
+function keepLine(key: string, audio: Buffer) {
+  if (audio.length > LONGEST_KEPT_BYTES) return;
+  forgetLine(key);
+  spoken.set(key, { audio, at: Date.now() });
+  spokenBytes += audio.length;
+  for (const [oldKey] of spoken) {
+    if (spokenBytes <= KEEP_SPOKEN_BYTES) break;
+    forgetLine(oldKey);
+  }
+}
+
+async function makeLine(text: string, voice: Voice, speed: number): Promise<Buffer> {
+  folder ??= mkdtempSync(path.join(tmpdir(), 'slopkeeper-say-'));
+  const file = path.join(folder, `made-${randomUUID()}.wav`);
+  const unlevelled = `${file}.raw.wav`;
+  try {
+    const raw = await speech(text, voice, speed, new AbortController().signal).catch((err: unknown) => {
+      throw new VoiceDown(err instanceof Error ? err.message : String(err));
+    });
+    writeFileSync(unlevelled, raw);
+    await levelSpeech(unlevelled, file, voice.effects);
+    return readFileSync(file);
+  } finally {
+    rmSync(file, { force: true });
+    rmSync(unlevelled, { force: true });
+  }
+}
+
+/** A line levelled and ready to play, made again only if it isn't one of the lines lately made or being made */
+async function lineAudio(text: string, voice: Voice, speed: number, signal: AbortSignal): Promise<Buffer> {
+  const key = JSON.stringify([voice.id, speed, text]);
+  const kept = spoken.get(key);
+  if (kept && Date.now() - kept.at < KEEP_SPOKEN_MS) {
+    // To the newest end, so lines said often are the last to go
+    spoken.delete(key);
+    spoken.set(key, kept);
+    return kept.audio;
+  }
+  forgetLine(key);
+  let made = making.get(key);
+  if (!made) {
+    // Made for whoever asks for it meanwhile, so one caller's Stop doesn't fail the others. A stopped line is still
+    // finished and kept, as it's often said again straight after
+    made = makeLine(text, voice, speed).then(
+      (audio) => (keepLine(key, audio), audio),
+    );
+    making.set(key, made);
+    const settled = () => void (making.get(key) === made && making.delete(key));
+    made.then(settled, settled);
+  }
+  signal.throwIfAborted();
+  return Promise.race([made, new Promise<never>((_, reject) => signal.addEventListener('abort', () => reject(signal.reason), { once: true }))]);
+}
+
+/** For tests: forgets every line lately made */
+export function forgetSpoken() {
+  spoken.clear();
+  making.clear();
+  spokenBytes = 0;
+}
+
 const PREVIEW_EVERY_MS = 2_000;
 const PREVIEWS_PER_MINUTE = 12;
 /** Server id → when its recent previews were asked for */
@@ -368,17 +449,7 @@ export async function previewSpeech(guild: Guild, typed: string, voiceId: string
   previewsAt.set(guild.id, [...recent, now]);
   const text = typed.trim() ? speechFor(guild, typed).slice(0, setting(guild.id, 'ttsMaxChars')) : `Hi, this is ${voice.name}.`;
   if (!hasWords(text)) throw new Error('There’s nothing in that to say.');
-  folder ??= mkdtempSync(path.join(tmpdir(), 'slopkeeper-say-'));
-  const file = path.join(folder, `preview-${randomUUID()}.wav`);
-  const unlevelled = `${file}.raw.wav`;
-  try {
-    writeFileSync(unlevelled, await speech(text, voice, setting(guild.id, 'ttsSpeed'), new AbortController().signal));
-    await levelSpeech(unlevelled, file, voice.effects);
-    return readFileSync(file);
-  } finally {
-    rmSync(file, { force: true });
-    rmSync(unlevelled, { force: true });
-  }
+  return lineAudio(text, voice, setting(guild.id, 'ttsSpeed'), new AbortController().signal);
 }
 
 /** A server asked for previews faster than they're allowed */
@@ -394,10 +465,8 @@ async function sayLine(queue: Queue, { channel, text, voice, started }: Line) {
   folder ??= mkdtempSync(path.join(tmpdir(), 'slopkeeper-say-'));
   // Each line has its own file, as the mixer takes a file it's already playing to be a restart
   const file = path.join(folder, `${randomUUID()}.wav`);
-  const unlevelled = `${file}.raw.wav`;
   try {
-    writeFileSync(unlevelled, await speech(text, voice, setting(guildId, 'ttsSpeed'), cancel.signal));
-    await levelSpeech(unlevelled, file, voice.effects);
+    writeFileSync(file, await lineAudio(text, voice, setting(guildId, 'ttsSpeed'), cancel.signal));
     cancel.signal.throwIfAborted();
     // At full gain: the speech volume is the group's, so moving it changes a line already being said
     await new Promise<void>((finished, failed) => {
@@ -413,7 +482,6 @@ async function sayLine(queue: Queue, { channel, text, voice, started }: Line) {
     started(cancel.signal.aborted ? STOPPED : UNAVAILABLE);
   } finally {
     rmSync(file, { force: true });
-    rmSync(unlevelled, { force: true });
   }
 }
 

@@ -393,6 +393,7 @@ The web UI's Soundboard tab, under **Manage**, also shows everything on Discord'
 - Lines wait their turn, while sounds still layer on top. **Stop** ends the line and clears anything waiting.
 - Mentions are read as names, custom emoji as their name, and links as "link".
 - Every line goes in the Activity tab with who said it.
+- The bot keeps the lines it made lately (up to 24 MB, until it restarts), so a saved line, a greeting or a line just previewed in the web UI plays straight away when it's said again in the same voice and speed.
 - The voices, all novelty ones:
   - **Characters:** **GLaDOS**, **HAL 9000**, **Bender**, **Optimus Prime**, **Kronk** and **TikTok** (the TikTok text-to-speech lady, and the default).
   - **Accents:** **Russian**, **Spanish** and **German** read English with that accent, and **State broadcast** is a Korean announcer over an old loudspeaker. Russian typed in Cyrillic and Korean in Hangul are read in their own language. Spanish and German read everything as English.
@@ -854,7 +855,7 @@ Set `VOICE_URL=http://voice:5000` on the bot, and don't publish the port. On fir
   - Spanish is [`es_ES-davefx-medium`](https://huggingface.co/rhasspy/piper-voices/tree/main/es/es_ES/davefx/medium) (CC0).
   - German is the neutral speaker of [`de_DE-thorsten_emotional-medium`](https://huggingface.co/rhasspy/piper-voices/tree/main/de/de_DE/thorsten_emotional/medium) (CC0), which also has amused, angry, disgusted, drunk, sleepy, surprised and whispering speakers.
 
-`VOICES` in `src/features/say.ts` lists the voices offered. Each model loads the first time it's used. With all eleven loaded it uses about 1.3 GB, and a long line at the slowest speed briefly takes it near 1.6 GB. It makes a short line in about a second on two CPU cores.
+`VOICES` in `src/features/say.ts` lists the voices offered. Each model loads the first time it's used, and a model other than the first one that hasn't spoken for 30 minutes is let go again, so the next line in that voice takes about a second longer. `VOICE_IDLE_MINUTES` in the container's `environment` changes the 30 minutes, and `0` keeps every model loaded. With all eleven loaded it uses about 1.5 GB, and a long line at the slowest speed briefly takes it near 1.6 GB; with only the first one it's about 200 MB. It makes a short line in about a second on two CPU cores.
 
 ### The music container
 
