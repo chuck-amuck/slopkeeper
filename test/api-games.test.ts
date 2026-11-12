@@ -288,6 +288,21 @@ test('lists who has a game, who needs it, who wants it and any sale', async () =
   assert.deepEqual(members.map((m: { name: string }) => m.name), ['Ana', 'Ben', 'Cy']);
 });
 
+test('each game says how long it’s been played in voice here and when it last was, under any spelling', async () => {
+  insertGame('Halo');
+  insertGame('Hades');
+  addPlay('u1', 'HALO', 30, 2);
+  addPlay('u2', 'Halo', 5, 1);
+  // Played at once under two spellings, which counts once
+  addPlay('u3', 'Halo!', 5, 1);
+  addPlay('u1', 'Halo', 3, 1, 'other');
+  const { games } = await ok(`/guilds/${GUILD}/games`);
+  const named = (name: string) => games.find((g: any) => g.name === name);
+  assert.equal(named('Hades').played, null);
+  assert.equal(named('Halo').played.ms, hours(3));
+  assert.ok(Math.abs(named('Halo').played.last - (Date.now() - hours(4))) < 5000);
+});
+
 test('sets a game’s player limit and Steam link, leaving the other as it was', async () => {
   const id = insertGame('Valheim');
   insertGame('Taken', 7);
@@ -881,6 +896,15 @@ test('says how each person is getting on with a game’s achievements', async (t
   await refused(404, `/guilds/${GUILD}/achievements?appid=620&users=b1`);
 });
 
+test('Compare offers only people still here with time in voice or a game played there', async () => {
+  addSession([['u2', 1800], ['gone', 60], ['u3', 0]], 5);
+  addPlay('u1', 'Halo', 3, 1);
+  // Cy played only in another server, or with nobody in voice
+  addPlay('u3', 'Halo', 3, 1, 'other');
+  db.prepare(`INSERT INTO game_plays (guild_id, user_id, game, channel_id, started_at, ended_at) VALUES (?, 'u3', 'Solo', NULL, 1, 2)`).run(GUILD);
+  assert.deepEqual(await ok(`/guilds/${GUILD}/compare/people`), { people: [{ id: 'u1', name: 'Ana' }, { id: 'u2', name: 'Ben' }] });
+});
+
 test('a comparison lists the Steam games two people share', async (t) => {
   await ownedGames(t);
   const { steamGames, shared } = await ok(`/guilds/${GUILD}/compare?a=u1&b=u2`);
@@ -928,11 +952,34 @@ test('says who isn’t counted, by name', async (t) => {
   assert.deepEqual([people, counted], [2, 1]);
 });
 
+test('choosing people by hand offers only those whose games the bot knows', async (t) => {
+  fakeSteam(t);
+  await mark(insertGame('Halo'), 'u1', { owns: true });
+  // Ben's library has been read, empty as it is. Cy's profile was private before the bot ever saw it
+  db.prepare(`INSERT INTO steam_links (user_id, steam_id, private, refreshed_at) VALUES ('u2', 's2', 0, ?), ('u3', 's3', 1, ?)`).run(Date.now(), Date.now());
+  const pickable = async () => (await ok(`/guilds/${GUILD}/pick/options`)).pickable;
+  assert.deepEqual(await pickable(), ['u1', 'u2']);
+  // What each note is about, as test members' IDs aren't the numbers that turn into names
+  const about = (notes: string[]) => notes.map((n) => n.replace(/:.*/, ''));
+  const { notes, counted } = await pick('users=u1,u2,u3');
+  assert.deepEqual([counted, about(notes)], [2, ['Not counted (🔒 Steam game details private)']]);
+  // Games seen before the profile went private still count, as does a family to borrow from
+  db.prepare(`INSERT INTO steam_owned (steam_id, appid, name, playtime) VALUES ('s3', 620, 'Portal 2', 1)`).run();
+  assert.deepEqual(await pickable(), ['u1', 'u2', 'u3']);
+  db.prepare(`DELETE FROM steam_owned WHERE steam_id = 's3'`).run();
+  // A family counts once there are games in it to borrow
+  await ok(`/guilds/${GUILD}/steam-links/u3/family`, { method: 'PUT', json: { with: 'u2' } });
+  assert.deepEqual(await pickable(), ['u1', 'u2']);
+  db.prepare(`INSERT INTO steam_owned (steam_id, appid, name, playtime) VALUES ('s2', 620, 'Portal 2', 1)`).run();
+  assert.deepEqual(await pickable(), ['u1', 'u2', 'u3']);
+  assert.deepEqual(about((await pick('users=u1,u2,u3')).notes), ['🔒 Steam game details private']);
+});
+
 test('says so when nobody picked can be counted', async (t) => {
   fakeSteam(t);
   const data = await pick('users=u3');
   assert.deepEqual([data.counted, data.ready], [0, []]);
-  assert.match(data.notes[0], /Nobody here has linked Steam/);
+  assert.match(data.notes[0], /Nobody here has games the bot knows/);
   assert.doesNotMatch(data.notes[0], /`/);
 });
 

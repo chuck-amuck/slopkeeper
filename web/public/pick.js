@@ -1,7 +1,6 @@
-import { ago, announce, api, attempt, el, formProblem, notice, openDialog, request, RequestError, state, toast, undoToast } from './lib.js';
+import { ago, announce, api, attempt, duration, el, formProblem, notice, openDialog, request, RequestError, state, toast, undoToast } from './lib.js';
 import { planNightFor } from './nights.js';
 import { achievementsView } from './achievements.js';
-import { duration } from './stats.js';
 
 const SHOWN = 100;
 const BY_HAND = 'people';
@@ -356,8 +355,11 @@ export function renderPick(main) {
     }
     if (guildId !== state.guildId || !main.isConnected) return;
     who.replaceChildren(...options.voice.map((c) => el('option', { value: c.id }, `${c.name} · ${c.people.join(', ')}`)), el('option', { value: BY_HAND }, 'Choose people'));
+    // Only people whose games the bot knows, as anyone else would block every game
+    const pickable = new Set(options.pickable);
+    const left = options.members.length > pickable.size;
     people.replaceChildren(
-      ...options.members.map((m) =>
+      ...options.members.filter((m) => pickable.has(m.id)).map((m) =>
         el(
           'label',
           { className: 'game-mark' },
@@ -372,6 +374,16 @@ export function renderPick(main) {
           m.name,
         ),
       ),
+      ...(left
+        ? [
+            el(
+              'p',
+              { className: 'hint pick-people-note' },
+              pickable.size ? 'Only people whose games the bot knows are listed.' : 'Nobody’s games are known yet.',
+              ' Link Steam under Games → Steam accounts, or mark the games people have there.',
+            ),
+          ]
+        : []),
     );
     await changed();
   });

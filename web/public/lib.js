@@ -235,6 +235,14 @@ export async function attempt(action) {
   }
 }
 
+/** A length of time, as 45m, 2h 5m or 120h */
+export function duration(ms) {
+  const minutes = Math.round(ms / 60_000);
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  return hours >= 100 || minutes % 60 === 0 ? `${hours}h` : `${hours}h ${minutes % 60}m`;
+}
+
 /** A rough age, as Discord shows it */
 export function ago(ms) {
   const days = Math.floor((Date.now() - ms) / 86_400_000);

@@ -5,13 +5,13 @@ import { config } from '../config.ts';
 import { reviewGiveaways } from '../features/freegames.ts';
 import { achievementProgress } from '../features/achievements.ts';
 import { addGameRole, canHandOut, gameRoles, pingableGames, pingChoices, pingMenu, removeGameRole } from '../features/gameroles.ts';
-import { addGame, addMemberGame, allGames, familyPlayersOf, gameById, groupMembers, hiddenGames, hideGame, memberGames, NOBODY_COUNTED, ownersOf, parseSteamAppId, removeGame, setGameDetails, setOwned, setWanted, steamOwnersOf, unhideGame, wantedBy, type GameRow } from '../features/games.ts';
+import { addGame, addMemberGame, allGames, familyPlayersOf, gameById, groupMembers, hiddenGames, hideGame, libraryKnown, memberGames, NOBODY_COUNTED, ownersOf, parseSteamAppId, removeGame, setGameDetails, setOwned, setWanted, steamOwnersOf, unhideGame, wantedBy, type GameRow } from '../features/games.ts';
 import { onSale, saleName, salePrices, saleReasons, storeUrl } from '../features/sales.ts';
 import { currentPlayers, familyOf, patchNotes, joinFamily, leaveFamily, linkSteam, lobbiesIn, profileUrl, refreshAll, steamLinks, unlinkSteam } from '../features/steam.ts';
-import { activityOf, checkpoint, comparison, PERIODS, pickFor, playsIn, sessionCount, stats, totalsBy } from '../features/gamestats.ts';
+import { activityOf, checkpoint, comparison, PERIODS, peopleWithStats, pickFor, playedByKey, playsIn, sessionCount, stats, totalsBy } from '../features/gamestats.ts';
 import { postVote } from '../features/gamevote.ts';
 import { recapFor } from '../features/recap.ts';
-import { gameName, gameSpellings, mergeGames, separateGame } from '../gameNames.ts';
+import { gameKey, gameName, gameSpellings, mergeGames, separateGame } from '../gameNames.ts';
 import { voiceTotals } from '../features/sessions.ts';
 import { idSetting, setting } from '../settings.ts';
 import { humansIn, pingWarning } from '../util.ts';
@@ -169,6 +169,7 @@ export async function changeGameNames(guild: Guild, req: IncomingMessage, action
 export function gameList(guild: Guild) {
   const group = groupMembers(guild);
   const prices = salePrices(guild.id);
+  const played = playedByKey(guild.id);
   const person = (id: string) => ({ id, name: nameOf(guild, id) });
   const byName = (a: { name: string }, b: { name: string }) => a.name.localeCompare(b.name);
   return {
@@ -188,6 +189,8 @@ export function gameList(guild: Guild) {
         needs: group.filter((id) => !owners.has(id) && !family.has(id)).map(person).sort(byName),
         wanted: wantedBy(g, guild).map(person).sort(byName),
         sale: sale ? { discount: sale.discount, price: sale.price, was: sale.was } : null,
+        // Time in voice, as Stats counts it, for sorting by what's played
+        played: played.get(gameKey(gameName(guild.id, g.name))) ?? null,
       };
     }),
     members: memberList(guild),
@@ -293,7 +296,16 @@ export const steamDown = (err: unknown) => {
 
 /** What the page needs to choose people and channels */
 export function pickOptions(guild: Guild) {
-  return { members: memberList(guild), voice: voiceList(guild).channels, channels: textChannels(guild), announceChannel: idSetting(guild.id, 'announceChannel') };
+  const members = memberList(guild);
+  const known = libraryKnown(guild.id);
+  return {
+    members,
+    // Who a pick can count, so choosing people by hand offers only them
+    pickable: members.filter((m) => known.has(m.id)).map((m) => m.id),
+    voice: voiceList(guild).channels,
+    channels: textChannels(guild),
+    announceChannel: idSetting(guild.id, 'announceChannel'),
+  };
 }
 
 export async function pickFromWeb(guild: Guild, url: URL) {
@@ -329,6 +341,12 @@ export async function voteFromWeb(guild: Guild, req: IncomingMessage) {
   refuse(guild, await postVote(channel, voice, length as number, games as string[] | undefined).catch(cantPost));
   logActivity(guild.id, by(), `Started a game vote for <#${voice.id}> in <#${channel.id}>`);
   return {};
+}
+
+/** Who Compare offers: people still here whom Stats has something on */
+export function comparePeople(guild: Guild) {
+  const known = peopleWithStats(guild.id);
+  return { people: memberList(guild).filter((m) => known.has(m.id)) };
 }
 
 export function compareFromWeb(guild: Guild, url: URL) {
@@ -429,6 +447,7 @@ export async function gameRoutes({ client, guild, req, res, url, section, rest }
   if (section === 'pick' && rest.length === 1 && rest[0] === 'options' && req.method === 'GET') return pickOptions(guild);
   if (section === 'votes' && !rest.length && req.method === 'POST') return voteFromWeb(guild, req);
   if (section === 'compare' && !rest.length && req.method === 'GET') return compareFromWeb(guild, url);
+  if (section === 'compare' && rest.length === 1 && rest[0] === 'people' && req.method === 'GET') return comparePeople(guild);
   if (section === 'achievements' && !rest.length && req.method === 'GET') return achievementsFromWeb(guild, url);
   if (section === 'recap' && !rest.length && req.method === 'GET') return recapFromWeb(guild, url);
   if (section === 'members' && rest.length === 2 && rest[1] === 'pings') return handlePings(guild, req, rest[0]);

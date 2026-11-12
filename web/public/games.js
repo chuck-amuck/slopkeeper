@@ -1,10 +1,18 @@
-import { api, attempt, confirmButton, el, formProblem, notice, openDialog, request, RequestError, state, toast } from './lib.js';
+import { ago, api, attempt, confirmButton, duration, el, formProblem, notice, openDialog, recall, remember, request, RequestError, state, toast } from './lib.js';
 
 const FILTERS = [
   ['all', 'All games'],
   ['wanted', 'Wanted'],
   ['sale', 'On sale'],
 ];
+
+// By time in voice here, as Stats counts it. Games nobody's played go last, A to Z
+const SORTS = [
+  ['recent', 'Recently played', (a, b) => (b.played?.last ?? 0) - (a.played?.last ?? 0)],
+  ['most', 'Most played', (a, b) => (b.played?.ms ?? 0) - (a.played?.ms ?? 0)],
+  ['name', 'A–Z', () => 0],
+];
+const SORT_KEY = 'gamesSort';
 
 const names = (people) => people.map((p) => p.name).join(', ');
 const row = (label, control, note) => el('label', { className: 'form-row' }, el('span', {}, label), control, note);
@@ -467,9 +475,23 @@ export function renderGames(main) {
     },
     FILTERS.map(([id, label]) => el('option', { value: id }, label)),
   );
+  // Remembered on each device
+  let sort = SORTS.some(([id]) => id === recall(SORT_KEY)) ? recall(SORT_KEY) : 'recent';
+  const order = el(
+    'select',
+    {
+      ariaLabel: 'Sort by',
+      onchange: (e) => {
+        sort = e.target.value;
+        remember(SORT_KEY, sort);
+        paint();
+      },
+    },
+    SORTS.map(([id, label]) => el('option', { value: id, selected: id === sort }, label)),
+  );
   const add = el('button', { className: 'primary', onclick: () => addDialog(main, load) }, 'Add a game');
   const accounts = el('button', { onclick: () => accountsDialog(main, load) }, 'Steam accounts');
-  main.append(el('div', { className: 'toolbar' }, search, picker, accounts, add), box);
+  main.append(el('div', { className: 'toolbar' }, search, picker, order, accounts, add), box);
 
   const gameRow = (g) =>
     el(
@@ -485,6 +507,7 @@ export function renderGames(main) {
           g.maxPlayers && el('span', { className: 'hint' }, `Up to ${g.maxPlayers}`),
           g.sale && el('span', { className: 'game-sale' }, `${g.sale.discount}% off · ${g.sale.price}`, el('s', {}, g.sale.was)),
         ),
+        g.played && el('div', { className: 'hint' }, `${duration(g.played.ms)} here · last played ${ago(g.played.last)}`),
         fact('Has it', g.owners),
         fact('Through family', g.family),
         fact('Needs it', g.needs),
@@ -525,7 +548,10 @@ export function renderGames(main) {
 
   function library() {
     if (!data.games.length) return notice('empty', 'The library is empty. Add a game to start it off.');
-    const shown = data.games.filter((g) => g.name.toLowerCase().includes(query) && (filter === 'all' || (filter === 'wanted' ? g.wanted.length > 0 : g.sale)));
+    const by = SORTS.find(([id]) => id === sort)[2];
+    const shown = data.games
+      .filter((g) => g.name.toLowerCase().includes(query) && (filter === 'all' || (filter === 'wanted' ? g.wanted.length > 0 : g.sale)))
+      .sort((a, b) => by(a, b) || a.name.localeCompare(b.name));
     if (!shown.length) return notice('empty', 'No games match that.');
     return el('section', { className: 'card' }, shown.map(gameRow));
   }

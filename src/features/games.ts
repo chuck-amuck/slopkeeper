@@ -90,6 +90,26 @@ function borrowers(appid: number, families: string[][], group: string[], without
 
 const librariesOf = (ids: string[]) => new Map(ids.map((id) => [id, ownedSteamGames(id)]));
 
+/**
+ * Everyone whose games the bot knows: a Steam library it has read (a private one keeps what was seen before), games
+ * marked as theirs in this server, or a Steam family with games seen to borrow from. Anyone else would block every
+ * game in a pick
+ */
+export function libraryKnown(guildId: string): Set<string> {
+  const rows = db
+    .prepare(
+      `SELECT l.user_id AS id FROM steam_links l
+         WHERE (l.private = 0 AND l.refreshed_at > 0) OR EXISTS (SELECT 1 FROM steam_owned o WHERE o.steam_id = l.steam_id)
+       UNION SELECT o.user_id FROM game_owners o JOIN games g ON g.id = o.game_id WHERE g.guild_id = ?
+       UNION SELECT f.user_id FROM steam_family f WHERE EXISTS (
+         SELECT 1 FROM steam_family kin JOIN steam_links l ON l.user_id = kin.user_id JOIN steam_owned o ON o.steam_id = l.steam_id
+         WHERE kin.family = f.family
+       )`,
+    )
+    .all(guildId) as { id: string }[];
+  return new Set(rows.map((r) => r.id));
+}
+
 function manualGameIds(userId: string, guildId: string): Set<number> {
   const rows = db
     .prepare('SELECT o.game_id FROM game_owners o JOIN games g ON g.id = o.game_id WHERE o.user_id = ? AND g.guild_id = ?')
@@ -298,7 +318,7 @@ export function choose<T extends { name: string }>(ready: T[], avoid?: string): 
 
 const mentions = (ids: Iterable<string>) => [...ids].map((id) => `<@${id}>`).join(' ');
 
-export const NOBODY_COUNTED = 'Nobody here has linked Steam (`/steam link`) or marked games (`/game own`) yet.';
+export const NOBODY_COUNTED = 'Nobody here has games the bot knows about yet. Link Steam (`/steam link`) with game details public, or mark games (`/game own`).';
 
 export interface Candidate {
   name: string;
@@ -334,11 +354,15 @@ export async function candidatesFor(guild: Guild, here: string[]) {
   // Family members who aren't here still lend their copies
   const steamLibs = librariesOf([...new Set([...here, ...families.flat()])]);
 
-  // People with no Steam link and no manual marks would block every game, so leave them out and say so
-  const inFamily = new Set(families.flat());
-  const counted = here.filter((id) => linkFor(id) || manual.get(id)!.size > 0 || inFamily.has(id));
-  const unknown = here.filter((id) => !counted.includes(id));
-  const privateIds = counted.filter((id) => linkFor(id)?.private);
+  // People whose games aren't known would block every game, so leave them out and say why
+  const known = libraryKnown(guild.id);
+  const counted = here.filter((id) => known.has(id));
+  const unknown = here.filter((id) => !known.has(id));
+  const links = new Map(here.map((id) => [id, linkFor(id)]));
+  const unlinked = unknown.filter((id) => !links.get(id));
+  const privateUnknown = unknown.filter((id) => links.get(id)?.private);
+  const unread = unknown.filter((id) => links.get(id) && !links.get(id)!.private);
+  const privateIds = counted.filter((id) => links.get(id)?.private);
   if (!counted.length) return null;
 
   const ownsApp = (id: string, appid: number) => {
@@ -389,9 +413,11 @@ export async function candidatesFor(guild: Guild, here: string[]) {
   }
 
   const notes: string[] = [];
-  if (unknown.length) notes.push(`Not counted (no Steam linked): ${mentions(unknown)}`);
+  if (unlinked.length) notes.push(`Not counted (no Steam linked): ${mentions(unlinked)}`);
+  if (privateUnknown.length) notes.push(`Not counted (🔒 Steam game details private): ${mentions(privateUnknown)}`);
+  if (unread.length) notes.push(`Not counted (Steam library not read yet): ${mentions(unread)}`);
   if (privateIds.length) notes.push(`🔒 Steam game details private: ${mentions(privateIds)}`);
-  return { counted, candidates, notes, unlinked: unknown };
+  return { counted, candidates, notes, unlinked };
 }
 
 /** Picks a game for the people in a voice channel. The buttons remember the channel, so anyone can press them */

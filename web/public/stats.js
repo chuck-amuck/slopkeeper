@@ -1,5 +1,5 @@
 import { achievementsView } from './achievements.js';
-import { ago, api, attempt, el, formProblem, icon, notice, openDialog, recall, remember, request, state, toast } from './lib.js';
+import { ago, api, attempt, duration, el, formProblem, icon, notice, openDialog, recall, remember, request, state, toast } from './lib.js';
 
 const PERIODS = [
   ['week', 'Past week'],
@@ -7,13 +7,6 @@ const PERIODS = [
   ['year', 'Past year'],
   ['all', 'All time'],
 ];
-
-export function duration(ms) {
-  const minutes = Math.round(ms / 60_000);
-  if (minutes < 60) return `${minutes}m`;
-  const hours = Math.floor(minutes / 60);
-  return hours >= 100 || minutes % 60 === 0 ? `${hours}h` : `${hours}h ${minutes % 60}m`;
-}
 
 function stepLabel(ms, step, timeZone) {
   if (step === 'month') return new Date(ms).toLocaleDateString(undefined, { timeZone, month: 'short', year: 'numeric' });
@@ -117,7 +110,8 @@ function compare(main) {
   const first = pick('First person');
   const second = pick('Second person');
   const content = el('div', { className: 'stack' });
-  main.append(el('div', { className: 'toolbar' }, first, el('span', {}, 'and'), second), content);
+  const bar = el('div', { className: 'toolbar' }, first, el('span', {}, 'and'), second);
+  main.append(bar, content);
 
   function achievementsCard(data) {
     const area = el('div');
@@ -156,13 +150,17 @@ function compare(main) {
   }
 
   void attempt(async () => {
-    const { members } = await request(api('/pick/options'));
+    // Only people Stats has something on: time in voice, or a game played there
+    const { people } = await request(api('/compare/people'));
     if (guildId !== state.guildId || !main.isConnected) return;
-    if (members.length < 2) return content.replaceChildren(notice('empty', 'It takes two people to compare.'));
+    if (people.length < 2) {
+      bar.hidden = true;
+      return content.replaceChildren(notice('empty', 'Compare needs two people with stats. Time in voice and games played there count.'));
+    }
     // Whoever's signed in goes first, so the comparison starts with them
-    const mine = members.findIndex((m) => m.id === state.me?.userId);
+    const mine = people.findIndex((m) => m.id === state.me?.userId);
     const starts = mine < 0 ? [0, 1] : [mine, mine === 0 ? 1 : 0];
-    for (const [idx, picker] of [first, second].entries()) picker.replaceChildren(...members.map((m, n) => el('option', { value: m.id, selected: n === starts[idx] }, m.name)));
+    for (const [idx, picker] of [first, second].entries()) picker.replaceChildren(...people.map((m, n) => el('option', { value: m.id, selected: n === starts[idx] }, m.name)));
     await show();
   });
 }

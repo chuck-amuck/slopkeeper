@@ -2942,6 +2942,11 @@ span.steam-family {
   gap: 6px 16px;
 }
 
+.pick-people-note {
+  flex-basis: 100%;
+  margin: 0;
+}
+
 .pick-game {
   border-top: 1px solid var(--line);
 }

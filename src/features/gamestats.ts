@@ -223,6 +223,29 @@ export function comparison(guildId: string, a: string, b: string) {
   return { games: playedTogether(guildId, a, b), voice: voiceTogether(guildId, a, b), shared: sharedGames(guildId, a, b), totals: [total(a), total(b)] };
 }
 
+/**
+ * Each game's time played in voice over all time, as Stats counts it, and when it last was. Plays are put under their
+ * name's key first, so any spelling finds them and people playing at once under different spellings count once
+ */
+export function playedByKey(guildId: string): Map<string, { ms: number; last: number }> {
+  checkpoint();
+  const keys = new Map<string, string>();
+  const keyOf = (name: string) => keys.get(name) ?? keys.set(name, gameKey(gameName(guildId, name))).get(name)!;
+  const plays = playsIn(guildId, 0, Date.now()).map((p) => ({ ...p, game: keyOf(p.game) }));
+  return new Map(totalsBy(plays, 'game').map((g) => [g.key, { ms: g.ms, last: g.last }]));
+}
+
+/** Everyone Stats has something on: time in voice, or a game played there. Plays are stored from their start */
+export function peopleWithStats(guildId: string): Set<string> {
+  const rows = db
+    .prepare(
+      `SELECT m.user_id AS id FROM session_members m JOIN sessions s ON s.id = m.session_id WHERE s.guild_id = ? AND m.seconds > 0
+       UNION SELECT user_id FROM game_plays WHERE guild_id = ? AND channel_id IS NOT NULL`,
+    )
+    .all(guildId, guildId) as { id: string }[];
+  return new Set(rows.map((r) => r.id));
+}
+
 /** How many times someone has played a game since a moment */
 export function sessionCount(guildId: string, user: string, game: string, since: number) {
   return (
