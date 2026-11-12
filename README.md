@@ -276,7 +276,7 @@ The web UI's Settings page lists what's free right now, with the reason each gam
 
 The bot tracks each voice channel as a session. It records who was there, for how long, and which games Discord showed them playing. A session ends once the channel has been empty for 5 minutes, so a quick disconnect doesn't split the night in two.
 
-A session of at least 15 minutes is recorded, even with one person in it, so time alone counts towards voice stats. With 2 or more people, the bot also posts a recap with each person's time and the games played. Shorter sessions aren't recorded. Both times can be changed with `/setup sessions`, and `/setup sessions recaps:False` stops the recap posts while still recording sessions.
+A session of at least 15 minutes is recorded, even with one person in it, so time alone counts towards voice stats. With 2 or more people, the bot also posts a recap with each person's time and the games played. Shorter sessions aren't recorded. Both times can be changed with `/setup sessions`, and `/setup sessions recaps:False` stops the recap posts while still recording sessions. A bot restart, such as an update, doesn't split a session: if it's back within 10 minutes, the session carries on, counting the time in between, and gets one recap at the end.
 
 ### Voice leaderboards
 

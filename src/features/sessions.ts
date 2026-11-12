@@ -21,6 +21,67 @@ interface LiveSession {
 
 const live = new Map<string, LiveSession>();
 const DAY = 86_400_000;
+/** Where sessions are kept over a restart */
+const SAVED_KEY = 'voiceSessions';
+/** A session carries on after a restart this soon, so a redeploy doesn't split a night in two or lose its recap */
+const RESUME_WITHIN_MS = 10 * 60_000;
+/** Set once the sessions are kept for the restart, so shutting down doesn't also record them as over */
+let savedForRestart = false;
+
+interface SavedSession {
+  channelId: string;
+  guildId: string;
+  startedAt: number;
+  present: [string, number][];
+  totals: [string, number][];
+  games: string[];
+  emptySince?: number;
+}
+
+/** Counts each person still in a session up to `at`, as if they'd all left then */
+function closeAt(s: LiveSession, at: number) {
+  for (const [userId, joinedAt] of s.present) s.totals.set(userId, (s.totals.get(userId) ?? 0) + at - joinedAt);
+  s.present.clear();
+}
+
+/**
+ * Picks up the sessions the bot was keeping before it restarted. One whose channel still has people in carries on,
+ * counting their time in between; an empty one gets what's left of its grace period. After a long gap they're
+ * recorded as they were when the bot stopped
+ */
+export function carryOn(client: Client<true>, now: number) {
+  const raw = getKv(SAVED_KEY);
+  if (!raw) return;
+  setKv(SAVED_KEY, '');
+  let saved: { at: number; sessions: SavedSession[] };
+  try {
+    saved = JSON.parse(raw);
+  } catch {
+    return;
+  }
+  for (const entry of saved.sessions ?? []) {
+    const s: LiveSession = { guildId: entry.guildId, startedAt: entry.startedAt, present: new Map(entry.present), totals: new Map(entry.totals), games: new Set(entry.games), emptySince: entry.emptySince };
+    const channel = client.guilds.cache.get(entry.guildId)?.channels.cache.get(entry.channelId);
+    if (now - saved.at > RESUME_WITHIN_MS || !channel?.isVoiceBased() || !isAllowed(entry.guildId) || live.has(entry.channelId)) {
+      closeAt(s, saved.at);
+      save(s, entry.channelId, s.emptySince ?? saved.at);
+      continue;
+    }
+    // Whoever left while the bot was away counts until it went
+    const here = new Set(humansIn(channel).map((m) => m.id));
+    for (const [userId, joinedAt] of [...s.present]) {
+      if (here.has(userId)) continue;
+      s.present.delete(userId);
+      s.totals.set(userId, (s.totals.get(userId) ?? 0) + saved.at - joinedAt);
+    }
+    live.set(entry.channelId, s);
+    for (const member of humansIn(channel)) join(channel, member, now);
+    if (s.present.size) continue;
+    s.emptySince ??= saved.at;
+    const left = setting(s.guildId, 'sessionGraceMin') * 60_000 - (now - s.emptySince);
+    s.endTimer = setTimeout(() => void finish(client, entry.channelId).catch(console.error), Math.max(0, left));
+  }
+}
 
 export function join(channel: VoiceBasedChannel, member: GuildMember, now: number) {
   if (channel.id === channel.guild.afkChannelId) return;
@@ -201,7 +262,9 @@ export const sessions: Feature = {
     },
   ],
   setup(client) {
-    // Pick up anyone already in voice when the bot starts
+    savedForRestart = false;
+    // Carry on from before a restart, then pick up anyone else already in voice
+    carryOn(client, Date.now());
     pickUp(client, Date.now());
     onSteamChange(() => noteGames(client));
     // Only fires for later reconnects: this listener is added after the first one
@@ -224,14 +287,29 @@ export const sessions: Feature = {
 
     setInterval(() => void maybePostWeekly(client).catch(console.error), 10 * 60_000);
   },
+  saveForRestart() {
+    const kept: SavedSession[] = [...live].map(([channelId, s]) => ({
+      channelId,
+      guildId: s.guildId,
+      startedAt: s.startedAt,
+      present: [...s.present],
+      totals: [...s.totals],
+      games: [...s.games],
+      emptySince: s.emptySince,
+    }));
+    setKv(SAVED_KEY, JSON.stringify({ at: Date.now(), sessions: kept }));
+    savedForRestart = true;
+  },
   shutdown() {
-    // There's no time left to post a recap, but the stats shouldn't go down with the bot
     const now = Date.now();
     for (const [channelId, s] of live) {
       clearTimeout(s.endTimer);
-      for (const [userId, joinedAt] of s.present) s.totals.set(userId, (s.totals.get(userId) ?? 0) + now - joinedAt);
+      // Without a restart to carry on in, there's no time left to post a recap, but the stats shouldn't go down with the bot
+      if (savedForRestart) continue;
+      closeAt(s, now);
       save(s, channelId, s.emptySince ?? now);
     }
     live.clear();
+    savedForRestart = false;
   },
 };

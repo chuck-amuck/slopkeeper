@@ -2,7 +2,7 @@ import { fakeClient } from './helpers.ts';
 import assert from 'node:assert/strict';
 import { mock, test } from 'node:test';
 import { db, getKv } from '../src/db.ts';
-import { join, leave, maybePostWeekly, resync, sessions } from '../src/features/sessions.ts';
+import { carryOn, join, leave, maybePostWeekly, resync, sessions } from '../src/features/sessions.ts';
 import { setSetting } from '../src/settings.ts';
 import { zonedParts } from '../src/util.ts';
 
@@ -136,4 +136,72 @@ test('after a long disconnect, people who left stop gaining time and people who 
     ['left', 3600],
     ['stayed', 3660],
   ]);
+});
+
+/** A server whose voice channel has these people in it, for picking up after a restart */
+function restarted(guildId: string, channelId: string, here: string[], posts: string[] = []) {
+  const members = new Map(here.map((id) => [id, { id, user: { bot: false }, presence: null }]));
+  const channel = { id: channelId, guild: { id: guildId, afkChannelId: null }, isVoiceBased: () => true, members };
+  setSetting(guildId, 'announceChannel', `channel-${guildId}`);
+  return fakeClient([{ id: guildId, name: guildId, channels: { cache: new Map([[channelId, channel]]) } } as never], async (id) => void posts.push(id));
+}
+
+test('a session carries on over a restart, counting the time in between, and is recapped once it ends', async (t) => {
+  t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: Date.now() });
+  const started = Date.now() - 3_600_000;
+  join(voice('restart', 'v4'), person('stayed'), started);
+  join(voice('restart', 'v4'), person('left'), started);
+  sessions.saveForRestart!();
+  sessions.shutdown!();
+  assert.deepEqual(seconds('restart'), [], 'kept for the restart rather than recorded as over');
+
+  t.mock.timers.tick(120_000);
+  const posts: string[] = [];
+  const client = restarted('restart', 'v4', ['stayed', 'new'], posts);
+  carryOn(client, Date.now());
+  t.mock.timers.tick(60_000);
+  for (const id of ['stayed', 'new']) leave(client, 'v4', id, Date.now());
+  t.mock.timers.tick(5 * 60_000);
+  for (let n = 0; n < 5; n++) await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(posts, ['restart'], 'one recap for the whole night');
+  assert.deepEqual(seconds('restart').map((r) => [r.user, r.secs]), [
+    ['left', 3600],
+    ['new', 60],
+    ['stayed', 3780],
+  ]);
+  assert.equal(getKv('voiceSessions'), '');
+});
+
+test('an empty session kept over a restart ends after what’s left of its grace period', async (t) => {
+  t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: Date.now() });
+  const started = Date.now() - 3_600_000;
+  join(voice('emptied', 'v5'), person('a'), started);
+  join(voice('emptied', 'v5'), person('b'), started);
+  const client = restarted('emptied', 'v5', []);
+  for (const id of ['a', 'b']) leave(client, 'v5', id, Date.now());
+  t.mock.timers.tick(60_000);
+  sessions.saveForRestart!();
+  sessions.shutdown!();
+  t.mock.timers.tick(60_000);
+  carryOn(client, Date.now());
+  t.mock.timers.tick(2 * 60_000);
+  assert.deepEqual(seconds('emptied'), [], 'still in its grace period');
+  t.mock.timers.tick(60_000);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(seconds('emptied').map((r) => [r.user, r.secs]), [
+    ['a', 3600],
+    ['b', 3600],
+  ]);
+});
+
+test('sessions kept for a restart that came too late are recorded as they were when the bot stopped', (t) => {
+  t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: Date.now() });
+  join(voice('late', 'v6'), person('a'), Date.now() - 3_600_000);
+  sessions.saveForRestart!();
+  sessions.shutdown!();
+  t.mock.timers.tick(30 * 60_000);
+  carryOn(restarted('late', 'v6', ['a']), Date.now());
+  assert.deepEqual(seconds('late').map((r) => [r.user, r.secs]), [['a', 3600]]);
+  sessions.shutdown!();
+  assert.equal(seconds('late').length, 1, 'not carried on as well');
 });
