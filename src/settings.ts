@@ -1,3 +1,4 @@
+import { type FeedName, feeds } from './changes.ts';
 import { config } from './config.ts';
 import { db } from './db.ts';
 
@@ -165,7 +166,20 @@ export function setting<K extends SettingKey>(guildId: string, key: K): SettingV
   return raw as SettingValue<K>;
 }
 
-/** Stores a /setup value; undefined goes back to the default */
+/** Settings that pages besides Settings show, and the live updates those pages follow, so a change shows on them at once */
+const SHOWN_ON: Partial<Record<SettingKey, FeedName>> = {
+  // The volume beside Play in
+  soundVolume: 'voice',
+  // Autoplay's switch is told through the music card, which changes with it
+  musicVolume: 'music',
+  // Manage's switch
+  evenVolume: 'sounds',
+  // Night times, and the channel the planning form starts on
+  timezone: 'nights',
+  announceChannel: 'nights',
+};
+
+/** Stores a /setup value; undefined goes back to the default. The web UI and /setup both come through here */
 export function setSetting(guildId: string, key: SettingKey, value: string | number | boolean | null | undefined) {
   if (value === undefined) db.prepare('DELETE FROM guild_settings WHERE guild_id = ? AND key = ?').run(guildId, key);
   else {
@@ -175,6 +189,8 @@ export function setSetting(guildId: string, key: SettingKey, value: string | num
       value === null ? '' : String(value),
     );
   }
+  const feed = SHOWN_ON[key];
+  if (feed) feeds[feed].changed(guildId);
 }
 
 export type IdSettingKey = 'announceChannel' | 'hopOnRole' | 'freeGamesChannel' | 'saleChannel' | 'patchNotesChannel' | 'soundManagerRole' | 'ttsRole' | 'ttsChannel' | 'loopRoom' | 'musicDjRole';

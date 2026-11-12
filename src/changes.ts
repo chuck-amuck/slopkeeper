@@ -51,11 +51,17 @@ export function changeFeed(): ChangeFeed {
   };
 }
 
-/** What the web UI can keep up with: sounds and speech playing, the music, and who's in which voice channel */
+/**
+ * What the web UI can keep up with: sounds and speech playing, the music, who's in which voice channel, game nights,
+ * the activity log, and the sound library with its groups, bin and Discord soundboard
+ */
 export const feeds = {
   playing: changeFeed(),
   music: changeFeed(),
   voice: changeFeed(),
+  nights: changeFeed(),
+  activity: changeFeed(),
+  sounds: changeFeed(),
 };
 
 export type FeedName = keyof typeof feeds;

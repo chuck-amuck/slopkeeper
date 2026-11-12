@@ -1,5 +1,6 @@
 import { announce, api, attempt, confirmButton, el, emojiNode, fetchAudio, icon, keepFocus, notice, player, recall, remember, request, soundPath, state, toast, undoToast, volumeControl } from './lib.js';
 import { elapsed, onPlaying } from './playing.js';
+import { followWhenIdle, older } from './updates.js';
 import { voiceBar } from './voice.js';
 
 const byUse = (a, b) => b.plays - a.plays || a.name.localeCompare(b.name);
@@ -305,6 +306,17 @@ export function renderBoard(main, openManage, head = main, arrange = false) {
     }
   }
 
+  /**
+   * The sounds as they are now, in the order they're shown: new ones go at the end, deleted ones go, and the rest stay
+   * where they are, so the board doesn't reshuffle under someone tapping it
+   */
+  function useSounds(fresh) {
+    const now = new Map(fresh.map((s) => [s.name, s]));
+    const kept = sounds.filter((s) => now.has(s.name)).map((s) => now.get(s.name));
+    const known = new Set(kept.map((s) => s.name));
+    sounds = [...kept, ...fresh.filter((s) => !known.has(s.name)).sort(byUse)];
+  }
+
   /** The star shows whether a sound is in Favourites */
   function useGroups(fresh) {
     groups = fresh;
@@ -415,12 +427,14 @@ export function renderBoard(main, openManage, head = main, arrange = false) {
           void attempt(() => voice.play(sound.name));
         },
         ondragstart: (e) => {
+          dragging = true;
           picked = sound.name;
           e.dataTransfer.effectAllowed = 'move';
           e.dataTransfer.setData('text/plain', sound.name);
           markPicked();
         },
         ondragend: () => {
+          dragging = false;
           picked = null;
           markPicked();
         },
@@ -494,7 +508,8 @@ export function renderBoard(main, openManage, head = main, arrange = false) {
     const grouped = new Set(groups.flatMap((g) => g.sounds));
     // Arranging shows every group, empty or not, to move sounds into
     const sections = groups.map((group, index) => ({ group, index, list: group.sounds.map((n) => byName.get(n)).filter(Boolean) })).filter((x) => arranging || x.list.length);
-    const rest = shown.filter((s) => !grouped.has(s.name)).sort(byUse);
+    // In the order they were loaded in, most played first then, and new ones after
+    const rest = shown.filter((s) => !grouped.has(s.name));
     const grid = (list, group) => el('div', { className: 'tiles' }, list.map((s) => tile(s, group)), arranging ? endOf(group) : []);
     keepFocus(board, () =>
       board.replaceChildren(
@@ -512,12 +527,28 @@ export function renderBoard(main, openManage, head = main, arrange = false) {
     paint();
   }
 
+  // What's shown comes from the first load and from changes made anywhere: other tabs, Discord and the bot itself.
+  // Whichever arrives first is used, and nothing older than what's shown
+  let dragging = false;
+  let shown = '';
+  function useData(fresh) {
+    if (guildId !== state.guildId || !main.isConnected || older(fresh.version, shown)) return false;
+    shown = fresh.version;
+    if (sounds) useSounds(fresh.sounds);
+    else sounds = fresh.sounds.sort(byUse);
+    useGroups(fresh.groups ?? []);
+    if (picked && !sounds.some((s) => s.name === picked)) picked = null;
+    return true;
+  }
+  // A change that comes while a group's name is being typed, a Delete waits for its second press or a sound is being
+  // dragged waits until that's done
+  followWhenIdle('sounds', main, () => [board], (fresh) => useData(fresh) && render(), () => dragging);
+
   void attempt(async () => {
     try {
       const fresh = await request(api('/sounds'));
       if (guildId !== state.guildId || !main.isConnected) return;
-      sounds = fresh.sounds.sort(byUse);
-      useGroups(fresh.groups ?? []);
+      useData(fresh);
       if (arrange) setArranging(true);
       else render();
     } catch (err) {

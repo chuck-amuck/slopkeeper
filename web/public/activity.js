@@ -1,4 +1,5 @@
 import { api, attempt, el, notice, request, state } from './lib.js';
+import { follow } from './updates.js';
 
 const EMPTY = 'Nothing yet. Changes to sounds, settings and game nights show up here from now on.';
 
@@ -56,6 +57,29 @@ export function renderActivity(main) {
   );
   const entries = [];
   let last;
+  let loaded = false;
+  // The newest page heard while the first was loading, put on top of it once it has
+  let early = null;
+
+  // New entries from anywhere go on top, keeping the older ones loaded. After more than a page of them at once, the
+  // list starts again from the newest, rather than leave a gap
+  follow('activity', main, (data) => {
+    if (guildId !== state.guildId) return;
+    if (!loaded) return void (early = data);
+    addNewest(data);
+  });
+
+  function addNewest(data) {
+    const newest = entries[0]?.id ?? 0;
+    const fresh = data.entries.filter((e) => e.id > newest);
+    if (!fresh.length) return;
+    if (fresh.length === data.entries.length && data.more) {
+      entries.splice(0, entries.length, ...data.entries);
+      last = data.entries.at(-1)?.id;
+      older.hidden = false;
+    } else entries.unshift(...fresh);
+    paint();
+  }
 
   function paint() {
     const shown = entries.filter((e) => !area.value || areaOf(e.action) === area.value);
@@ -95,6 +119,9 @@ export function renderActivity(main) {
       last = data.entries.at(-1)?.id;
       older.hidden = !data.more;
       paint();
+      if (!loaded && early) addNewest(early);
+      loaded = true;
+      early = null;
     } finally {
       older.disabled = false;
     }

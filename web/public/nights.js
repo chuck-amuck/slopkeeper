@@ -1,4 +1,5 @@
-import { announce, api, attempt, confirmButton, el, formProblem, notice, openDialog, recall, remember, request, RequestError, state, toast } from './lib.js';
+import { announce, api, attempt, confirmButton, el, formProblem, keepFocus, notice, openDialog, recall, remember, request, RequestError, state, toast } from './lib.js';
+import { followWhenIdle, older } from './updates.js';
 
 const READ_DELAY_MS = 250;
 const WHEN_HINT = 'Try fri 8pm, tomorrow 20:30 or nov 3 7pm.';
@@ -224,6 +225,8 @@ export async function planNightFor(main, game) {
 export function renderNights(main) {
   const guildId = state.guildId;
   let latest = null;
+  // The version shown, so an answer that's been overtaken isn't shown over a newer one
+  let shown = '';
   const box = el('div', { className: 'stack' }, notice('loading', 'Loading game nights…'));
   const plan = el('button', { className: 'primary', disabled: true, onclick: () => planDialog(main, latest, load) }, 'Plan a game night');
   main.append(el('div', { className: 'toolbar end' }, plan), box);
@@ -231,6 +234,16 @@ export function renderNights(main) {
   async function load() {
     const data = await request(api('/game-nights'));
     if (guildId !== state.guildId || !main.isConnected) return;
+    show(data);
+  }
+
+  // Answers from Discord, other tabs, and repeating nights posting their next. One that comes while you're choosing who
+  // to answer as, or about to cancel, waits until you're done. A Plan or Edit form that's open stays as it is
+  followWhenIdle('nights', main, () => [box], (data) => guildId === state.guildId && show(data));
+
+  function show(data) {
+    if (older(data.version, shown)) return;
+    shown = data.version;
     latest = data;
     plan.disabled = !data.channels.length || !data.members.length;
     if (!data.nights.length && !data.series.length) {
@@ -281,11 +294,13 @@ export function renderNights(main) {
         ),
       );
 
-    box.replaceChildren(
-      ...data.nights.map(night),
-      ...(data.series.length
-        ? [el('section', { className: 'card' }, el('h2', {}, 'Repeating'), el('p', { className: 'card-note' }, 'Stopping one leaves nights already posted. Cancel those above.'), data.series.map(series))]
-        : []),
+    keepFocus(box, () =>
+      box.replaceChildren(
+        ...data.nights.map(night),
+        ...(data.series.length
+          ? [el('section', { className: 'card' }, el('h2', {}, 'Repeating'), el('p', { className: 'card-note' }, 'Stopping one leaves nights already posted. Cancel those above.'), data.series.map(series))]
+          : []),
+      ),
     );
   }
 

@@ -1,6 +1,7 @@
 import { ChannelType, type Client, type Guild, type VoiceChannel } from 'discord.js';
 import { type IncomingMessage } from 'node:http';
 import { logActivity, webUser } from '../activity.ts';
+import { feeds } from '../changes.ts';
 import { answerFor, cancelNight, editNight, gameNames, planNight, readWhen, stopSeries, upcomingNights, whenText } from '../features/gamenight.ts';
 import { friendsCheck, profileUrl, steamLinks } from '../features/steam.ts';
 import { checkSetting } from '../features/setup.ts';
@@ -91,7 +92,8 @@ export async function nightFriends(guild: Guild, nightId: number) {
 }
 
 export async function nightRoutes({ client, guild, req, res, url, section, rest }: Ask) {
-  if (section === 'game-nights' && !rest.length && req.method === 'GET') return nightList(guild);
+  // With the version it's at, so a page can tell it from an older or newer live update
+  if (section === 'game-nights' && !rest.length && req.method === 'GET') return { version: feeds.nights.version(guild.id), ...nightList(guild) };
   if (section === 'game-nights' && !rest.length && req.method === 'POST') return planFromWeb(client, guild, req);
   if (section === 'game-nights' && rest.length === 1 && rest[0] === 'when' && req.method === 'GET') {
     return { time: readWhen(guild.id, (url.searchParams.get('text') ?? '').slice(0, 100)) };

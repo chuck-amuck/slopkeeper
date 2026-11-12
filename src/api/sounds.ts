@@ -38,7 +38,7 @@ async function durationOf(file: string, mtimeMs: number): Promise<number | null>
   return seconds;
 }
 
-async function soundList(guild: Guild) {
+export async function soundList(guild: Guild) {
   const sounds = [];
   const onDiscord = await discordBoard.board(guild).catch(() => null);
   const starred = favourites(guild.id);
@@ -153,7 +153,8 @@ export async function handleSounds(client: Client<true>, guild: Guild, req: Inco
   const note = (action: string) => logActivity(guild.id, by(), action);
 
   if (name === undefined) {
-    if (method === 'GET') return soundList(guild);
+    // With the version it's at, read first, so a page can tell it from an older or newer live update
+    if (method === 'GET') return { version: feeds.sounds.version(guild.id), ...(await soundList(guild)) };
     throw new Refused(405, 'Not here.');
   }
 

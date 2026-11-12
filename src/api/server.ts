@@ -68,8 +68,8 @@ export async function handleMe(guild: Guild, req: IncomingMessage) {
   throw new Refused(405, 'Not here.');
 }
 
-export function activityList(guild: Guild, url: URL) {
-  const before = Number(url.searchParams.get('before')) || undefined;
+/** A page of the log, newest first, from before the entry with id `before` if given */
+export function activityList(guild: Guild, before?: number) {
   const rows = recentActivity(guild.id, ACTIVITY_PAGE + 1, before);
   return {
     timeZone: setting(guild.id, 'timezone'),
@@ -105,7 +105,7 @@ export async function handleSettings(guild: Guild, req: IncomingMessage, key?: s
 
 export async function serverRoutes({ client, guild, req, res, url, section, rest }: Ask) {
   if (section === 'settings' && rest.length <= 1) return handleSettings(guild, req, rest[0]);
-  if (section === 'activity' && !rest.length && req.method === 'GET') return activityList(guild, url);
+  if (section === 'activity' && !rest.length && req.method === 'GET') return activityList(guild, Number(url.searchParams.get('before')) || undefined);
   if (section === 'me' && !rest.length) return handleMe(guild, req);
   throw new Refused(404, 'Not found.');
 }

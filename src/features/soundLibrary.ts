@@ -1,6 +1,7 @@
 import { type Client, type Guild } from 'discord.js';
 import { copyFileSync, existsSync, mkdirSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import { feeds } from '../changes.ts';
 import { config } from '../config.ts';
 import { db, transaction } from '../db.ts';
 import * as discordBoard from '../discordSounds.ts';
@@ -93,6 +94,14 @@ export function listSounds(guildId: string): Sound[] {
 
 export const findSound = (guildId: string, name: string) => listSounds(guildId).find((s) => s.name === name);
 
+/**
+ * Every change to the sounds, their groups or the bin comes through here, so an open Soundboard tab redraws. Links to
+ * copies on Discord's soundboard say so in discordSounds.ts. A play isn't a change
+ */
+export function libraryChanged(guildId: string) {
+  feeds.sounds.changed(guildId);
+}
+
 function setEmoji(guildId: string, name: string, emoji: string | null) {
   if (emoji) {
     db.prepare('INSERT INTO sound_emoji (guild_id, name, emoji) VALUES (?, ?, ?) ON CONFLICT(guild_id, name) DO UPDATE SET emoji = excluded.emoji').run(
@@ -101,6 +110,7 @@ function setEmoji(guildId: string, name: string, emoji: string | null) {
       emoji,
     );
   } else db.prepare('DELETE FROM sound_emoji WHERE guild_id = ? AND name = ?').run(guildId, name);
+  libraryChanged(guildId);
 }
 
 /** Clears custom emoji the server no longer has, since one on a button stops its whole panel posting. Returns whether any were */
@@ -131,6 +141,7 @@ export async function saveUpload(guildId: string, name: string, ext: string, dat
   // Its trim original goes with it, as restoring that now would bring back the wrong sound
   if (existing) moveToBin(guildId, existing);
   renameSync(upload, target);
+  libraryChanged(guildId);
   return true;
 }
 
@@ -189,6 +200,7 @@ async function levelSound(guildId: string, sound: Sound, keepPercent = false) {
     `INSERT INTO sound_levels (guild_id, name, gain_db) VALUES (?, ?, ?)
      ON CONFLICT(guild_id, name) DO UPDATE SET gain_db = excluded.gain_db, percent = ${keepPercent ? 'percent' : 100}`,
   ).run(guildId, sound.name, gain);
+  libraryChanged(guildId);
 }
 
 /** Measures sounds from before levelling existed, one at a time so it doesn't get in the way of playback */
@@ -207,6 +219,7 @@ export async function levelLibrary(client: Client<true>) {
 /** Sets how loud a sound plays, here and on Discord's soundboard */
 export async function setSoundVolume(guild: Guild, name: string, percent: number) {
   db.prepare('INSERT INTO sound_levels (guild_id, name, percent) VALUES (?, ?, ?) ON CONFLICT(guild_id, name) DO UPDATE SET percent = excluded.percent').run(guild.id, name, percent);
+  libraryChanged(guild.id);
   await discordBoard.setVolume(guild, name, discordVolume(guild.id, name));
 }
 
@@ -279,7 +292,10 @@ export const expiresAt = (sound: DeletedSound) => sound.deleted_at + BIN_DAYS * 
 /** Empties one place in the bin for good. Returns whether there was anything there */
 export function eraseDeleted(guildId: string, id: number): boolean {
   const { changes } = db.prepare('DELETE FROM deleted_sounds WHERE guild_id = ? AND id = ?').run(guildId, id);
-  if (changes) rmSync(binDir(guildId, id), { recursive: true, force: true });
+  if (changes) {
+    rmSync(binDir(guildId, id), { recursive: true, force: true });
+    libraryChanged(guildId);
+  }
   return changes > 0;
 }
 
@@ -324,6 +340,7 @@ export function restoreDeleted(guildId: string, id: number): string | null {
   else if (sound.favourite === 1) setFavourite(guildId, name, true);
   db.prepare('INSERT OR REPLACE INTO sound_levels (guild_id, name, gain_db, percent) VALUES (?, ?, ?, ?)').run(guildId, name, sound.gain_db, sound.percent);
   eraseDeleted(guildId, id);
+  libraryChanged(guildId);
   return name;
 }
 
@@ -345,6 +362,7 @@ export async function removeSound(guild: Guild, sound: Sound): Promise<{ problem
     setSetting(guild.id, 'loopSound', '');
     await refreshLoopRoom(guild);
   }
+  libraryChanged(guild.id);
   return { problem, binId };
 }
 
@@ -399,6 +417,7 @@ export function addGroup(guildId: string, name: string, top = false): { id: numb
   const ends = db.prepare('SELECT MIN(pos) AS first, MAX(pos) AS last FROM sound_groups WHERE guild_id = ?').get(guildId) as { first: number | null; last: number | null };
   const pos = top ? (ends.first ?? 1) - 1 : (ends.last ?? -1) + 1;
   const { lastInsertRowid } = db.prepare('INSERT INTO sound_groups (guild_id, name, pos) VALUES (?, ?, ?)').run(guildId, name, pos);
+  libraryChanged(guildId);
   return { id: Number(lastInsertRowid) };
 }
 
@@ -409,6 +428,7 @@ export function renameGroup(guildId: string, id: number, name: string): string |
   const problem = groupNameProblem(guildId, name, id);
   if (problem) return problem;
   db.prepare('UPDATE sound_groups SET name = ? WHERE id = ?').run(name, id);
+  libraryChanged(guildId);
   return null;
 }
 
@@ -421,6 +441,7 @@ export function moveGroup(guildId: string, id: number, to: number): boolean {
   ids.splice(Math.max(0, Math.min(ids.length, Math.trunc(to))), 0, id);
   const update = db.prepare('UPDATE sound_groups SET pos = ? WHERE id = ?');
   transaction(() => ids.forEach((g, i) => update.run(i, g)));
+  libraryChanged(guildId);
   return true;
 }
 
@@ -432,6 +453,7 @@ export function deleteGroup(guildId: string, id: number): SoundGroup | null {
     db.prepare('DELETE FROM sound_places WHERE group_id = ?').run(id);
     db.prepare('DELETE FROM sound_groups WHERE id = ?').run(id);
   });
+  libraryChanged(guildId);
   return group;
 }
 
@@ -442,6 +464,7 @@ export function deleteGroup(guildId: string, id: number): SoundGroup | null {
 export function placeSound(guildId: string, name: string, groupId: number | null, before: string | null = null): string | null {
   if (groupId === null) {
     db.prepare('DELETE FROM sound_places WHERE guild_id = ? AND name = ?').run(guildId, name);
+    libraryChanged(guildId);
     return null;
   }
   if (!groupOf(guildId, groupId)) return 'That group is gone.';
@@ -450,6 +473,7 @@ export function placeSound(guildId: string, name: string, groupId: number | null
   others.splice(at < 0 ? others.length : at, 0, name);
   const put = db.prepare('INSERT INTO sound_places (guild_id, name, group_id, pos) VALUES (?, ?, ?, ?) ON CONFLICT(guild_id, name) DO UPDATE SET group_id = excluded.group_id, pos = excluded.pos');
   transaction(() => others.forEach((n, i) => put.run(guildId, n, groupId, i)));
+  libraryChanged(guildId);
   return null;
 }
 
@@ -481,6 +505,7 @@ export function setFavourite(guildId: string, name: string, on: boolean) {
   const group = favouritesGroup(guildId);
   if (!on) {
     if (group) db.prepare('DELETE FROM sound_places WHERE group_id = ? AND name = ?').run(group.id, name);
+    libraryChanged(guildId);
     return;
   }
   if (group && placeOf(guildId, name)?.group_id === group.id) return;
@@ -516,6 +541,7 @@ export async function renameSound(guild: Guild, sound: Sound, name: string): Pro
   db.prepare('UPDATE join_sounds SET name = ? WHERE guild_id = ? AND name = ?').run(name, guild.id, sound.name);
   if (storedSetting(guild.id, 'loopSound') === sound.name) setSetting(guild.id, 'loopSound', name);
   if (storedSetting(guild.id, 'loopIntro') === sound.name) setSetting(guild.id, 'loopIntro', name);
+  libraryChanged(guild.id);
   return null;
 }
 

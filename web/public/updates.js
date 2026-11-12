@@ -1,7 +1,8 @@
 import { el, request, state } from './lib.js';
 
 /**
- * Keeps the page up with what's playing, the music and who's in voice, through one request at a time per tab. Each
+ * Keeps the page up with what's playing, the music, who's in voice, game nights, the activity log and the sounds,
+ * through one request at a time per tab. Each
  * waits at the bot until something the page shows changes, then brings only what did. A hidden tab stops asking until
  * it's shown again
  */
@@ -14,14 +15,14 @@ const UNCHANGED_MS = 1000;
 const UNSEEN_MS = 5000;
 
 /** Who follows each part: { node, listener, since, seen } */
-const followers = { playing: new Set(), music: new Set(), voice: new Set() };
+const followers = { playing: new Set(), music: new Set(), voice: new Set(), nights: new Set(), activity: new Set(), sounds: new Set() };
 /** The last of each part the bot sent for the server watched: { data, at } */
 let latest = new Map();
 /** The request loop for one server */
 let run = null;
 
 /**
- * Calls `listener(data, at)` with `part` (playing, music or voice) for the server picked, now if it's known and each
+ * Calls `listener(data, at)` with `part` (playing, music, voice, nights, activity or sounds) for the server picked, now if it's known and each
  * time it changes, until `node` leaves the page. `at` is the performance.now() when the bot sent it
  */
 export function follow(part, node, listener) {
@@ -37,6 +38,57 @@ export function follow(part, node, listener) {
   }
   // Asked for from the next request, which starts straight away
   else if (watching && !watching.asking.has(part)) watching.wake();
+}
+
+/**
+ * Whether version `a` of a part is from before version `b`. Each run of the bot starts its own, and within a run they
+ * only go up, so versions from different runs aren't compared
+ */
+export function older(a, b) {
+  if (!a || !b) return false;
+  const [runA, countsA] = a.split('.');
+  const [runB, countsB] = b.split('.');
+  const total = (counts) => counts.split('-').reduce((sum, n) => sum + Number(n), 0);
+  return runA === runB && total(countsA) < total(countsB);
+}
+
+// Where a press that hasn't been let go of started: a slider being dragged, say
+let pressing = null;
+addEventListener('pointerdown', (e) => (pressing = e.target), true);
+for (const type of ['pointerup', 'pointercancel']) addEventListener(type, () => (pressing = null), true);
+
+// Fields that take typing, as opposed to a switch, slider or menu that's done with once used
+const TYPING = 'textarea, input:not([type=checkbox], [type=radio], [type=range], [type=button], [type=submit], [type=reset], [type=file], [type=color])';
+
+/**
+ * Like follow, for a part of the page someone may be in the middle of using: a change that comes while they're typing
+ * or pressing in one of `areas()`, have a delete or cancel waiting for its second press there, or `alsoBusy()` says so,
+ * waits until they're done. Only the newest change is kept meanwhile
+ */
+export function followWhenIdle(part, node, areas, listener, alsoBusy = () => false) {
+  let held = null;
+  let check = 0;
+  const busy = () =>
+    alsoBusy() ||
+    areas().some((area) => {
+      const at = document.activeElement;
+      return (area.contains(at) && at.matches(TYPING)) || (pressing && area.contains(pressing)) || !!area.querySelector('.confirm.danger');
+    });
+  const apply = () => {
+    if (!node.isConnected) return clearInterval(check);
+    if (!held || busy()) return;
+    clearInterval(check);
+    const data = held;
+    held = null;
+    listener(data);
+  };
+  follow(part, node, (data) => {
+    held = data;
+    clearInterval(check);
+    // Checked now and then rather than on each way of finishing, as a second press that never comes just times out
+    if (busy()) check = setInterval(apply, 1000);
+    else apply();
+  });
 }
 
 /** Lets go of followers whose node has left the page, and of what nobody follows, so following it again starts fresh */

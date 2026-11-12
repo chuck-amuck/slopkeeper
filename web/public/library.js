@@ -2,6 +2,7 @@ import { pickClip } from './clip.js';
 import { emojiPicker } from './emojipicker.js';
 import { api, attempt, confirmButton, el, emojiNode, icon, keepFocus, notice, openDialog, player, postDialog, recall, remember, request, RequestError, soundPath, state, toast, undoToast, volumeControl } from './lib.js';
 import { pickTrim } from './trim.js';
+import { followWhenIdle, older } from './updates.js';
 import { voiceBar } from './voice.js';
 
 const MAX_BYTES = 5 * 1024 * 1024;
@@ -37,6 +38,8 @@ async function filesIn(entry) {
 export function renderLibrary(main, openArrange) {
   const guildId = state.guildId;
   let data = null;
+  // The version of the sounds shown, so an answer that's been overtaken isn't shown over a newer one
+  let shown = '';
   let filter = '';
   let queue = [];
   let toDiscord = recall('uploadToDiscord') !== 'no';
@@ -166,8 +169,9 @@ export function renderLibrary(main, openArrange) {
 
   async function load() {
     const [fresh, deleted] = await Promise.all([request(api('/sounds')), request(api('/deleted-sounds'))]);
-    // Still on this server, if the request took a while
-    if (guildId !== state.guildId || !main.isConnected) return;
+    // Still on this server, if the request took a while, and not overtaken by a live update
+    if (guildId !== state.guildId || !main.isConnected || older(fresh.version, shown)) return;
+    shown = fresh.version;
     data = fresh;
     renderSlots();
     renderBoard();
@@ -175,6 +179,18 @@ export function renderLibrary(main, openArrange) {
     renderQueue();
     renderBin(deleted);
   }
+
+  // Changes from other tabs, from Discord and from the bot itself. One that comes while you're renaming, sliding a
+  // volume or about to delete something waits until you're done, so nothing is pulled out from under you
+  followWhenIdle('sounds', main, () => [list, boardBody, bin], ({ bin: deleted, ...fresh }) => {
+    if (guildId !== state.guildId || older(fresh.version, shown)) return;
+    shown = fresh.version;
+    data = fresh;
+    renderSlots();
+    renderBoard();
+    renderList();
+    renderBin(deleted);
+  });
 
   function renderBin({ days, sounds }) {
     bin.replaceChildren(

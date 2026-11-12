@@ -1,6 +1,7 @@
 import { DiscordAPIError, PermissionFlagsBits, RESTJSONErrorCodes, type Guild } from 'discord.js';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { feeds } from './changes.ts';
 import { db } from './db.ts';
 
 // Discord caps server soundboard sounds at 5.2 s and 512 KB; clips are cut a little short so mp3 padding can't push them over
@@ -91,9 +92,13 @@ export async function download(sound: DiscordSound): Promise<{ data: Buffer; ext
   return { data: Buffer.from(await res.arrayBuffer()), ext: type.includes('ogg') ? '.ogg' : '.mp3' };
 }
 
+/** The web UI's Soundboard tab shows which sounds are on Discord, so every change to these links tells it */
+const linksChanged = (guildId: string) => feeds.sounds.changed(guildId);
+
 /** Ties a library sound to a copy already on Discord */
 export function link(guildId: string, name: string, soundId: string) {
   db.prepare('INSERT OR REPLACE INTO discord_sounds (guild_id, name, sound_id) VALUES (?, ?, ?)').run(guildId, name, soundId);
+  linksChanged(guildId);
 }
 
 function emojiFields(emoji: string | undefined | null) {
@@ -170,7 +175,7 @@ export async function upload(guild: Guild, sound: SyncSound, volume: number, sta
       emojiId: emojiId ?? undefined,
       emojiName: emojiName ?? undefined,
     });
-    db.prepare('INSERT INTO discord_sounds (guild_id, name, sound_id) VALUES (?, ?, ?)').run(guild.id, sound.name, created.soundId);
+    link(guild.id, sound.name, created.soundId);
     return null;
   } catch (err) {
     return explain(err);
@@ -208,6 +213,7 @@ export async function rename(guild: Guild, name: string, newName: string): Promi
     return explainChange(err);
   }
   db.prepare('UPDATE OR REPLACE discord_sounds SET name = ? WHERE sound_id = ?').run(newName, id);
+  linksChanged(guild.id);
   return null;
 }
 
@@ -224,7 +230,9 @@ export async function setVolume(guild: Guild, name: string, volume: number) {
 
 /** Drops the mapping for a Discord sound that no longer exists. Returns whether one was dropped */
 export function forget(soundId: string): boolean {
-  return db.prepare('DELETE FROM discord_sounds WHERE sound_id = ?').run(soundId).changes > 0;
+  const gone = db.prepare('DELETE FROM discord_sounds WHERE sound_id = ? RETURNING guild_id').all(soundId) as { guild_id: string }[];
+  for (const { guild_id: guildId } of gone) linksChanged(guildId);
+  return gone.length > 0;
 }
 
 /** Forgets copies deleted from Discord while the bot wasn't watching */

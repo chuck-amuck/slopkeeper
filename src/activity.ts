@@ -1,3 +1,4 @@
+import { feeds } from './changes.ts';
 import { db } from './db.ts';
 
 const KEEP_MS = 365 * 24 * 3_600_000;
@@ -46,6 +47,7 @@ export function logActivity(guildId: string, actor: string, action: string) {
   const now = Date.now();
   db.prepare('INSERT INTO activity (guild_id, at, actor, action) VALUES (?, ?, ?, ?)').run(guildId, now, actor, action);
   db.prepare('DELETE FROM activity WHERE guild_id = ? AND at < ?').run(guildId, now - KEEP_MS);
+  feeds.activity.changed(guildId);
 }
 
 /** Newest first, from before the entry with id `before` if given */

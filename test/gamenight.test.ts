@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { mock, test } from 'node:test';
 import { recentActivity } from '../src/activity.ts';
 import { config } from '../src/config.ts';
+import { feeds } from '../src/changes.ts';
 import { db } from '../src/db.ts';
 import { gameNights, nextOccurrence, parseWhen, tick, whenText } from '../src/features/gamenight.ts';
 import { setSetting } from '../src/settings.ts';
@@ -363,4 +364,21 @@ test('the host edits a night from its card, and people who are in hear when it m
   assert.equal(posted.length, 1);
   assert.deepEqual(posted[0].allowedMentions, { users: ['friend'] }, 'not the host, who did it, nor anyone who can’t come');
   assert.equal(recentActivity('edits', 1)[0].action, 'Changed the time, details of **Valheim** night');
+});
+
+test('a night dropping off the web UI’s list three hours in tells an open Nights tab, once', async (t) => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.now() });
+  const client = fakeClient([], async () => {});
+  await tick(client);
+  night('dropping', -3 * 3_600_000 + 30_000);
+  const at = feeds.nights.version('dropping');
+  await tick(client);
+  assert.equal(feeds.nights.version('dropping'), at, 'still listed');
+  t.mock.timers.tick(60_000);
+  await tick(client);
+  const dropped = feeds.nights.version('dropping');
+  assert.notEqual(dropped, at);
+  t.mock.timers.tick(60_000);
+  await tick(client);
+  assert.equal(feeds.nights.version('dropping'), dropped, 'once');
 });

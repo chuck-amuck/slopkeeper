@@ -3,13 +3,12 @@ import { Events, MessageFlags, SlashCommandBuilder, type Guild } from 'discord.j
 import path from 'node:path';
 import { logActivity } from '../activity.ts';
 import { db } from '../db.ts';
-import { feeds } from '../changes.ts';
 import * as discordBoard from '../discordSounds.ts';
 import { isAllowed, setting } from '../settings.ts';
 import type { Feature } from '../types.ts';
 import { servedGuilds } from '../util.ts';
 import { commandMention } from '../commandIds.ts';
-import { BIN_DAYS, DAY, type Sound, VOLUME_PERCENT, addToDiscord, applyLevels, changeEmoji, clearBin, deletedSounds, dropMissingEmoji, findSound, levelLibrary, listSounds, parseEmoji, recordDiscordPlay, recordPlay, removeSound, renameSound, restoreDeleted, setSoundVolume, soundGain, syncToDiscord, uploadProblem } from './soundLibrary.ts';
+import { BIN_DAYS, DAY, type Sound, VOLUME_PERCENT, addToDiscord, libraryChanged, applyLevels, changeEmoji, clearBin, deletedSounds, dropMissingEmoji, findSound, levelLibrary, listSounds, parseEmoji, recordDiscordPlay, recordPlay, removeSound, renameSound, restoreDeleted, setSoundVolume, soundGain, syncToDiscord, uploadProblem } from './soundLibrary.ts';
 import { applyMusicVolume, applySoundVolume, applySpeechVolume, leaveIfAlone, leaveVoice, musicOn, play, stopPlayback } from './voiceAudio.ts';
 import { autoplayChanged } from './music.ts';
 import { affectsLoopRoom, checkLoopRoom, noteLoopRoom, refreshLoopRoom, startLoopRoom, stopLoopRoom } from './loopRoom.ts';
@@ -23,17 +22,9 @@ const OPEN_TO_ALL = new Set(['play', 'stop', 'join', 'panel']);
 export async function afterSettingsChanged(guild: Guild, keys: string[]) {
   // Discord's copies of the sounds, and audio already playing, have their own volume
   if (keys.includes('evenVolume')) await applyLevels(guild);
-  if (keys.includes('soundVolume')) {
-    applySoundVolume(guild.id);
-    // The volume beside Play in shows it
-    feeds.voice.changed(guild.id);
-  }
+  if (keys.includes('soundVolume')) applySoundVolume(guild.id);
   if (keys.includes('ttsVolume')) applySpeechVolume(guild.id);
-  if (keys.includes('musicVolume')) {
-    applyMusicVolume(guild.id);
-    // The music page shows it
-    feeds.music.changed(guild.id);
-  }
+  if (keys.includes('musicVolume')) applyMusicVolume(guild.id);
   if (keys.includes('musicAutoplay')) autoplayChanged(guild.id);
   if (keys.some(affectsLoopRoom)) await refreshLoopRoom(guild);
 }
@@ -317,7 +308,12 @@ export const soundboard: Feature = {
     });
     client.on(Events.GuildSoundboardSoundDelete, (sound) => {
       if (discordBoard.forget(sound.soundId) && sound.guildId) void refreshPanels(client, sound.guildId);
+      if (sound.guildId) libraryChanged(sound.guildId);
     });
+    // Manage shows Discord's soundboard, which people change in Discord too
+    client.on(Events.GuildSoundboardSoundCreate, (sound) => libraryChanged(sound.guildId));
+    client.on(Events.GuildSoundboardSoundUpdate, (_, sound) => libraryChanged(sound.guildId));
+    client.on(Events.GuildSoundboardSoundsUpdate, (_, guild) => libraryChanged(guild.id));
     // Not waited for: a whole library takes a while the first time, and nothing else depends on it
     void levelLibrary(client).catch(console.error);
   },

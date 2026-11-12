@@ -10,9 +10,11 @@ import { followVoice } from '../src/api/live.ts';
 import { config } from '../src/config.ts';
 import { db } from '../src/db.ts';
 import { logActivity } from '../src/activity.ts';
-import { soundGain } from '../src/features/soundLibrary.ts';
+import { feeds } from '../src/changes.ts';
+import * as discordBoard from '../src/discordSounds.ts';
+import { recordPlay, soundGain } from '../src/features/soundLibrary.ts';
 import { setting, setSetting } from '../src/settings.ts';
-import { GUILD, TOKEN, as, base, client, guild, ok, onlyOnDiscord, panelEdits, quietWav, refused, setFake, soundFolder, sounds, upload } from './apiFixture.ts';
+import { GUILD, TOKEN, as, base, client, guild, ok, onlyOnDiscord, panelEdits, planned, postNight, quietWav, refused, setFake, soundFolder, sounds, upload } from './apiFixture.ts';
 
 // Signing in, who’s who, settings, activity, voice channels, live updates and the API server itself
 
@@ -239,6 +241,80 @@ test('activity stays with its server and goes after a year', async () => {
   db.prepare("INSERT INTO activity (guild_id, at, actor, action) VALUES (?, ?, 'u1', 'Ancient')").run(GUILD, Date.now() - 366 * 86_400_000);
   logActivity(GUILD, 'u1', 'Recent');
   assert.deepEqual((await ok(`/guilds/${GUILD}/activity`)).entries.map((e: any) => e.action), ['Recent']);
+});
+
+test('the Nights, Activity and Soundboard tabs hear what changes them, and nothing else', async (t) => {
+  t.after(() => ok(`/guilds/${GUILD}/settings/timezone`, { method: 'DELETE' }));
+  t.after(() => ok(`/guilds/${GUILD}/settings/evenVolume`, { method: 'DELETE' }));
+  const first = await ok(`/guilds/${GUILD}/updates?nights=&activity=&sounds=`);
+  assert.deepEqual(Object.keys(first).sort(), ['activity', 'nights', 'sounds']);
+  assert.ok(Array.isArray(first.nights.nights) && Array.isArray(first.activity.entries));
+  assert.ok(Array.isArray(first.sounds.sounds) && Array.isArray(first.sounds.groups) && Array.isArray(first.sounds.bin.sounds), 'the library as /sounds has it, with the bin');
+  const all: Record<string, string> = { nights: first.nights.version, activity: first.activity.version, sounds: first.sounds.version };
+  /** What changed since the last look, which answers at once when anything did */
+  const look = async () => {
+    const update = await ok(`/guilds/${GUILD}/updates?${new URLSearchParams(all)}`);
+    for (const [part, value] of Object.entries(update)) all[part] = (value as { version: string }).version;
+    return update;
+  };
+  const versions = () => Object.fromEntries(Object.keys(all).map((part) => [part, feeds[part as keyof typeof feeds].version(GUILD)]));
+
+  await upload('live-one');
+  let update = await look();
+  assert.deepEqual(Object.keys(update).sort(), ['activity', 'sounds']);
+  assert.ok(update.sounds.sounds.some((s: { name: string }) => s.name === 'live-one'));
+  assert.match(update.activity.entries[0].action, /live-one/);
+
+  // A play isn't a change, so nobody's board redraws for one
+  const before = versions();
+  recordPlay(GUILD, 'u1', 'live-one');
+  assert.deepEqual(versions(), before);
+
+  // Which sounds are on Discord, however that changes
+  discordBoard.link(GUILD, 'live-one', 'live-copy');
+  assert.notEqual(feeds.sounds.version(GUILD), before.sounds);
+  const linked = feeds.sounds.version(GUILD);
+  assert.equal(discordBoard.forget('no-such-copy'), false);
+  assert.equal(feeds.sounds.version(GUILD), linked, 'forgetting nothing changes nothing');
+  assert.equal(discordBoard.forget('live-copy'), true);
+  assert.notEqual(feeds.sounds.version(GUILD), linked);
+  await look();
+
+  await ok(`/guilds/${GUILD}/sound-groups`, { method: 'POST', json: { name: 'Live' } });
+  update = await look();
+  assert.deepEqual(update.sounds.groups.map((g: { name: string }) => g.name), ['Live']);
+  await ok(`/guilds/${GUILD}/sounds/live-one`, { method: 'DELETE' });
+  update = await look();
+  assert.ok(update.sounds.bin.sounds.some((s: { name: string }) => s.name === 'live-one'), 'the bin');
+  assert.ok(!update.sounds.sounds.some((s: { name: string }) => s.name === 'live-one'));
+
+  // Settings the tabs show
+  await ok(`/guilds/${GUILD}/settings/evenVolume`, { method: 'PUT', json: { value: false } });
+  update = await look();
+  assert.deepEqual(Object.keys(update).sort(), ['activity', 'sounds']);
+  assert.equal(update.sounds.evenVolume, false);
+  await ok(`/guilds/${GUILD}/settings/timezone`, { method: 'PUT', json: { value: 'Europe/London' } });
+  update = await look();
+  assert.deepEqual(Object.keys(update).sort(), ['activity', 'nights']);
+  assert.equal(update.nights.timeZone, 'Europe/London');
+
+  // A night planned, and someone answering
+  await postNight(planned({ game: 'Live night' }));
+  update = await look();
+  assert.deepEqual(Object.keys(update).sort(), ['activity', 'nights']);
+  const { id } = update.nights.nights.find((n: { game: string }) => n.game === 'Live night');
+  await ok(`/guilds/${GUILD}/game-nights/${id}/rsvp`, { method: 'POST', json: { userId: 'u1', answer: 'maybe' } });
+  update = await look();
+  assert.ok('nights' in update);
+  await ok(`/guilds/${GUILD}/game-nights/${id}/cancel`, { method: 'POST' });
+  update = await look();
+  assert.ok(!update.nights.nights.some((n: { id: number }) => n.id === id), 'cancelled');
+
+  // Anything in the log, however it got there
+  logActivity(GUILD, 'u1', 'Did a thing');
+  update = await look();
+  assert.deepEqual(Object.keys(update), ['activity']);
+  assert.equal(update.activity.entries[0].action, 'Did a thing');
 });
 
 test('a page’s one request for updates waits for a change, then answers with only what changed', async (t) => {
