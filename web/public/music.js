@@ -191,7 +191,7 @@ export function renderMusic(main) {
   let playlists = null;
   const modes = el('div', { className: 'views' });
   const MODES = [
-    ['songs', 'Songs', 'Search, paste a link or upload a file', `Searches Spotify. A Spotify, YouTube or SoundCloud link works too, or upload an audio file (up to ${MOST_FILE_MB} MB and 20 minutes).`],
+    ['songs', 'Songs', 'Search or paste a link', `Searches Spotify. A Spotify, YouTube or SoundCloud link works too, or upload an audio file (up to ${MOST_FILE_MB} MB and 20 minutes).`],
     ['playlists', 'My playlists', 'Find a playlist or paste a link', 'Your saved playlists, or a link to any public one.'],
   ];
   function setMode(id) {
