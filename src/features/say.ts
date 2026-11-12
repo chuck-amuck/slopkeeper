@@ -37,7 +37,7 @@ const STRETCHES: Stretches = [
   [2, 2.5],
 ] as const;
 
-/** The same, measured across the GLaDOS and HAL models, which stretch more evenly. Bender, Optimus Prime and TikTok match it within 3% */
+/** The same, measured across the GLaDOS and HAL models, which stretch more evenly. Bender, Optimus Prime, TikTok and KSS (State broadcast) match it within 3% */
 const CHARACTER_STRETCHES: Stretches = [
   [0.61, 0.5],
   [0.78, 0.7],
@@ -66,7 +66,19 @@ interface Voice {
   stretches?: Stretches;
   /** Multiplies the length_scale, for a model that sounds rushed at the same speed as the others */
   pace?: number;
+  /** ffmpeg filters for a voice that's a style built on a model, run before the speech is levelled */
+  effects?: string;
 }
+
+/**
+ * A prim British voice with a thin metallic ring: a semitone up, narrowed, with a 5 ms echo that rings like a tin can, and
+ * turned up to match the other voices' loudness
+ */
+const DROID_EFFECTS = 'rubberband=pitch=1.06:formant=preserved,highpass=f=280,lowpass=f=7500,equalizer=f=3000:t=q:w=1.4:g=3,aecho=0.8:0.7:5:0.3,volume=4.5dB';
+
+/** An old state TV sound: narrowed, pushed forward, squeezed and with a hall's echo, turned up to match the others */
+const BROADCAST_EFFECTS =
+  'highpass=f=170,lowpass=f=6800,equalizer=f=2500:t=q:w=1.2:g=5,acompressor=threshold=0.05:ratio=8:attack=3:release=80:makeup=4,aecho=0.8:0.5:70|140:0.22|0.12,asoftclip=type=tanh,volume=6dB';
 
 export const VOICES: readonly Voice[] = [
   { id: '1', name: 'Voice 1', speaker: 0 },
@@ -81,6 +93,12 @@ export const VOICES: readonly Voice[] = [
   // Kronk stretches like the default model's voices, but sounded rushed: it's 15% slower, with steadier timing
   { id: 'kronk', name: 'Kronk', model: 'kronk', noise: [0.667, 0.333], pace: 1.15 },
   { id: 'tiktok', name: 'TikTok', model: 'tiktok', stretches: CHARACTER_STRETCHES },
+  // Styles built on official models with effects, not a model of a character or person. VCTK's speaker 258 (p258) stretches
+  // like the default model, and talks 8% quicker, as a fussy droid would
+  { id: 'droid', name: 'Protocol droid', model: 'vctk', speaker: 57, pace: 0.92, effects: DROID_EFFECTS },
+  // The Korean model reads English with a Korean accent (voice/accent.py) and Korean as it is. It stretches like the
+  // character models, and goes 15% slower, as an announcer reads
+  { id: 'broadcast', name: 'State broadcast', model: 'kss', pace: 1.15, stretches: CHARACTER_STRETCHES, effects: BROADCAST_EFFECTS },
 ];
 
 /** The voice a server uses when nobody picks one. A stored voice that's since been removed falls back to the bot's default, then Voice 5 */
@@ -152,7 +170,7 @@ async function speakToFile(guild: Guild, typed: string, voiceId: string, file: s
     writeFileSync(raw, await speech(text, voice, setting(guild.id, 'ttsSpeed'), new AbortController().signal).catch(() => {
       throw new Error('The voice container isn’t answering, so the looping speech can’t be made.');
     }));
-    await levelSpeech(raw, file);
+    await levelSpeech(raw, file, voice.effects);
   } finally {
     rmSync(raw, { force: true });
   }
@@ -196,7 +214,7 @@ async function sayLine(queue: Queue, { channel, text, voice, started }: Line) {
   const unlevelled = `${file}.raw.wav`;
   try {
     writeFileSync(unlevelled, await speech(text, voice, setting(guildId, 'ttsSpeed'), cancel.signal));
-    await levelSpeech(unlevelled, file);
+    await levelSpeech(unlevelled, file, voice.effects);
     cancel.signal.throwIfAborted();
     // At full gain: the speech volume is the group's, so moving it changes a line already being said
     await new Promise<void>((finished, failed) => {

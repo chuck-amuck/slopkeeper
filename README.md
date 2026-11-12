@@ -387,7 +387,7 @@ The web UI's Soundboard tab, under **Manage**, also shows everything on Discord'
 - Lines wait their turn, while sounds still layer on top. **Stop** ends the line and clears anything waiting.
 - Mentions are read as names, custom emoji as their name, and links as "link".
 - Every line goes in the Activity tab with who said it.
-- The voices are **Voice 1**, **2**, **5** and **9**, plus characters: **GLaDOS**, **HAL 9000**, **Bender**, **Optimus Prime**, **Kronk** and **TikTok** (the TikTok text-to-speech lady). Each talks at the server's speed, and Kronk a little slower than that, as his model sounds rushed. A server whose default voice has been removed talks in the bot's default voice.
+- The voices are **Voice 1**, **2**, **5** and **9**, plus characters: **GLaDOS**, **HAL 9000**, **Bender**, **Optimus Prime**, **Kronk** and **TikTok** (the TikTok text-to-speech lady). Two more are styles made with effects, not models of a real character or person: **Protocol droid**, a prim, slightly metallic butler, and **State broadcast**, a Korean announcer over an old loudspeaker. State broadcast reads Korean as Korean and gives English a Korean accent. Each talks at the server's speed, Kronk and State broadcast a little slower than that and Protocol droid a little quicker, so they sound right. A server whose default voice has been removed talks in the bot's default voice.
 - `/setup speech` sets whether it's on, the default voice, how fast and how loud it talks, the longest line and how long each person waits between lines. `/setup speech-role` limits it to a role, plus people with **Manage Server**. The web UI isn't limited by the role, and counts as one person for the wait.
 
 It needs the [voice container](#the-voice-container).
@@ -590,7 +590,7 @@ Each setting goes by the name `/setup show` and `/setup reset` use.
 | Music volume | `music` | `MUSIC_VOLUME` | 40% |
 | Who can control music | `music` | | everyone |
 | Text to speech | `speech` | `TTS` (`false` to turn off) | on |
-| Default voice | `speech` | `TTS_VOICE` (`1`, `2`, `5`, `9`, `glados`, `hal`, `bender`, `optimus`, `kronk` or `tiktok`) | 5 |
+| Default voice | `speech` | `TTS_VOICE` (`1`, `2`, `5`, `9`, `glados`, `hal`, `bender`, `optimus`, `kronk`, `tiktok`, `droid` or `broadcast`) | 5 |
 | Speech speed | `speech` | `TTS_SPEED` | 85% of the voice's natural speed |
 | Speech volume | `speech` | `TTS_VOLUME` | 100%, about as loud as a sound with even volume on |
 | Longest spoken line | `speech` | `TTS_MAX_CHARS` | 200 characters |
@@ -811,12 +811,12 @@ voice:
   deploy:
     resources:
       limits:
-        memory: 1280M
+        memory: 1536M
   volumes:
     - slopkeeper-voice:/voices
 ```
 
-Set `VOICE_URL=http://voice:5000` on the bot, and don't publish the port. On first start it downloads seven models into its volume, and after that it needs no internet:
+Set `VOICE_URL=http://voice:5000` on the bot, and don't publish the port. On first start it downloads nine models into its volume, and after that it needs no internet:
 
 - `en_US-libritts_r-medium` (79 MB, CC BY 4.0) holds 904 voices. Voices 1, 2, 5 and 9 are four of them.
 - The character voices are community models, 64 MB each, fetched at a fixed version and checked against their hashes. If one can't be fetched, its voice talks with the first model until the container restarts.
@@ -826,8 +826,11 @@ Set `VOICE_URL=http://voice:5000` on the bot, and don't publish the port. On fir
   - [Optimus Prime](https://huggingface.co/crazygiscool/optimus-piper-voice) by crazygiscool (CC BY-NC 4.0: non-commercial use only)
   - [Kronk](https://huggingface.co/russdill/kronk) (no license given)
   - TikTok, from cosycove's BeefStew, which is no longer online, via a copy in [fox3000foxy/piper-voices-collection](https://huggingface.co/fox3000foxy/piper-voices-collection) (no license given)
+- The two styles use official Piper models (77 and 63 MB), with ffmpeg effects added by the bot:
+  - Protocol droid is speaker p258 of [`en_GB-vctk-medium`](https://huggingface.co/rhasspy/piper-voices/tree/main/en/en_GB/vctk/medium) (CC BY 4.0), pitched up a little with a thin, tinny tone.
+  - State broadcast is [`ko_KR-kss-medium`](https://huggingface.co/rhasspy/piper-voices/tree/main/ko/ko_KR/kss/medium) (CC BY-NC-SA 4.0: non-commercial use only), with a loudspeaker's narrow, compressed sound and echo. A Korean model reads English as noise, so `voice/accent.py` turns English into the nearest Korean sounds first.
 
-`VOICES` in `src/features/say.ts` lists the voices offered. Each model loads the first time it's used. With all seven loaded it uses about 700 to 800 MB, and a long line at a slow speed briefly takes it near 1 GB. It makes a short line in about a second on two CPU cores.
+`VOICES` in `src/features/say.ts` lists the voices offered. Each model loads the first time it's used. With all nine loaded it uses about 1 GB, and a long line at a slow speed briefly takes it near 1.35 GB. It makes a short line in about a second on two CPU cores.
 
 ### The music container
 

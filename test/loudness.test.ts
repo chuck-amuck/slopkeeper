@@ -4,6 +4,7 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdtempSync } from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
+import { VOICES } from '../src/features/say.ts';
 import { levelGain, levelSpeech, measureGain } from '../src/loudness.ts';
 
 const hasFfmpeg = spawnSync('ffmpeg', ['-version']).status === 0;
@@ -65,4 +66,19 @@ test('speech comes up to the level of sounds without clipping', { skip: !hasFfmp
   const read = (log: string, name: string) => Number(new RegExp(`\\b${name}:\\s+(\\S+) (?:LUFS|dBFS)`).exec(log.slice(log.lastIndexOf('Summary')))![1]);
   assert.ok(read(stderr, 'I') > read(before, 'I') + 3, 'louder');
   assert.ok(read(stderr, 'Peak') < 0.5, 'not clipped');
+});
+
+// Their levels were matched on real Piper speech, which a test tone can't stand in for: the broadcast's compressor squeezes a
+// steady tone far more than speech. So this checks the filters run and give sound, not how loud
+test('every voice’s effects run in ffmpeg and give sound', { skip: !hasFfmpeg }, async () => {
+  const input = path.join(dir, 'voice.wav');
+  const output = path.join(dir, 'voiced.wav');
+  execFileSync('ffmpeg', ['-loglevel', 'error', '-y', '-f', 'lavfi', '-i', "aevalsrc='(0.1*sin(2*PI*440*t)+0.06*sin(2*PI*1200*t))*abs(sin(2*PI*3*t))':d=3:s=22050", input]);
+  const styled = VOICES.filter((v) => v.effects);
+  assert.ok(styled.length >= 2);
+  for (const voice of styled) {
+    await levelSpeech(input, output, voice.effects);
+    const { stderr } = spawnSync('ffmpeg', ['-hide_banner', '-nostats', '-i', output, '-af', 'ebur128', '-f', 'null', '-'], { encoding: 'utf8' });
+    assert.ok(Number(/\bI:\s+(\S+) LUFS/.exec(stderr.slice(stderr.lastIndexOf('Summary')))![1]) > -30, `${voice.name} gives sound`);
+  }
 });

@@ -25,9 +25,9 @@ export function levelGain(lufs: number, peak: number): number {
 // Speech hits full scale while sounding quiet, so levelling can't raise it. Taking its peaks off with a limiter lets it reach the target
 const SPEECH_FILTER = `volume=7dB,alimiter=limit=${10 ** (PEAK_CEILING_DB / 20)}:attack=3:release=40:level=false`;
 
-/** Writes a copy of spoken audio that's about as loud as a levelled sound */
-export async function levelSpeech(input: string, output: string) {
-  await exec('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-y', '-i', input, '-af', SPEECH_FILTER, output]);
+/** Writes a copy of spoken audio that's about as loud as a levelled sound, after a voice's own ffmpeg effects if it has any */
+export async function levelSpeech(input: string, output: string, effects?: string) {
+  await exec('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-y', '-i', input, '-af', effects ? `${effects},${SPEECH_FILTER}` : SPEECH_FILTER, output]);
 }
 
 /** Reads a file's loudness and works out its gain. Takes about a second for a sound of a few minutes */

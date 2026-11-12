@@ -99,7 +99,7 @@ test('the character voices ask for their own model, delivery and speed', { skip:
     return new Response(readFileSync(speechFile));
   });
   const voice = channel();
-  for (const id of ['glados', 'hal', 'bender', 'optimus', 'kronk', 'tiktok']) {
+  for (const id of ['glados', 'hal', 'bender', 'optimus', 'kronk', 'tiktok', 'droid', 'broadcast']) {
     assert.equal(await say(voice, 'good news everyone', id, id), null);
     await sleep(300);
   }
@@ -112,6 +112,9 @@ test('the character voices ask for their own model, delivery and speed', { skip:
     // Kronk stretches like the default model, then 15% slower and with steadier timing
     { text: 'good news everyone', voice: 'kronk', length_scale: 1.56, noise_scale: 0.667, noise_w_scale: 0.333 },
     { text: 'good news everyone', voice: 'tiktok', length_scale: 1.25 },
+    // The styles: one VCTK speaker 8% quicker than the default curve, and KSS 15% slower than the character one
+    { text: 'good news everyone', voice: 'vctk', speaker_id: 57, length_scale: 1.25 },
+    { text: 'good news everyone', voice: 'kss', length_scale: 1.44 },
   ]);
   assert.deepEqual(leftovers(), []);
 });

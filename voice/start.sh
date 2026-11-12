@@ -43,6 +43,14 @@ fetch kronk russdill/kronk 9403433305b256e73bc0fe1c685a80dbd88a1f87 \
 fetch tiktok fox3000foxy/piper-voices-collection 0ce0fe21f3dfc87a8e318030b28b753cacfbbcf3 \
   cosycove--BeefStew/src_data_tts_voices_tiktok_lady.onnx.onnx 8f329dc194051481ff141153444098975c052dfef6fa39f376fbcf0748c7a32c \
   cosycove--BeefStew/src_data_tts_voices_tiktok_lady.onnx.onnx.json 108c16883ad72e74f8c1894dd75b045fc955d4c3b338e4a501737cf6c85ce99e
+# Official Piper models the style voices are built on: a British model with many speakers, and a Korean one that serve.py
+# gives English a Korean accent in
+fetch vctk rhasspy/piper-voices ae9d8352b73c1b1750748843e753a504b00e05b0 \
+  en/en_GB/vctk/medium/en_GB-vctk-medium.onnx 4e9fc85ab9009385319fc6bae7f55577f8a2d7ee77fd9159a5500eb6531f41e6 \
+  en/en_GB/vctk/medium/en_GB-vctk-medium.onnx.json 7f85e6391ed0f7f46e4abd19345929a16be931a0c9945086f96692dce2087fa8
+fetch kss rhasspy/piper-voices ae9d8352b73c1b1750748843e753a504b00e05b0 \
+  ko/ko_KR/kss/medium/ko_KR-kss-medium.onnx 624fd774e26895f24bebae1bd9a3379e3394baeade4b584924f83e414096e2c9 \
+  ko/ko_KR/kss/medium/ko_KR-kss-medium.onnx.json 153b5619d0580f824a59108d83ca19434de410eb8e4fe80325b58684fdc8a1df
 
 # serve.py is piper.http_server with less memory kept between lines
 exec python3 /serve.py --host 0.0.0.0 --port 5000 --data-dir /voices -m "$MODEL"

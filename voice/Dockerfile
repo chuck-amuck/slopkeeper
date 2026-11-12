@@ -2,7 +2,7 @@ FROM python:3.12-slim-bookworm
 
 RUN pip install --no-cache-dir --root-user-action=ignore 'piper-tts[http]==1.8.0'
 
-COPY start.sh serve.py /
+COPY start.sh serve.py accent.py /
 
 # Named volumes inherit this ownership on first creation, so this user can write to them
 RUN useradd --create-home piper && mkdir /voices && chown piper:piper /voices
