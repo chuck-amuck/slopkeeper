@@ -1098,6 +1098,18 @@ export async function loopBotStatus(guildId: string): Promise<{ ok: boolean; not
   }
 }
 
+/**
+ * Counts a sound someone played from Discord's own soundboard, which Discord only reports in the voice channel the bot is
+ * in. Under its library name when it's a copy of a library sound, otherwise under its name on Discord
+ */
+export function recordDiscordPlay(guild: Guild, userId: string, soundId: string) {
+  if (userId === guild.client.user.id || guild.members.cache.get(userId)?.user.bot) return;
+  const library = [...discordBoard.synced(guild.id)].find(([, id]) => id === soundId)?.[0];
+  // Discord's built-in sounds aren't in the server's soundboard, and have no name to count them under
+  const name = library ?? guild.soundboardSounds.cache.get(soundId)?.name;
+  if (name) recordPlay(guild.id, userId, name);
+}
+
 /** For the monthly recap */
 function recordPlay(guildId: string, userId: string, name: string) {
   db.prepare('INSERT INTO sound_plays (guild_id, user_id, name, played_at) VALUES (?, ?, ?, ?)').run(guildId, userId, name, Date.now());
@@ -1850,6 +1862,9 @@ export const soundboard: Feature = {
       noteLoopRoom(old, state);
       void playJoinSound(old, state).catch(console.error);
       void checkLoopRoom(state.guild).catch(console.error);
+    });
+    client.on(Events.VoiceChannelEffectSend, (effect) => {
+      if (isAllowed(effect.guild.id) && effect.soundId !== null) recordDiscordPlay(effect.guild, effect.userId, String(effect.soundId));
     });
     client.on(Events.GuildSoundboardSoundDelete, (sound) => {
       if (discordBoard.forget(sound.soundId) && sound.guildId) void refreshPanels(client, sound.guildId);

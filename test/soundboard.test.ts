@@ -7,8 +7,9 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { mock, test, type TestContext } from 'node:test';
 import { db } from '../src/db.ts';
+import { link } from '../src/discordSounds.ts';
 import { recentActivity } from '../src/activity.ts';
-import { cantJoin, dropMissingEmoji, joinSounds, leaveIfAlone, listSounds, onPlaybackStop, play, playJoinSound, saveUpload, setJoinSound, soundboard, soundGain } from '../src/features/soundboard.ts';
+import { cantJoin, dropMissingEmoji, recordDiscordPlay, joinSounds, leaveIfAlone, listSounds, onPlaybackStop, play, playJoinSound, saveUpload, setJoinSound, soundboard, soundGain } from '../src/features/soundboard.ts';
 import { Mixer } from '../src/mixer.ts';
 import { setSetting } from '../src/settings.ts';
 
@@ -151,6 +152,24 @@ test('replacing a sound with another format leaves only the new file', { skip: !
   assert.equal(await saveUpload('uploads', 'bell', '.ogg', audio()), true);
   assert.equal(existsSync(path.join(dir(), 'bell.wav')), false);
   assert.equal(existsSync(path.join(dir(), 'bell.ogg')), true);
+});
+
+test('a sound played from Discord’s own soundboard counts, under its library name if it’s a copy, but not the bot’s or other bots’', () => {
+  const guild = {
+    id: 'discord-plays',
+    client: { user: { id: 'the-bot' } },
+    members: { cache: new Map([['ana', { user: { bot: false } }], ['robot', { user: { bot: true } }]]) },
+    soundboardSounds: { cache: new Map([['s-horn', { name: 'horn' }], ['s-theirs', { name: 'Big Bell' }]]) },
+  } as never;
+  link('discord-plays', 'airhorn', 's-horn');
+  recordDiscordPlay(guild, 'ana', 's-horn');
+  recordDiscordPlay(guild, 'ana', 's-theirs');
+  // One of Discord's built-in sounds, which has no name here
+  recordDiscordPlay(guild, 'ana', '3');
+  recordDiscordPlay(guild, 'robot', 's-horn');
+  recordDiscordPlay(guild, 'the-bot', 's-horn');
+  const rows = db.prepare(`SELECT user_id, name FROM sound_plays WHERE guild_id = 'discord-plays' ORDER BY rowid`).all() as { user_id: string; name: string }[];
+  assert.deepEqual(rows.map((r) => `${r.user_id}:${r.name}`), ['ana:airhorn', 'ana:Big Bell']);
 });
 
 test('plays are counted for the recap, whether from a panel or /sound play, and failures aren’t', { skip: !hasFfmpeg }, async (t) => {
