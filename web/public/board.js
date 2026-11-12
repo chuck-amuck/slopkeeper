@@ -1,4 +1,4 @@
-import { announce, api, attempt, confirmButton, el, emojiNode, fetchAudio, icon, keepFocus, notice, player, recall, remember, request, soundPath, state, toast, undoToast } from './lib.js';
+import { announce, api, attempt, confirmButton, el, emojiNode, fetchAudio, forget, icon, keepFocus, notice, player, recall, remember, request, soundPath, state, toast, undoToast } from './lib.js';
 import { elapsed, onPlaying } from './playing.js';
 import { followWhenIdle, older } from './updates.js';
 import { voiceBar } from './voice.js';
@@ -7,6 +7,27 @@ const byUse = (a, b) => b.plays - a.plays || a.name.localeCompare(b.name);
 // What the sounds in no group are called, and the group the star puts sounds in
 const EVERYTHING_ELSE = 'Everything else';
 const FAVOURITES = 'favourites';
+// Whether Speech is folded away, on this device
+const SPEECH_FOLDED = 'speechFolded';
+// Which groups are folded away, on this device, for each server: `g<id>`, or `rest` for Everything else
+const foldedKey = (guildId) => `foldedGroups:${guildId}`;
+
+/**
+ * A section's heading, which folds `body` away and back where it is. `count` shows while it's folded, so nothing looks
+ * missing. onFold(open) hears each change
+ */
+function foldHead(name, open, body, onFold, count = null) {
+  const number = count === null ? null : el('span', { className: 'fold-count', hidden: open }, String(count));
+  const button = el('button', { type: 'button', className: 'fold-toggle', ariaExpanded: String(open), onclick: () => fold(button.ariaExpanded !== 'true') }, icon('chevron'), el('span', {}, name), number);
+  const fold = (on) => {
+    button.ariaExpanded = String(on);
+    body.hidden = !on;
+    if (number) number.hidden = on;
+    onFold(on);
+  };
+  body.hidden = !open;
+  return el('h2', { className: 'fold-head' }, button);
+}
 
 // Voices in this order, and any the bot adds later after them
 const VOICE_GROUPS = ['Characters', 'Accents', 'Effects'];
@@ -24,8 +45,8 @@ function voiceOptions(voices, chosen) {
 }
 
 /**
- * Has the bot read out what's typed: one row for the line and Say, then the voice, a preview only you hear, and the
- * saved lines. Stays hidden if there's no voice to read it
+ * Has the bot read out what's typed: one row for the line, the voice with a preview only you hear, and Say, then the
+ * saved lines. Folds away to its heading, remembered on this device, and stays hidden if there's no voice to read it
  */
 function sayBox(voice) {
   const guildId = state.guildId;
@@ -63,8 +84,6 @@ function sayBox(voice) {
   const chips = el('div', { className: 'phrase-list' });
   const saveLine = el('button', { type: 'button', className: 'icon save-line', ariaLabel: 'Save this line', title: 'Save this line, to say it again with one tap', hidden: true, onclick: () => saveTyped() }, icon('plus'));
   const editLines = el('button', { type: 'button', className: 'quiet', ariaPressed: 'false', hidden: true, onclick: () => setEditing(!editing) }, 'Edit');
-  // Which voice, with its preview, above the box it says
-  const voiceRow = el('div', { className: 'toolbar say-voices' }, el('span', { className: 'voice-label' }, 'Voice'), picker, preview);
   // On a phone the saved lines scroll sideways, so the sounds stay near the top; All unfolds them
   const scroller = el('div', { className: 'phrase-scroll' }, chips, editLines);
   const allLines = el('button', { type: 'button', className: 'quiet all-lines', ariaExpanded: 'false', hidden: true, onclick: () => setUnfolded(!unfolded) }, 'All');
@@ -156,7 +175,7 @@ function sayBox(voice) {
   const form = el(
     'form',
     {
-      className: 'toolbar say',
+      className: 'say-form',
       onsubmit: async (e) => {
         e.preventDefault();
         const line = text.value.trim();
@@ -181,11 +200,14 @@ function sayBox(voice) {
         paint();
       },
     },
-    text,
-    saveLine,
+    el('div', { className: 'say-text' }, text, saveLine),
+    // The voice is a choice for the line being sent, so it sits with Say
+    el('div', { className: 'say-voices' }, picker, preview),
     send,
   );
-  const node = el('div', { className: 'say-box', hidden: true }, voiceRow, form, row);
+  const body = el('div', { className: 'say-body' }, form, row);
+  const head = foldHead('Speech', recall(SPEECH_FOLDED) !== '1', body, (open) => (open ? forget(SPEECH_FOLDED) : remember(SPEECH_FOLDED, '1')));
+  const node = el('div', { className: 'say-box', hidden: true }, head, body);
   void attempt(async () => {
     const { on, voices, voice: serverDefault, longest, phrases: saved } = await request(api('/say'));
     if (guildId !== state.guildId) return;
@@ -488,6 +510,29 @@ export function renderBoard(main, openManage, head = main, arrange = false) {
     markPlaying();
   });
 
+  // Groups folded away on this device. A search or Arrange shows them all, and they fold again after
+  let folded = new Set();
+  try {
+    folded = new Set(JSON.parse(recall(foldedKey(guildId)) ?? '[]'));
+  } catch {}
+  const foldId = (group) => (group ? `g${group.id}` : 'rest');
+  /** A group's heading, which folds its sounds away, unless a search has every group open */
+  const headOf = (group, list, grid) => {
+    const name = group?.name ?? EVERYTHING_ELSE;
+    if (filter) return el('h2', {}, name);
+    const id = foldId(group);
+    const onFold = (open) => {
+      if (open) folded.delete(id);
+      else folded.add(id);
+      // Groups deleted since are forgotten
+      const ids = new Set(['rest', ...groups.map(foldId)]);
+      folded = new Set([...folded].filter((x) => ids.has(x)));
+      if (folded.size) remember(foldedKey(guildId), JSON.stringify([...folded]));
+      else forget(foldedKey(guildId));
+    };
+    return foldHead(name, !folded.has(id), grid, onFold, list.length);
+  };
+
   function render() {
     tiles.length = 0;
     shownTiles.clear();
@@ -504,12 +549,21 @@ export function renderBoard(main, openManage, head = main, arrange = false) {
     keepFocus(board, () =>
       board.replaceChildren(
         ...(arranging ? [arrangeBar] : []),
-        ...sections.flatMap(({ group, index, list }) => [
-          arranging ? groupHead(group, index) : el('h2', {}, group.name),
-          ...(arranging && !list.length ? [el('p', { className: 'hint' }, filter ? `None of its sounds match “${filter}”.` : 'Empty. Pick a sound and put it here.')] : []),
-          grid(list, group),
-        ]),
-        ...(rest.length || arranging ? [...(sections.length ? [el('h2', {}, EVERYTHING_ELSE)] : []), grid(rest, null)] : []),
+        ...sections.flatMap(({ group, index, list }) => {
+          const box = grid(list, group);
+          return [
+            arranging ? groupHead(group, index) : headOf(group, list, box),
+            ...(arranging && !list.length ? [el('p', { className: 'hint' }, filter ? `None of its sounds match “${filter}”.` : 'Empty. Pick a sound and put it here.')] : []),
+            box,
+          ];
+        }),
+        ...(rest.length || arranging
+          ? (() => {
+              const box = grid(rest, null);
+              // Without groups, there's no heading to fold it with
+              return [...(sections.length ? [arranging ? el('h2', {}, EVERYTHING_ELSE) : headOf(null, rest, box)] : []), box];
+            })()
+          : []),
       ),
     );
     markPicked();

@@ -157,6 +157,12 @@ export function remember(key, value) {
   } catch {}
 }
 
+export function forget(key) {
+  try {
+    localStorage.removeItem(key);
+  } catch {}
+}
+
 export function recall(key) {
   try {
     return localStorage.getItem(key);
@@ -264,35 +270,43 @@ export const pickedVoice = {
 export const api = (path) => `/api/guilds/${state.guildId}${path}`;
 export const soundPath = (name, part = '') => api(`/sounds/${encodeURIComponent(name)}${part}`);
 
-// Volume sliders follow a loudness curve rather than the percentage itself, which piles most of the change into the
-// bottom quarter: the percentage goes with the square of how far along the slider is, so 100% of 200 sits at 71%
+// Volume sliders read like VLC's: 0 to 100% fills the first three quarters of the bar evenly, and past 100% is a boost
+// zone, the last quarter, marked off so it's clear when something's turned up beyond its normal level
 const SLIDER_STEPS = 1000;
+/** Where 100% sits along the bar, as a fraction */
+const FULL_AT = 0.75;
 /** How far the arrow keys and Page Up or Down move a volume slider, in percent */
 const KEY_STEP = 5;
 const PAGE_STEP = 20;
-let volumeControls = 0;
 
 /**
- * A volume slider with a box for typing the exact percentage. onInput runs while it's being moved, and onSave once a
- * value is settled on. set() shows a value without saving it
+ * A volume slider with the percentage beside it, which can be typed over. onInput runs while it's being moved, and
+ * onSave once a value is settled on. set() shows a value without saving it. Every slider starts at 0 so 100% is in
+ * the same place on each; one with a higher `min` stops there
  */
 export function volumeControl({ min, max, label, onInput, onSave }) {
-  const toPercent = (position) => Math.min(max, Math.max(min, Math.round(max * (position / SLIDER_STEPS) ** 2)));
-  const toPosition = (percent) => Math.round(SLIDER_STEPS * Math.sqrt(percent / max));
-  const marks = `volume-marks-${++volumeControls}`;
+  // A slider that can't go past 100% is all normal zone
+  const fullAt = max > 100 ? FULL_AT : 1;
+  const full = Math.round(SLIDER_STEPS * fullAt);
+  const clamp = (value) => Math.min(max, Math.max(min, value));
+  const toPercent = (position) =>
+    clamp(position <= full ? Math.round((position / full) * 100) : 100 + Math.round(((position - full) / (SLIDER_STEPS - full)) * (max - 100)));
+  const toPosition = (value) => (value <= 100 ? Math.round((value / 100) * full) : full + Math.round(((value - 100) / (max - 100)) * (SLIDER_STEPS - full)));
   let percent = min;
 
   const slider = el('input', {
     type: 'range',
-    min: toPosition(min),
+    // Without a boost zone, there's no 100% to mark
+    className: max > 100 ? '' : 'capped',
+    min: 0,
     max: SLIDER_STEPS,
     step: 1,
-    list: marks,
     ariaLabel: label,
     oninput: () => {
       percent = toPercent(Number(slider.value));
-      box.value = percent;
-      slider.ariaValueText = `${percent}%`;
+      // Below the lowest it goes, the knob stays at the lowest
+      if (Number(slider.value) < toPosition(min)) slider.value = toPosition(min);
+      show();
       onInput?.(percent);
     },
     onchange: () => onSave(percent),
@@ -302,13 +316,14 @@ export function volumeControl({ min, max, label, onInput, onSave }) {
       if (!step) return;
       e.preventDefault();
       // To the next multiple of the step, so 42% goes to 45% or 40%
-      const next = Math.min(max, Math.max(min, step > 0 ? Math.floor(percent / step) * step + step : Math.ceil(percent / -step) * -step + step));
+      const next = clamp(step > 0 ? Math.floor(percent / step) * step + step : Math.ceil(percent / -step) * -step + step);
       if (next === percent) return;
       set(next);
       onInput?.(percent);
       onSave(percent);
     },
   });
+  slider.style.setProperty('--full', String(fullAt));
   const box = el('input', {
     type: 'number',
     min,
@@ -318,27 +333,29 @@ export function volumeControl({ min, max, label, onInput, onSave }) {
     // Enter or leaving the box saves it
     onchange: () => {
       if (!Number.isFinite(box.valueAsNumber)) return set(percent);
-      set(Math.min(max, Math.max(min, Math.round(box.valueAsNumber))));
+      set(clamp(Math.round(box.valueAsNumber)));
       onInput?.(percent);
       onSave(percent);
     },
   });
 
+  /** The fill up to the knob, orange past 100% */
+  function show() {
+    box.value = percent;
+    slider.ariaValueText = `${percent}%`;
+    slider.style.setProperty('--at', String(Number(slider.value) / SLIDER_STEPS));
+    slider.classList.toggle('boosted', percent > 100);
+  }
+
   function set(value) {
     percent = value;
     slider.value = toPosition(value);
-    slider.ariaValueText = `${value}%`;
-    box.value = value;
+    show();
   }
 
+  set(min);
   return {
-    node: el(
-      'span',
-      { className: 'volume-control' },
-      slider,
-      el('datalist', { id: marks }, el('option', { value: toPosition(100) })),
-      el('span', { className: 'volume-box' }, box, '%'),
-    ),
+    node: el('span', { className: 'volume-control' }, slider, el('span', { className: 'volume-box' }, box, '%')),
     set,
     value: () => percent,
   };
