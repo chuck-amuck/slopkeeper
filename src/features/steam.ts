@@ -1,4 +1,16 @@
-import { EmbedBuilder, MessageFlags, SlashCommandBuilder, type Client, type Guild } from 'discord.js';
+import {
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
+  EmbedBuilder,
+  MessageFlags,
+  ModalBuilder,
+  SlashCommandBuilder,
+  TextInputBuilder,
+  TextInputStyle,
+  type Client,
+  type Guild,
+} from 'discord.js';
 import { logActivity } from '../activity.ts';
 import { config } from '../config.ts';
 import { db, transaction } from '../db.ts';
@@ -509,8 +521,46 @@ export async function currentPlayers(appid: number) {
 const PRIVACY_HELP =
   'Their Steam game details are private, so I can\'t see their library. Fix: Steam → profile → Edit Profile → Privacy Settings → **Game details: Public**, then run `/steam refresh`.';
 
+/** A button that opens a form for linking your own Steam account, for wherever linking is suggested */
+export const linkSteamButton = () => new ButtonBuilder().setCustomId('steam:link').setLabel('Link my Steam').setEmoji('🔗').setStyle(ButtonStyle.Secondary);
+
+const linkForm = () =>
+  new ModalBuilder()
+    .setCustomId('steam:link')
+    .setTitle('Link your Steam account')
+    .addComponents(
+      new ActionRowBuilder<TextInputBuilder>().addComponents(
+        new TextInputBuilder()
+          .setCustomId('profile')
+          .setLabel('Your Steam profile link, or its name')
+          .setPlaceholder('https://steamcommunity.com/id/yourname')
+          .setStyle(TextInputStyle.Short)
+          .setMaxLength(200)
+          .setRequired(true),
+      ),
+    );
+
 export const steam: Feature = {
   title: 'Steam',
+  componentPrefix: 'steam',
+  async onButton(i) {
+    if (i.customId !== 'steam:link') return;
+    if (!config.steamApiKey) return i.reply({ content: 'Steam is not configured (STEAM_API_KEY).', flags: MessageFlags.Ephemeral });
+    return i.showModal(linkForm());
+  },
+  async onModal(i) {
+    if (i.customId !== 'steam:link') return;
+    // Looking up the profile and its games can take longer than the 3 s Discord waits for an answer
+    await i.deferReply({ flags: MessageFlags.Ephemeral });
+    const linked = await linkSteam(i.user.id, i.fields.getTextInputValue('profile').trim()).catch((err: unknown) => {
+      console.error('Linking Steam from the form:', err);
+      return undefined;
+    });
+    if (linked === undefined) return i.editReply('Steam couldn’t be reached just now. Try again in a bit.');
+    if (!linked) return i.editReply('Couldn’t find that Steam profile. Paste the full profile link: on Steam, open your profile, then copy the address.');
+    if (i.guildId) logActivity(i.guildId, i.user.id, 'Linked their Steam account');
+    return i.editReply(linked.games === null ? `🔗 Linked, but: ${PRIVACY_HELP}` : `🔗 Linked (${linked.games} games). Picks and sale alerts count your library now.`);
+  },
   commands: [
     {
       data: new SlashCommandBuilder()
@@ -617,13 +667,14 @@ export const steam: Feature = {
 
         // Links are shared between servers; only list this server's members
         const links = i.inCachedGuild() ? steamLinks().filter((l) => i.guild.members.cache.has(l.user_id)) : [];
-        if (!links.length) return i.reply(`Nobody here has linked Steam yet. Use ${commandMention(i.guildId, 'steam link')}.`);
+        const linkRow = [new ActionRowBuilder<ButtonBuilder>().addComponents(linkSteamButton())];
+        if (!links.length) return i.reply({ content: `Nobody here has linked Steam yet. Use ${commandMention(i.guildId, 'steam link')}, or the button.`, components: linkRow });
         const lines = links.map((l) => {
           const family = familyOf(l.user_id).filter((id) => id !== l.user_id);
           const shares = family.length ? ` · 👪 ${listNames(family.map((id) => `<@${id}>`))}` : '';
           return `<@${l.user_id}> · [profile](${profileUrl(l.steam_id)}) · ${l.private ? '🔒 game details private' : `${l.games} games`}${shares}`;
         });
-        return i.reply({ embeds: [new EmbedBuilder().setTitle('🔗 Linked Steam accounts').setDescription(lines.join('\n')).setColor(0x1b2838)] });
+        return i.reply({ embeds: [new EmbedBuilder().setTitle('🔗 Linked Steam accounts').setDescription(lines.join('\n')).setColor(0x1b2838)], components: linkRow });
       },
     },
   ],

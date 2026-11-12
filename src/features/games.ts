@@ -14,7 +14,7 @@ import { db, transaction } from '../db.ts';
 import type { Feature } from '../types.ts';
 import { humansIn, paginate } from '../util.ts';
 import { findOnSteam } from './gamefacts.ts';
-import { appInfo, DECK_PLAYABLE, DECK_VERIFIED, ensureAppInfo, familiesOf, familyOf, isShareable, linkFor, ownedSteamGames, refreshStale, type OwnedGame } from './steam.ts';
+import { appInfo, DECK_PLAYABLE, DECK_VERIFIED, ensureAppInfo, familiesOf, familyOf, isShareable, linkFor, linkSteamButton, ownedSteamGames, refreshStale, type OwnedGame } from './steam.ts';
 import { commandMention } from '../commandIds.ts';
 import { logActivity } from '../activity.ts';
 
@@ -391,14 +391,14 @@ export async function candidatesFor(guild: Guild, here: string[]) {
   const notes: string[] = [];
   if (unknown.length) notes.push(`Not counted (no Steam linked): ${mentions(unknown)}`);
   if (privateIds.length) notes.push(`🔒 Steam game details private: ${mentions(privateIds)}`);
-  return { counted, candidates, notes };
+  return { counted, candidates, notes, unlinked: unknown };
 }
 
 /** Picks a game for the people in a voice channel. The buttons remember the channel, so anyone can press them */
 async function buildPick(guild: Guild, room: VoiceBasedChannel, filter: PickFilter, avoid?: string) {
   const here = humansIn(room).map((m) => m.id);
   const found = await candidatesFor(guild, here);
-  if (!found) return { content: NOBODY_COUNTED, embeds: [], components: [] };
+  if (!found) return { content: NOBODY_COUNTED, embeds: [], components: [new ActionRowBuilder<ButtonBuilder>().addComponents(linkSteamButton())] };
   const { counted, notes } = found;
   const candidates = found.candidates.filter((c) => passes(c, filter));
 
@@ -431,6 +431,8 @@ async function buildPick(guild: Guild, room: VoiceBasedChannel, filter: PickFilt
     new ButtonBuilder().setCustomId(`wdp:reroll:${filter.type ?? ''}:${filter.deck ?? 0}:${room.id}`).setLabel('Reroll').setEmoji('🎲').setStyle(ButtonStyle.Primary).setDisabled(ready.length < 2),
     new ButtonBuilder().setCustomId('vote:start').setLabel('Vote').setEmoji('🗳️').setStyle(ButtonStyle.Secondary).setDisabled(ready.length < 2),
   );
+  // Whoever isn't counted can link from here
+  if (found.unlinked.length) buttons.addComponents(linkSteamButton());
   if (pick?.appid) {
     buttons.addComponents(new ButtonBuilder().setCustomId(`wdp:hide:${pick.appid}:${filter.type ?? ''}:${filter.deck ?? 0}:${room.id}`).setLabel('Never suggest this').setStyle(ButtonStyle.Secondary));
   }

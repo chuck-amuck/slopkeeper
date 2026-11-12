@@ -127,7 +127,7 @@ The bot builds a picture of who owns what from two sources:
 
 | Command | What it does |
 | --- | --- |
-| `/steam link profile [user]` | Links a Steam account and immediately reads its library. `profile` can be a profile URL (`https://steamcommunity.com/id/samplays`), a vanity name (`samplays`) or a 17-digit SteamID64. Use `user` to link it for someone else. |
+| `/steam link profile [user]` | Links a Steam account and immediately reads its library. `profile` can be a profile URL (`https://steamcommunity.com/id/samplays`), a vanity name (`samplays`) or a 17-digit SteamID64. Use `user` to link it for someone else. A **Link my Steam** button does the same with a form, on `/steam list` and on a `/whatdoweplay` card when someone in voice isn't counted. |
 | `/steam unlink [user]` | Removes a link and forgets that library. Defaults to you. |
 | `/steam list` | Shows everyone who's linked, with a profile link, game count and family. 🔒 means their game details are private. |
 | `/steam family with [user]` | Says who shares a Steam library. `user` joins the family of `with`, and defaults to you. |

@@ -17,7 +17,7 @@ import { logActivity, recentActivity } from '../src/activity.ts';
 import { Mixer } from '../src/mixer.ts';
 import { noteGame } from '../src/gameNames.ts';
 import { activity, stats } from '../src/features/gamestats.ts';
-import { steam } from '../src/features/steam.ts';
+import { steam, unlinkSteam } from '../src/features/steam.ts';
 import { BIN_DAYS, clearBin, levelLibrary, setJoinSound, soundboard, soundGain } from '../src/features/soundboard.ts';
 import { lengthFor } from '../src/features/say.ts';
 import { setting, setSetting } from '../src/settings.ts';
@@ -2346,7 +2346,35 @@ test('/steam link, list and unlink work as they did', async (t) => {
   assert.match((await run('list', {})).embeds[0].toJSON().description, new RegExp(`<@u1> · \\[profile\\]\\(https://steamcommunity.com/profiles/${OTHER_STEAM}\\) · 🔒`));
   assert.equal((await run('unlink', {})).content, 'Unlinked <@u1>.');
   assert.equal(await account('u1'), null);
-  assert.match((await run('list', {})) as string, /Nobody here has linked/);
+  const empty = await run('list', {});
+  assert.match(empty.content, /Nobody here has linked/);
+  assert.equal(empty.components[0].toJSON().components[0].custom_id, 'steam:link');
+});
+
+test('the Link my Steam button opens a form that links whoever fills it in', async (t) => {
+  steamApi(t);
+  let modal: any;
+  await steam.onButton!({ customId: 'steam:link', showModal: async (m: unknown) => void (modal = m) } as never);
+  assert.equal(modal.toJSON().components[0].components[0].custom_id, 'profile');
+  const submit = async (profile: string) => {
+    let answer: string | undefined;
+    let flags: unknown;
+    await steam.onModal!({
+      customId: 'steam:link',
+      guildId: GUILD,
+      user: { id: 'u2' },
+      fields: { getTextInputValue: () => profile },
+      deferReply: async (o: { flags: unknown }) => void (flags = o.flags),
+      editReply: async (r: string) => void (answer = r),
+    } as never);
+    assert.ok(flags, 'answered privately');
+    return answer!;
+  };
+  assert.match(await submit('nobody-here'), /Couldn’t find that Steam profile/);
+  assert.equal(await submit(`  ${VALVE} `), '🔗 Linked (2 games). Picks and sale alerts count your library now.');
+  assert.equal((await account('u2'))!.games, 2);
+  assert.equal(activityText().at(-1), 'Linked their Steam account');
+  unlinkSteam('u2');
 });
 
 const pingsUrl = `/guilds/${GUILD}/game-pings`;
