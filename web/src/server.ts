@@ -17,7 +17,14 @@ const TOO_BIG = 'That file is over 60 MB.';
 // Syncing a full soundboard to Discord takes a while
 const BOT_TIMEOUT_MS = 5 * 60_000;
 
-const CONTENT_TYPES = { html: 'text/html; charset=utf-8', js: 'text/javascript; charset=utf-8', css: 'text/css; charset=utf-8', svg: 'image/svg+xml' };
+const CONTENT_TYPES = {
+  html: 'text/html; charset=utf-8',
+  js: 'text/javascript; charset=utf-8',
+  css: 'text/css; charset=utf-8',
+  svg: 'image/svg+xml',
+  png: 'image/png',
+  manifest: 'application/manifest+json',
+};
 const read = (file: string) => readFileSync(new URL(`../public/${file}`, import.meta.url));
 const FILES: [path: string, file: string, type: keyof typeof CONTENT_TYPES][] = [
   ['/', 'index.html', 'html'],
@@ -28,6 +35,11 @@ const FILES: [path: string, file: string, type: keyof typeof CONTENT_TYPES][] = 
     .map((file): [string, string, 'js'] => [`/${file}`, file, 'js']),
   ['/style.css', 'style.css', 'css'],
   ['/icon.svg', 'icon.svg', 'svg'],
+  // For adding the page to a phone's home screen
+  ['/manifest.webmanifest', 'manifest.webmanifest', 'manifest'],
+  ['/apple-touch-icon.png', 'apple-touch-icon.png', 'png'],
+  ['/icon-192.png', 'icon-192.png', 'png'],
+  ['/icon-512.png', 'icon-512.png', 'png'],
 ];
 const sources = new Map(FILES.map(([path, file]) => [path, read(file)]));
 const hash = (...parts: Buffer[]) => parts.reduce((h, part) => h.update(part), createHash('sha256')).digest('base64url').slice(0, 16);

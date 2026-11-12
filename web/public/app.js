@@ -28,11 +28,28 @@ if (recall('tab') === 'library') {
   remember('tab', 'board');
   remember(VIEW_KEY, 'manage');
 }
-let tab = TABS.some(([id]) => id === recall('tab')) ? recall('tab') : 'board';
+const isTab = (id) => TABS.some(([t]) => t === id);
+// The address names the tab, so Back, a bookmark or a shared link opens it. Without one, the tab used last
+const fromHash = () => location.hash.slice(1);
+let tab = isTab(fromHash()) ? fromHash() : isTab(recall('tab')) ? recall('tab') : 'board';
+history.replaceState(null, '', `#${tab}`);
+
+addEventListener('popstate', () => {
+  const id = fromHash();
+  if (!isTab(id)) return history.replaceState(null, '', `#${tab}`);
+  if (id === tab) return;
+  tab = id;
+  remember('tab', id);
+  // Over the login or a retry screen it's just remembered, and shown once the tabs are
+  if (!app.querySelector('.bottom-nav')) return;
+  focusTitle = true;
+  renderFrame();
+});
 
 function showLogin() {
   // Requests made side by side can each find the session expired, and a second form would wipe what's being typed
   if (app.querySelector(':scope > .login')) return;
+  document.title = 'Log in · Slopkeeper';
   player.stop();
   stopWatchingPlaying();
   const password = el('input', { type: 'password', autocomplete: 'current-password', required: true, placeholder: 'Password', ariaLabel: 'Password', 'aria-describedby': 'login-error' });
@@ -152,6 +169,7 @@ addEventListener('resize', fitNav);
 let focusTitle = false;
 
 function openTab(id) {
+  if (id !== tab) history.pushState(null, '', `#${id}`);
   tab = id;
   remember('tab', id);
   focusTitle = true;
@@ -271,6 +289,7 @@ function renderFrame() {
   if (guild) watchPlaying();
   else stopWatchingPlaying();
 
+  document.title = `${TABS.find(([id]) => id === tab)[1]} · Slopkeeper`;
   fitNav();
   if (focusTitle) title.focus();
   focusTitle = false;
