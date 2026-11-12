@@ -3446,8 +3446,17 @@ span.steam-family {
 
 /* A phone: the tabs move to a bar along the bottom, and who you are and Log out go under More */
 @media (max-width: 640px) {
+  /* Firefox for Android lets the end of the page lift off the bottom of the screen as its toolbar slides away, and
+     the strip it leaves under the bar shows the page's base colour, which nothing on the page can paint over. That
+     colour is the bar's, so the bar seems to run on down, and the page keeps its own colour by filling the screen */
   html {
     --bar-h: calc(60px + env(safe-area-inset-bottom, 0px));
+    background: var(--surface);
+  }
+
+  body {
+    min-height: 100vh;
+    min-height: 100svh;
   }
 
   header nav:not(.bottom-nav),
@@ -3467,18 +3476,6 @@ span.steam-family {
     height: var(--bar-h);
     padding-bottom: env(safe-area-inset-bottom, 0px);
     border-top: 1px solid var(--line);
-    background: var(--surface);
-  }
-
-  /* Some phone browsers leave a strip below the bar at the very end of a page, as their own toolbar slides away. The
-     bar's colour carries on down into it, rather than the page showing through */
-  .bottom-nav::after {
-    content: '';
-    position: absolute;
-    top: 100%;
-    right: 0;
-    left: 0;
-    height: 120px;
     background: var(--surface);
   }
 
