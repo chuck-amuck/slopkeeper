@@ -204,7 +204,8 @@ function view(night: Night) {
 
 async function createEvent(guild: Guild, night: NewNight): Promise<string | null> {
   const me = guild.members.me;
-  if (!me?.permissions.has(PermissionFlagsBits.CreateEvents) && !me?.permissions.has(PermissionFlagsBits.ManageEvents)) return null;
+  // Manage Events alone no longer lets a bot create events, only edit them
+  if (!me?.permissions.has(PermissionFlagsBits.CreateEvents)) return null;
   const event = await guild.scheduledEvents.create({
     name: `${night.game} night`.slice(0, 100),
     description: night.details?.slice(0, 1000),
@@ -546,9 +547,11 @@ export const gameNights: Feature = {
         return refreshCard(i.client, night);
       }
       if (night.cancelled) return i.update({ content: `**${night.game}** night was already cancelled.`, components: [] });
+      // Deleting the Discord event can take longer than the 3 s Discord waits for an answer
+      await i.deferUpdate();
       await markCancelled(i.guild, night);
       logActivity(night.guild_id, i.user.id, `Cancelled **${night.game}** night`);
-      await i.update({ content: `❌ Cancelled **${night.game}** night.`, components: [] });
+      await i.editReply({ content: `❌ Cancelled **${night.game}** night.`, components: [] });
       await refreshCard(i.client, getNight(night.id)!);
       const going = rsvps(night.id).in.filter((id) => id !== i.user.id);
       if (night.starts_at > Date.now() && going.length) await i.followUp(offNotice(night, going));

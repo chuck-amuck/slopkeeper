@@ -1,4 +1,5 @@
 import {
+  InteractionContextType,
   MessageFlags,
   PermissionFlagsBits,
   SlashCommandBuilder,
@@ -21,7 +22,7 @@ import { idSetting } from '../settings.ts';
 import { coverFor, isShortLink, MOST_FROM_LINK, myPlaylists, parseLink, playlistsReady, RateLimited, search, searchReady, SpotifyError, tracksFor, type Track } from '../spotify.ts';
 import type { Feature } from '../types.ts';
 import { humansIn } from '../util.ts';
-import { botChannelId, EXTENSIONS, onPlaybackStop, playLong } from './soundboard.ts';
+import { botChannelId, EXTENSIONS, onMusicCheck, onPlaybackStop, playLong } from './soundboard.ts';
 
 // Jumping within a song stops this far short of its end, which would only end it
 const END_SLACK_MS = 6_000;
@@ -404,7 +405,7 @@ async function playCurrent(s: Session, fromMs = 0): Promise<string | null> {
 function onSongEnd(s: Session, turn: number, byItself: boolean) {
   if (s.turn !== turn || sessions.get(s.guild.id) !== s) return;
   s.stopAudio = undefined;
-  if (byItself && s.phase === 'playing') void moveOn(s);
+  if (byItself && s.phase === 'playing') void moveOn(s).catch((err) => console.error(`Moving on to the next song in ${s.guild.name} failed:`, err));
   else if (s.phase !== 'paused') pauseHere(s, null);
 }
 
@@ -860,7 +861,7 @@ export const music: Feature = {
       data: new SlashCommandBuilder()
         .setName('music')
         .setDescription('Music in voice, with a queue everyone shares')
-        .setDMPermission(false)
+        .setContexts(InteractionContextType.Guild)
         .addSubcommand((s) =>
           s
             .setName('play')
@@ -894,6 +895,10 @@ export const music: Feature = {
       if (keepMusic) return;
       const s = sessions.get(guildId);
       if (s && s.phase !== 'paused') pauseHere(s, null);
+    });
+    onMusicCheck((guildId) => {
+      const phase = sessions.get(guildId)?.phase;
+      return phase === 'playing' || phase === 'starting';
     });
     listening = new AbortController();
     void listen(listening.signal);

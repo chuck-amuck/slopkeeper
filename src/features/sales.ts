@@ -1,4 +1,4 @@
-import { EmbedBuilder, escapeMarkdown, SlashCommandBuilder, type Client, type Guild } from 'discord.js';
+import { EmbedBuilder, escapeMarkdown, MessageFlags, SlashCommandBuilder, type Client, type Guild } from 'discord.js';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { config } from '../config.ts';
 import { db } from '../db.ts';
@@ -290,7 +290,7 @@ export const sales: Feature = {
     {
       data: new SlashCommandBuilder().setName('sales').setDescription('Show what this server plays or wants that’s on sale'),
       async run(i) {
-        if (!i.inCachedGuild()) return i.reply('Use this in a server.');
+        if (!i.inCachedGuild()) return i.reply({ content: 'Use this in a server.', flags: MessageFlags.Ephemeral });
         await i.deferReply();
         const games = await onSale(i.guild);
         if (!games.length) return i.editReply('Nothing this server plays or wants is on sale right now.');

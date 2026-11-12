@@ -22,7 +22,9 @@ export async function achievementProgress(appid: number, userIds: string[]) {
 /** Games with a Steam ID that people here have */
 function steamGames(guild: Guild) {
   const library = allGames(guild.id).flatMap((g) => (g.steam_appid === null ? [] : [{ name: g.name, appid: g.steam_appid }]));
-  return [...library, ...memberGames(guild).map((g) => ({ name: g.name, appid: g.appid }))];
+  // A game in the library is often in people's Steam libraries too, so each shows once
+  const seen = new Set<number>();
+  return [...library, ...memberGames(guild).map((g) => ({ name: g.name, appid: g.appid }))].filter((g) => !seen.has(g.appid) && seen.add(g.appid));
 }
 
 function autocomplete(i: AutocompleteInteraction) {

@@ -566,7 +566,8 @@ export const steam: Feature = {
         }
 
         if (sub === 'unlink') {
-          if (unlinkSteam(user.id)) note(`Unlinked ${name(user.id)}’s Steam account`);
+          if (!unlinkSteam(user.id)) return i.reply({ content: `${user} has no Steam account linked.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
+          note(`Unlinked ${name(user.id)}’s Steam account`);
           return i.reply({ content: `Unlinked ${user}.`, allowedMentions: { parse: [] } });
         }
 

@@ -350,7 +350,7 @@ The bot holds a library of uploaded sounds and plays them in your voice channel.
 | --- | --- |
 | `/sound panel` | Posts a button grid in the current channel: 20 sounds per page, ◀ ▶ to flip pages, ⏹ **Stop** to silence every sound and line of speech (the music carries on). The bot keeps every panel it posts up to date as sounds change, so post one in a handy channel and pin it. |
 | `/sound play name` | Plays one sound in your voice channel. The name autocompletes. |
-| `/sound stop` | Stops everything and makes the bot leave voice. The reply is in the channel, so people can see who stopped it. |
+| `/sound stop` | Stops the sounds and speech, like the Stop button, and makes the bot leave voice. If music is playing, it carries on and the bot stays: music has its own controls and [DJ role](#music). The reply is in the channel, so people can see who stopped it. |
 | `/sound join [name]` | Picks a sound that plays when you join voice. Leave `name` empty to stop having one. |
 
 You have to be in a voice channel to play a sound. The bot joins whichever channel you're in.
@@ -500,29 +500,29 @@ Every setting has a sensible default, so only the announce channel needs setting
 | --- | --- |
 | `/setup show` | Lists every setting, its current value and where it comes from: **set here** (with `/setup`), **host default** (the host's `.env`) or **default**. |
 | `/setup announce-channel channel` | Sets where hop-on pings, session recaps, the weekly leaderboard, the monthly recap and sale alerts are posted, and free games unless they have their own channel. Until it's set, the bot works but posts nothing. It checks that it can post in the channel and tells you which permission is missing if not. |
-| `/setup hopon-role [role]` | Sets the role that hop-on pings ping, which `/notify` hands out. Leave `role` empty to post hop-on pings without pinging that role. It warns you if its own role is below this one, since Discord then won't let it hand the role out. |
+| `/setup hopon-role [role] [off]` | Sets the role that hop-on pings ping, which `/notify` hands out. `off:True` posts hop-on pings without pinging a role. It warns you if its own role is below this one, since Discord then won't let it hand the role out. |
 | `/setup hopon [min_people] [cooldown_minutes]` | How many people a voice channel needs before a hop-on ping, and how long to wait before the next one. |
 | `/setup sessions [recaps] [recap_min_minutes] [grace_minutes]` | Whether a recap is posted when a session ends (sessions count in stats either way). The shortest session that counts: shorter ones get no recap and aren't in stats or leaderboards. Also how long a channel stays empty before its session ends. |
 | `/setup leaderboard [enabled] [day] [hour]` | Whether and when the weekly voice leaderboard is posted. |
-| `/setup timezone zone` | The server's time zone, used for the weekly post, counting "nights" on leaderboards, and reading game night times. Autocompletes, e.g. `America/Chicago`, `Europe/London`. |
-| `/setup steam-region country` | Steam store region for sale prices, as a two-letter country code. |
+| `/setup timezone [zone]` | The server's time zone, used for the weekly post, counting "nights" on leaderboards, and reading game night times. Autocompletes, e.g. `America/Chicago`, `Europe/London`. |
+| `/setup steam-region [country]` | Steam store region for sale prices, as a two-letter country code. |
 | `/setup free-game-filters [min_rating] [like_what_we_play] [multiplayer_only] [not_on_steam]` | Chooses which free games are worth posting. See [Free games](#free-games). |
 | `/setup sale-alerts [min_discount] [steam_wishlists] [channel]` | Sets the smallest sale worth posting, whether Steam wishlists count, and a channel of their own. See [Sale alerts](#sale-alerts). |
-| `/setup free-games enabled [channel]` | Turns free game posts on or off. `channel` gives them their own channel; without it they go to the announce channel. To move them back to the announce channel, use `/setup reset setting:Free games channel`. |
-| `/setup gamenight-reminder minutes` | How long before a game night to remind the people who are in. `0` turns reminders off. |
-| `/setup monthly-recap enabled` | Turns the post on the 1st of each month on or off. |
+| `/setup free-games [enabled] [channel]` | Turns free game posts on or off. `channel` gives them their own channel; without it they go to the announce channel. To move them back to the announce channel, use `/setup reset setting:Free games channel`. |
+| `/setup gamenight-reminder [minutes]` | How long before a game night to remind the people who are in. `0` turns reminders off. |
+| `/setup monthly-recap [enabled]` | Turns the post on the 1st of each month on or off. |
 | `/setup patch-notes [mode] [channel]` | Posts patch notes for games played here: `each` as they come out, `digest` once a week, or `off`. `channel` gives them their own channel. |
-| `/setup steam-status enabled` | Whether what linked members in voice are playing on Steam counts when Discord doesn't show it. |
+| `/setup steam-status [enabled]` | Whether what linked members in voice are playing on Steam counts when Discord doesn't show it. |
 | `/setup sounds [even_volume] [join_sounds] [join_cooldown_minutes] [join_delay_ms] [volume]` | Turns [even volume](#even-volume) and join sounds on or off, and sets how often one person's join sound can play and how long the bot waits after connecting before it plays. `volume` sets how loud every sound plays. |
 | `/setup loop-room [channel] [off] [sound] [volume] …` | Plays a sound, and speech if you like, nonstop while anyone's in a voice channel. `off:True` turns it off and keeps the rest of its settings. See [looping sound room](#looping-sound-room). |
 | `/setup music [volume] [dj_role] [everyone]` | How loud music plays, and who can control it. `everyone:True` takes the role limit off. See [Music](#music). |
-| `/setup sound-managers [role]` | Limits changing sounds to a role, plus people with **Manage Server**. Leave `role` empty to let everyone change them, which is the default. See [who can change sounds](#who-can-change-sounds). |
+| `/setup sound-managers [role] [everyone]` | Limits changing sounds to a role, plus people with **Manage Server**. `everyone:True` lets everyone change them again, which is the default. See [who can change sounds](#who-can-change-sounds). |
 | `/setup speech [enabled] [speed] [volume] …` | Text to speech: on or off, its speed, the limits on `/say`, and what the bot says aloud by itself. See [Text to speech](#text-to-speech). |
-| `/setup speech-role [role]` | Limits `/say` and having messages read out to a role, plus people with **Manage Server**. Leave `role` empty to let everyone. |
+| `/setup speech-role [role] [everyone]` | Limits `/say` and having messages read out to a role, plus people with **Manage Server**. `everyone:True` lets everyone again. |
 | `/setup speech-channel [channel] [off] [who]` | Reads out what people type in a channel. `off:True` stops it. |
 | `/setup reset setting` | Puts one setting back to its default. |
 
-For the commands with several options, only the options you fill in change. Give none and the reply shows how those settings are now.
+Only the options you fill in change. Give none and the reply shows how those settings are now, without changing anything.
 
 Examples:
 ```

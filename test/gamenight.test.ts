@@ -171,6 +171,8 @@ async function press(customId: string, user: string, manageEvents = false) {
     client: { channels: { fetch: async () => ({ isTextBased: () => true, messages: { edit: async (_id: string, r: typeof card) => (card = r) } }) } },
     memberPermissions: { has: () => manageEvents },
     update: async (r: typeof update) => (update = r),
+    deferUpdate: async () => {},
+    editReply: async (r: typeof update) => (update = r),
     reply: async (r: typeof reply) => (reply = r),
     followUp: async () => {},
   } as never);

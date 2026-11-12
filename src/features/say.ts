@@ -10,7 +10,7 @@ import { db } from '../db.ts';
 import { levelSpeech } from '../loudness.ts';
 import { DEFAULTS, idSetting, setting } from '../settings.ts';
 import type { Feature } from '../types.ts';
-import { humansIn } from '../util.ts';
+import { canSee, humansIn } from '../util.ts';
 import { plural } from './gamestats.ts';
 import { onPlaybackStop, play, setGreeter, setLoopSpeaker } from './soundboard.ts';
 
@@ -274,7 +274,10 @@ export function speechFor(guild: Guild, typed: string) {
   return typed
     .replace(/<@!?(\d+)>/g, (_, id: string) => guild.members.cache.get(id)?.displayName ?? 'someone')
     .replace(/<@&(\d+)>/g, (_, id: string) => guild.roles.cache.get(id)?.name ?? 'a role')
-    .replace(/<#(\d+)>/g, (_, id: string) => guild.channels.cache.get(id)?.name ?? 'a channel')
+    .replace(/<#(\d+)>/g, (_, id: string) => {
+      const channel = guild.channels.cache.get(id);
+      return channel && canSee(guild, channel) ? channel.name : 'a channel';
+    })
     .replace(/<a?:(\w+):\d+>/g, ' $1 ')
     .replace(LINK, 'link')
     .replace(/[\p{Extended_Pictographic}\p{Emoji_Modifier}‍️]/gu, ' ')

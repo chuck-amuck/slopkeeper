@@ -7,9 +7,10 @@ import { rolesForGames } from './gameroles.ts';
 import { announceAloud } from './say.ts';
 import { checkSteamStatusOf } from './steam.ts';
 import { commandMention } from '../commandIds.ts';
+import { getKv, setKv } from '../db.ts';
 
-/** Server id → when it was last pinged */
-const lastPingAt = new Map<string, number>();
+/** When a server was last pinged, kept in the database so a restart doesn't ping again */
+const lastPingAt = (guildId: string) => Number(getKv(`hopOnPingAt:${guildId}`) ?? 0);
 
 async function onVoiceState(client: Client<true>, oldState: VoiceState, newState: VoiceState) {
   const channel = newState.channel;
@@ -20,10 +21,10 @@ async function onVoiceState(client: Client<true>, oldState: VoiceState, newState
   // Joins add one person at a time, so this fires exactly once as the channel crosses the threshold
   const humans = humansIn(channel);
   if (humans.length !== setting(guildId, 'hopOnMinPeople')) return;
-  if (Date.now() - (lastPingAt.get(guildId) ?? 0) < setting(guildId, 'hopOnCooldownMin') * 60_000) return;
+  if (Date.now() - lastPingAt(guildId) < setting(guildId, 'hopOnCooldownMin') * 60_000) return;
   const out = await announceChannel(client, guildId);
   if (!out) return;
-  lastPingAt.set(guildId, Date.now());
+  setKv(`hopOnPingAt:${guildId}`, String(Date.now()));
 
   await checkSteamStatusOf(guildId, humans.map((m) => m.id));
   const games = [...new Set(humans.flatMap(playingGames).map((game) => gameName(guildId, game)))];
@@ -50,16 +51,19 @@ export const hopOn: Feature = {
         if (!roleId) {
           return i.reply({ content: `This server has no hop-on role. A server admin can set one with ${commandMention(i.guildId, 'setup hopon-role')}.`, flags: MessageFlags.Ephemeral });
         }
+        // Changing roles can take longer than the 3 s Discord waits for an answer when it's busy
+        await i.deferReply({ flags: MessageFlags.Ephemeral });
+        const more = `-# More pings, like for each game: ${commandMention(i.guildId, 'pings')}`;
         try {
           if (i.member.roles.cache.has(roleId)) {
             await i.member.roles.remove(roleId);
-            return await i.reply({ content: '🔕 You will no longer be pinged when people hop on.', flags: MessageFlags.Ephemeral });
+            return await i.editReply(`🔕 You will no longer be pinged when people hop on.\n${more}`);
           }
           await i.member.roles.add(roleId);
-          return await i.reply({ content: '🔔 You will be pinged when people hop on.', flags: MessageFlags.Ephemeral });
+          return await i.editReply(`🔔 You will be pinged when people hop on.\n${more}`);
         } catch (err) {
           if (!(err instanceof DiscordAPIError && err.code === RESTJSONErrorCodes.MissingPermissions)) throw err;
-          return i.reply({ content: `I couldn’t change your roles. My role needs **Manage Roles** and has to be above <@&${roleId}>.`, flags: MessageFlags.Ephemeral });
+          return i.editReply(`I couldn’t change your roles. My role needs **Manage Roles** and has to be above <@&${roleId}>.`);
         }
       },
     },

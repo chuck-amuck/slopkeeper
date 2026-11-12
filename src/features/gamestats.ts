@@ -108,10 +108,15 @@ function gameSpans(plays: (Span & { game: string })[]) {
 const clippedPlays = (where: string) =>
   `SELECT user_id AS userId, game, MAX(started_at, :since) AS start, MIN(ended_at, :until) AS end, ended_at AS last FROM named_plays WHERE ${where} ORDER BY start`;
 
-interface Play extends Span {
+export interface Play extends Span {
   userId: string;
   game: string;
   last: number;
+}
+
+/** The plays in a period, by one person or of one game if given, each clipped to the period */
+export function playsIn(guildId: string, since: number, until: number, user?: string, game?: string): Play[] {
+  return db.prepare(clippedPlays(playsWhere(user, game))).all({ guild: guildId, since, until, ...(user ? { user } : {}), ...(game ? { game } : {}) }) as unknown as Play[];
 }
 
 /** Totals by game or person. Overlaps count once: a game's time is how long it was being played, not everyone's time added up */
@@ -124,8 +129,11 @@ export function stats(
   game?: string,
   until = Date.now(),
 ) {
-  const where = playsWhere(filter === 'user' || filter === 'both' ? 'user' : undefined, filter === 'game' || filter === 'both' ? 'game' : undefined);
-  const plays = db.prepare(clippedPlays(where)).all({ guild: guildId, since, until, ...(user ? { user } : {}), ...(game ? { game } : {}) }) as unknown as Play[];
+  return totalsBy(playsIn(guildId, since, until, filter === 'user' || filter === 'both' ? user : undefined, filter === 'game' || filter === 'both' ? game : undefined), groupBy);
+}
+
+/** `stats` for plays already fetched */
+export function totalsBy(plays: Play[], groupBy: 'game' | 'user_id') {
   const groups = Map.groupBy(plays, (p) => (groupBy === 'game' ? p.game : p.userId));
   return [...groups]
     .map(([key, group]) => ({
@@ -142,7 +150,11 @@ export function stats(
  * as in `stats`. Every step is listed, so a quiet one shows up as a gap.
  */
 export function activity(guildId: string, since: number, until: number, timeZone: string, user?: string, game?: string) {
-  const rows = db.prepare(clippedPlays(playsWhere(user, game))).all({ guild: guildId, since, until, ...(user ? { user } : {}), ...(game ? { game } : {}) }) as unknown as Play[];
+  return activityOf(playsIn(guildId, since, until, user, game), since, until, timeZone);
+}
+
+/** `activity` for plays already fetched */
+export function activityOf(rows: Play[], since: number, until: number, timeZone: string) {
   if (!rows.length) return { step: 'day', buckets: [] };
   const plays = [...gameSpans(rows).values()].flat();
 

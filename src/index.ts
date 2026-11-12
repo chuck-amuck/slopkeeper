@@ -1,36 +1,13 @@
 import { Events, MessageFlags, type Guild, type Interaction } from 'discord.js';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { webApi } from './api.ts';
-import { backups } from './backup.ts';
 import { client } from './client.ts';
 import { commandMention, rememberCommands } from './commandIds.ts';
 import { config } from './config.ts';
 import { db } from './db.ts';
-import { freeGames } from './features/freegames.ts';
-import { gameNights } from './features/gamenight.ts';
-import { gamePings } from './features/gameroles.ts';
-import { games } from './features/games.ts';
-import { gameStats } from './features/gamestats.ts';
-import { achievements } from './features/achievements.ts';
-import { gameVotes } from './features/gamevote.ts';
-import { help } from './features/help.ts';
-import { hopOn } from './features/hopon.ts';
-import { music } from './features/music.ts';
-import { patchNotes } from './features/patchnotes.ts';
-import { recap } from './features/recap.ts';
-import { sales } from './features/sales.ts';
-import { sessions } from './features/sessions.ts';
-import { setup } from './features/setup.ts';
-import { speak } from './features/say.ts';
-import { soundboard } from './features/soundboard.ts';
-import { steam } from './features/steam.ts';
 import { idSetting, isAllowed } from './settings.ts';
-import type { Feature } from './types.ts';
+import { features, startOrder } from './features/all.ts';
 import { servedGuilds } from './util.ts';
 
-// In /help order
-const features: Feature[] = [hopOn, gamePings, gameNights, sessions, gameStats, recap, games, gameVotes, steam, achievements, patchNotes, freeGames, sales, soundboard, music, setup, backups, webApi, speak];
-features.unshift(help(features));
 const commands = new Map(features.flatMap((f) => f.commands ?? []).map((c) => [c.data.name, c]));
 
 /** Registers the commands in a server, or leaves it if it isn't allowed */
@@ -56,8 +33,9 @@ async function join(guild: Guild, isNew: boolean) {
 }
 
 client.once(Events.ClientReady, async (c) => {
-  for (const guild of c.guilds.cache.values()) await join(guild, false).catch(console.error);
-  for (const feature of features) await feature.setup?.(c);
+  await Promise.all(c.guilds.cache.map((guild) => join(guild, false).catch(console.error)));
+  // One feature failing to start leaves the rest working
+  for (const feature of startOrder) await Promise.resolve(feature.setup?.(c)).catch((err) => console.error(`Starting ${feature.title ?? feature.componentPrefix ?? 'a feature'} failed:`, err));
   const count = servedGuilds(c).length;
   console.log(`Logged in as ${c.user.tag} in ${count} server${count === 1 ? '' : 's'}`);
 });
@@ -92,9 +70,14 @@ client.on(Events.InteractionCreate, async (i) => {
     console.error(`${describe(i)} failed:`, err);
     if (!i.isRepliable()) return;
     const msg = { content: 'Something went wrong on the bot’s side. Try again, and if it keeps happening, tell whoever runs the bot.', flags: MessageFlags.Ephemeral } as const;
+    // A public "thinking…" would turn into the error for everyone, so it goes and only whoever asked sees the error
+    if (i.deferred && !i.replied && i.ephemeral === false) await i.deleteReply().catch(() => {});
     await (i.replied || i.deferred ? i.followUp(msg) : i.reply(msg)).catch(() => {});
   }
 });
+
+// A stray failed promise is logged rather than taking every feature down with it
+process.on('unhandledRejection', (err) => console.error('Unhandled rejection:', err));
 
 for (const signal of ['SIGINT', 'SIGTERM']) {
   process.on(signal, async () => {

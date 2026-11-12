@@ -494,7 +494,8 @@ test('/sound remove can be undone with /sound restore', async () => {
     client: { channels: { cache: new Map() } },
     user: { id: 'person' },
     options: { getSubcommand: () => 'remove', getString: () => 'horn' },
-    reply: async (r: string) => assert.match(r, /within 30 days with `\/sound restore`/),
+    deferReply: async () => {},
+    editReply: async (r: string) => assert.match(r, /within 30 days with `\/sound restore`/),
   } as never);
   let offered: { name: string; value: string }[] = [];
   await soundboard.commands![0].autocomplete!({ guildId: guild, options: { getFocused: () => 'ho', getSubcommand: () => 'restore' }, respond: async (r: typeof offered) => (offered = r) } as never);

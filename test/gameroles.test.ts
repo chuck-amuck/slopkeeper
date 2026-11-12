@@ -106,6 +106,8 @@ async function gamerole(sub: string, game: string, role: object | null = null, g
     user: { id: 'ana', tag: 'ana' },
     options: { getSubcommand: () => sub, getString: () => game, getRole: () => role },
     reply: async (r: { content: string }) => (reply = r),
+    deferReply: async () => {},
+    editReply: async (r: string | { content: string }) => (reply = typeof r === 'string' ? { content: r } : r),
   } as never);
   return { made, deleted, content: reply!.content };
 }

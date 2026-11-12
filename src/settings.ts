@@ -144,9 +144,12 @@ export const DEFAULT_ENV: Partial<Record<SettingKey, string>> = {
 export type SettingKey = keyof typeof DEFAULTS;
 type SettingValue<K extends SettingKey> = (typeof DEFAULTS)[K];
 
+// Prepared once: settings are read on nearly every event
+const readSetting = db.prepare('SELECT value FROM guild_settings WHERE guild_id = ? AND key = ?');
+
 /** The raw /setup value, or undefined when the server uses the default */
 export function storedSetting(guildId: string, key: SettingKey): string | undefined {
-  const row = db.prepare('SELECT value FROM guild_settings WHERE guild_id = ? AND key = ?').get(guildId, key) as { value: string } | undefined;
+  const row = readSetting.get(guildId, key) as { value: string } | undefined;
   return row?.value;
 }
 

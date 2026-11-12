@@ -164,7 +164,11 @@ export const gamePings: Feature = {
         const sub = i.options.getSubcommand();
 
         if (sub === 'menu') {
-          await i.channel?.send(pingMenu());
+          const send = i.channel?.isThread() ? PermissionFlagsBits.SendMessagesInThreads : PermissionFlagsBits.SendMessages;
+          if (!i.channel || !i.appPermissions.has([PermissionFlagsBits.ViewChannel, send])) {
+            return i.reply({ content: 'I can’t post in this channel. Give my role **View Channel** and **Send Messages** here, then try again.', flags: MessageFlags.Ephemeral });
+          }
+          await i.channel.send(pingMenu());
           return i.reply({ content: 'Posted.', flags: MessageFlags.Ephemeral });
         }
 
@@ -172,17 +176,20 @@ export const gamePings: Feature = {
         if (sub === 'remove') {
           const row = db.prepare('SELECT role_id, name, created FROM game_roles WHERE guild_id = ? AND name = ?').get(i.guildId, game) as GameRole | undefined;
           if (!row) return i.reply({ content: `**${game}** has no ping role.`, flags: MessageFlags.Ephemeral });
+          // Deleting the role can take longer than the 3 s Discord waits for an answer
+          await i.deferReply({ flags: MessageFlags.Ephemeral });
           await removeGameRole(i.guild, row, i.user.tag);
           logActivity(i.guildId, i.user.id, `Removed game pings for **${row.name}**`);
-          return i.reply({ content: `🗑️ Removed pings for **${row.name}**.`, flags: MessageFlags.Ephemeral });
+          return i.editReply(`🗑️ Removed pings for **${row.name}**.`);
         }
 
+        // Making a role can take longer than the 3 s Discord waits for an answer
+        await i.deferReply({ flags: MessageFlags.Ephemeral });
         const result = await addGameRole(i.guild, game, i.options.getRole('role'), i.user.tag);
-        if (typeof result === 'string') return i.reply({ content: result, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
+        if (typeof result === 'string') return i.editReply({ content: result, allowedMentions: { parse: [] } });
         logActivity(i.guildId, i.user.id, `Added game pings for **${game}**`);
-        return i.reply({
+        return i.editReply({
           content: `✅ ${result.created ? 'Made' : 'Using'} ${result.role} for **${game}**. People pick it with ${commandMention(i.guildId, 'pings')}.${pingWarning(result.role)}`,
-          flags: MessageFlags.Ephemeral,
           allowedMentions: { parse: [] },
         });
       },

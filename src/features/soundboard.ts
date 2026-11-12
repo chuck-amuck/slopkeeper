@@ -1175,6 +1175,10 @@ const stopListeners: ((guildId: string, keepMusic: boolean) => void)[] = [];
 /** For whatever else is waiting to play, so that Stop stops that too */
 export const onPlaybackStop = (listener: (guildId: string, keepMusic: boolean) => void) => void stopListeners.push(listener);
 
+/** Whether music is on in a server, playing or between songs, as the music feature tells it */
+let musicOn = (_guildId: string) => false;
+export const onMusicCheck = (check: (guildId: string) => boolean) => void (musicOn = check);
+
 // ---------- what's playing ----------
 
 // Starts each run of the bot afresh, so a page that last heard of version 3 before a restart isn't kept waiting
@@ -1569,7 +1573,7 @@ export const soundboard: Feature = {
             .addStringOption((o) => o.setName('name').setDescription('Sound').setRequired(true).setAutocomplete(true)),
         )
         .addSubcommand((s) => s.setName('discord-sync').setDescription('Copy every short sound into Discord’s soundboard while there are free slots'))
-        .addSubcommand((s) => s.setName('stop').setDescription('Stop playback and leave voice'))
+        .addSubcommand((s) => s.setName('stop').setDescription('Stop sounds and speech, and leave voice unless music is playing'))
         .addSubcommand((s) => s.setName('panel').setDescription('Post a soundboard panel in this channel; it updates itself as sounds change')),
       async autocomplete(i) {
         if (!i.guildId) return i.respond([]);
@@ -1628,21 +1632,25 @@ export const soundboard: Feature = {
         if (sub === 'emoji') {
           const sound = findSound(i.guildId, i.options.getString('name', true));
           if (!sound) return i.reply({ content: 'No sound by that name.', ...ephemeral });
+          // Changing it on Discord's soundboard too can take longer than the 3 s Discord waits for an answer
+          await i.deferReply(ephemeral);
           const emojiInput = i.options.getString('emoji');
           const emoji = emojiInput ? await parseEmoji(i.guild, emojiInput) : null;
-          if (emoji && 'error' in emoji) return i.reply({ content: emoji.error, ...ephemeral });
+          if (emoji && 'error' in emoji) return i.editReply(emoji.error);
           await changeEmoji(i.guild, sound.name, emoji?.emoji ?? null);
           logActivity(i.guildId, i.user.id, emoji ? `Set the emoji on **${sound.name}**` : `Cleared the emoji on **${sound.name}**`);
-          await i.reply({ content: emoji ? `${emoji.emoji} set on **${sound.name}**.` : `Cleared the emoji on **${sound.name}**.`, ...ephemeral });
+          await i.editReply(emoji ? `${emoji.emoji} set on **${sound.name}**.` : `Cleared the emoji on **${sound.name}**.`);
           return refreshPanels(i.client, i.guildId);
         }
 
         if (sub === 'remove') {
           const sound = findSound(i.guildId, i.options.getString('name', true));
           if (!sound) return i.reply({ content: 'No sound by that name.', ...ephemeral });
+          // Taking it off Discord's soundboard too can take longer than the 3 s Discord waits for an answer
+          await i.deferReply();
           const { problem } = await removeSound(i.guild, sound);
           logActivity(i.guildId, i.user.id, `Removed sound **${sound.name}**`);
-          await i.reply(`🗑️ Removed sound **${sound.name}**. Bring it back within ${BIN_DAYS} days with ${commandMention(i.guildId, 'sound restore')}.${problem ? `\nCouldn’t remove it from Discord’s soundboard: ${problem}.` : ''}`);
+          await i.editReply(`🗑️ Removed sound **${sound.name}**. Bring it back within ${BIN_DAYS} days with ${commandMention(i.guildId, 'sound restore')}.${problem ? `\nCouldn’t remove it from Discord’s soundboard: ${problem}.` : ''}`);
           return refreshPanels(i.client, i.guildId);
         }
 
@@ -1722,9 +1730,15 @@ export const soundboard: Feature = {
         }
 
         if (sub === 'stop') {
-          leaveVoice(i.guildId);
+          // Music has its own controls and DJ role, so like the panel's Stop this leaves it playing
+          const music = musicOn(i.guildId);
+          if (music) stopPlayback(i.guildId, true);
+          else leaveVoice(i.guildId);
           // Said in the channel, like /music stop, so people in voice can see who stopped it
-          return i.reply({ content: '⏹️ Stopped the sounds.', allowedMentions: { parse: [] } });
+          return i.reply({
+            content: music ? `⏹️ Stopped the sounds and speech. The music carries on: ${commandMention(i.guildId, 'music pause')} pauses it.` : '⏹️ Stopped the sounds.',
+            allowedMentions: { parse: [] },
+          });
         }
 
         const reply = await i.reply({ ...panel(i.guildId, 0), withResponse: true });

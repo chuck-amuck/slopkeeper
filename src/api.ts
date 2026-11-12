@@ -1,4 +1,4 @@
-import { ChannelType, type Client, type Guild, type GuildTextBasedChannel, type VoiceBasedChannel, type VoiceChannel } from 'discord.js';
+import { ChannelType, type Client, type Guild, type GuildBasedChannel, type GuildTextBasedChannel, type NewsChannel, type TextChannel, type VoiceBasedChannel, type VoiceChannel } from 'discord.js';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { createReadStream, createWriteStream, rmSync, statSync } from 'node:fs';
@@ -15,7 +15,7 @@ import { addGameRole, canHandOut, gameRoles, pingableGames, pingChoices, pingMen
 import { addGame, addMemberGame, allGames, familyPlayersOf, gameById, groupMembers, hiddenGames, hideGame, memberGames, NOBODY_COUNTED, ownersOf, parseSteamAppId, removeGame, setGameDetails, setOwned, setWanted, steamOwnersOf, unhideGame, wantedBy, type GameRow } from './features/games.ts';
 import { onSale, saleName, salePrices, saleReasons, storeUrl } from './features/sales.ts';
 import { currentPlayers, familyOf, patchNotes, friendsCheck, joinFamily, leaveFamily, linkSteam, lobbiesIn, profileUrl, refreshAll, steamLinks, unlinkSteam } from './features/steam.ts';
-import { activity, checkpoint, comparison, PERIODS, pickFor, sessionCount, stats } from './features/gamestats.ts';
+import { activityOf, checkpoint, comparison, PERIODS, pickFor, playsIn, sessionCount, stats, totalsBy } from './features/gamestats.ts';
 import { postVote } from './features/gamevote.ts';
 import { recapFor } from './features/recap.ts';
 import { gameName, gameSpellings, mergeGames, separateGame } from './gameNames.ts';
@@ -27,7 +27,7 @@ import { addSound, addToDiscord, afterSettingsChanged, BIN_DAYS, changeEmoji, de
 import { DEFAULTS, idSetting, isAllowed, setSetting, setting, type SettingKey } from './settings.ts';
 import { myPlaylists, playlistsReady, search, SpotifyError, type Track } from './spotify.ts';
 import type { Feature } from './types.ts';
-import { humansIn, pingWarning, servedGuilds } from './util.ts';
+import { canSee, humansIn, pingWarning, servedGuilds } from './util.ts';
 
 // A little over the largest sound, which is the largest thing anything sends
 const MAX_BODY = 5 * 1024 * 1024 + 1024;
@@ -201,11 +201,23 @@ async function soundList(guild: Guild) {
   };
 }
 
+const CHANNEL_SETTINGS = ['announceChannel', 'freeGamesChannel', 'saleChannel', 'patchNotesChannel', 'ttsChannel', 'loopRoom'] as const;
+
+/**
+ * Channels the pickers offer: the ones the bot can see, plus any a setting still points at, so the setting shows as
+ * it is, marked as a problem, rather than as none
+ */
+function listed(guild: Guild) {
+  const inUse = new Set(CHANNEL_SETTINGS.map((key) => idSetting(guild.id, key)));
+  return (c: GuildBasedChannel) => canSee(guild, c) || inUse.has(c.id);
+}
+const channelName = (guild: Guild, c: GuildBasedChannel) => (canSee(guild, c) ? c.name : 'a channel I can’t see');
+
 const textChannels = (guild: Guild) =>
   [...guild.channels.cache.values()]
-    .filter((c) => c.type === ChannelType.GuildText || c.type === ChannelType.GuildAnnouncement)
+    .filter((c): c is TextChannel | NewsChannel => (c.type === ChannelType.GuildText || c.type === ChannelType.GuildAnnouncement) && listed(guild)(c))
     .sort((a, b) => a.rawPosition - b.rawPosition)
-    .map((c) => ({ id: c.id, name: c.name, category: c.parent?.name ?? null }));
+    .map((c) => ({ id: c.id, name: channelName(guild, c), category: c.parent?.name ?? null }));
 
 function settingList(guild: Guild) {
   const keys = Object.keys(DEFAULTS) as SettingKey[];
@@ -221,9 +233,9 @@ function settingList(guild: Guild) {
     })),
     channels: textChannels(guild),
     voiceChannels: [...guild.channels.cache.values()]
-      .filter((c): c is VoiceChannel => c.type === ChannelType.GuildVoice && c.id !== guild.afkChannelId)
+      .filter((c): c is VoiceChannel => c.type === ChannelType.GuildVoice && c.id !== guild.afkChannelId && listed(guild)(c))
       .sort((a, b) => a.rawPosition - b.rawPosition)
-      .map((c) => ({ id: c.id, name: c.name })),
+      .map((c) => ({ id: c.id, name: channelName(guild, c) })),
     sounds: listSounds(guild.id).map((s) => s.name),
     roles: [...guild.roles.cache.values()]
       .filter((r) => r.id !== guild.id && !r.managed)
@@ -275,7 +287,7 @@ function nightList(guild: Guild) {
     channels: textChannels(guild),
     defaultChannel: idSetting(guild.id, 'announceChannel'),
     voiceChannels: [...guild.channels.cache.values()]
-      .filter((c) => c.type === ChannelType.GuildVoice)
+      .filter((c): c is VoiceChannel => c.type === ChannelType.GuildVoice && canSee(guild, c))
       .sort((a, b) => a.rawPosition - b.rawPosition)
       .map((c) => ({ id: c.id, name: c.name })),
     members: memberList(guild),
@@ -457,8 +469,10 @@ function statsFor(guild: Guild, url: URL) {
   const filter = user && game ? 'both' : user ? 'user' : game ? 'game' : 'none';
 
   checkpoint();
-  const games = stats(guild.id, since, filter, 'game', user, game);
-  const players = stats(guild.id, since, filter, 'user_id', user, game).filter((r) => isMember(r.key));
+  // One read of the plays serves every total and the chart
+  const plays = playsIn(guild.id, since, now, user, game);
+  const games = totalsBy(plays, 'game');
+  const players = totalsBy(plays, 'user_id').filter((r) => isMember(r.key));
   // Voice time isn't per game, so it only applies when no game is picked
   const voice = game ? [] : voiceTotals(guild.id, since).filter((p) => isMember(p.userId) && (!user || p.userId === user));
   return {
@@ -477,7 +491,7 @@ function statsFor(guild: Guild, url: URL) {
     games: games.slice(0, MAX_RANKED).map((g) => ({ name: g.key, ms: g.ms, people: g.n, last: g.last })),
     players: players.slice(0, MAX_RANKED).map((p) => ({ id: p.key, name: nameOf(guild, p.key), ms: p.ms, games: p.n, last: p.last })),
     voice: voice.slice(0, MAX_RANKED).map((p) => ({ id: p.userId, name: nameOf(guild, p.userId), ms: p.secs * 1000, nights: p.nights })),
-    activity: activity(guild.id, since, now, setting(guild.id, 'timezone'), user, game),
+    activity: activityOf(plays, since, now, setting(guild.id, 'timezone')),
   };
 }
 

@@ -175,7 +175,9 @@ export const freeGames: Feature = {
         const hidden = reviewed.length - shown.length;
         const note = hidden ? `${hidden} more ${hidden === 1 ? 'is' : 'are'} hidden by this server’s filters. Use \`all\` to see ${hidden === 1 ? 'it' : 'them'}.` : '';
         if (!shown.length) return i.editReply(`Nothing that’s free right now passes this server’s filters. ${note}`);
-        return i.editReply({ content: note, embeds: shown.slice(0, 10).map((g) => embed(g, g.reason)) });
+        // A message holds 10 embeds at most
+        const more = shown.length > 10 ? `Showing 10 of ${shown.length}.` : '';
+        return i.editReply({ content: [note, more].filter(Boolean).join('\n'), embeds: shown.slice(0, 10).map((g) => embed(g, g.reason)) });
       },
     },
   ],

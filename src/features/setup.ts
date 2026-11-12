@@ -379,8 +379,9 @@ export const setup: Feature = {
         .addSubcommand((s) =>
           s
             .setName('hopon-role')
-            .setDescription('Role pinged when people hop in voice; /notify toggles it')
-            .addRoleOption((o) => o.setName('role').setDescription('Leave empty to turn hop-on role pings off')),
+            .setDescription('Role pinged when people hop in voice; /notify toggles it. Give nothing to see it')
+            .addRoleOption((o) => o.setName('role').setDescription('The role to ping'))
+            .addBooleanOption((o) => o.setName('off').setDescription('Turn hop-on role pings off')),
         )
         .addSubcommand((s) =>
           s
@@ -416,19 +417,19 @@ export const setup: Feature = {
           s
             .setName('timezone')
             .setDescription('Time zone for the weekly post, leaderboards and game nights')
-            .addStringOption((o) => o.setName('zone').setDescription('e.g. America/Chicago or Europe/London').setRequired(true).setAutocomplete(true)),
+            .addStringOption((o) => o.setName('zone').setDescription('e.g. America/Chicago or Europe/London').setAutocomplete(true)),
         )
         .addSubcommand((s) =>
           s
             .setName('steam-region')
             .setDescription('Steam store region for sale prices')
-            .addStringOption((o) => o.setName('country').setDescription('Two-letter country code, e.g. us, gb, de').setRequired(true).setMinLength(2).setMaxLength(2)),
+            .addStringOption((o) => o.setName('country').setDescription('Two-letter country code, e.g. us, gb, de').setMinLength(2).setMaxLength(2)),
         )
         .addSubcommand((s) =>
           s
             .setName('free-games')
             .setDescription('Post free-to-keep games on Steam, Epic and GOG (off by default)')
-            .addBooleanOption((o) => o.setName('enabled').setDescription('On or off').setRequired(true))
+            .addBooleanOption((o) => o.setName('enabled').setDescription('On or off'))
             .addChannelOption((o) =>
               o
                 .setName('channel')
@@ -466,13 +467,13 @@ export const setup: Feature = {
           s
             .setName('gamenight-reminder')
             .setDescription('How long before a game night to ping the people who are in')
-            .addIntegerOption((o) => o.setName('minutes').setDescription('0 turns reminders off').setRequired(true).setMinValue(LIMITS.gameNightReminderMin[0]).setMaxValue(LIMITS.gameNightReminderMin[1])),
+            .addIntegerOption((o) => o.setName('minutes').setDescription('0 turns reminders off').setMinValue(LIMITS.gameNightReminderMin[0]).setMaxValue(LIMITS.gameNightReminderMin[1])),
         )
         .addSubcommand((s) =>
           s
             .setName('monthly-recap')
             .setDescription('Post a recap of the month on the 1st (on by default)')
-            .addBooleanOption((o) => o.setName('enabled').setDescription('On or off').setRequired(true)),
+            .addBooleanOption((o) => o.setName('enabled').setDescription('On or off')),
         )
         .addSubcommand((s) =>
           s
@@ -495,7 +496,7 @@ export const setup: Feature = {
           s
             .setName('steam-status')
             .setDescription('Use what linked members in voice are playing on Steam if Discord doesn’t show it (on by default)')
-            .addBooleanOption((o) => o.setName('enabled').setDescription('On or off').setRequired(true)),
+            .addBooleanOption((o) => o.setName('enabled').setDescription('On or off')),
         )
         .addSubcommand((s) =>
           s
@@ -552,7 +553,8 @@ export const setup: Feature = {
           s
             .setName('sound-managers')
             .setDescription('Limit changing sounds to a role, plus people with Manage Server')
-            .addRoleOption((o) => o.setName('role').setDescription('Leave empty to let everyone change sounds')),
+            .addRoleOption((o) => o.setName('role').setDescription('Only this role, plus people with Manage Server, can change sounds'))
+            .addBooleanOption((o) => o.setName('everyone').setDescription('Let everyone change sounds again')),
         )
         .addSubcommand((s) =>
           s
@@ -585,7 +587,8 @@ export const setup: Feature = {
           s
             .setName('speech-role')
             .setDescription('Limit /say to a role, plus people with Manage Server')
-            .addRoleOption((o) => o.setName('role').setDescription('Leave empty to let everyone use it')),
+            .addRoleOption((o) => o.setName('role').setDescription('Only this role, plus people with Manage Server, can use /say'))
+            .addBooleanOption((o) => o.setName('everyone').setDescription('Let everyone use /say again')),
         )
         .addSubcommand((s) =>
           s
@@ -640,7 +643,8 @@ export const setup: Feature = {
 
         if (sub === 'hopon-role') {
           const role = i.options.getRole('role');
-          if (!role) return apply(i, [['hopOnRole', '']]);
+          if (role && i.options.getBoolean('off')) return i.reply({ content: 'Give a role, or `off:True` for no role, not both.', flags: MessageFlags.Ephemeral });
+          if (!role) return apply(i, [['hopOnRole', i.options.getBoolean('off') ? '' : null]]);
           const problem = cantHandOut(i.guild, role as Role);
           if (problem) return i.reply({ content: problem, flags: MessageFlags.Ephemeral });
           setSetting(i.guildId, 'hopOnRole', role.id);
@@ -673,11 +677,15 @@ export const setup: Feature = {
           ]);
         }
         if (sub === 'timezone') {
-          const zone = checkSetting(i.guild, 'timezone', i.options.getString('zone', true));
+          const typed = i.options.getString('zone');
+          if (typed === null) return apply(i, [['timezone', null]]);
+          const zone = checkSetting(i.guild, 'timezone', typed);
           return 'error' in zone ? i.reply({ content: zone.error, flags: MessageFlags.Ephemeral }) : apply(i, [['timezone', zone.value]]);
         }
         if (sub === 'steam-region') {
-          const country = checkSetting(i.guild, 'steamCountry', i.options.getString('country', true));
+          const typed = i.options.getString('country');
+          if (typed === null) return apply(i, [['steamCountry', null]]);
+          const country = checkSetting(i.guild, 'steamCountry', typed);
           return 'error' in country ? i.reply({ content: country.error, flags: MessageFlags.Ephemeral }) : apply(i, [['steamCountry', country.value]]);
         }
         if (sub === 'free-games') {
@@ -685,7 +693,7 @@ export const setup: Feature = {
           const problem = channel && cantPost(i.guild, channel);
           if (problem) return i.reply({ content: problem, flags: MessageFlags.Ephemeral });
           return apply(i, [
-            ['freeGames', i.options.getBoolean('enabled', true)],
+            ['freeGames', i.options.getBoolean('enabled')],
             ['freeGamesChannel', channel?.id ?? null],
           ]);
         }
@@ -707,8 +715,8 @@ export const setup: Feature = {
             ['saleChannel', channel?.id ?? null],
           ]);
         }
-        if (sub === 'gamenight-reminder') return apply(i, [['gameNightReminderMin', i.options.getInteger('minutes', true)]]);
-        if (sub === 'monthly-recap') return apply(i, [['monthlyRecap', i.options.getBoolean('enabled', true)]]);
+        if (sub === 'gamenight-reminder') return apply(i, [['gameNightReminderMin', i.options.getInteger('minutes')]]);
+        if (sub === 'monthly-recap') return apply(i, [['monthlyRecap', i.options.getBoolean('enabled')]]);
         if (sub === 'patch-notes') {
           const channel = i.options.getChannel('channel', false, [ChannelType.GuildText, ChannelType.GuildAnnouncement]);
           const problem = channel && cantPost(i.guild, channel);
@@ -718,7 +726,7 @@ export const setup: Feature = {
             ['patchNotesChannel', channel?.id ?? null],
           ]);
         }
-        if (sub === 'steam-status') return apply(i, [['steamStatus', i.options.getBoolean('enabled', true)]]);
+        if (sub === 'steam-status') return apply(i, [['steamStatus', i.options.getBoolean('enabled')]]);
         if (sub === 'sounds') {
           return apply(i, [
             ['evenVolume', i.options.getBoolean('even_volume')],
@@ -772,14 +780,19 @@ export const setup: Feature = {
           return;
         }
 
+        // A role, or everyone again; nothing given only shows it
+        const roleOrEveryone = (option: string) => i.options.getRole(option)?.id ?? (i.options.getBoolean('everyone') ? '' : null);
+        if ((sub === 'music' || sub === 'sound-managers' || sub === 'speech-role') && i.options.getRole(sub === 'music' ? 'dj_role' : 'role') && i.options.getBoolean('everyone')) {
+          return i.reply({ content: 'Give a role, or `everyone:True` for everyone, not both.', flags: MessageFlags.Ephemeral });
+        }
         if (sub === 'music') {
-          await apply(i, [
+          return apply(i, [
             ['musicVolume', i.options.getInteger('volume')],
-            ['musicDjRole', i.options.getRole('dj_role')?.id ?? (i.options.getBoolean('everyone') ? '' : null)],
+            ['musicDjRole', roleOrEveryone('dj_role')],
           ]);
         }
-        if (sub === 'sound-managers') return apply(i, [['soundManagerRole', i.options.getRole('role')?.id ?? '']]);
-        if (sub === 'speech-role') return apply(i, [['ttsRole', i.options.getRole('role')?.id ?? '']]);
+        if (sub === 'sound-managers') return apply(i, [['soundManagerRole', roleOrEveryone('role')]]);
+        if (sub === 'speech-role') return apply(i, [['ttsRole', roleOrEveryone('role')]]);
         if (sub === 'speech-channel') {
           const channel = i.options.getChannel('channel', false, [ChannelType.GuildText, ChannelType.GuildAnnouncement]);
           const problem = channel && cantSee(i.guild, channel);

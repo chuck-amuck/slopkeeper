@@ -1,9 +1,15 @@
-import { ActivityType, PermissionFlagsBits, type Client, type Guild, type GuildMember, type Role, type SendableChannels, type VoiceBasedChannel } from 'discord.js';
+import { ActivityType, PermissionFlagsBits, type Client, type Guild, type GuildBasedChannel, type GuildMember, type Role, type SendableChannels, type VoiceBasedChannel } from 'discord.js';
 import { idSetting, isAllowed, setting, type IdSettingKey } from './settings.ts';
 import { steamGame } from './steamStatus.ts';
 
 /** For outside services, so a stalled one can't hold a command or a scheduled job for minutes */
 export const requestTimeout = () => AbortSignal.timeout(30_000);
+
+/** Whether the bot can see a channel. Discord hides the names of the ones it can't, and it couldn't use them anyway */
+export function canSee(guild: Guild, channel: GuildBasedChannel): boolean {
+  const me = guild.members.me;
+  return !me || channel.permissionsFor(me)?.has(PermissionFlagsBits.ViewChannel) !== false;
+}
 
 export function humansIn(channel: VoiceBasedChannel): GuildMember[] {
   return [...channel.members.values()].filter((m) => !m.user.bot);

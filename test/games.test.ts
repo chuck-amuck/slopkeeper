@@ -52,14 +52,15 @@ test('a long /game list goes on to more pages, with nothing lost', async () => {
 test('/notify explains a role the bot can’t hand out', async () => {
   setSetting('notify', 'hopOnRole', 'r');
   const denied = new DiscordAPIError({ code: 50013, message: 'Missing Permissions' }, 50013, 403, 'PUT', '/x', {} as never);
-  let reply: { content: string } | undefined;
+  let reply: string | undefined;
   await hopOn.commands![0].run({
     inCachedGuild: () => true,
     guildId: 'notify',
     member: { roles: { cache: new Map(), add: async () => { throw denied; } } },
-    reply: async (r: { content: string }) => (reply = r),
+    deferReply: async () => {},
+    editReply: async (r: string) => (reply = r),
   } as never);
-  assert.match(reply!.content, /Manage Roles/);
+  assert.match(reply!, /Manage Roles/);
 });
 
 test('/setup show lists sources without stray markdown', async () => {

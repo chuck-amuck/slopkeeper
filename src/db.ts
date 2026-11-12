@@ -288,6 +288,8 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS game_plays_by_guild ON game_plays (guild_id, started_at);
   CREATE INDEX IF NOT EXISTS game_plays_by_user ON game_plays (guild_id, user_id, started_at);
+  -- Stats ask for plays that ended after the start of a period
+  CREATE INDEX IF NOT EXISTS game_plays_by_end ON game_plays (guild_id, ended_at);
 
   -- Every spelling Discord has shown for a game and the name it goes by. manual: someone chose this
   CREATE TABLE IF NOT EXISTS game_aliases (

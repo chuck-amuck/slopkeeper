@@ -9,6 +9,8 @@ import { setting } from '../src/settings.ts';
 /** Runs a /setup subcommand */
 function run(guildId: string, sub: string, values: Record<string, unknown>) {
   const pick = (name: string) => values[name] ?? null;
+  // Like discord.js, a second reply to one interaction throws
+  let replied = false;
   return setup.commands![0].run({
     inCachedGuild: () => true,
     guildId,
@@ -16,7 +18,11 @@ function run(guildId: string, sub: string, values: Record<string, unknown>) {
     guild: { id: guildId, members: { me: {} }, channels: { cache: new Map(Object.values(values).flatMap((v) => (v && typeof v === 'object' && 'type' in v ? [[(v as unknown as { id: string }).id, v]] : []))) } },
     user: { id: 'admin' },
     options: { getSubcommand: () => sub, getInteger: pick, getNumber: pick, getBoolean: pick, getString: pick, getRole: pick, getChannel: pick },
-    reply: async (r: { content: string }) => void (replies[guildId] = r.content),
+    reply: async (r: { content: string }) => {
+      if (replied) throw new Error('The reply to this interaction has already been sent or deferred.');
+      replied = true;
+      replies[guildId] = r.content;
+    },
     followUp: async () => {},
   } as never);
 }
@@ -57,7 +63,7 @@ test('/setup reset searches every setting, and refuses anything else', async () 
 
 test('records settings changed in Discord, including ones set to nothing or zero', async () => {
   await run('setup-log', 'hopon', { cooldown_minutes: 0 });
-  await run('setup-log', 'hopon-role', {});
+  await run('setup-log', 'hopon-role', { off: true });
   await run('setup-log', 'sounds', { join_sounds: false });
   assert.deepEqual(log('setup-log'), ['Set Join sounds to off', 'Set Hop-on role to none, hop-on pings don’t ping anyone', 'Set Hop-on cooldown to 0 min']);
   assert.equal(recentActivity('setup-log', 10)[0].actor, 'admin');
@@ -89,10 +95,39 @@ test('free game filters set the lowest rating and whether unlisted games show', 
 test('sets and clears the sound managers role', async () => {
   await run('setup-managers', 'sound-managers', { role: { id: 'managers', toString: () => '<@&managers>' } });
   assert.equal(setting('setup-managers', 'soundManagerRole'), 'managers');
+  // Giving nothing only shows it
   await run('setup-managers', 'sound-managers', {});
+  assert.equal(setting('setup-managers', 'soundManagerRole'), 'managers');
+  assert.match(replies['setup-managers'], /Give an option to change one/);
+  await run('setup-managers', 'sound-managers', { everyone: true });
   assert.equal(setting('setup-managers', 'soundManagerRole'), '');
   assert.equal(log('setup-managers')[0], 'Set Sound managers to everyone can change sounds');
   assert.equal(log('setup-managers')[1], 'Set Sound managers to <@&managers>');
+});
+
+test('/setup music saves and replies once', async () => {
+  await run('setup-music-once', 'music', { volume: 55 });
+  assert.equal(setting('setup-music-once', 'musicVolume'), 55);
+  assert.match(replies['setup-music-once'], /✅/);
+});
+
+test('a role together with off or everyone is refused, not half-applied', async () => {
+  const role = { id: 'r1', toString: () => '<@&r1>' };
+  await run('setup-both', 'hopon-role', { role, off: true });
+  assert.match(replies['setup-both'], /not both/);
+  await run('setup-both', 'speech-role', { role, everyone: true });
+  assert.match(replies['setup-both'], /not both/);
+  await run('setup-both', 'music', { dj_role: role, everyone: true });
+  assert.match(replies['setup-both'], /not both/);
+  assert.deepEqual(log('setup-both'), []);
+});
+
+test('a subcommand given nothing shows its settings and changes none', async () => {
+  for (const sub of ['hopon-role', 'speech-role', 'monthly-recap', 'steam-status', 'free-games', 'gamenight-reminder', 'timezone', 'steam-region', 'music']) {
+    await run('setup-show-only', sub, {});
+    assert.match(replies['setup-show-only'], /Give an option to change one/, sub);
+  }
+  assert.deepEqual(log('setup-show-only'), []);
 });
 
 test('patch notes start off, take a mode and a channel, and refuse anything else', () => {
