@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { getVoiceConnection } from '@discordjs/voice';
@@ -209,6 +209,10 @@ export const VOICES: readonly Voice[] = [
   ...STYLES,
 ];
 
+const ACCENTS = new Set(['broadcast', 'russian', 'spanish', 'german']);
+/** How the web UI groups the voices */
+export const voiceGroup = (voice: Voice) => (STYLES.includes(voice) ? 'Effects' : ACCENTS.has(voice.id) ? 'Accents' : 'Characters');
+
 /**
  * The voice a server uses when nobody picks one, or the one given. One that's since been removed falls back to the server's
  * default, then the bot's, then TikTok
@@ -331,6 +335,44 @@ async function speech(text: string, voice: Voice, speed: number, signal: AbortSi
   });
   if (!res.ok) throw new Error(`Voice container said HTTP ${res.status}`);
   return Buffer.from(await res.arrayBuffer());
+}
+
+const PREVIEW_EVERY_MS = 2_000;
+const PREVIEWS_PER_MINUTE = 12;
+/** Server id → when its recent previews were asked for */
+const previewsAt = new Map<string, number[]>();
+
+/**
+ * A line in a voice, as a WAV file, for the web UI to play in the browser so someone can hear a voice before the
+ * whole call does. A blank line gets the voice saying its name. Throws a TooSoon when a server asks too often
+ */
+export async function previewSpeech(guild: Guild, typed: string, voiceId: string): Promise<Buffer> {
+  if (!config.voiceUrl) throw new Error('Text to speech isn’t set up on this bot.');
+  const voice = serverVoice(guild.id, voiceId);
+  const now = Date.now();
+  const recent = (previewsAt.get(guild.id) ?? []).filter((at) => now - at < 60_000);
+  if (recent.length >= PREVIEWS_PER_MINUTE || now - (recent.at(-1) ?? 0) < PREVIEW_EVERY_MS) throw new TooSoon();
+  previewsAt.set(guild.id, [...recent, now]);
+  const text = typed.trim() ? speechFor(guild, typed).slice(0, setting(guild.id, 'ttsMaxChars')) : `Hi, this is ${voice.name}.`;
+  if (!hasWords(text)) throw new Error('There’s nothing in that to say.');
+  folder ??= mkdtempSync(path.join(tmpdir(), 'slopkeeper-say-'));
+  const file = path.join(folder, `preview-${randomUUID()}.wav`);
+  const unlevelled = `${file}.raw.wav`;
+  try {
+    writeFileSync(unlevelled, await speech(text, voice, setting(guild.id, 'ttsSpeed'), new AbortController().signal));
+    await levelSpeech(unlevelled, file, voice.effects);
+    return readFileSync(file);
+  } finally {
+    rmSync(file, { force: true });
+    rmSync(unlevelled, { force: true });
+  }
+}
+
+/** A server asked for previews faster than they're allowed */
+export class TooSoon extends Error {
+  constructor() {
+    super('Wait a moment before the next preview.');
+  }
 }
 
 async function sayLine(queue: Queue, { channel, text, voice, started }: Line) {

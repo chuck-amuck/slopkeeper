@@ -13,6 +13,21 @@ services:
         limits:
           memory: 256M
 
+  web:
+    image: ghcr.io/chuck-amuck/slopkeeper-web:latest # the web UI, optional. Needs API_TOKEN in .env, which also turns the bot's API on
+    restart: unless-stopped
+    init: true
+    environment:
+      WEB_PASSWORD: ${WEB_PASSWORD}
+      API_TOKEN: ${API_TOKEN}
+      BOT_URL: http://slopkeeper:8787
+    ports:
+      - 8080:8080 # plain HTTP: keep it on your home network or behind a proxy that adds HTTPS
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+
   voice:
     image: ghcr.io/chuck-amuck/slopkeeper-voice:latest # text to speech, optional. Needs VOICE_URL=http://voice:5000 in .env
     restart: unless-stopped

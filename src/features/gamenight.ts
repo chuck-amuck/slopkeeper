@@ -570,3 +570,20 @@ export const gameNights: Feature = {
     setInterval(() => void tick(client).catch(console.error), 60_000);
   },
 };
+
+/**
+ * Answers for someone from the web UI, as their button on the card would, and redraws the card. Returns the night's
+ * game and the answer's label when it worked, what's wrong if it didn't, or undefined when there's no such night
+ */
+export async function answerFor(client: Client<true>, guild: Guild, id: number, userId: string, answer: string): Promise<{ game: string; label: string } | string | undefined> {
+  const night = getNight(id);
+  if (!night || night.guild_id !== guild.id) return undefined;
+  if (!Object.hasOwn(RSVP, answer)) return 'Answer in, maybe or out.';
+  if (night.cancelled) return 'This game night was cancelled.';
+  if (night.starts_at < Date.now() - 12 * HOUR) return 'This game night is over.';
+  db.prepare(
+    'INSERT INTO game_night_rsvps (night_id, user_id, status) VALUES (?, ?, ?) ON CONFLICT(night_id, user_id) DO UPDATE SET status = excluded.status',
+  ).run(night.id, userId, answer);
+  await refreshCard(client, night);
+  return { game: night.game, label: RSVP[answer as Status].label };
+}

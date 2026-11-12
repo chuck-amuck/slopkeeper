@@ -6,16 +6,18 @@ runs the TypeScript directly, with no build step. README.md is the user guide, g
 
 ## Commands
 
-There's no npm on the development machine, so run the bot's checks in a container that matches CI: Node 24 plus
-ffmpeg. Without ffmpeg the audio tests skip silently and the run looks green.
+There's no npm on the development machine, so run the bot's checks in the image's own `base` stage: Node 24 plus the
+same static ffmpeg as the image and CI. Without ffmpeg the audio tests skip silently and the run looks green.
 
-- Bot typecheck and tests (about 90 s plus the apt step):
-  `docker run --rm -v "$PWD":/app -w /app node:24-trixie-slim sh -c "apt-get update -qq >/dev/null && apt-get install -y -qq ffmpeg >/dev/null 2>&1; npx tsc -p . && npm test"`
+- Build that once, and again when the Dockerfile's ffmpeg changes: `docker build -q --target base -t sk-test .`
+- Bot typecheck and tests (about 20 s):
+  `docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp -e npm_config_cache=/tmp/npm -v "$PWD":/app -w /app sk-test sh -c 'npx tsc -p . && npm test'`
 - One file, in the same container: `node --disable-warning=ExperimentalWarning --test test/<name>.test.ts` (add
   `--test-name-pattern="<name>"` for one test).
 - Web: `cd web && node --test 'test/*.test.ts'` works with the host's node; typecheck with `npx tsc -p .` in the
   container.
-- Music container: `node --test 'music/*.test.mjs'`. `voice/` has no tests.
+- Music container: `node --test 'music/*.test.mjs'`. `voice/` has only syntax checks, which CI runs too:
+  `python3 -m py_compile voice/*.py` and `sh -n voice/start.sh`.
 - Front end: `for f in web/public/*.js; do node --check "$f"; done`.
 - Web UI by hand: run `web/src/index.ts` against a fake bot (`BOT_URL`) and drive `chromium --headless=new` over CDP.
   Non-GET calls need the header `x-slopkeeper: 1`.
@@ -27,7 +29,7 @@ ffmpeg. Without ffmpeg the audio tests skip silently and the run looks green.
    (deliberate mutations) cover only the riskiest changes and run after the release.
 3. `git fetch` before pushing: other sessions push here too.
 4. CI (`.github/workflows/image.yml`) runs the bot, web and music tests and builds four images: the bot (which also
-   runs the loop bot), web, voice and music. If a run stalls (the ffmpeg apt step and say.test.ts have hung),
+   runs the loop bot), web, voice and music. If a run stalls (say.test.ts has hung),
    `gh run cancel <id>`, then `gh run rerun <id>`.
 5. A web-only change ships as its own image. Browser tabs opened before the redeploy keep the old page until
    they're refreshed. How the deployment picks up images is in CLAUDE.local.md.
@@ -54,6 +56,8 @@ ffmpeg. Without ffmpeg the audio tests skip silently and the run looks green.
 - Never publish or proxy the management API port. Identity headers count only with a matching `PROXY_SECRET`.
 - Offer only the voices in `VOICES` (src/features/say.ts). Speech speed follows a measured curve, not a
   proportional one.
+- The voices' effects run through the Dockerfile's pinned static ffmpeg. Before changing its version, render every
+  voice with both and compare them: rubberband and other filters can change between versions.
 - Music resumes at the same second after a restart if people are still in the channel and it was under 10 minutes
   ago, so redeploying during playback is fine.
 - Public playlists come from the Spotify embed page's `__NEXT_DATA__` (first 100 songs) and covers from oEmbed. If

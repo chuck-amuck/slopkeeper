@@ -2623,7 +2623,9 @@ test('tells the page what text to speech offers', async () => {
       ...['Demon', 'Helium', 'Giant', 'Robot', 'Alien', 'Walkie-talkie', 'Phone call', 'Megaphone', 'Stadium PA', 'Newsreel'],
       ...['Cathedral', 'Underwater', 'Ghost', 'Trailer narrator'],
     ]);
-    assert.deepEqual(Object.keys(data.voices[0]), ['id', 'name']);
+    assert.deepEqual(Object.keys(data.voices[0]), ['id', 'name', 'group']);
+    const group = (id: string) => data.voices.find((v: { id: string }) => v.id === id).group;
+    assert.deepEqual([group('glados'), group('russian'), group('demon')], ['Characters', 'Accents', 'Effects']);
     assert.deepEqual([data.on, data.voice, data.volume, data.longest], [true, 'tiktok', 100, 200]);
     setSetting(GUILD, 'tts', false);
     assert.equal((await ok(`/guilds/${GUILD}/say`)).on, false);
@@ -2631,6 +2633,49 @@ test('tells the page what text to speech offers', async () => {
     config.voiceUrl = url;
     setSetting(GUILD, 'tts', undefined);
   }
+});
+
+test('previews a voice for the browser only, a few at a time', async (t) => {
+  const url = config.voiceUrl;
+  t.after(() => {
+    config.voiceUrl = url;
+    setSetting(GUILD, 'tts', undefined);
+  });
+  const preview = `/guilds/${GUILD}/say/preview?voice=demon&text=${encodeURIComponent('hello there')}`;
+  assert.equal(await refused(409, preview), 'Text to speech is off for this server.', 'no voice container set up');
+  config.voiceUrl = 'http://voice.test';
+  const real = fetch;
+  const asked: { text: string }[] = [];
+  t.mock.method(globalThis, 'fetch', async (target: URL | string, init?: RequestInit) => {
+    if (String(target).startsWith(base)) return real(target, init);
+    asked.push(JSON.parse(init!.body as string));
+    return new Response(wav(0.3));
+  });
+  const res = await call(preview);
+  assert.equal(res.status, 200);
+  assert.equal(res.headers.get('content-type'), 'audio/wav');
+  assert.equal(new TextDecoder().decode((await res.arrayBuffer()).slice(0, 4)), 'RIFF');
+  assert.equal(asked[0].text, 'hello there');
+  assert.equal(await refused(429, preview), 'Wait a moment before the next preview.');
+  assert.deepEqual(recentActivity(GUILD, 50).filter((r) => /preview/i.test(r.action)), [], 'it isn’t said in voice, so it isn’t logged');
+  setSetting(GUILD, 'tts', false);
+  assert.equal(await refused(409, preview), 'Text to speech is off for this server.');
+});
+
+test('answers for someone to a game night from the web, and redraws the card', async () => {
+  const id = addNight();
+  const answer = (json: unknown) => ok(`/guilds/${GUILD}/game-nights/${id}/rsvp`, { method: 'POST', json });
+  const edits = panelEdits.length;
+  const { night } = await answer({ answer: 'in', userId: 'u2' });
+  assert.equal(panelEdits.length, edits + 1, 'the card is redrawn');
+  assert.deepEqual([night.id, night.in], [id, ['Ana', 'Ben']]);
+  assert.deepEqual((await answer({ answer: 'out', userId: 'u2' })).night.out.includes('Ben'), true);
+  assert.equal(recentActivity(GUILD, 1)[0].action, 'Answered **Can’t** for Ben to **Halo** night');
+  assert.equal(await refused(409, `/guilds/${GUILD}/game-nights/${id}/rsvp`, { method: 'POST', json: { answer: 'sure', userId: 'u2' } }), 'Answer in, maybe or out.');
+  await refused(404, `/guilds/${GUILD}/game-nights/${id}/rsvp`, { method: 'POST', json: { answer: 'in', userId: 'nobody' } });
+  await refused(404, `/guilds/${GUILD}/game-nights/99999/rsvp`, { method: 'POST', json: { answer: 'in', userId: 'u2' } });
+  const cancelled = addNight({ cancelled: 1 });
+  assert.equal(await refused(409, `/guilds/${GUILD}/game-nights/${cancelled}/rsvp`, { method: 'POST', json: { answer: 'in', userId: 'u2' } }), 'This game night was cancelled.');
 });
 
 test('the page’s limits on text to speech', async () => {

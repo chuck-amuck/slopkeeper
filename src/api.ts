@@ -8,7 +8,7 @@ import path from 'node:path';
 import { FROM_WEB, fromWebUser, linkWebUser, logActivity, recentActivity, seeWebUser, webUser, webUserFor } from './activity.ts';
 import { config } from './config.ts';
 import * as discordBoard from './discordSounds.ts';
-import { cancelNight, gameNames, planNight, readWhen, stopSeries, upcomingNights } from './features/gamenight.ts';
+import { answerFor, cancelNight, gameNames, planNight, readWhen, stopSeries, upcomingNights } from './features/gamenight.ts';
 import { reviewGiveaways } from './features/freegames.ts';
 import { achievementProgress } from './features/achievements.ts';
 import { addGameRole, canHandOut, gameRoles, pingableGames, pingChoices, pingMenu, removeGameRole } from './features/gameroles.ts';
@@ -20,7 +20,7 @@ import { postVote } from './features/gamevote.ts';
 import { recapFor } from './features/recap.ts';
 import { gameName, gameSpellings, mergeGames, separateGame } from './gameNames.ts';
 import { addTracks, clearQueue, fileProblem, fileUploadPath, MOST_FILE_BYTES, moveTrack, musicChannelFor, musicState, pauseMusic, playFile, queueFrom, queueOf, removeTrack, seekFile, seekMusic, shuffleQueue, skipMusic, startMusic, stopFile, stopMusic } from './features/music.ts';
-import { phrases, removePhrase, savePhrase, say, serverVoice, VOICES } from './features/say.ts';
+import { phrases, previewSpeech, removePhrase, savePhrase, say, serverVoice, TooSoon, voiceGroup, VOICES } from './features/say.ts';
 import { voiceTotals } from './features/sessions.ts';
 import { checkSetting, LABELS, LIMITS, show, source, STEPS } from './features/setup.ts';
 import { addSound, addToDiscord, afterSettingsChanged, BIN_DAYS, changeEmoji, deletedSounds, eraseDeleted, expiresAt, favourites, findSound, joinSounds, listSounds, loopBotStatus, loopSpeechProblem, parseEmoji, playCounts, playDiscordSound, playFromWeb, playingChange, playingNow, playingVersion, postPanel, refreshPanels, removeSound, renameSound, restoreDeleted, restoreSound, saveFromDiscord, setFavourite, setJoinSound, setSoundVolume, type Sound, soundLevels, soundVolumes, stopPlayback, stopPlayingOne, swapOnDiscord, syncToDiscord, takeOffDiscord, trimmedSounds, trimProblem, trimSound, untaken, uploadProblem, volumeProblem } from './features/soundboard.ts';
@@ -1257,6 +1257,17 @@ async function handle(client: Client<true>, req: IncomingMessage, res: ServerRes
   }
   if (section === 'game-nights' && rest.length === 2 && rest[1] === 'friends' && req.method === 'GET') return nightFriends(guild, Number(rest[0]));
   if (section === 'lobbies' && !rest.length && req.method === 'GET') return lobbyList(guild);
+  if (section === 'game-nights' && rest.length === 2 && rest[1] === 'rsvp' && req.method === 'POST') {
+    const { answer, userId } = await readJson(req);
+    // Someone signed in who has said who they are answers for themselves; otherwise the page says who
+    const who = asking.getStore();
+    const member = memberIn(guild, String((who && webUser(who.email)?.userId) || userId));
+    const result = await answerFor(client, guild, Number(rest[0]), member.id, String(answer));
+    if (result === undefined) throw new Refused(404, 'No such game night.');
+    if (typeof result === 'string') throw new Refused(409, result);
+    logActivity(guild.id, by(), `Answered **${result.label}** for ${member.displayName} to **${result.game}** night`);
+    return { night: nightList(guild).nights.find((n) => n.id === Number(rest[0])) ?? null };
+  }
   if (section === 'game-nights' && rest.length === 2 && rest[1] === 'cancel' && req.method === 'POST') {
     const game = await cancelNight(client, guild, Number(rest[0]));
     if (!game) throw new Refused(404, 'No such game night.');
@@ -1270,7 +1281,20 @@ async function handle(client: Client<true>, req: IncomingMessage, res: ServerRes
     return {};
   }
   if (section === 'say' && !rest.length && req.method === 'GET') {
-    return { on: Boolean(config.voiceUrl) && setting(guild.id, 'tts'), voices: VOICES.map(({ id, name }) => ({ id, name })), voice: serverVoice(guild.id).id, volume: setting(guild.id, 'ttsVolume'), longest: setting(guild.id, 'ttsMaxChars'), phrases: phrases(guild.id) };
+    return { on: Boolean(config.voiceUrl) && setting(guild.id, 'tts'), voices: VOICES.map((v) => ({ id: v.id, name: v.name, group: voiceGroup(v) })), voice: serverVoice(guild.id).id, volume: setting(guild.id, 'ttsVolume'), longest: setting(guild.id, 'ttsMaxChars'), phrases: phrases(guild.id) };
+  }
+  if (section === 'say' && rest.length === 1 && rest[0] === 'preview' && req.method === 'GET') {
+    if (!config.voiceUrl || !setting(guild.id, 'tts')) throw new Refused(409, 'Text to speech is off for this server.');
+    const audio = await previewSpeech(guild, (url.searchParams.get('text') ?? '').slice(0, 2000), url.searchParams.get('voice') ?? '').catch((err: unknown) => {
+      if (err instanceof TooSoon) throw new Refused(429, err.message);
+      if (err instanceof Error && err.message.startsWith('There’s nothing')) throw new Refused(400, err.message);
+      console.error(`Web UI: a voice preview in ${guild.name} failed:`, err);
+      throw new Refused(502, 'The voice container isn’t answering. Try again in a moment.');
+    });
+    // Only whoever asked hears it, in their browser
+    res.writeHead(200, { 'content-type': 'audio/wav', 'content-length': audio.length, 'cache-control': 'no-store' });
+    res.end(audio);
+    return null;
   }
   if (section === 'say' && !rest.length && req.method === 'POST') {
     const { channelId, text, voice } = await readJson(req);

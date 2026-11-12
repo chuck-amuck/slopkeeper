@@ -657,7 +657,7 @@ browser → web UI (password, session cookie) → bot API (token) → database a
 | `PROXY_SECRET` | off | Turns on [signing in through Pangolin](#signing-in-through-pangolin) |
 | `PORT` | 8080 | Port inside the container |
 
-Build the image from `web/Dockerfile`. It serves plain HTTP, so keep it on your home network or put it behind a proxy that adds HTTPS.
+Use the `ghcr.io/chuck-amuck/slopkeeper-web` image (the reference [`docker-compose.yml`](docker-compose.yml) has it), or build it from `web/Dockerfile`. It serves plain HTTP, so keep it on your home network or put it behind a proxy that adds HTTPS.
 
 ### Signing in through Pangolin
 
@@ -687,10 +687,12 @@ Set in `.env` (see `.env.example`).
 | `TZ` | UTC | The container's time zone, and every server's default time zone |
 | `API_TOKEN` | off | Turns on the [management API](#management-api) and is the token that unlocks it |
 | `API_PORT` | 8787 | Port for the management API |
+| `DATA_DIR` | `./data`, `/data` in the image | Where the database, sounds and backups are kept |
 | `VOICE_URL` | off | Where the [voice container](#the-voice-container) is. Unset turns `/say` off |
 | `MUSIC_URL` | off | Where the [music container](#the-music-container) is. Unset turns music off |
 | `LOOP_BOT_URL` | off | Where the [loop bot](#the-loop-bot) is. Unset plays the looping room on this bot |
 | `LOOP_TOKEN` | none | Same value as the loop bot's `LOOP_TOKEN` |
+| `LOOP_PORT` | 8788 | The loop bot's port, set in its own container |
 | `MUSIC_TOKEN` | none | Same value as the music container's `MUSIC_TOKEN` |
 | `MUSIC_AUDIO_DIR` | `/music/audio` | Where the bot reads the songs the music container downloads, from its volume |
 | `SPOTIFY_CLIENT_ID`, `SPOTIFY_CLIENT_SECRET` | none | A Spotify app's, for search and links. See [the music container](#the-music-container) |
@@ -747,7 +749,8 @@ It applies the same rules as `/sound` and `/setup`, and every request needs an `
 | `POST /guilds/:id/stop` | Stops every sound and any spoken lines waiting, leaving the music playing. Returns `musicPlaying` |
 | `GET /guilds/:id/playing` | The sounds and speech playing, not the music: `version` and `playing` (`id`, `name`, `kind` sound or speech, `loop`, `started` once it's heard, `elapsedMs`). With `?after=<version>` it waits up to 25 s for a change |
 | `POST /guilds/:id/playing/:playingId/stop` | Stops one of them. 404 if it's already finished |
-| `GET /guilds/:id/say` | Whether text to speech is `on`, the `voices`, the default `voice`, the speech `volume`, the `longest` line and the saved `phrases` |
+| `GET /guilds/:id/say` | Whether text to speech is `on`, the `voices` (each with its `group`: Characters, Accents or Effects), the default `voice`, the speech `volume`, the `longest` line and the saved `phrases` |
+| `GET /guilds/:id/say/preview?voice=<id>&text=<text>` | The line in that voice as a WAV file, for the page to play to whoever asked; a blank `text` has the voice say its name. At most one every 2 seconds and 12 a minute per server |
 | `POST /guilds/:id/say` | Reads out `text` in `channelId`, with an optional `voice`. Answers once the line starts |
 | `POST /guilds/:id/phrases` | Saves `text`, and answers with the `phrases` |
 | `DELETE /guilds/:id/phrases/:id` | Removes a saved line, and answers with the `phrases` |
@@ -763,6 +766,7 @@ It applies the same rules as `/sound` and `/setup`, and every request needs an `
 | `POST /guilds/:id/game-nights` | Plans a night as `/gamenight plan` does: `{ "game", "when", "channelId", "hostId", "voiceChannelId", "details", "repeat" }`, where `repeat` is 7, 14 or null |
 | `GET /guilds/:id/game-nights/:night/friends` | Who's going but isn't Steam friends yet, with profile links: `strangers`, `unknown` where both lists are private, and `unlinked` |
 | `GET /guilds/:id/game-nights/when?text=<time>` | Says how a typed time reads, without planning anything |
+| `POST /guilds/:id/game-nights/:night/rsvp` | Answers `{ "answer": "in" \| "maybe" \| "out", "userId" }` as the card's buttons do, and redraws the card. Someone signed in who has said who they are always answers for themselves |
 | `POST /guilds/:id/game-nights/:night/cancel` | Cancels a night, as its Cancel button does |
 | `DELETE /guilds/:id/game-night-series/:series` | Stops a series; nights already posted stay on |
 | `GET /guilds/:id/join-sounds` | Lists who has a join sound |
@@ -919,7 +923,7 @@ For whoever runs the bot.
    https://discord.com/oauth2/authorize?client_id=YOUR_APPLICATION_ID&scope=bot+applications.commands&permissions=26389624409088
    ```
 
-Local dev (Node 24+): `npm install && npm run dev`. `npm run typecheck` runs tsc, and `npm test` runs the tests (the audio ones need ffmpeg and are skipped without it). GitHub Actions runs both on every push, and the image is only built if they pass.
+Local dev (Node 24+): `npm install && npm run dev`. `npm run typecheck` runs tsc, and `npm test` runs the tests (the audio ones need ffmpeg and are skipped without it). GitHub Actions runs them on every push, with the same static ffmpeg as the image, and each image is only built once its own checks pass.
 
 Data (SQLite DB and uploaded sounds) lives in the `slopkeeper-data` volume at `/data`, with each server's sounds in `sounds/<server id>/`, and the first version of any trimmed sound in `originals/` inside that. The bot copies its database to `backups/` in that volume once a day and keeps the last 7 copies. Those guard against a bad update or a damaged database, not against losing the disk, and they don't include sounds, so back the volume up elsewhere too.
 
