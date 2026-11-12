@@ -6,10 +6,11 @@ import {
   MessageFlags,
   SlashCommandBuilder,
   type AutocompleteInteraction,
+  type ButtonInteraction,
   type Guild,
   type VoiceBasedChannel,
 } from 'discord.js';
-import { db } from '../db.ts';
+import { db, transaction } from '../db.ts';
 import type { Feature } from '../types.ts';
 import { humansIn, paginate } from '../util.ts';
 import { findOnSteam } from './gamefacts.ts';
@@ -214,6 +215,46 @@ export function setGameDetails(game: GameRow, maxPlayers: number | null, appid: 
 }
 
 export const removeGame = (game: GameRow) => db.prepare('DELETE FROM games WHERE id = ?').run(game.id);
+
+/** How long /game remove's Undo works */
+const UNDO_MS = 15 * 60_000;
+/** Games taken out with /game remove, with who owned and wanted them, for its Undo button */
+const removed = new Map<number, { at: number; row: Record<string, unknown>; owners: string[]; wants: string[] }>();
+
+/** Takes a game out of the library, keeping it for a while so Undo can put it back as it was */
+function removeKeepingUndo(game: GameRow) {
+  for (const [id, kept] of removed) if (Date.now() - kept.at > UNDO_MS) removed.delete(id);
+  const users = (table: 'game_owners' | 'game_wants') => (db.prepare(`SELECT user_id FROM ${table} WHERE game_id = ?`).all(game.id) as { user_id: string }[]).map((r) => r.user_id);
+  const row = db.prepare('SELECT * FROM games WHERE id = ?').get(game.id) as Record<string, unknown>;
+  removed.set(game.id, { at: Date.now(), row, owners: users('game_owners'), wants: users('game_wants') });
+  removeGame(game);
+}
+
+/** Puts a removed game back, with its owners and wants. Returns what's wrong if it can't */
+function restoreGame(guildId: string, id: number): { name: string } | string {
+  const kept = removed.get(id);
+  if (!kept || kept.row.guild_id !== guildId || Date.now() - kept.at > UNDO_MS) return 'It’s too late to undo that. Add it again with /game add.';
+  const name = String(kept.row.name);
+  if (findGame(guildId, name)) return `**${name}** is back in the library already.`;
+  transaction(() => {
+    // Under its old id when that's still free, so links to it keep working
+    const free = !db.prepare('SELECT 1 FROM games WHERE id = ?').get(id);
+    // Every column, so one added later comes back too
+    const row = { ...kept.row, id: free ? id : null };
+    const columns = Object.keys(row);
+    const { lastInsertRowid } = db
+      .prepare(`INSERT INTO games (${columns.join(', ')}) VALUES (${columns.map(() => '?').join(', ')})`)
+      .run(...(Object.values(row) as (string | number | null)[]));
+    const gameId = Number(lastInsertRowid);
+    for (const user of kept.owners) db.prepare('INSERT OR IGNORE INTO game_owners (game_id, user_id) VALUES (?, ?)').run(gameId, user);
+    for (const user of kept.wants) db.prepare('INSERT OR IGNORE INTO game_wants (game_id, user_id) VALUES (?, ?)').run(gameId, user);
+  });
+  removed.delete(id);
+  return { name };
+}
+
+/** One Undo button. Only `actor`, who made the change, can press it */
+const undoRow = (id: string) => [new ActionRowBuilder<ButtonBuilder>().addComponents(new ButtonBuilder().setCustomId(`wdp:${id}`).setLabel('Undo').setEmoji('↩️').setStyle(ButtonStyle.Secondary))];
 
 /** Owning a game is the end of wanting it */
 export function setOwned(game: GameRow, userId: string, on: boolean) {
@@ -433,6 +474,31 @@ function libraryPage(guild: Guild, wanted: number) {
   return { embeds: [embed], components: [new ActionRowBuilder<ButtonBuilder>().addComponents(turn(page - 1, '◀️'), turn(page + 1, '▶️'))] };
 }
 
+/** The Undo buttons on /game own, want and remove */
+async function undo(i: ButtonInteraction<'cached'>, action: 'own' | 'want' | 'restore', parts: string[]) {
+  const actor = parts.at(-1);
+  if (actor !== i.user.id) return i.reply({ content: `Only <@${actor}>, who made the change, can undo it.`, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
+  const done = (content: string) => i.update({ content, components: [], allowedMentions: { parse: [] } });
+  if (action === 'restore') {
+    const back = restoreGame(i.guildId, Number(parts[0]));
+    if (typeof back === 'string') return i.reply({ content: back, flags: MessageFlags.Ephemeral });
+    logActivity(i.guildId, i.user.id, `Put **${back.name}** back in the game library`);
+    return done(`↩️ **${back.name}** is back in the library.`);
+  }
+  const game = gameById(i.guildId, Number(parts[0]));
+  if (!game) return i.reply({ content: 'That game isn’t in the library any more.', flags: MessageFlags.Ephemeral });
+  if (action === 'want') {
+    setWanted(game, i.user.id, parts[1] === '1');
+    logActivity(i.guildId, i.user.id, `Marked ${i.member.displayName} as ${parts[1] === '1' ? 'wanting' : 'not wanting'} **${game.name}**`);
+    return done(`↩️ Undone: you’re ${parts[1] === '1' ? 'still' : 'not'} pinged when **${game.name}** goes on sale.`);
+  }
+  const [userId, was] = parts.slice(1);
+  setOwned(game, userId, was[0] === '1');
+  if (was[0] !== '1') setWanted(game, userId, was[1] === '1');
+  logActivity(i.guildId, i.user.id, `Marked ${i.guild.members.cache.get(userId)?.displayName ?? 'someone'} as ${was[0] === '1' ? 'owning' : 'not owning'} **${game.name}**`);
+  return done(`↩️ Undone: <@${userId}> ${was[0] === '1' ? 'owns' : 'doesn’t own'} **${game.name}** again.`);
+}
+
 export const games: Feature = {
   title: 'Game library',
   commands: [
@@ -516,9 +582,10 @@ export const games: Feature = {
           if (ownersOf(wanted, i.guild).has(i.user.id)) return i.editReply(`You already own **${wanted.name}**.`);
           const { changes } = db.prepare('DELETE FROM game_wants WHERE game_id = ? AND user_id = ?').run(wanted.id, i.user.id);
           logActivity(i.guildId, i.user.id, `Marked ${i.member.displayName} as ${changes ? 'not wanting' : 'wanting'} **${wanted.name}**`);
-          if (changes) return i.editReply(`➖ You’ll no longer hear about **${wanted.name}**.`);
+          const undo = undoRow(`want:${wanted.id}:${changes ? 1 : 0}:${i.user.id}`);
+          if (changes) return i.editReply({ content: `➖ You’ll no longer hear about **${wanted.name}**.`, components: undo });
           db.prepare('INSERT INTO game_wants (game_id, user_id) VALUES (?, ?)').run(wanted.id, i.user.id);
-          return i.editReply(`🛒 You’ll be pinged when **${wanted.name}** goes on sale.`);
+          return i.editReply({ content: `🛒 You’ll be pinged when **${wanted.name}** goes on sale.`, components: undo });
         }
 
         const game = sub === 'list' ? undefined : findGame(i.guildId, i.options.getString('name', true));
@@ -530,18 +597,21 @@ export const games: Feature = {
             return i.reply({ content: `${user} already owns **${game.name}** on Steam.`, allowedMentions: { parse: [] } });
           }
           const owned = manualGameIds(user.id, i.guildId).has(game.id);
+          // Owning it ends wanting it, so Undo needs to know whether they did
+          const wanted = wantedBy(game, i.guild).includes(user.id);
           setOwned(game, user.id, !owned);
           logActivity(i.guildId, i.user.id, `Marked ${i.guild.members.cache.get(user.id)?.displayName ?? user.username} as ${owned ? 'not owning' : 'owning'} **${game.name}**`);
           return i.reply({
             content: `${owned ? '➖' : '✅'} ${user} ${owned ? 'no longer owns' : 'owns'} **${game.name}**.`,
+            components: undoRow(`own:${game.id}:${user.id}:${owned ? 1 : 0}${wanted ? 1 : 0}:${i.user.id}`),
             allowedMentions: { parse: [] },
           });
         }
 
         if (sub === 'remove' && game) {
-          removeGame(game);
+          removeKeepingUndo(game);
           logActivity(i.guildId, i.user.id, `Removed **${game.name}** from the game library`);
-          return i.reply(`🗑️ Removed **${game.name}**.`);
+          return i.reply({ content: `🗑️ Removed **${game.name}**, with who owns and wants it. Undo puts it all back, for 15 minutes.`, components: undoRow(`restore:${game.id}:${i.user.id}`) });
         }
 
         return i.reply(libraryPage(i.guild, 0));
@@ -571,6 +641,7 @@ export const games: Feature = {
     const [target] = rest;
     if (!i.inCachedGuild()) return i.reply({ content: 'Use this in a server.', flags: MessageFlags.Ephemeral });
     if (action === 'list') return i.update(libraryPage(i.guild, Number(target)));
+    if (action === 'own' || action === 'want' || action === 'restore') return undo(i, action, rest);
     // Buttons posted before filters, or before they named the channel, have less here
     const [type, deck, roomId] = action === 'hide' ? rest.slice(1) : rest;
     // The channel the pick was for, while anyone's still in it, so someone not in voice can press it too

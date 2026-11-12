@@ -199,10 +199,10 @@ The library is the group's shared list of games it cares about. Add a game to th
 | Command | What it does |
 | --- | --- |
 | `/game add name [steam] [max_players]` | Adds a game. `steam` takes the store URL or app ID and turns on sale alerts and automatic Steam ownership. `max_players` is the most people one lobby holds. |
-| `/game want name` | Pings you when a game goes on sale. Takes a library game, a name or a Steam store link, and adds a new game to the library. Run it again to take it back. |
-| `/game own name [user]` | Marks a game as owned by you, or by `user`, for non-Steam games and Family Sharing. Run it again to unmark it. It's not needed if Steam already shows the person owning the game. |
+| `/game want name` | Pings you when a game goes on sale. Takes a library game, a name or a Steam store link, and adds a new game to the library. Run it again, or press **Undo** on the reply, to take it back. |
+| `/game own name [user]` | Marks a game as owned by you, or by `user`, for non-Steam games and Family Sharing. Run it again, or press **Undo**, to unmark it. It's not needed if Steam already shows the person owning the game. |
 | `/game list` | Shows every library game, its player cap, who owns it and who still needs it, with ◀ ▶ buttons once it's too long for one page. |
-| `/game remove name` | Removes a game from the library, along with its manual ownership marks. |
+| `/game remove name` | Removes a game from the library, along with its manual ownership marks. **Undo** on the reply puts it back as it was, for 15 minutes. |
 | `/game unhide name` | Lets `/whatdoweplay` suggest a game that was hidden with **Never suggest this**. |
 
 Examples:

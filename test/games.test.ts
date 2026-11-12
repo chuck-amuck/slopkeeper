@@ -135,3 +135,65 @@ test('Never suggest this hides a game, and /game unhide lets it back', async () 
   assert.deepEqual(hiddenGames('hide'), []);
   assert.equal(((await unhide('Portal 2')) as { content: string }).content, 'That game is not hidden.');
 });
+
+// ---------- Undo on /game own, want and remove ----------
+
+const undoGuild = { id: 'undo', members: { cache: new Map(['u1', 'u2'].map((id) => [id, { id, displayName: id.toUpperCase() }])) } };
+
+/** Runs a /game subcommand on a library game, returning the reply */
+async function gameCommand(sub: string, name: string, user = 'u1') {
+  let reply: { content: string; components?: { toJSON(): { components: { custom_id: string }[] } }[] } | undefined;
+  await games.commands![0].run({
+    inCachedGuild: () => true,
+    guildId: 'undo',
+    guild: undoGuild,
+    user: { id: user, username: user, toString: () => `<@${user}>` },
+    member: { displayName: user },
+    options: { getSubcommand: () => sub, getString: () => name, getUser: () => null },
+    reply: async (r: typeof reply) => (reply = r),
+  } as never);
+  return reply!;
+}
+
+/** Presses the Undo button on a reply */
+async function pressUndo(reply: Awaited<ReturnType<typeof gameCommand>>, user = 'u1') {
+  let answer: { content: string; components?: unknown[] } | undefined;
+  await games.onButton!({
+    customId: reply.components![0].toJSON().components[0].custom_id,
+    inCachedGuild: () => true,
+    guildId: 'undo',
+    guild: undoGuild,
+    user: { id: user },
+    member: { displayName: user },
+    update: async (r: typeof answer) => (answer = r),
+    reply: async (r: typeof answer) => (answer = r),
+  } as never);
+  return answer!;
+}
+
+const halo = () => db.prepare(`SELECT id FROM games WHERE guild_id = 'undo' AND name = 'Halo'`).get() as { id: number } | undefined;
+const usersIn = (table: string, id: number) => (db.prepare(`SELECT user_id FROM ${table} WHERE game_id = ? ORDER BY user_id`).all(id) as { user_id: string }[]).map((r) => r.user_id);
+
+test('Undo on /game own puts back owning and wanting, and only for whoever did it', async () => {
+  const id = Number(db.prepare(`INSERT INTO games (guild_id, name, added_by) VALUES ('undo', 'Halo', 'u1')`).run().lastInsertRowid);
+  db.prepare(`INSERT INTO game_wants (game_id, user_id) VALUES (?, 'u1')`).run(id);
+  const owned = await gameCommand('own', 'Halo');
+  assert.deepEqual([usersIn('game_owners', id), usersIn('game_wants', id)], [['u1'], []], 'owning it ends wanting it');
+  assert.match((await pressUndo(owned, 'u2')).content, /Only <@u1>/);
+  const undone = await pressUndo(owned);
+  assert.equal(undone.content, '↩️ Undone: <@u1> doesn’t own **Halo** again.');
+  assert.deepEqual(undone.components, []);
+  assert.deepEqual([usersIn('game_owners', id), usersIn('game_wants', id)], [[], ['u1']]);
+});
+
+test('Undo on /game remove puts the game back as it was, owners and all, under the same id', async () => {
+  const id = halo()!.id;
+  db.prepare(`INSERT INTO game_owners (game_id, user_id) VALUES (?, 'u2')`).run(id);
+  const gone = await gameCommand('remove', 'Halo');
+  assert.equal(halo(), undefined);
+  assert.equal((await pressUndo(gone)).content, '↩️ **Halo** is back in the library.');
+  assert.equal(halo()!.id, id);
+  assert.deepEqual([usersIn('game_owners', id), usersIn('game_wants', id)], [['u2'], ['u1']]);
+  assert.match((await pressUndo(gone)).content, /too late/, 'once only');
+  assert.equal(recentActivity('undo', 1)[0].action, 'Put **Halo** back in the game library');
+});
