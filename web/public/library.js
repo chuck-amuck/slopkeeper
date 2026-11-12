@@ -470,7 +470,7 @@ export function renderLibrary(main) {
           }
         }),
     });
-    const remove = confirmButton({ className: 'quiet icon', title: 'Delete', ariaLabel: `Delete ${sound.name}` }, icon('x'), 'Delete?', async () => {
+    async function deleteSound() {
       const { discordProblem, binId } = await request(soundPath(sound.name), { method: 'DELETE' });
       if (player.name === sound.name) player.stop();
       if (discordProblem) toast(`Deleted ${sound.name}, but it’s still on Discord: ${discordProblem}`, true);
@@ -482,7 +482,35 @@ export function renderLibrary(main) {
         });
       }
       await load();
-    });
+    }
+    const remove = confirmButton({ className: 'quiet icon sound-extra', title: 'Delete', ariaLabel: `Delete ${sound.name}` }, icon('x'), 'Delete?', deleteSound);
+
+    // On a phone, the rarer actions are in a list with their names, rather than a row of icons nobody can hover over
+    function moreSheet() {
+      const item = (iconName, label, run) =>
+        el('button', { type: 'button', className: 'sheet-item with-icon', onclick: () => (node.close(), run()) }, icon(iconName), el('span', {}, label));
+      const node = openDialog(main, {
+        title: sound.name,
+        className: 'sheet',
+        body: [
+          el(
+            'div',
+            { className: 'sheet-list' },
+            item('volume', `Volume (${sound.percent}%)`, () => pickVolume(sound)),
+            item('scissors', sound.trimmed ? 'Trim or restore' : 'Trim', () => attempt(() => trim(sound))),
+            item('pencil', 'Rename', rename),
+          ),
+          el(
+            'div',
+            { className: 'sheet-list' },
+            confirmButton({ type: 'button', className: 'sheet-item with-icon' }, [icon('trash'), el('span', {}, 'Delete')], 'Tap again to delete', async () => {
+              node.close();
+              await deleteSound();
+            }),
+          ),
+        ],
+      });
+    }
 
     const preview = el('button', { className: 'quiet icon', onclick: () => player.toggle(soundPath(sound.name, '/audio'), sound.name, sound.loudness) });
     previews.set(sound.name, preview);
@@ -503,10 +531,11 @@ export function renderLibrary(main) {
         sound.emoji ? emojiNode(sound.emoji, 'emoji') : el('span', { className: 'none' }, icon('plus')),
       ),
       nameBox,
-      el('button', { className: 'quiet icon', title: 'Volume', ariaLabel: `Volume for ${sound.name}`, onclick: () => pickVolume(sound) }, icon('volume')),
-      el('button', { className: 'quiet icon', title: 'Trim', ariaLabel: `Trim ${sound.name}`, onclick: () => attempt(() => trim(sound)) }, icon('scissors')),
+      el('button', { className: 'quiet icon sound-extra', title: 'Volume', ariaLabel: `Volume for ${sound.name}`, onclick: () => pickVolume(sound) }, icon('volume')),
+      el('button', { className: 'quiet icon sound-extra', title: 'Trim', ariaLabel: `Trim ${sound.name}`, onclick: () => attempt(() => trim(sound)) }, icon('scissors')),
       el('label', { className: 'toggle' }, toggle, el('span', {}, 'On Discord')),
       remove,
+      el('button', { type: 'button', className: 'quiet icon sound-more', ariaLabel: `More for ${sound.name}`, ariaHasPopup: 'dialog', onclick: moreSheet }, icon('more')),
     );
   }
 

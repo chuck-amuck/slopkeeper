@@ -2466,6 +2466,28 @@ textarea {
   .sound .toggle {
     margin-left: auto;
   }
+
+  /* Named, as nothing here can be hovered over to find out */
+  .sound .toggle span {
+    display: inline;
+    color: var(--muted);
+    font-size: var(--text-xs);
+  }
+
+  /* Volume, Trim and Delete are in the ⋯ list instead */
+  .sound .sound-extra {
+    display: none;
+  }
+}
+
+.sound .sound-more {
+  display: none;
+}
+
+@media (max-width: 640px) {
+  .sound .sound-more {
+    display: inline-grid;
+  }
 }
 
 /* Discord's soundboard */
@@ -3106,6 +3128,18 @@ button.sheet-item {
   border-color: transparent;
   background: transparent;
   text-align: left;
+}
+
+/* Delete asks first, and its icon and word are in one label */
+button.sheet-item.confirm {
+  display: flex;
+  justify-content: flex-start;
+}
+
+button.sheet-item.confirm > span {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
 }
 
 .sheet-item[aria-current='page'] {
