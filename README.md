@@ -180,7 +180,7 @@ Buttons:
 - **🗳️ Vote** starts a 1-minute `/gamevote`. It's greyed out when only one game qualifies.
 - **Never suggest this** hides a game from future picks, and tells whoever pressed it how to undo it: `/game unhide`, or the web UI's Games page.
 
-**🎲 Reroll** keeps to the `type` and `deck` you chose. **🗳️ Vote** covers every game that qualifies.
+**🎲 Reroll** keeps to the `type` and `deck` you chose, and to the people in the channel it was picked for, so anyone can press it, even someone not in voice. **🗳️ Vote** covers every game that qualifies.
 
 How a vote works:
 - The ballot has up to 10 games from the same list: the 5 you've played most, then a random mix of the rest.

@@ -7,6 +7,7 @@ import {
   SlashCommandBuilder,
   type AutocompleteInteraction,
   type Guild,
+  type VoiceBasedChannel,
 } from 'discord.js';
 import { db } from '../db.ts';
 import type { Feature } from '../types.ts';
@@ -352,7 +353,9 @@ export async function candidatesFor(guild: Guild, here: string[]) {
   return { counted, candidates, notes };
 }
 
-async function buildPick(guild: Guild, here: string[], filter: PickFilter, avoid?: string) {
+/** Picks a game for the people in a voice channel. The buttons remember the channel, so anyone can press them */
+async function buildPick(guild: Guild, room: VoiceBasedChannel, filter: PickFilter, avoid?: string) {
+  const here = humansIn(room).map((m) => m.id);
   const found = await candidatesFor(guild, here);
   if (!found) return { content: NOBODY_COUNTED, embeds: [], components: [] };
   const { counted, notes } = found;
@@ -384,11 +387,11 @@ async function buildPick(guild: Guild, here: string[], filter: PickFilter, avoid
   }
 
   const buttons = new ActionRowBuilder<ButtonBuilder>().addComponents(
-    new ButtonBuilder().setCustomId(`wdp:reroll:${filter.type ?? ''}:${filter.deck ?? 0}`).setLabel('Reroll').setEmoji('🎲').setStyle(ButtonStyle.Primary).setDisabled(ready.length < 2),
+    new ButtonBuilder().setCustomId(`wdp:reroll:${filter.type ?? ''}:${filter.deck ?? 0}:${room.id}`).setLabel('Reroll').setEmoji('🎲').setStyle(ButtonStyle.Primary).setDisabled(ready.length < 2),
     new ButtonBuilder().setCustomId('vote:start').setLabel('Vote').setEmoji('🗳️').setStyle(ButtonStyle.Secondary).setDisabled(ready.length < 2),
   );
   if (pick?.appid) {
-    buttons.addComponents(new ButtonBuilder().setCustomId(`wdp:hide:${pick.appid}:${filter.type ?? ''}:${filter.deck ?? 0}`).setLabel('Never suggest this').setStyle(ButtonStyle.Secondary));
+    buttons.addComponents(new ButtonBuilder().setCustomId(`wdp:hide:${pick.appid}:${filter.type ?? ''}:${filter.deck ?? 0}:${room.id}`).setLabel('Never suggest this').setStyle(ButtonStyle.Secondary));
   }
   return { content: '', embeds: [embed], components: [buttons], allowedMentions: { parse: [] } };
 }
@@ -558,7 +561,7 @@ export const games: Feature = {
         }
         await i.deferReply();
         const filter = { type: (i.options.getString('type') ?? undefined) as PickFilter['type'], deck: i.options.getInteger('deck') ?? undefined };
-        return i.editReply(await buildPick(i.guild, humansIn(i.member.voice.channel).map((m) => m.id), filter));
+        return i.editReply(await buildPick(i.guild, i.member.voice.channel, filter));
       },
     },
   ],
@@ -566,21 +569,23 @@ export const games: Feature = {
   async onButton(i) {
     const [, action, ...rest] = i.customId.split(':');
     const [target] = rest;
-    if (i.inCachedGuild() && action === 'list') return i.update(libraryPage(i.guild, Number(target)));
-    if (!i.inCachedGuild() || !i.member.voice.channel) {
-      return i.reply({ content: 'Join a voice channel first.', flags: MessageFlags.Ephemeral });
-    }
+    if (!i.inCachedGuild()) return i.reply({ content: 'Use this in a server.', flags: MessageFlags.Ephemeral });
+    if (action === 'list') return i.update(libraryPage(i.guild, Number(target)));
+    // Buttons posted before filters, or before they named the channel, have less here
+    const [type, deck, roomId] = action === 'hide' ? rest.slice(1) : rest;
+    // The channel the pick was for, while anyone's still in it, so someone not in voice can press it too
+    const posted = roomId ? i.guild.channels.cache.get(roomId) : undefined;
+    const room = posted?.isVoiceBased() && humansIn(posted).length ? posted : i.member.voice.channel;
+    if (!room) return i.reply({ content: 'Join a voice channel first.', flags: MessageFlags.Ephemeral });
     const shown = i.message.embeds[0]?.title?.replace(/^🎲 /, '');
     const title = shown ?? `App ${target}`;
     if (action === 'hide') {
       hideGame(i.guildId, Number(target), title, i.user.id);
       logActivity(i.guildId, i.user.id, `Hid **${title}** from suggestions`);
     }
-    // Buttons posted before filters existed have nothing here
-    const [type, deck] = action === 'hide' ? rest.slice(1) : rest;
     const filter = { type: (type || undefined) as PickFilter['type'], deck: Number(deck ?? 0) };
     await i.deferUpdate();
-    await i.editReply(await buildPick(i.guild, humansIn(i.member.voice.channel).map((m) => m.id), filter, shown));
+    await i.editReply(await buildPick(i.guild, room, filter, shown));
     if (action === 'hide') {
       await i.followUp({ content: `🙈 **${title}** won’t be suggested again. ${commandMention(i.guildId, 'game unhide')} brings it back.`, flags: MessageFlags.Ephemeral });
     }

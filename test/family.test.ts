@@ -16,7 +16,8 @@ function useKey(t: TestContext) {
 }
 
 const member = (id: string) => [id, { id }] as const;
-const guild = { id: 'g', members: { cache: new Map(['a', 'b', 'c', 'd'].map(member)) } } as never;
+const rooms = new Map<string, unknown>();
+const guild = { id: 'g', members: { cache: new Map(['a', 'b', 'c', 'd'].map(member)) }, channels: { cache: rooms } } as never;
 
 const own = (user: string, appid = GAME, playtime = 60, recent = 0) => {
   db.prepare('INSERT OR IGNORE INTO steam_links (user_id, steam_id) VALUES (?, ?)').run(user, `s-${user}`);
@@ -333,13 +334,16 @@ test('/steam family refuses bots and yourself', async (t) => {
 });
 
 /** Runs /whatdoweplay, or presses a button on its card, and returns the card's title and buttons */
-async function pickCard(customId: string | null, type: string | null = null, deck: number | null = null) {
-  const voice = { members: new Map(['a', 'c'].map((id) => [id, { id, user: { bot: false } }])) };
+async function pickCard(customId: string | null, type: string | null = null, deck: number | null = null, inVoice = true) {
+  const voice = { id: 'room', isVoiceBased: () => true, members: new Map(['a', 'c'].map((id) => [id, { id, user: { bot: false } }])) };
+  rooms.set('room', voice);
   let card: { embeds: { toJSON(): { title: string } }[]; components: { toJSON(): { components: { custom_id: string }[] } }[] } | undefined;
-  const shared = { inCachedGuild: () => true, guildId: 'g', guild, user: { id: 'a' }, member: { voice: { channel: voice } }, deferReply: async () => {}, deferUpdate: async () => {}, editReply: async (r: typeof card) => (card = r), followUp: async () => {} };
+  let replied: string | undefined;
+  const shared = { inCachedGuild: () => true, guildId: 'g', guild, user: { id: 'a' }, member: { voice: { channel: inVoice ? voice : null } }, reply: async (r: { content: string }) => void (replied = r.content), deferReply: async () => {}, deferUpdate: async () => {}, editReply: async (r: typeof card) => (card = r), followUp: async () => {} };
   if (customId) await games.onButton!({ ...shared, customId, message: { embeds: [] } } as never);
   else await games.commands![1].run({ ...shared, options: { getString: () => type, getInteger: () => deck } } as never);
-  return { title: card!.embeds[0].toJSON().title, ids: card!.components[0].toJSON().components.map((b) => b.custom_id) };
+  if (!card) return { title: replied!, ids: [] };
+  return { title: card.embeds[0].toJSON().title, ids: card.components[0].toJSON().components.map((b) => b.custom_id) };
 }
 
 test('/whatdoweplay only picks what fits, and rerolling keeps to that', async () => {
@@ -354,8 +358,8 @@ test('/whatdoweplay only picks what fits, and rerolling keeps to that', async ()
 
   const coop = await pickCard(null, 'coop');
   assert.equal(coop.title, '🎲 Co-op Game');
-  assert.equal(coop.ids[0], 'wdp:reroll:coop:0');
-  for (let n = 0; n < 10; n++) assert.equal((await pickCard('wdp:reroll:coop:0')).title, '🎲 Co-op Game');
+  assert.equal(coop.ids[0], 'wdp:reroll:coop:0:room');
+  for (let n = 0; n < 10; n++) assert.equal((await pickCard('wdp:reroll:coop:0:room')).title, '🎲 Co-op Game');
   assert.equal((await pickCard(null, null, 3)).title, '🎲 Co-op Game');
   assert.equal((await pickCard(null, 'pvp', 3)).title, '🤷 Nothing fits');
   assert.ok(['🎲 Co-op Game', '🎲 PvP Game'].includes((await pickCard(null, null, 2)).title));
@@ -366,13 +370,19 @@ test('a reroll button from before filters still works', async () => {
   assert.equal((await pickCard('wdp:reroll')).title, '🎲 Deep Rock');
 });
 
+test('rerolling picks for the channel the card was for, even pressed by someone not in voice', async () => {
+  for (const user of ['a', 'c']) own(user);
+  assert.equal((await pickCard('wdp:reroll::0:room', null, null, false)).title, '🎲 Deep Rock');
+  assert.equal((await pickCard('wdp:reroll::0', null, null, false)).title, 'Join a voice channel first.', 'an older button needs the presser in voice');
+});
+
 test('Never suggest this keeps the filters too', async () => {
   for (const user of ['a', 'c']) own(user, 1);
   facts(1, 0, { coop: 1 });
-  assert.equal((await pickCard(null, 'coop')).ids.at(-1), 'wdp:hide:1:coop:0');
+  assert.equal((await pickCard(null, 'coop')).ids.at(-1), 'wdp:hide:1:coop:0:room');
   for (const user of ['a', 'c']) own(user, 2);
   facts(2, 0, { pvp: 1 });
   const pressed = await pickCard('wdp:hide:1:coop:0');
-  assert.equal(pressed.ids[0], 'wdp:reroll:coop:0');
+  assert.equal(pressed.ids[0], 'wdp:reroll:coop:0:room');
   assert.equal(pressed.title, '🤷 Nothing fits', 'the PvP game left doesn’t fit');
 });
