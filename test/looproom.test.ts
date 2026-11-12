@@ -210,8 +210,9 @@ test('the soundboard volume reaches sounds already playing, and new ones', { ski
   await play(lounge as never, findSound(id, 'rain')!.file);
   assert.deepEqual(set.mock.calls.map((c) => c.arguments), [
     ['sound', 0.4],
+    ['speech', 1],
     ['music', 0.4],
-  ], 'a new mixer starts at both volumes');
+  ], 'a new mixer starts at every group’s volume');
   setSetting(id, 'soundVolume', 150);
   applySoundVolume(id);
   assert.deepEqual(set.mock.calls.at(-1)!.arguments, ['sound', 1.5]);

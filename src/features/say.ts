@@ -198,9 +198,9 @@ async function sayLine(queue: Queue, { channel, text, voice, started }: Line) {
     writeFileSync(unlevelled, await speech(text, voice, setting(guildId, 'ttsSpeed'), cancel.signal));
     await levelSpeech(unlevelled, file);
     cancel.signal.throwIfAborted();
-    const gain = setting(guildId, 'ttsVolume') / 100;
+    // At full gain: the speech volume is the group's, so moving it changes a line already being said
     await new Promise<void>((finished, failed) => {
-      play(channel, file, gain, finished, { group: 'speech', label: text })
+      play(channel, file, 1, finished, { group: 'speech', label: text })
         .then((problem) => {
           started(problem);
           if (problem) finished();

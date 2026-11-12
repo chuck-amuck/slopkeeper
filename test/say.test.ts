@@ -12,7 +12,7 @@ import { recentActivity } from '../src/activity.ts';
 import { config } from '../src/config.ts';
 import { Mixer } from '../src/mixer.ts';
 import { announceAloud, lengthFor, phrases, readMessage, removePhrase, savePhrase, say, sayOut, speak, speechFor } from '../src/features/say.ts';
-import { loopSpeechProblem, playJoinSound, saveUpload, setJoinSound, soundboard, stopPlayback } from '../src/features/soundboard.ts';
+import { applySpeechVolume, loopSpeechProblem, playJoinSound, saveUpload, setJoinSound, soundboard, stopPlayback } from '../src/features/soundboard.ts';
 import { setSetting } from '../src/settings.ts';
 
 const hasFfmpeg = spawnSync('ffmpeg', ['-version']).status === 0;
@@ -148,14 +148,18 @@ test('a speed means what it says, despite Piper not being proportional', () => {
   assert.ok(lengths.every((length, n) => n === 0 || length <= lengths[n - 1]), 'faster never takes longer');
 });
 
-test('a server’s volume setting changes how loud a line plays', { skip: !hasFfmpeg }, async (t) => {
+test('a server’s speech volume sets how loud lines play, including one being said', { skip: !hasFfmpeg }, async (t) => {
   fakeVoice(t);
   const added = t.mock.method(Mixer.prototype, 'add', (_file: string, _gain?: number, onEnd?: () => void) => onEnd?.());
+  const set = t.mock.method(Mixer.prototype, 'setGroupGain');
   const voice = channel();
-  assert.equal(await say(voice, 'hello', undefined, 'a'), null);
   setSetting(voice.guild.id, 'ttsVolume', 150);
-  assert.equal(await say(voice, 'hello', undefined, 'b'), null);
-  assert.deepEqual(added.mock.calls.map((c) => c.arguments[1]), [1, 1.5]);
+  assert.equal(await say(voice, 'hello', undefined, 'a'), null);
+  assert.deepEqual(added.mock.calls.map((c) => [c.arguments[1], c.arguments[3]?.group]), [[1, 'speech']], 'the line plays at full gain in the speech group');
+  assert.deepEqual(set.mock.calls.find((c) => c.arguments[0] === 'speech')?.arguments, ['speech', 1.5], 'the group starts at the setting');
+  setSetting(voice.guild.id, 'ttsVolume', 50);
+  applySpeechVolume(voice.guild.id);
+  assert.deepEqual(set.mock.calls.at(-1)!.arguments, ['speech', 0.5], 'and follows it when it changes');
 });
 
 test('audio that can’t be read counts as the voice being unavailable, and leaves nothing behind', { skip: !hasFfmpeg }, async (t) => {

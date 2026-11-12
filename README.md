@@ -414,7 +414,7 @@ Sounds from before this existed are measured when the bot starts. Copies on Disc
 
 ### Soundboard volume
 
-**Soundboard volume** turns every sound up or down at once, including join sounds and the looping sound, and changes sounds that are already playing. It's the slider next to **Play in** on the web UI, in Settings, and `volume` in `/setup sounds`. Speech has its own volume.
+**Soundboard volume** turns every sound up or down at once, including join sounds and the looping sound, and changes sounds that are already playing. It's the **Sounds** slider next to **Play in** on the web UI, in Settings, and `volume` in `/setup sounds`. Speech has its own volume: **Speech volume**, the **Speech** slider under the web UI's **Say something** box, also in Settings and `volume` in `/setup speech`. It changes a line being said too.
 
 The web UI's volume sliders, for the soundboard, music and each sound, follow loudness rather than the percentage, so moving one sounds about as big a change anywhere along it, and 100% sits at the tick about 70% of the way along. The box beside each takes an exact percentage, and the arrow keys move a slider 5% at a time (Page Up and Page Down 20%).
 
@@ -742,7 +742,7 @@ It applies the same rules as `/sound` and `/setup`, and every request needs an `
 | `POST /guilds/:id/stop` | Stops every sound and any spoken lines waiting, leaving the music playing. Returns `musicPlaying` |
 | `GET /guilds/:id/playing` | The sounds and speech playing, not the music: `version` and `playing` (`id`, `name`, `kind` sound or speech, `loop`, `started` once it's heard, `elapsedMs`). With `?after=<version>` it waits up to 25 s for a change |
 | `POST /guilds/:id/playing/:playingId/stop` | Stops one of them. 404 if it's already finished |
-| `GET /guilds/:id/say` | Whether text to speech is `on`, the `voices`, the default `voice`, the `longest` line and the saved `phrases` |
+| `GET /guilds/:id/say` | Whether text to speech is `on`, the `voices`, the default `voice`, the speech `volume`, the `longest` line and the saved `phrases` |
 | `POST /guilds/:id/say` | Reads out `text` in `channelId`, with an optional `voice`. Answers once the line starts |
 | `POST /guilds/:id/phrases` | Saves `text`, and answers with the `phrases` |
 | `DELETE /guilds/:id/phrases/:id` | Removes a saved line, and answers with the `phrases` |

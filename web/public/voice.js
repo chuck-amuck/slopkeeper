@@ -2,7 +2,7 @@ import { api, attempt, el, pickedVoice, poll, request, soundPath, state, toast, 
 
 const REFRESH_MS = 5000;
 
-/** The "Play in" picker and soundboard volume. Stop is in the corner of every page. onChange runs whenever the chosen channel changes */
+/** The "Play in" picker and the volume for sounds; speech has its own, in the Say box. Stop is in the corner of every page. onChange runs whenever the chosen channel changes */
 export function voiceBar(main, onChange) {
   const guildId = state.guildId;
   // Null until it's first loaded, so an empty list still gets drawn
@@ -21,7 +21,7 @@ export function voiceBar(main, onChange) {
   const volume = volumeControl({
     min: 0,
     max: 200,
-    label: 'Soundboard volume',
+    label: 'Sound volume',
     // It's the server's setting, not this page's, so saying so is worth a toast
     onSave: (value) =>
       void attempt(async () => {
@@ -31,8 +31,8 @@ export function voiceBar(main, onChange) {
   });
   const volumeLabel = el(
     'span',
-    { className: 'voice-volume', hidden: true, title: 'How loud sounds play for everyone in the server. It’s the Soundboard volume in Settings.' },
-    el('span', { className: 'voice-label' }, 'Volume'),
+    { className: 'voice-volume', hidden: true, title: 'How loud sounds play for everyone in the server. Speech has its own volume. It’s the Soundboard volume in Settings.' },
+    el('span', { className: 'voice-label' }, 'Sounds'),
     volume.node,
   );
 

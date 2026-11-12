@@ -724,6 +724,7 @@ function mixInto(guildId: string, add: (mixer: Mixer) => void) {
   a.mixer = new Mixer(VOLUME, MAX_VOICES);
   a.mixer.on('playing', () => playingChanged(guildId));
   a.mixer.setGroupGain('sound', setting(guildId, 'soundVolume') / 100);
+  a.mixer.setGroupGain('speech', setting(guildId, 'ttsVolume') / 100);
   a.mixer.setGroupGain('music', setting(guildId, 'musicVolume') / 100);
   // Before playing, or the mixer would find nothing to mix and end straight away
   add(a.mixer);
@@ -765,6 +766,11 @@ export async function play(channel: VoiceBasedChannel, file: string, gain = 1, o
 /** Applies the soundboard volume to sounds already playing */
 export function applySoundVolume(guildId: string) {
   audio.get(guildId)?.mixer?.setGroupGain('sound', setting(guildId, 'soundVolume') / 100);
+}
+
+/** Applies the speech volume to a line already being said */
+export function applySpeechVolume(guildId: string) {
+  audio.get(guildId)?.mixer?.setGroupGain('speech', setting(guildId, 'ttsVolume') / 100);
 }
 
 /** The room loops its sound, its speech, or both, each on its own */
@@ -947,6 +953,7 @@ export async function afterSettingsChanged(guild: Guild, keys: string[]) {
   // Discord's copies of the sounds, and audio already playing, have their own volume
   if (keys.includes('evenVolume')) await applyLevels(guild);
   if (keys.includes('soundVolume')) applySoundVolume(guild.id);
+  if (keys.includes('ttsVolume')) applySpeechVolume(guild.id);
   if (keys.includes('musicVolume')) applyMusicVolume(guild.id);
   if (keys.some(affectsLoopRoom)) await refreshLoopRoom(guild);
 }

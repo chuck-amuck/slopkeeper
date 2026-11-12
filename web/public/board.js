@@ -1,4 +1,4 @@
-import { api, attempt, el, emojiNode, icon, keepFocus, notice, postDialog, request, soundPath, state, toast, undoToast } from './lib.js';
+import { api, attempt, el, emojiNode, icon, keepFocus, notice, postDialog, request, soundPath, state, toast, undoToast, volumeControl } from './lib.js';
 import { elapsed, onPlaying } from './playing.js';
 import { voiceBar } from './voice.js';
 
@@ -86,10 +86,27 @@ function sayBox(voice) {
     send,
     save,
   );
-  const node = el('div', { className: 'say-box', hidden: true }, form, row);
+  // Apart from the sounds' volume, so a quiet voice can be turned up without the soundboard
+  const volume = volumeControl({
+    min: 25,
+    max: 200,
+    label: 'Speech volume',
+    onSave: (value) =>
+      void attempt(async () => {
+        await request(api('/settings/ttsVolume'), { method: 'PUT', json: { value } });
+        toast(`Speech plays at ${value}% for everyone now.`);
+      }),
+  });
+  const volumeRow = el(
+    'div',
+    { className: 'toolbar' },
+    el('span', { className: 'voice-volume', title: 'How loud the bot speaks for everyone in the server. It’s the Speech volume in Settings.' }, el('span', { className: 'voice-label' }, 'Speech'), volume.node),
+  );
+  const node = el('div', { className: 'say-box', hidden: true }, form, volumeRow, row);
   void attempt(async () => {
-    const { on, voices, voice: chosen, longest, phrases: saved } = await request(api('/say'));
+    const { on, voices, voice: chosen, volume: loudness, longest, phrases: saved } = await request(api('/say'));
     if (guildId !== state.guildId) return;
+    volume.set(loudness);
     text.maxLength = longest;
     picker.replaceChildren(...voices.map((v) => el('option', { value: v.id, selected: v.id === chosen }, v.name)));
     node.hidden = !on;

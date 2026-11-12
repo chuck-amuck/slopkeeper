@@ -1256,7 +1256,7 @@ async function handle(client: Client<true>, req: IncomingMessage, res: ServerRes
     return {};
   }
   if (section === 'say' && !rest.length && req.method === 'GET') {
-    return { on: Boolean(config.voiceUrl) && setting(guild.id, 'tts'), voices: VOICES.map(({ id, name }) => ({ id, name })), voice: setting(guild.id, 'ttsVoice'), longest: setting(guild.id, 'ttsMaxChars'), phrases: phrases(guild.id) };
+    return { on: Boolean(config.voiceUrl) && setting(guild.id, 'tts'), voices: VOICES.map(({ id, name }) => ({ id, name })), voice: setting(guild.id, 'ttsVoice'), volume: setting(guild.id, 'ttsVolume'), longest: setting(guild.id, 'ttsMaxChars'), phrases: phrases(guild.id) };
   }
   if (section === 'say' && !rest.length && req.method === 'POST') {
     const { channelId, text, voice } = await readJson(req);
