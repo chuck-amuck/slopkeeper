@@ -63,8 +63,10 @@ function sayBox(voice) {
   const chips = el('div', { className: 'phrase-list' });
   const saveLine = el('button', { type: 'button', className: 'icon save-line', ariaLabel: 'Save this line', title: 'Save this line, to say it again with one tap', hidden: true, onclick: () => saveTyped() }, icon('plus'));
   const editLines = el('button', { type: 'button', className: 'quiet', ariaPressed: 'false', hidden: true, onclick: () => setEditing(!editing) }, 'Edit');
-  // On a phone the row scrolls sideways, so the sounds stay near the top; All unfolds it
-  const scroller = el('div', { className: 'phrase-scroll' }, picker, preview, chips, editLines);
+  // Which voice, with its preview, above the box it says
+  const voiceRow = el('div', { className: 'toolbar say-voices' }, el('span', { className: 'voice-label' }, 'Voice'), picker, preview);
+  // On a phone the saved lines scroll sideways, so the sounds stay near the top; All unfolds them
+  const scroller = el('div', { className: 'phrase-scroll' }, chips, editLines);
   const allLines = el('button', { type: 'button', className: 'quiet all-lines', ariaExpanded: 'false', hidden: true, onclick: () => setUnfolded(!unfolded) }, 'All');
   const row = el('div', { className: 'phrases' }, scroller, allLines);
   let phrases = [];
@@ -131,6 +133,7 @@ function sayBox(voice) {
     );
     allLines.hidden = editing || !phrases.length;
     editLines.hidden = !phrases.length;
+    row.hidden = !phrases.length;
     if (!phrases.length) setEditing(false);
     paint();
   };
@@ -182,7 +185,7 @@ function sayBox(voice) {
     saveLine,
     send,
   );
-  const node = el('div', { className: 'say-box', hidden: true }, form, row);
+  const node = el('div', { className: 'say-box', hidden: true }, voiceRow, form, row);
   void attempt(async () => {
     const { on, voices, voice: serverDefault, longest, phrases: saved } = await request(api('/say'));
     if (guildId !== state.guildId) return;
@@ -216,6 +219,7 @@ export function renderBoard(main, openManage, head = main, arrange = false) {
   const voice = voiceBar(paint);
   const search = el('input', {
     type: 'search',
+    className: 'board-search',
     placeholder: 'Search sounds',
     ariaLabel: 'Search sounds',
     oninput: (e) => {
@@ -228,7 +232,6 @@ export function renderBoard(main, openManage, head = main, arrange = false) {
   // Tooltips don't show on a phone, so the reason the tiles are grey is said where it's seen
   const nobody = notice('empty', 'Nobody’s in voice. Join a voice channel in Discord and these light up.', { compact: true });
   nobody.hidden = true;
-  // On a phone it's only the icon until it says Done, so the search box beside it keeps its room
   const arrangeLabel = el('span', { className: 'arrange-label' }, 'Arrange');
   const arrangeButton = el('button', { type: 'button', className: 'with-icon arrange-toggle', title: 'Sort sounds into groups and put them in order', onclick: () => setArranging(!arranging) }, icon('grip'), arrangeLabel);
   const newGroup = el('input', { ariaLabel: 'New group’s name', placeholder: 'New group', maxLength: 40, autocomplete: 'off' });
@@ -255,9 +258,9 @@ export function renderBoard(main, openManage, head = main, arrange = false) {
       el('button', { type: 'submit' }, 'Add group'),
     ),
   );
-  // Beside Play | Manage when there's a slot for it, a row higher up
-  head.append(search, arrangeButton);
-  main.append(voice.node, say.node, nobody, board);
+  // Beside Play | Manage when there's a slot for it, a row higher up. The search is just above the sounds it searches
+  head.append(arrangeButton);
+  main.append(voice.node, say.node, search, nobody, board);
   board.append(notice('loading', 'Loading sounds…'));
 
   function paint() {

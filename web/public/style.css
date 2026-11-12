@@ -685,7 +685,7 @@ main {
   display: none;
 }
 
-/* The search on Play, beside Play | Manage */
+/* Play's Arrange, at the end of the row with Play | Manage */
 .view-head {
   display: flex;
   flex-wrap: wrap;
@@ -696,6 +696,7 @@ main {
 .view-slot {
   display: flex;
   flex: 1 1 160px;
+  justify-content: flex-end;
   gap: var(--space-2);
   min-width: 0;
 }
@@ -713,14 +714,18 @@ main {
   display: none;
 }
 
-/* The saved lines wrap along with the voice picker before them */
+/* The saved lines wrap along with Edit after them */
 .phrase-list {
   display: contents;
 }
 
+.toolbar.say-voices {
+  flex-wrap: nowrap;
+}
+
 .say-voice {
   flex: 0 1 auto;
-  max-width: 14em;
+  max-width: 16em;
   min-width: 0;
 }
 
@@ -1436,17 +1441,6 @@ dialog input {
   flex: none;
 }
 
-@media (max-width: 640px) {
-  /* Only the icon, until it says Done: still read out, and the search box keeps its room */
-  .arrange-toggle:not(.primary) .arrange-label {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    overflow: hidden;
-    clip-path: inset(50%);
-    white-space: nowrap;
-  }
-}
 
 .arrange-bar {
   display: grid;
@@ -2442,8 +2436,8 @@ textarea {
     max-width: 80%;
   }
 
-  /* The voice, its preview and the saved lines scroll sideways in one row, fading at the edge so it shows there's
-     more; All unfolds them, and so does Edit */
+  /* The saved lines scroll sideways in one row, fading at the edge so it shows there's more; All unfolds them, and so
+     does Edit */
   .phrases:not(.unfolded, .editing) .phrase-scroll {
     flex-wrap: nowrap;
     overflow-x: auto;
@@ -2473,7 +2467,8 @@ textarea {
   }
 
   .say-voice {
-    max-width: 10em;
+    flex: 1 1 auto;
+    max-width: none;
   }
 
   /* The word goes, the speaker says it */
