@@ -1,4 +1,4 @@
-import { api, attempt, confirmButton, el, icon, keepFocus, notice, pickedVoice, poll, request, RequestError, session, state, toast, undoToast, volumeControl } from './lib.js';
+import { announce, api, attempt, confirmButton, el, icon, keepFocus, notice, pickedVoice, poll, request, RequestError, session, state, toast, undoToast, volumeControl } from './lib.js';
 
 const REFRESH_MS = 3000;
 // A playlist adds this many songs, the first or at random
@@ -286,6 +286,7 @@ export function renderMusic(main) {
                 await addFrom({ query: `spotify:playlist:${p.id}`, shuffle }, next);
                 for (const b of buttons) b.disabled = false;
               },
+              ariaLabel: `${label}: ${p.name}`,
             },
             label,
           );
@@ -322,11 +323,18 @@ export function renderMusic(main) {
               cover(t.cover, 40),
               el('div', { className: 'song-text' }, el('div', { className: 'song-title' }, t.title), el('div', { className: 'song-sub' }, `${t.artist} · ${t.album}`)),
               el('span', { className: 'song-time' }, time(t.durationMs)),
-              el('div', { className: 'song-actions' }, el('button', { onclick: () => void addFrom({ track: t }, true) }, 'Play next'), el('button', { onclick: () => void addFrom({ track: t }, false) }, 'Add to end')),
+              // Named with the song, as a list of buttons all called Play next says nothing to a screen reader
+              el(
+                'div',
+                { className: 'song-actions' },
+                el('button', { ariaLabel: `Play next: ${t.title}`, onclick: () => void addFrom({ track: t }, true) }, 'Play next'),
+                el('button', { ariaLabel: `Add to end: ${t.title}`, onclick: () => void addFrom({ track: t }, false) }, 'Add to end'),
+              ),
             ),
           )
         : [notice('empty', `Nothing on Spotify matches “${text}”.`, { compact: true })]),
     );
+    announce(tracks.length ? `${tracks.length} song${tracks.length === 1 ? '' : 's'} found.` : `Nothing on Spotify matches ${text}.`);
   }
 
   const searchCard = el('section', { className: 'card music' }, el('h2', {}, 'Add music'), el('div', { className: 'card-body music-search' }, searchNote, modes, searchForm, searchHelp, results));

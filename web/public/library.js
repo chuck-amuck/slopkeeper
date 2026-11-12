@@ -416,7 +416,8 @@ export function renderLibrary(main) {
     const nameBox = el('div', { className: 'name' });
     const showName = () =>
       nameBox.replaceChildren(
-        el('button', { title: 'Rename', onclick: rename }, sound.name),
+        // Says what pressing it does, after the name people see
+        el('button', { title: 'Rename', ariaLabel: `${sound.name}, rename`, onclick: rename }, sound.name),
         el('span', { className: 'meta' }, [formatSeconds(sound.seconds), sound.percent !== 100 && `${sound.percent}%`, sound.trimmed && 'trimmed'].filter(Boolean).join(' · ')),
       );
 
