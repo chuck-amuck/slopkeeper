@@ -18,6 +18,7 @@ import {
   MOST_QUEUED,
   moveTrack,
   music,
+  musicCard,
   musicState,
   onStatus,
   pauseMusic,
@@ -37,6 +38,7 @@ import {
   type PlayerStatus,
 } from '../src/features/music.ts';
 import { soundboard, stopPlayback } from '../src/features/soundboard.ts';
+import { setSetting } from '../src/settings.ts';
 import type { Track } from '../src/spotify.ts';
 
 // yt-dlp is ready
@@ -718,4 +720,150 @@ test('after a restart the music waits for the music player to start, and someone
   await again;
   assert.equal(played.length, before + 2, 'played once, not twice');
   stopMusic(id, 'u1');
+});
+
+// ---------- the music card ----------
+
+const cardJson = (card: ReturnType<typeof musicCard>) => ({
+  embed: card.embeds[0].toJSON(),
+  buttons: card.components.flatMap((row) => row.toJSON().components.map((c: any) => [c.custom_id, c.label, Boolean(c.disabled)])),
+});
+
+/** Someone in a server, who can control the music unless the server has a DJ role they don't have */
+const person = (guildId: string, channel: unknown = null, roles: string[] = []) => ({
+  guild: { id: guildId },
+  roles: { cache: new Set(roles) },
+  permissions: { has: () => false },
+  voice: { channel },
+});
+
+/** Presses a button on a music card */
+async function pressCard(guild: import('discord.js').Guild, customId: string, member = person(guild.id)) {
+  const out = { updates: [] as any[], replies: [] as any[], followUps: [] as any[] };
+  await music.onButton!({
+    customId,
+    guildId: guild.id,
+    guild,
+    member,
+    user: { id: 'u1', toString: () => '<@u1>' },
+    inCachedGuild: () => true,
+    update: async (r: unknown) => out.updates.push(r),
+    editReply: async (r: unknown) => out.updates.push(r),
+    deferUpdate: async () => {},
+    reply: async (r: unknown) => out.replies.push(r),
+    followUp: async (r: unknown) => out.followUps.push(r),
+  } as never);
+  return out;
+}
+
+test('the card shows what’s playing, how far in, and a page of what’s next', async (t) => {
+  const tick = clock(t);
+  const { id, guild, channel } = server();
+  let card = cardJson(musicCard(id));
+  assert.equal(card.embed.description, 'The queue is empty. Add songs with /music play.');
+  assert.deepEqual(card.buttons.filter(([, , off]) => off).map(([, label]) => label), ['Play', 'Skip', 'Shuffle', 'Stop'], 'nothing to control');
+
+  addTracks(id, Array.from({ length: 23 }, (_, n) => song(n + 1, 180_000)), 'u1');
+  card = cardJson(musicCard(id));
+  assert.equal(card.embed.title, '🎵 Music');
+  assert.equal(card.embed.fields![0].name, 'Up next: 23 songs, 69 min');
+
+  await startMusic(guild, channel);
+  tick(60_000);
+  card = cardJson(musicCard(id));
+  assert.equal(card.embed.author!.name, '▶ Now playing');
+  assert.deepEqual([card.embed.title, card.embed.url], ['Song 1', `https://open.spotify.com/track/${'1'.padStart(22, '0')}`]);
+  assert.equal(card.embed.description, `Band · 3:00\nEnds <t:${Math.round((Date.now() + 120_000) / 1000)}:R> in <#voice>`);
+  assert.equal(card.embed.fields![0].name, 'Up next: 22 songs, 66 min');
+  assert.match(card.embed.fields![0].value, /^1\. \*\*Song 2\*\*/);
+  assert.deepEqual(card.buttons.map(([idText]) => idText), ['music:toggle:0', 'music:skip:0', 'music:shuffle:0', 'music:stop:0', 'music:show:0', 'music:show:-1', 'music:page', 'music:show:1']);
+  assert.equal(card.buttons[0][1], 'Pause');
+
+  card = cardJson(musicCard(id, 9));
+  assert.match(card.embed.fields![0].value, /^21\. \*\*Song 22\*\*/, 'a page past the end shows the last');
+  assert.deepEqual(card.buttons.slice(5).map(([, label, off]) => [label, off]), [['Earlier', false], ['Page 3 of 3', true], ['Later', true]]);
+
+  pauseMusic(id);
+  card = cardJson(musicCard(id));
+  assert.deepEqual([card.embed.author!.name, card.buttons[0][1]], ['⏸ Paused', 'Play']);
+  assert.match(card.embed.description!, /Paused at 1:00 of 3:00 in <#voice>/);
+  stopMusic(id, 'u1');
+});
+
+test('the card’s buttons control the music, and only for the DJs', async () => {
+  const { id, guild, channel } = server();
+  addTracks(id, [song(1), song(2), song(3)], 'u1');
+  let out = await pressCard(guild, 'music:toggle:0');
+  assert.match(out.followUps[0].content, /Join a voice channel first/);
+  assert.equal(musicState(id).phase, 'stopped');
+
+  out = await pressCard(guild, 'music:toggle:0', person(id, channel));
+  assert.equal(musicState(id).phase, 'playing');
+  assert.equal(cardJson(out.updates[0]).embed.title, 'Song 1', 'the card is redrawn');
+  await pressCard(guild, 'music:toggle:0');
+  assert.equal(musicState(id).phase, 'paused');
+  await pressCard(guild, 'music:toggle:0');
+  assert.equal(musicState(id).phase, 'playing', 'carries on in its own channel without the presser in voice');
+  await pressCard(guild, 'music:skip:0');
+  assert.deepEqual(titles(id), ['Song 2', 'Song 3']);
+
+  setSetting(id, 'musicDjRole', 'dj');
+  out = await pressCard(guild, 'music:skip:0');
+  assert.match(out.replies[0].content, /Only <@&dj>/);
+  assert.equal(titles(id).length, 2);
+  out = await pressCard(guild, 'music:show:0');
+  assert.equal(out.updates.length, 1, 'anyone can look');
+
+  const dj = person(id, null, ['dj']);
+  out = await pressCard(guild, 'music:stop:0', dj);
+  assert.match(out.replies[0].content, /Stop the music and clear the queue of 2 songs\?/);
+  assert.equal(musicState(id).phase, 'playing', 'nothing stops until it’s confirmed');
+  out = await pressCard(guild, 'music:stop-yes:0', dj);
+  assert.deepEqual([musicState(id).phase, titles(id)], ['stopped', []]);
+  assert.equal(out.followUps[0].content, '<@u1> stopped the music and cleared the queue.');
+});
+
+test('the card /music play posts follows the music, and a newer one takes over', async () => {
+  const { id, guild, channel } = server();
+  const edits: [string, any][] = [];
+  const client = { channels: { fetch: async () => ({ isTextBased: () => true, messages: { edit: async (messageId: string, r: unknown) => void edits.push([messageId, r]) } }) } };
+  let posted = 0;
+  const play = async () => {
+    let answer: any;
+    await music.commands![0].run({
+      inCachedGuild: () => true,
+      guildId: id,
+      guild,
+      client,
+      member: person(id, channel),
+      user: { id: 'u1' },
+      deferred: false,
+      options: { getSubcommand: () => 'play', getString: () => null, getBoolean: () => null },
+      async deferReply() {
+        (this as { deferred: boolean }).deferred = true;
+      },
+      editReply: async (r: unknown) => ((answer = r), { channelId: 'text', id: `card-${++posted}` }),
+    } as never);
+    return answer;
+  };
+  addTracks(id, [song(1), song(2)], 'u1');
+  const first = await play();
+  assert.equal(first.content, 'Playing **Song 1** in #General.');
+  assert.equal(cardJson(first).embed.title, 'Song 1');
+
+  await skipMusic(id, 'u1');
+  await sleep(1_700);
+  const [messageId, redrawn] = edits.at(-1)!;
+  assert.equal(messageId, 'card-1');
+  assert.equal(cardJson(redrawn).embed.title, 'Song 2', 'redrawn once the song changed');
+
+  pauseMusic(id);
+  edits.length = 0;
+  await play();
+  await sleep(10);
+  assert.deepEqual(edits.map(([messageId, r]) => [messageId, r.components.length]), [['card-1', 0]], 'the older card loses its buttons');
+  stopMusic(id, 'u1');
+  await sleep(1_700);
+  assert.equal(edits.at(-1)![0], 'card-2');
+  assert.equal(cardJson(edits.at(-1)![1]).embed.description, 'The queue is empty. Add songs with /music play.');
 });

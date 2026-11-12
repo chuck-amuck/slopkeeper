@@ -1,9 +1,14 @@
 import {
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
+  EmbedBuilder,
   InteractionContextType,
   MessageFlags,
   PermissionFlagsBits,
   SlashCommandBuilder,
   type AutocompleteInteraction,
+  type ButtonInteraction,
   type ChatInputCommandInteraction,
   type Client,
   type Guild,
@@ -31,7 +36,10 @@ const FETCH_TIMEOUT_MS = 3 * 60_000;
 export const MOST_QUEUED = 500;
 /** Album covers looked up at once, for songs added without one */
 const COVER_LOOKUPS = 4;
-const SHOWN_IN_DISCORD = 10;
+/** Songs waiting shown on each page of the music card */
+const CARD_PAGE = 10;
+/** How long the card waits for the music to settle before it's redrawn, so a burst of changes is one edit */
+const CARD_DELAY_MS = 1_500;
 // A file played once from the web page, which can be a whole song or a mix
 export const MOST_FILE_BYTES = 60 * 1024 * 1024;
 // A jump within a file stops this far short of its end, which would only stop it
@@ -125,6 +133,7 @@ export function addTracks(guildId: string, tracks: Track[], who: string, next = 
     renumber(guildId);
   });
   fetchNext(guildId);
+  cardChanged(guildId);
   if (adding.some((t) => !t.cover)) void fillCovers();
   return adding.length;
 }
@@ -207,6 +216,7 @@ export function moveTrack(guildId: string, id: number, to: number): boolean {
   const update = db.prepare('UPDATE music_queue SET pos = ? WHERE id = ?');
   transaction(() => rows.forEach((r, i) => update.run(i, r.id)));
   fetchNext(guildId);
+  cardChanged(guildId);
   return true;
 }
 
@@ -223,6 +233,7 @@ export function shuffleQueue(guildId: string, who: string): number {
   const update = db.prepare('UPDATE music_queue SET pos = ? WHERE id = ?');
   transaction(() => [...rows.slice(0, first), ...rest].forEach((r, i) => update.run(i, r.id)));
   fetchNext(guildId);
+  cardChanged(guildId);
   logActivity(guildId, who, 'Shuffled the music queue');
   return rest.length;
 }
@@ -236,6 +247,7 @@ export async function removeTrack(guildId: string, id: number, who: string): Pro
   else db.prepare('DELETE FROM music_queue WHERE id = ?').run(id);
   logActivity(guildId, who, `Removed **${row.title}** from the music queue`);
   fetchNext(guildId);
+  cardChanged(guildId);
   return row;
 }
 
@@ -243,6 +255,7 @@ export async function removeTrack(guildId: string, id: number, who: string): Pro
 export function clearQueue(guildId: string, who: string) {
   const keep = sessions.get(guildId)?.current.id ?? -1;
   db.prepare('DELETE FROM music_queue WHERE guild_id = ? AND id != ?').run(guildId, keep);
+  cardChanged(guildId);
   logActivity(guildId, who, 'Cleared the music queue');
 }
 
@@ -364,6 +377,7 @@ async function playCurrent(s: Session, fromMs = 0): Promise<string | null> {
   const turn = ++s.turn;
   const row = s.current;
   s.phase = 'starting';
+  cardChanged(s.guild.id);
   stopAudioOf(s);
   let found: Awaited<ReturnType<typeof fetchAudio>>;
   try {
@@ -393,9 +407,11 @@ async function playCurrent(s: Session, fromMs = 0): Promise<string | null> {
   if (typeof stop === 'string') {
     s.phase = 'paused';
     s.position = { ms: fromMs, at: Date.now(), speed: 0 };
+    cardChanged(s.guild.id);
     return stop;
   }
   Object.assign(s, { stopAudio: stop, via: found.source, phase: 'playing', position: { ms: fromMs, at: Date.now(), speed: 1 } });
+  cardChanged(s.guild.id);
   saveSessions();
   fetchNext(s.guild.id);
   return null;
@@ -422,6 +438,7 @@ function pauseHere(s: Session, note: string | null) {
   s.note = note;
   s.position = { ms: positionOf(s), at: Date.now(), speed: 0 };
   stopAudioOf(s);
+  cardChanged(s.guild.id);
   saveSessions();
 }
 
@@ -440,6 +457,7 @@ export async function seekMusic(guildId: string, ms: number): Promise<string | n
   const to = Math.round(Math.max(0, Math.min(ms, s.current.duration_ms - END_SLACK_MS)));
   if (s.phase === 'paused') {
     s.position = { ms: to, at: Date.now(), speed: 0 };
+    cardChanged(guildId);
     return null;
   }
   // Playing, or still starting, maybe from an earlier seek: it starts again from here
@@ -477,6 +495,7 @@ async function moveOn(s: Session): Promise<string | null> {
     // It starts from the top of the new song once someone presses play
     s.turn++;
     s.position = { ms: 0, at: Date.now(), speed: 0 };
+    cardChanged(s.guild.id);
     return null;
   }
   return playCurrent(s);
@@ -486,6 +505,7 @@ function endSession(s: Session) {
   s.turn++;
   stopAudioOf(s);
   if (sessions.get(s.guild.id) === s) sessions.delete(s.guild.id);
+  cardChanged(s.guild.id);
   saveSessions();
 }
 
@@ -747,6 +767,158 @@ const time = (ms: number) => `${Math.floor(ms / 60_000)}:${String(Math.floor((ms
 
 // ---------- Discord ----------
 
+/** A song's page, for its title on the card */
+function songLink(uri: string): string | null {
+  const track = uri.match(/^spotify:track:(\w+)$/);
+  if (track) return `https://open.spotify.com/track/${track[1]}`;
+  return /^https:\/\//.test(uri) ? uri : null;
+}
+
+const cut = (text: string, most: number) => (text.length > most ? `${text.slice(0, most - 1)}…` : text);
+
+/** The music card: what's playing and how far in, a page of what's next, and buttons to control it */
+export function musicCard(guildId: string, page = 0) {
+  const rows = queueOf(guildId);
+  const s = sessions.get(guildId);
+  const state = musicState(guildId);
+  const embed = new EmbedBuilder().setColor(0x1db954);
+  const waiting = s ? rows.filter((r) => r.id !== s.current.id) : rows;
+  const pages = Math.max(1, Math.ceil(waiting.length / CARD_PAGE));
+  const shown = Math.max(0, Math.min(Math.trunc(page) || 0, pages - 1));
+
+  if (s) {
+    const song = s.current;
+    const at = Math.min(state.positionMs, song.duration_ms);
+    const where = state.channelId ? ` in <#${state.channelId}>` : '';
+    const progress =
+      s.phase === 'playing'
+        ? `Ends <t:${Math.round((Date.now() + song.duration_ms - at) / 1000)}:R>${where}`
+        : s.phase === 'paused'
+          ? `Paused at ${time(at)} of ${time(song.duration_ms)}${where}`
+          : `Starting${where}…`;
+    embed
+      .setAuthor({ name: s.phase === 'paused' ? '⏸ Paused' : s.phase === 'starting' ? '⏳ Starting' : '▶ Now playing' })
+      .setTitle(cut(song.title, 256))
+      .setURL(songLink(song.uri))
+      .setDescription([`${cut(song.artist, 200)} · ${time(song.duration_ms)}`, progress, state.note && `-# ${state.note}`].filter(Boolean).join('\n'));
+    if (song.cover) embed.setThumbnail(song.cover);
+  } else {
+    embed.setTitle('🎵 Music').setDescription(rows.length ? 'Not playing. ▶ starts the queue in your voice channel.' : 'The queue is empty. Add songs with /music play.');
+  }
+  if (waiting.length) {
+    const first = shown * CARD_PAGE;
+    const lines = waiting.slice(first, first + CARD_PAGE).map((r, n) => `${first + n + 1}. **${cut(r.title, 60)}** – ${cut(r.artist, 40)} · ${time(r.duration_ms)}`);
+    const left = waiting.reduce((sum, r) => sum + r.duration_ms, 0);
+    embed.addFields({ name: `Up next: ${waiting.length} song${waiting.length === 1 ? '' : 's'}, ${Math.round(left / 60_000)} min`, value: lines.join('\n').slice(0, 1024) });
+  }
+
+  const playing = s?.phase === 'playing' || s?.phase === 'starting';
+  const button = (id: string, label: string, emoji: string, disabled = false, style = ButtonStyle.Secondary) =>
+    new ButtonBuilder().setCustomId(`music:${id}:${shown}`).setLabel(label).setEmoji(emoji).setStyle(style).setDisabled(disabled);
+  const controls = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    playing ? button('toggle', 'Pause', '⏸') : button('toggle', 'Play', '▶', !rows.length, ButtonStyle.Success),
+    button('skip', 'Skip', '⏭', !s),
+    button('shuffle', 'Shuffle', '🔀', waiting.length < 2),
+    button('stop', 'Stop', '⏹', !s && !rows.length, ButtonStyle.Danger),
+    button('show', 'Refresh', '🔄'),
+  );
+  if (pages === 1) return { embeds: [embed], components: [controls] };
+  const turn = (to: number, label: string, emoji: string) =>
+    new ButtonBuilder().setCustomId(`music:show:${to}`).setLabel(label).setEmoji(emoji).setStyle(ButtonStyle.Secondary).setDisabled(to < 0 || to >= pages);
+  const paging = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    turn(shown - 1, 'Earlier', '◀'),
+    new ButtonBuilder().setCustomId('music:page').setLabel(`Page ${shown + 1} of ${pages}`).setStyle(ButtonStyle.Secondary).setDisabled(true),
+    turn(shown + 1, 'Later', '▶'),
+  );
+  return { embeds: [embed], components: [controls, paging] };
+}
+
+interface Card {
+  client: Client;
+  channelId: string;
+  messageId: string;
+  timer?: NodeJS.Timeout;
+}
+
+/** The card from the latest /music play in each server, which is redrawn as the music changes */
+const cards = new Map<string, Card>();
+
+async function editCard(card: Card, edit: ReturnType<typeof musicCard> | { embeds: EmbedBuilder[]; components: [] }) {
+  const channel = await card.client.channels.fetch(card.channelId).catch(() => null);
+  if (!channel?.isTextBased()) return false;
+  return channel.messages.edit(card.messageId, edit).then(
+    () => true,
+    () => false,
+  );
+}
+
+/** Keeps a newly posted card up to date. The card it takes over from loses its buttons, so only one is live */
+function adoptCard(guildId: string, card: Card) {
+  const old = cards.get(guildId);
+  cards.set(guildId, card);
+  if (!old || old.messageId === card.messageId) return;
+  clearTimeout(old.timer);
+  void editCard(old, { embeds: [new EmbedBuilder().setColor(0x99aab5).setDescription('🎵 The music card moved further down.')], components: [] });
+}
+
+/** Redraws the server's live card soon, once whatever changed has settled */
+function cardChanged(guildId: string) {
+  const card = cards.get(guildId);
+  if (!card || card.timer) return;
+  card.timer = setTimeout(() => {
+    card.timer = undefined;
+    void editCard(card, musicCard(guildId)).then((ok) => {
+      // A deleted card, or one in a channel the bot lost, is let go
+      if (!ok && cards.get(guildId) === card) cards.delete(guildId);
+    });
+  }, CARD_DELAY_MS);
+  card.timer.unref();
+}
+
+const OUTSIDE_DJ = (guildId: string) => `Only <@&${idSetting(guildId, 'musicDjRole')}> and people with **Manage Server** can control the music.`;
+
+/** The card's buttons, which act like the /music commands */
+async function onCardButton(i: ButtonInteraction<'cached'>) {
+  const [, action, pageText] = i.customId.split(':');
+  const page = Number(pageText) || 0;
+  if (action === 'show') return i.update(musicCard(i.guildId, page));
+  if (!canControl(i.member)) return i.reply({ content: OUTSIDE_DJ(i.guildId), flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
+
+  if (action === 'shuffle') {
+    shuffleQueue(i.guildId, i.user.id);
+    return i.update(musicCard(i.guildId, page));
+  }
+  if (action === 'stop') {
+    // Asked first, privately, since the queue can't be brought back
+    const songs = queueOf(i.guildId).length;
+    const yes = new ButtonBuilder().setCustomId('music:stop-yes:0').setLabel('Stop and clear').setStyle(ButtonStyle.Danger);
+    return i.reply({
+      content: `Stop the music and clear the queue${songs ? ` of ${songs} song${songs === 1 ? '' : 's'}` : ''}?`,
+      components: [new ActionRowBuilder<ButtonBuilder>().addComponents(yes)],
+      flags: MessageFlags.Ephemeral,
+    });
+  }
+  if (action === 'stop-yes') {
+    stopMusic(i.guildId, i.user.id);
+    await i.update({ content: '⏹ Stopped the music and cleared the queue.', components: [] });
+    // Said in the channel too, as /music stop is, so people can see who did it
+    return i.followUp({ content: `${i.user} stopped the music and cleared the queue.`, allowedMentions: { parse: [] } });
+  }
+  if (action !== 'toggle' && action !== 'skip') return;
+  // Starting a song can take longer than the 3 s Discord waits for an answer
+  await i.deferUpdate();
+  let problem: string | null;
+  const s = sessions.get(i.guildId);
+  if (action === 'skip') problem = await skipMusic(i.guildId, i.user.id);
+  else if (s && s.phase !== 'paused') problem = pauseMusic(i.guildId);
+  else {
+    const channel = i.member.voice.channel ?? (s && channelOf(s));
+    problem = channel ? await startMusic(i.guild, channel) : 'Join a voice channel first, and the music plays there.';
+  }
+  await i.editReply(musicCard(i.guildId, page));
+  if (problem) await i.followUp({ content: problem, flags: MessageFlags.Ephemeral });
+}
+
 function canControl(member: GuildMember): boolean {
   const role = idSetting(member.guild.id, 'musicDjRole');
   return !role || member.roles.cache.has(role) || member.permissions.has(PermissionFlagsBits.ManageGuild);
@@ -783,19 +955,8 @@ async function run(i: ChatInputCommandInteraction<'cached'>) {
   const reply = (content: string) => i.reply({ content, flags: MessageFlags.Ephemeral });
   // What changes the music for everyone is said in the channel, so people can see who did it
   const announce = (content: string) => i.reply({ content, allowedMentions: { parse: [] } });
-  if (sub === 'queue') {
-    const rows = queueOf(i.guildId);
-    if (!rows.length) return reply('The queue is empty.');
-    const state = musicState(i.guildId);
-    const lines = rows.slice(0, SHOWN_IN_DISCORD).map((r, n) => {
-      const playing = n === 0 && state.phase !== 'stopped';
-      return `${playing ? (state.phase === 'paused' ? '⏸' : '▶') : `${n}.`} **${r.title}** – ${r.artist} (${time(r.duration_ms)})`;
-    });
-    if (rows.length > SHOWN_IN_DISCORD) lines.push(`…and ${rows.length - SHOWN_IN_DISCORD} more`);
-    return reply(lines.join('\n'));
-  }
-  const role = idSetting(i.guildId, 'musicDjRole');
-  if (!canControl(i.member)) return reply(`Only <@&${role}> and people with **Manage Server** can control the music.`);
+  if (sub === 'queue') return i.reply({ ...musicCard(i.guildId), flags: MessageFlags.Ephemeral });
+  if (!canControl(i.member)) return reply(OUTSIDE_DJ(i.guildId));
 
   if (sub === 'play') {
     const input = i.options.getString('song');
@@ -813,7 +974,16 @@ async function run(i: ChatInputCommandInteraction<'cached'>) {
     const s = sessions.get(i.guildId);
     const playing = !!s && s.phase !== 'paused';
     const say = (content: string) => (i.deferred ? i.editReply(content) : reply(content));
-    if (playing) return say(added || 'The music is already playing.');
+    // A public answer carries the card, which then follows the music
+    // Only once deferred: a song was given, or the music is being started
+    const withCard = async (content: string) => {
+      const message = await i.editReply({ content, ...musicCard(i.guildId), allowedMentions: { parse: [] } });
+      adoptCard(i.guildId, { client: i.client, channelId: message.channelId, messageId: message.id });
+    };
+    if (playing) {
+      if (i.deferred) return withCard(added || 'The music is already playing.');
+      return i.reply({ content: 'The music is already playing.', ...musicCard(i.guildId), flags: MessageFlags.Ephemeral });
+    }
     const channel = i.member.voice.channel;
     if (!channel) return say(`${added ? `${added} ` : ''}Join a voice channel and use /music play to start it.`.trim());
     // Getting the song can take longer than the 3 s Discord waits for an answer
@@ -826,7 +996,7 @@ async function run(i: ChatInputCommandInteraction<'cached'>) {
     }
     if (problem) return say(`${added} ${problem}`);
     const now = queueOf(i.guildId)[0];
-    return say(`${added ? `${added} ` : ''}Playing **${now.title}** in ${channel}.`.trim());
+    return withCard(`${added ? `${added} ` : ''}Playing **${now.title}** in ${channel}.`.trim());
   }
   if (sub === 'pause') {
     const problem = pauseMusic(i.guildId);
@@ -856,6 +1026,8 @@ async function run(i: ChatInputCommandInteraction<'cached'>) {
 
 export const music: Feature = {
   title: 'Music',
+  componentPrefix: 'music',
+  onButton: (i) => (i.inCachedGuild() ? onCardButton(i) : Promise.resolve()),
   commands: [
     {
       data: new SlashCommandBuilder()
@@ -911,6 +1083,7 @@ export const music: Feature = {
   shutdown() {
     clearInterval(saver);
     for (const guildId of files.keys()) stopFile(guildId);
+    for (const card of cards.values()) clearTimeout(card.timer);
     listening?.abort();
     for (const s of [...sessions.values()]) endSession(s);
   },
@@ -922,6 +1095,8 @@ export const musicChannelFor = (guildId: string) => sessions.get(guildId)?.chann
 /** For tests: starts from nothing and follows a fake music container's status */
 export function resetMusic(next: PlayerStatus | null = null) {
   askedAhead.clear();
+  for (const card of cards.values()) clearTimeout(card.timer);
+  cards.clear();
   for (const s of sessions.values()) s.turn++;
   sessions.clear();
   status = next;
