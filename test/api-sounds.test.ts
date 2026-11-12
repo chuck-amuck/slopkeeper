@@ -309,6 +309,84 @@ test('a favourite follows a rename, and doesn’t outlive its sound', async () =
   assert.equal((await sounds())[0].favourite, false);
 });
 
+/** The labels of the posted panel's sound buttons, from its latest edit */
+const panelButtons = () => ((panelEdits.at(-1)![1] as any).components as any[]).slice(0, -1).flatMap((row) => row.toJSON().components.map((c: any) => c.label));
+const panelText = () => (panelEdits.at(-1)![1] as any).content as string;
+const groups = async () => (await ok(`/guilds/${GUILD}/sounds`)).groups as { id: number; name: string; sounds: string[] }[];
+const place = (name: string, group: number | null, before?: string) => ok(`/guilds/${GUILD}/sounds/${name}`, { method: 'PATCH', json: { place: { group, before } } });
+
+test('sounds are sorted into groups in any order, the rest come after most played first, and the panel follows', async () => {
+  for (const name of ['a', 'b', 'c', 'd']) await upload(name);
+  db.prepare('INSERT INTO sound_plays (guild_id, user_id, name, played_at) VALUES (?, ?, ?, 1), (?, ?, ?, 2), (?, ?, ?, 3)').run(GUILD, 'u', 'd', GUILD, 'u', 'd', GUILD, 'u', 'c');
+  let { groups: made } = await ok(`/guilds/${GUILD}/sound-groups`, { method: 'POST', json: { name: '  Memes ' } });
+  assert.deepEqual(made.map((g: any) => [g.name, g.sounds]), [['Memes', []]]);
+  const memes = made[0].id;
+  assert.match(await refused(400, `/guilds/${GUILD}/sound-groups`, { method: 'POST', json: { name: 'memes' } }), /already a group called memes/);
+  assert.match(await refused(400, `/guilds/${GUILD}/sound-groups`, { method: 'POST', json: { name: 'Everything else' } }), /Pick another name/);
+  assert.match(await refused(400, `/guilds/${GUILD}/sound-groups`, { method: 'POST', json: { name: ' ' } }), /Give the group a name/);
+
+  await place('b', memes);
+  await place('a', memes, 'b');
+  assert.deepEqual((await groups()).map((g) => g.sounds), [['a', 'b']]);
+  assert.equal(activityText().at(-1), 'Moved **a** to the sound group **Memes**');
+  assert.deepEqual(panelButtons(), ['a', 'b', 'd', 'c'], 'Memes, then the rest most played first');
+  assert.match(panelText(), /-# Memes · Everything else/);
+
+  ({ groups: made } = await ok(`/guilds/${GUILD}/sound-groups`, { method: 'POST', json: { name: 'Reactions' } }));
+  const reactions = made[1].id;
+  await place('c', reactions);
+  ({ groups: made } = await ok(`/guilds/${GUILD}/sound-groups/${reactions}`, { method: 'PATCH', json: { to: 0, name: 'Reacts' } }));
+  assert.deepEqual(made.map((g: any) => [g.name, g.sounds]), [['Reacts', ['c']], ['Memes', ['a', 'b']]]);
+  assert.equal(activityText().at(-1), 'Renamed the sound group **Reactions** to **Reacts**');
+  assert.deepEqual(panelButtons(), ['c', 'a', 'b', 'd']);
+
+  await place('a', null);
+  assert.equal(activityText().at(-1), 'Took **a** out of the sound group **Memes**');
+  assert.deepEqual(panelButtons(), ['c', 'b', 'd', 'a'], 'a has no plays, so it comes last');
+  await refused(404, `/guilds/${GUILD}/sounds/a`, { method: 'PATCH', json: { place: { group: 999 } } });
+
+  ({ groups: made } = await ok(`/guilds/${GUILD}/sound-groups/${memes}`, { method: 'DELETE' }));
+  assert.deepEqual(made.map((g: any) => g.name), ['Reacts']);
+  assert.equal(activityText().at(-1), 'Deleted the sound group **Memes**');
+  // Undo puts it back as it was
+  ({ groups: made } = await ok(`/guilds/${GUILD}/sound-groups`, { method: 'POST', json: { name: 'Memes', sounds: ['b', 'nope'], at: 0 } }));
+  assert.deepEqual(made.map((g: any) => [g.name, g.sounds]), [['Memes', ['b']], ['Reacts', ['c']]]);
+  await refused(404, `/guilds/${GUILD}/sound-groups/999`, { method: 'DELETE' });
+
+  // Undo leaves a sound where it's been put since
+  const again = made[0].id;
+  await ok(`/guilds/${GUILD}/sound-groups/${again}`, { method: 'DELETE' });
+  await place('b', reactions);
+  ({ groups: made } = await ok(`/guilds/${GUILD}/sound-groups`, { method: 'POST', json: { name: 'Memes', sounds: ['b'], at: 0 } }));
+  assert.deepEqual(made.map((g: any) => [g.name, g.sounds]), [['Memes', []], ['Reacts', ['c', 'b']]]);
+  assert.ok(made[0].id > again, 'a deleted group’s id isn’t used again, as the bin remembers groups by id');
+
+  // A group's name is shown as typed on the panel, and never pings
+  ({ groups: made } = await ok(`/guilds/${GUILD}/sound-groups/${made[0].id}`, { method: 'PATCH', json: { name: '@everyone **loud**', to: 0 } }));
+  await place('d', made[0].id);
+  assert.match(panelText(), /-# @everyone \\\*\\\*loud\\\*\\\* · Reacts/);
+  assert.deepEqual((panelEdits.at(-1)![1] as any).allowedMentions, { parse: [] });
+});
+
+test('the star makes Favourites at the top, and a sound keeps its place through a rename, a delete and a restore', async () => {
+  for (const name of ['x', 'y', 'w', 'horn']) await upload(name);
+  const { groups: made } = await ok(`/guilds/${GUILD}/sound-groups`, { method: 'POST', json: { name: 'Memes' } });
+  await place('y', made[0].id);
+  await place('x', made[0].id, 'y');
+  const { groups: starred } = await ok(`/guilds/${GUILD}/sounds/horn`, { method: 'PATCH', json: { favourite: true } });
+  assert.deepEqual(starred.map((g: any) => [g.name, g.sounds]), [['Favourites', ['horn']], ['Memes', ['x', 'y']]], 'the star answers with the groups');
+  await ok(`/guilds/${GUILD}/sounds/x`, { method: 'PATCH', json: { name: 'z' } });
+  assert.deepEqual((await groups())[1].sounds, ['z', 'y']);
+  const { binId } = await ok(`/guilds/${GUILD}/sounds/z`, { method: 'DELETE' });
+  assert.deepEqual((await groups())[1].sounds, ['y']);
+  // Something else goes first meanwhile, and the restored sound still comes back first
+  await place('w', made[0].id, 'y');
+  await restore(binId);
+  assert.deepEqual((await groups())[1].sounds, ['z', 'w', 'y'], 'back where it was');
+  await ok(`/guilds/${GUILD}/sounds/horn`, { method: 'PATCH', json: { favourite: false } });
+  assert.deepEqual((await groups()).map((g) => [g.name, g.sounds]), [['Favourites', []], ['Memes', ['z', 'w', 'y']]]);
+});
+
 test('a play across midnight is split between the days', () => {
   const midnight = Date.parse('2026-03-10T05:00:00Z'); // In Chicago, on CDT
   db.prepare(`INSERT INTO game_plays (guild_id, user_id, game, channel_id, started_at, ended_at) VALUES (?, ?, ?, 'voice', ?, ?)`).run(GUILD, 'u1', 'Halo', midnight - HOUR / 2, midnight + HOUR);

@@ -1,4 +1,4 @@
-import { ActionRowBuilder, ButtonBuilder, ButtonStyle, DiscordAPIError, FileUploadBuilder, LabelBuilder, ModalBuilder, PermissionFlagsBits, RESTJSONErrorCodes, StringSelectMenuBuilder, StringSelectMenuOptionBuilder, TextInputBuilder, TextInputStyle, type BaseInteraction, type ButtonInteraction, type Client, type Guild, type GuildTextBasedChannel, type ModalMessageModalSubmitInteraction } from 'discord.js';
+import { ActionRowBuilder, ButtonBuilder, ButtonStyle, DiscordAPIError, escapeMarkdown, FileUploadBuilder, LabelBuilder, ModalBuilder, PermissionFlagsBits, RESTJSONErrorCodes, StringSelectMenuBuilder, StringSelectMenuOptionBuilder, TextInputBuilder, TextInputStyle, type BaseInteraction, type ButtonInteraction, type Client, type Guild, type GuildTextBasedChannel, type ModalMessageModalSubmitInteraction } from 'discord.js';
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { logActivity } from '../activity.ts';
@@ -7,7 +7,7 @@ import * as discordBoard from '../discordSounds.ts';
 import { idSetting, setSetting, setting } from '../settings.ts';
 import { requestTimeout } from '../util.ts';
 import { commandMention } from '../commandIds.ts';
-import { BIN_DAYS, EXTENSIONS, type Sound, VOLUME_PERCENT, addSound, addToDiscord, applyLevels, findSound, listSounds, nameFromFile, parseEmoji, removeSound, setSoundVolume, soundGain, soundLevels, untaken, uploadProblem } from './soundLibrary.ts';
+import { BIN_DAYS, EVERYTHING_ELSE, EXTENSIONS, type Sound, VOLUME_PERCENT, addSound, addToDiscord, applyLevels, findSound, nameFromFile, orderedSounds, soundGroups, parseEmoji, removeSound, setSoundVolume, soundGain, soundLevels, untaken, uploadProblem } from './soundLibrary.ts';
 import { play } from './voiceAudio.ts';
 
 // The soundboard panel posted in Discord, its settings menu, and adding a sound from it or from /sound add
@@ -102,8 +102,9 @@ export async function storeUpload(guild: Guild, userId: string, upload: Upload):
 
 export const pageCount = (sounds: Sound[]) => Math.max(1, Math.ceil(sounds.length / PAGE_SIZE));
 
+/** A page of sounds in the order people arranged them, packed from one group into the next to fit as many as can be */
 export function panel(guildId: string, page: number) {
-  const sounds = listSounds(guildId);
+  const sounds = orderedSounds(guildId);
   if (!sounds.length) return { content: `🔊 No sounds yet. Add one with ${commandMention(guildId, 'sound add')}.`, components: [] };
   const pages = pageCount(sounds);
   page = Math.min(Math.max(page, 0), pages - 1);
@@ -138,8 +139,14 @@ export function panel(guildId: string, page: number) {
   rows.push(controls);
 
   const title = pages > 1 ? `🔊 **Soundboard** · page ${page + 1} of ${pages}` : '🔊 **Soundboard**';
-  const legend = sounds.some((s) => s.onDiscord) ? '\n-# Blue sounds are also in Discord’s own soundboard, for instant spamming' : '';
-  return { content: title + legend, components: rows };
+  // The groups on this page, in order, since the buttons can't show where one ends
+  const groups = soundGroups(guildId, new Set(shown.map((s) => s.name))).filter((g) => g.sounds.length);
+  const grouped = new Set(groups.flatMap((g) => g.sounds));
+  // Group names are typed freely on the web UI, so they're shown as typed, never as formatting
+  const names = [...groups.map((g) => escapeMarkdown(g.name)), ...(groups.length && shown.some((s) => !grouped.has(s.name)) ? [EVERYTHING_ELSE] : [])];
+  const legend = [names.length && names.join(' · '), sounds.some((s) => s.onDiscord) && 'Blue sounds are also in Discord’s own soundboard, for instant spamming'].filter(Boolean).map((line) => `\n-# ${line}`).join('');
+  // A group named like a mention mustn't ping anyone each time a panel is posted
+  return { content: title + legend, components: rows, allowedMentions: { parse: [] } };
 }
 
 export function trackPanel(messageId: string, guildId: string, channelId: string, page: number) {
@@ -174,7 +181,8 @@ export const managersOnly = (guildId: string) => `Only <@&${idSetting(guildId, '
 /** The first step of ⚙️ Settings: the sounds on a panel's page, and the server's switches for those allowed them */
 export function settingsMenu(i: BaseInteraction<'cached'>, page: number, note?: string) {
   const { guildId } = i;
-  const sounds = listSounds(guildId);
+  // In the panel's order, so each page has the same sounds as the panel's
+  const sounds = orderedSounds(guildId);
   const rows: ActionRowBuilder<StringSelectMenuBuilder | ButtonBuilder>[] = [];
   page = Math.min(Math.max(page, 0), Math.max(pageCount(sounds) - 1, 0));
   const shown = sounds.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);

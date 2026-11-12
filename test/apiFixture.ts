@@ -204,7 +204,7 @@ beforeEach(() => {
   failSend = false;
   permitted = [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.EmbedLinks];
   db.exec(`DELETE FROM sound_emoji; DELETE FROM discord_sounds; DELETE FROM sound_plays; DELETE FROM guild_settings; DELETE FROM sound_panels;
-    DELETE FROM sound_favourites; DELETE FROM game_nights; DELETE FROM game_night_series; DELETE FROM game_plays; DELETE FROM session_members; DELETE FROM sessions;
+    DELETE FROM sound_favourites; DELETE FROM sound_groups; DELETE FROM sound_places; DELETE FROM game_nights; DELETE FROM game_night_series; DELETE FROM game_plays; DELETE FROM session_members; DELETE FROM sessions;
     DELETE FROM sound_levels; DELETE FROM join_sounds; DELETE FROM activity; DELETE FROM game_aliases; DELETE FROM deleted_sounds; DELETE FROM games;
     DELETE FROM steam_links; DELETE FROM steam_owned; DELETE FROM steam_family; DELETE FROM sale_prices; DELETE FROM game_roles; DELETE FROM hidden_apps; DELETE FROM game_votes; DELETE FROM web_users`);
   db.prepare("INSERT INTO sound_panels (message_id, guild_id, channel_id, page) VALUES ('m', ?, '111', 0)").run(GUILD);

@@ -47,7 +47,7 @@ type Reply = { content: string; components: { toJSON(): { components: Record<str
 
 /** Fakes a click on a settings control, and keeps what the private message shows afterwards */
 function clicker(s: ReturnType<typeof server>, options: { admin?: boolean; voice?: unknown; roles?: string[] } = {}) {
-  const state: { shown?: Reply; modal?: { toJSON(): Record<string, any> }; said: string[] } = { said: [] };
+  const state: { shown?: Reply; modal?: { toJSON(): Record<string, any> }; said: string[]; panel?: Reply } = { said: [] };
   const edits: unknown[] = [];
   const base = {
     inCachedGuild: () => true,
@@ -68,7 +68,8 @@ function clicker(s: ReturnType<typeof server>, options: { admin?: boolean; voice
   return {
     state,
     edits,
-    press: (customId: string, message = { id: 'private' }) => soundboard.onButton!({ ...base, customId, message } as never),
+    press: (customId: string, message = { id: 'private' }) =>
+      soundboard.onButton!({ ...base, customId, message: { ...message, edit: async (r: Reply) => void (state.panel = r) } } as never),
     pick: (name: string, page = 0) => soundboard.onSelect!({ ...base, customId: `sb:#pick:${page}`, values: [name] } as never),
     submit: (customId: string, value: string) =>
       soundboard.onModal!({ ...base, customId, isFromMessage: () => true, fields: { getTextInputValue: () => value } } as never),
@@ -102,6 +103,8 @@ test('⚙️ Settings opens privately on the panel’s page', async () => {
   assert.equal(menu.custom_id, 'sb:#pick:1');
   assert.deepEqual(menu.options.map((o: { value: string }) => o.value), names.slice(20));
   assert.match(c.state.shown!.content, /\(page 2 of 2\)$/);
+  // The panel is redrawn on its page, in case plays have reordered its sounds since
+  assert.match(c.state.panel!.content, /page 2 of 2/);
   assert.deepEqual([button(c.state.shown!, 'sb:#back:0:').disabled, button(c.state.shown!, 'sb:#back:2:').disabled], [false, true]);
 
   // Its own pages, which leave the panel where it is

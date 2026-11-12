@@ -353,7 +353,9 @@ export const soundboard: Feature = {
 
     if (i.customId === SETTINGS) {
       const { page } = db.prepare('SELECT page FROM sound_panels WHERE message_id = ?').get(i.message.id) as { page: number };
-      return i.reply({ ...settingsMenu(i, page), flags: MessageFlags.Ephemeral });
+      await i.reply({ ...settingsMenu(i, page), flags: MessageFlags.Ephemeral });
+      // Plays reorder the sounds in no group without redrawing panels, so this one catches up to the sounds Settings lists
+      return i.message.edit(panel(i.guildId, page)).catch(console.error);
     }
 
     const sound = findSound(i.guildId, i.customId.slice('sb:'.length));

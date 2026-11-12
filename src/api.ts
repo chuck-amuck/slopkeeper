@@ -15,7 +15,7 @@ import { followVoice, liveRoutes } from './api/live.ts';
 
 /** Which area of the API answers each section of a path */
 const AREAS = new Map<string, (ask: Ask) => Promise<unknown>>([
-  ...['sounds', 'deleted-sounds', 'discord-sounds', 'discord-sync', 'sound-panels', 'join-sounds', 'playing', 'stop', 'say', 'phrases'].map((s) => [s, soundRoutes] as const),
+  ...['sounds', 'sound-groups', 'deleted-sounds', 'discord-sounds', 'discord-sync', 'sound-panels', 'join-sounds', 'playing', 'stop', 'say', 'phrases'].map((s) => [s, soundRoutes] as const),
   ...['games', 'pick', 'votes', 'compare', 'achievements', 'recap', 'members', 'game-pings', 'hidden-games', 'steam-links', 'steam-apps', 'steam-refresh', 'stats', 'free-games', 'sales', 'game-names', 'lobbies'].map((s) => [s, gameRoutes] as const),
   ...['game-nights', 'game-night-series'].map((s) => [s, nightRoutes] as const),
   ...['music'].map((s) => [s, musicRoutes] as const),

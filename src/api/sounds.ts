@@ -8,7 +8,7 @@ import { config } from '../config.ts';
 import * as discordBoard from '../discordSounds.ts';
 import { musicState } from '../features/music.ts';
 import { phrases, previewSpeech, removePhrase, savePhrase, say, serverVoice, TooSoon, voiceGroup, VOICES } from '../features/say.ts';
-import { addSound, addToDiscord, BIN_DAYS, changeEmoji, deletedSounds, eraseDeleted, expiresAt, favourites, findSound, listSounds, parseEmoji, playCounts, removeSound, renameSound, restoreDeleted, restoreSound, saveFromDiscord, setFavourite, setSoundVolume, type Sound, soundLevels, soundVolumes, swapOnDiscord, syncToDiscord, takeOffDiscord, trimmedSounds, trimProblem, trimSound, untaken, uploadProblem, volumeProblem } from '../features/soundLibrary.ts';
+import { addGroup, addSound, addToDiscord, BIN_DAYS, changeEmoji, deleteGroup, fillGroup, moveGroup, placeSound, renameGroup, soundGroups, deletedSounds, eraseDeleted, expiresAt, favourites, findSound, listSounds, parseEmoji, playCounts, removeSound, renameSound, restoreDeleted, restoreSound, saveFromDiscord, setFavourite, setSoundVolume, type Sound, soundLevels, soundVolumes, swapOnDiscord, syncToDiscord, takeOffDiscord, trimmedSounds, trimProblem, trimSound, untaken, uploadProblem, volumeProblem } from '../features/soundLibrary.ts';
 import { joinSounds, setJoinSound } from '../features/joinSounds.ts';
 import { playDiscordSound, playFromWeb, playingNow, stopPlayback, stopPlayingOne } from '../features/voiceAudio.ts';
 import { postPanel, refreshPanels } from '../features/soundPanel.ts';
@@ -75,6 +75,8 @@ async function soundList(guild: Guild) {
   }
   return {
     sounds,
+    // In their order, each with its sounds in order. Sounds in none come after, most played first
+    groups: soundGroups(guild.id, new Set(listed.map((s) => s.name))),
     evenVolume: setting(guild.id, 'evenVolume'),
     slots: onDiscord && { used: onDiscord.used, total: onDiscord.total },
     discordSounds: onDiscord?.sounds.map(({ url: _, ...sound }) => sound) ?? [],
@@ -238,6 +240,7 @@ export async function handleSounds(client: Client<true>, guild: Guild, req: Inco
       note(emoji ? `Set the emoji on **${sound.name}**` : `Cleared the emoji on **${sound.name}**`);
     }
     if ('favourite' in body) setFavourite(guild.id, sound.name, body.favourite === true);
+    if ('place' in body) placeFromWeb(guild, sound.name, body.place);
     if ('volume' in body) {
       refuse(guild, volumeProblem(body.volume));
       await setSoundVolume(guild, sound.name, body.volume as number);
@@ -248,7 +251,8 @@ export async function handleSounds(client: Client<true>, guild: Guild, req: Inco
       note(`Renamed **${sound.name}** to **${String(body.name)}**`);
     }
     await refresh();
-    return {};
+    // Moving or starring one changes the groups, which the page shows as they are now
+    return 'place' in body || 'favourite' in body ? { groups: soundGroups(guild.id) } : {};
   }
 
   if (method === 'DELETE') {
@@ -283,7 +287,67 @@ export async function handleDeleted(client: Client<true>, guild: Guild, req: Inc
   throw new Refused(405, 'Not here.');
 }
 
+/** Moves a sound into a group, before one of its sounds or at the end, or with group null out of every group */
+function placeFromWeb(guild: Guild, name: string, place: unknown) {
+  const { group, before } = (place ?? {}) as { group?: unknown; before?: unknown };
+  if (group !== null && !Number.isInteger(group)) throw new Refused(400, 'Say which group, or null for none.');
+  if (before !== undefined && before !== null && typeof before !== 'string') throw new Refused(400, 'Before has to be a sound’s name.');
+  const groups = soundGroups(guild.id);
+  const from = groups.find((g) => g.sounds.includes(name));
+  const to = groups.find((g) => g.id === group);
+  if (group !== null && !to) throw new Refused(404, 'That group is gone.');
+  refuse(guild, placeSound(guild.id, name, group as number | null, (before as string | null | undefined) ?? null));
+  // Moving within a group isn't worth a line each time
+  if (to && to !== from) logActivity(guild.id, by(), `Moved **${name}** to the sound group **${to.name}**`);
+  else if (!to && from) logActivity(guild.id, by(), `Took **${name}** out of the sound group **${from.name}**`);
+}
+
+/**
+ * The groups sounds are sorted into. POST makes one (with `sounds` and `at` to put back one that was deleted), PATCH renames or
+ * moves one, DELETE deletes one, its sounds going back among the rest. Each answers with the groups as they are now
+ */
+async function handleGroups(client: Client<true>, guild: Guild, req: IncomingMessage, id?: string) {
+  const note = (action: string) => logActivity(guild.id, by(), action);
+  const done = async () => {
+    await refreshPanels(client, guild.id);
+    return { groups: soundGroups(guild.id) };
+  };
+  if (id === undefined) {
+    if (req.method !== 'POST') throw new Refused(405, 'Not here.');
+    const { name, sounds, at } = await readJson(req);
+    if (typeof name !== 'string') throw new Refused(400, 'Give the group a name.');
+    const made = addGroup(guild.id, name);
+    if ('error' in made) throw new Refused(400, made.error);
+    if (Array.isArray(sounds)) fillGroup(guild.id, made.id, sounds.filter((s): s is string => typeof s === 'string'));
+    if (Number.isInteger(at)) moveGroup(guild.id, made.id, at as number);
+    note(`Made the sound group **${name.trim()}**`);
+    return done();
+  }
+  const group = soundGroups(guild.id).find((g) => g.id === Number(id));
+  if (!group) throw new Refused(404, 'That group is gone.');
+  if (req.method === 'PATCH') {
+    const { name, to } = await readJson(req);
+    if (name !== undefined) {
+      if (typeof name !== 'string') throw new Refused(400, 'Give the group a name.');
+      refuse(guild, renameGroup(guild.id, group.id, name));
+      if (name.trim() !== group.name) note(`Renamed the sound group **${group.name}** to **${name.trim()}**`);
+    }
+    if (to !== undefined) {
+      if (!Number.isInteger(to)) throw new Refused(400, 'Say where to move it.');
+      moveGroup(guild.id, group.id, to as number);
+    }
+    return done();
+  }
+  if (req.method === 'DELETE') {
+    deleteGroup(guild.id, group.id);
+    note(`Deleted the sound group **${group.name}**`);
+    return done();
+  }
+  throw new Refused(405, 'Not here.');
+}
+
 export async function soundRoutes({ client, guild, req, res, url, section, rest }: Ask) {
+  if (section === 'sound-groups' && rest.length <= 1) return handleGroups(client, guild, req, rest[0]);
   if (section === 'sounds' && rest.length <= 2) return handleSounds(client, guild, req, res, url, rest[0], rest[1]);
   if (section === 'deleted-sounds' && !rest.length && req.method === 'GET') return deletedList(guild);
   if (section === 'deleted-sounds' && (rest.length === 1 || rest.length === 2)) return handleDeleted(client, guild, req, rest[0], rest[1]);

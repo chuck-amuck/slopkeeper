@@ -2,7 +2,7 @@ import { type Client, type Guild } from 'discord.js';
 import { copyFileSync, existsSync, mkdirSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { config } from '../config.ts';
-import { db } from '../db.ts';
+import { db, transaction } from '../db.ts';
 import * as discordBoard from '../discordSounds.ts';
 import { measureGain } from '../loudness.ts';
 import { MIX_VOLUME } from '../mixer.ts';
@@ -241,9 +241,11 @@ export async function addSound(guild: Guild, name: string, ext: string, data: Bu
 /** Returns its id in the bin */
 function moveToBin(guildId: string, sound: Sound): number {
   const level = soundLevels(guildId).get(sound.name);
+  // Where it was: which group, and how many sounds were ahead of it there
+  const group = soundGroups(guildId).find((g) => g.sounds.includes(sound.name));
   const { lastInsertRowid } = db
-    .prepare('INSERT INTO deleted_sounds (guild_id, name, emoji, favourite, gain_db, percent, deleted_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
-    .run(guildId, sound.name, sound.emoji ?? null, favourites(guildId).has(sound.name) ? 1 : 0, level?.gainDb ?? null, level?.percent ?? 100, Date.now());
+    .prepare('INSERT INTO deleted_sounds (guild_id, name, emoji, favourite, gain_db, percent, deleted_at, group_id, place) VALUES (?, ?, ?, 0, ?, ?, ?, ?, ?)')
+    .run(guildId, sound.name, sound.emoji ?? null, level?.gainDb ?? null, level?.percent ?? 100, Date.now(), group?.id ?? null, group ? group.sounds.indexOf(sound.name) : null);
   const dir = binDir(guildId, Number(lastInsertRowid));
   mkdirSync(path.join(dir, 'originals'), { recursive: true });
   const original = originalOf(guildId, sound.name);
@@ -256,7 +258,10 @@ export interface DeletedSound {
   id: number;
   name: string;
   emoji: string | null;
+  /** From before groups: whether it was starred */
   favourite: number;
+  group_id: number | null;
+  place: number | null;
   gain_db: number | null;
   percent: number;
   deleted_at: number;
@@ -264,7 +269,9 @@ export interface DeletedSound {
 
 /** What's in the bin, newest first */
 export function deletedSounds(guildId: string): DeletedSound[] {
-  return db.prepare('SELECT id, name, emoji, favourite, gain_db, percent, deleted_at FROM deleted_sounds WHERE guild_id = ? ORDER BY deleted_at DESC, id DESC').all(guildId) as unknown as DeletedSound[];
+  return db
+    .prepare('SELECT id, name, emoji, favourite, group_id, place, gain_db, percent, deleted_at FROM deleted_sounds WHERE guild_id = ? ORDER BY deleted_at DESC, id DESC')
+    .all(guildId) as unknown as DeletedSound[];
 }
 
 export const expiresAt = (sound: DeletedSound) => sound.deleted_at + BIN_DAYS * DAY;
@@ -311,7 +318,10 @@ export function restoreDeleted(guildId: string, id: number): string | null {
   }
   renameSync(path.join(dir, file), path.join(soundDir(guildId), `${name}${path.extname(file)}`));
   setEmoji(guildId, name, sound.emoji);
-  setFavourite(guildId, name, sound.favourite === 1);
+  // Back where it was in its group, if the group's still there, with as many ahead of it as there were
+  const group = sound.group_id === null ? undefined : soundGroups(guildId).find((g) => g.id === sound.group_id);
+  if (group) placeSound(guildId, name, group.id, group.sounds[sound.place ?? group.sounds.length] ?? null);
+  else if (sound.favourite === 1) setFavourite(guildId, name, true);
   db.prepare('INSERT OR REPLACE INTO sound_levels (guild_id, name, gain_db, percent) VALUES (?, ?, ?, ?)').run(guildId, name, sound.gain_db, sound.percent);
   eraseDeleted(guildId, id);
   return name;
@@ -327,7 +337,7 @@ export async function removeSound(guild: Guild, sound: Sound): Promise<{ problem
   if (problem) discordBoard.forget(discordBoard.synced(guild.id).get(sound.name)!);
   const binId = moveToBin(guild.id, sound);
   setEmoji(guild.id, sound.name, null);
-  setFavourite(guild.id, sound.name, false);
+  placeSound(guild.id, sound.name, null);
   db.prepare('DELETE FROM sound_levels WHERE guild_id = ? AND name = ?').run(guild.id, sound.name);
   db.prepare('DELETE FROM join_sounds WHERE guild_id = ? AND name = ?').run(guild.id, sound.name);
   if (storedSetting(guild.id, 'loopIntro') === sound.name) setSetting(guild.id, 'loopIntro', '');
@@ -338,14 +348,144 @@ export async function removeSound(guild: Guild, sound: Sound): Promise<{ problem
   return { problem, binId };
 }
 
-/** Favourites sit at the top of the web UI's soundboard */
-export function favourites(guildId: string): Set<string> {
-  return new Set((db.prepare('SELECT name FROM sound_favourites WHERE guild_id = ?').all(guildId) as { name: string }[]).map((r) => r.name));
+// ---------- groups and order ----------
+
+export const FAVOURITES = 'Favourites';
+/** What the sounds in no group are called, which a group can't be */
+export const EVERYTHING_ELSE = 'Everything else';
+const GROUP_NAME_MAX = 40;
+
+export interface SoundGroup {
+  id: number;
+  name: string;
+  /** Its sounds in their order, only those still in the library */
+  sounds: string[];
 }
 
+/** The server's groups in their order, each with its sounds in order */
+export function soundGroups(guildId: string, names = new Set(listSounds(guildId).map((s) => s.name))): SoundGroup[] {
+  const groups = db.prepare('SELECT id, name FROM sound_groups WHERE guild_id = ? ORDER BY pos, id').all(guildId) as { id: number; name: string }[];
+  const places = db.prepare('SELECT name, group_id FROM sound_places WHERE guild_id = ? ORDER BY pos, name').all(guildId) as { name: string; group_id: number }[];
+  return groups.map((g) => ({ ...g, sounds: places.filter((p) => p.group_id === g.id && names.has(p.name)).map((p) => p.name) }));
+}
+
+/** Every sound in the order people see them: the groups' in theirs, then the rest most played first */
+export function orderedSounds(guildId: string): Sound[] {
+  const sounds = listSounds(guildId);
+  const byName = new Map(sounds.map((s) => [s.name, s]));
+  const grouped = soundGroups(guildId, new Set(byName.keys())).flatMap((g) => g.sounds);
+  const placed = new Set(grouped);
+  const plays = playCounts(guildId);
+  const rest = sounds.filter((s) => !placed.has(s.name)).sort((a, b) => (plays.get(b.name) ?? 0) - (plays.get(a.name) ?? 0) || a.name.localeCompare(b.name));
+  return [...grouped.map((name) => byName.get(name)!), ...rest];
+}
+
+const groupOf = (guildId: string, id: number) => db.prepare('SELECT id, name FROM sound_groups WHERE guild_id = ? AND id = ?').get(guildId, id) as { id: number; name: string } | undefined;
+
+/** Why a group can't have this name, or null if it can */
+function groupNameProblem(guildId: string, name: string, except?: number): string | null {
+  if (!name) return 'Give the group a name.';
+  if (name.length > GROUP_NAME_MAX) return `Group names can be up to ${GROUP_NAME_MAX} characters.`;
+  if (name.toLowerCase() === EVERYTHING_ELSE.toLowerCase()) return `“${EVERYTHING_ELSE}” is where sounds in no group go. Pick another name.`;
+  const taken = db.prepare('SELECT id FROM sound_groups WHERE guild_id = ? AND lower(name) = lower(?)').get(guildId, name) as { id: number } | undefined;
+  return taken && taken.id !== except ? `There’s already a group called ${name}.` : null;
+}
+
+/** Makes a group, at the top or after the others. Returns it, or why it couldn't */
+export function addGroup(guildId: string, name: string, top = false): { id: number } | { error: string } {
+  name = name.trim().replace(/\s+/g, ' ');
+  const problem = groupNameProblem(guildId, name);
+  if (problem) return { error: problem };
+  const ends = db.prepare('SELECT MIN(pos) AS first, MAX(pos) AS last FROM sound_groups WHERE guild_id = ?').get(guildId) as { first: number | null; last: number | null };
+  const pos = top ? (ends.first ?? 1) - 1 : (ends.last ?? -1) + 1;
+  const { lastInsertRowid } = db.prepare('INSERT INTO sound_groups (guild_id, name, pos) VALUES (?, ?, ?)').run(guildId, name, pos);
+  return { id: Number(lastInsertRowid) };
+}
+
+/** Renames a group. Returns null, or why it couldn't */
+export function renameGroup(guildId: string, id: number, name: string): string | null {
+  name = name.trim().replace(/\s+/g, ' ');
+  if (!groupOf(guildId, id)) return 'That group is gone.';
+  const problem = groupNameProblem(guildId, name, id);
+  if (problem) return problem;
+  db.prepare('UPDATE sound_groups SET name = ? WHERE id = ?').run(name, id);
+  return null;
+}
+
+/** Moves a group to a place among the others. Returns whether it's there */
+export function moveGroup(guildId: string, id: number, to: number): boolean {
+  const ids = (db.prepare('SELECT id FROM sound_groups WHERE guild_id = ? ORDER BY pos, id').all(guildId) as { id: number }[]).map((g) => g.id);
+  const from = ids.indexOf(id);
+  if (from < 0) return false;
+  ids.splice(from, 1);
+  ids.splice(Math.max(0, Math.min(ids.length, Math.trunc(to))), 0, id);
+  const update = db.prepare('UPDATE sound_groups SET pos = ? WHERE id = ?');
+  transaction(() => ids.forEach((g, i) => update.run(i, g)));
+  return true;
+}
+
+/** Deletes a group, its sounds going back among the rest. Returns its name and sounds, to put it back, or null if it's gone */
+export function deleteGroup(guildId: string, id: number): SoundGroup | null {
+  const group = soundGroups(guildId).find((g) => g.id === id);
+  if (!group) return null;
+  transaction(() => {
+    db.prepare('DELETE FROM sound_places WHERE group_id = ?').run(id);
+    db.prepare('DELETE FROM sound_groups WHERE id = ?').run(id);
+  });
+  return group;
+}
+
+/**
+ * Puts a sound in a group, before another of its sounds or at the end, or with `groupId` null, back among the sounds in no group.
+ * Returns null, or why it couldn't
+ */
+export function placeSound(guildId: string, name: string, groupId: number | null, before: string | null = null): string | null {
+  if (groupId === null) {
+    db.prepare('DELETE FROM sound_places WHERE guild_id = ? AND name = ?').run(guildId, name);
+    return null;
+  }
+  if (!groupOf(guildId, groupId)) return 'That group is gone.';
+  const others = (db.prepare('SELECT name FROM sound_places WHERE group_id = ? ORDER BY pos, name').all(groupId) as { name: string }[]).map((p) => p.name).filter((n) => n !== name);
+  const at = before === null ? -1 : others.indexOf(before);
+  others.splice(at < 0 ? others.length : at, 0, name);
+  const put = db.prepare('INSERT INTO sound_places (guild_id, name, group_id, pos) VALUES (?, ?, ?, ?) ON CONFLICT(guild_id, name) DO UPDATE SET group_id = excluded.group_id, pos = excluded.pos');
+  transaction(() => others.forEach((n, i) => put.run(guildId, n, groupId, i)));
+  return null;
+}
+
+/** Where a sound is: its group and place in it, or null in none */
+function placeOf(guildId: string, name: string) {
+  return (db.prepare('SELECT group_id, pos FROM sound_places WHERE guild_id = ? AND name = ?').get(guildId, name) as { group_id: number; pos: number } | undefined) ?? null;
+}
+
+/** Puts sounds at the end of a group, in order, leaving out any put in another group since: for undoing a group's deletion */
+export function fillGroup(guildId: string, id: number, names: string[]) {
+  const free = new Set(listSounds(guildId).map((s) => s.name));
+  for (const g of soundGroups(guildId)) for (const name of g.sounds) free.delete(name);
+  transaction(() => {
+    for (const name of names) if (free.has(name)) placeSound(guildId, name, id);
+  });
+}
+
+const favouritesGroup = (guildId: string) => db.prepare('SELECT id FROM sound_groups WHERE guild_id = ? AND lower(name) = lower(?)').get(guildId, FAVOURITES) as { id: number } | undefined;
+
+/** The sounds in the Favourites group, which the star on the web UI's soundboard puts sounds in */
+export function favourites(guildId: string): Set<string> {
+  const group = favouritesGroup(guildId);
+  if (!group) return new Set();
+  return new Set((db.prepare('SELECT name FROM sound_places WHERE group_id = ?').all(group.id) as { name: string }[]).map((r) => r.name));
+}
+
+/** Starring puts a sound at the end of Favourites, made at the top if there isn't one; unstarring takes it out */
 export function setFavourite(guildId: string, name: string, on: boolean) {
-  if (on) db.prepare('INSERT INTO sound_favourites (guild_id, name) VALUES (?, ?) ON CONFLICT DO NOTHING').run(guildId, name);
-  else db.prepare('DELETE FROM sound_favourites WHERE guild_id = ? AND name = ?').run(guildId, name);
+  const group = favouritesGroup(guildId);
+  if (!on) {
+    if (group) db.prepare('DELETE FROM sound_places WHERE group_id = ? AND name = ?').run(group.id, name);
+    return;
+  }
+  if (group && placeOf(guildId, name)?.group_id === group.id) return;
+  const id = group?.id ?? (addGroup(guildId, FAVOURITES, true) as { id: number }).id;
+  placeSound(guildId, name, id);
 }
 
 /** Sound name → how often it's been played */
@@ -371,7 +511,7 @@ export async function renameSound(guild: Guild, sound: Sound, name: string): Pro
   if (original) renameSync(original, path.join(path.dirname(original), name + path.extname(original)));
   db.prepare('UPDATE OR REPLACE sound_emoji SET name = ? WHERE guild_id = ? AND name = ?').run(name, guild.id, sound.name);
   db.prepare('UPDATE sound_plays SET name = ? WHERE guild_id = ? AND name = ?').run(name, guild.id, sound.name);
-  db.prepare('UPDATE OR REPLACE sound_favourites SET name = ? WHERE guild_id = ? AND name = ?').run(name, guild.id, sound.name);
+  db.prepare('UPDATE OR REPLACE sound_places SET name = ? WHERE guild_id = ? AND name = ?').run(name, guild.id, sound.name);
   db.prepare('UPDATE OR REPLACE sound_levels SET name = ? WHERE guild_id = ? AND name = ?').run(name, guild.id, sound.name);
   db.prepare('UPDATE join_sounds SET name = ? WHERE guild_id = ? AND name = ?').run(name, guild.id, sound.name);
   if (storedSetting(guild.id, 'loopSound') === sound.name) setSetting(guild.id, 'loopSound', name);

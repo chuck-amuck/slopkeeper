@@ -312,6 +312,22 @@ db.exec(`
     name TEXT NOT NULL,
     PRIMARY KEY (guild_id, name)
   );
+  -- Groups people sort sounds into, in their order. Sounds in none come after them, most played first
+  CREATE TABLE IF NOT EXISTS sound_groups (
+    -- Never reused, as the bin remembers each deleted sound's group by its id
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    guild_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    pos REAL NOT NULL
+  );
+  -- Which group each sound is in, and where in it
+  CREATE TABLE IF NOT EXISTS sound_places (
+    guild_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    group_id INTEGER NOT NULL,
+    pos REAL NOT NULL,
+    PRIMARY KEY (guild_id, name)
+  );
   CREATE TABLE IF NOT EXISTS sound_plays (
     guild_id TEXT NOT NULL,
     user_id TEXT NOT NULL,
@@ -449,6 +465,35 @@ if (!db.prepare("SELECT 1 FROM pragma_table_info('game_plays') WHERE name = 'cha
     keepVoicePlays();
   });
 }
+
+// A deleted sound comes back to the group it was in
+if (!db.prepare("SELECT 1 FROM pragma_table_info('deleted_sounds') WHERE name = 'group_id'").get()) {
+  db.exec('ALTER TABLE deleted_sounds ADD COLUMN group_id INTEGER');
+  db.exec('ALTER TABLE deleted_sounds ADD COLUMN place REAL');
+}
+
+// Favourites were a star on each sound before groups, and become a Favourites group at the top, most played first as they showed
+transaction(() => {
+  const starred = db
+    .prepare(
+      `SELECT f.guild_id, f.name FROM sound_favourites f
+       LEFT JOIN (SELECT guild_id, name, COUNT(*) AS plays FROM sound_plays GROUP BY guild_id, name) p ON p.guild_id = f.guild_id AND p.name = f.name
+       ORDER BY f.guild_id, COALESCE(p.plays, 0) DESC, f.name`,
+    )
+    .all() as { guild_id: string; name: string }[];
+  const groups = new Map<string, number>();
+  for (const { guild_id: guildId, name } of starred) {
+    if (!groups.has(guildId)) {
+      // Stars only come back after running an older version, and then join the Favourites group that's there
+      const there = db.prepare("SELECT id FROM sound_groups WHERE guild_id = ? AND lower(name) = 'favourites'").get(guildId) as { id: number } | undefined;
+      const top = db.prepare('SELECT MIN(pos) AS pos FROM sound_groups WHERE guild_id = ?').get(guildId) as { pos: number | null };
+      groups.set(guildId, there?.id ?? Number(db.prepare("INSERT INTO sound_groups (guild_id, name, pos) VALUES (?, 'Favourites', ?)").run(guildId, (top.pos ?? 1) - 1).lastInsertRowid));
+    }
+    const at = db.prepare('SELECT COALESCE(MAX(pos) + 1, 0) AS n FROM sound_places WHERE group_id = ?').get(groups.get(guildId)!) as { n: number };
+    db.prepare('INSERT OR IGNORE INTO sound_places (guild_id, name, group_id, pos) VALUES (?, ?, ?, ?)').run(guildId, name, groups.get(guildId)!, at.n);
+  }
+  db.exec('DELETE FROM sound_favourites');
+});
 
 export function getKv(key: string): string | undefined {
   const row = db.prepare('SELECT value FROM kv WHERE key = ?').get(key) as { value: string } | undefined;

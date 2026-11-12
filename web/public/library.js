@@ -33,7 +33,8 @@ async function filesIn(entry) {
   }
 }
 
-export function renderLibrary(main) {
+/** `openArrange` switches to Play, arranging the sounds into groups */
+export function renderLibrary(main, openArrange) {
   const guildId = state.guildId;
   let data = null;
   let filter = '';
@@ -145,7 +146,7 @@ export function renderLibrary(main) {
 
   main.append(
     voice.node,
-    el('div', { className: 'toolbar' }, search, sync, postPanel),
+    el('div', { className: 'toolbar' }, search, sync, postPanel, el('button', { type: 'button', title: 'Sort sounds into groups and put them in order, on Play', onclick: openArrange }, 'Arrange')),
     board,
     dropzone,
     picker,
