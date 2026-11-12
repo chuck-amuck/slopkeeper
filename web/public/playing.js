@@ -1,97 +1,26 @@
 import { api, attempt, el, icon, request, state, toast } from './lib.js';
+import { follow } from './updates.js';
 
-// After a failed request, how long before asking again
-const RETRY_MS = 5000;
-// The least time between requests that bring no change, should something answer without waiting for one
-const UNCHANGED_MS = 1000;
 // Speech shows as its first few words
 const SPEECH_SHOWN = 40;
 // Past this many, the rest show as a count
 const MOST_SHOWN = 4;
 
-/** What's playing in the server picked, as the bot last said, and when it said it */
-let latest = { guildId: null, playing: [], at: 0 };
-const listeners = new Set();
-/** The request loop for one server, stopped by setting alive to false */
-let watching = null;
+/** When the bot last said what's playing */
+let saidAt = 0;
 
 const short = (text) => (text.length > SPEECH_SHOWN ? `${text.slice(0, SPEECH_SHOWN - 1).trimEnd()}…` : text);
 const nameOf = (p) => (p.kind === 'speech' ? `“${short(p.name)}”` : p.name);
 
 /** How far into a sound or line it is now, in milliseconds */
-export const elapsed = (p) => p.elapsedMs + (performance.now() - latest.at);
+export const elapsed = (p) => p.elapsedMs + (performance.now() - saidAt);
 
 /** Calls `listener` with what's playing now and each time it changes, until `node` leaves the page */
 export function onPlaying(node, listener) {
-  const entry = { node, listener };
-  listeners.add(entry);
-  if (latest.guildId === state.guildId) listener(latest.playing);
-}
-
-function publish(guildId, playing) {
-  latest = { guildId, playing, at: performance.now() };
-  for (const entry of listeners) {
-    if (!entry.node.isConnected) listeners.delete(entry);
-    else entry.listener(playing);
-  }
-}
-
-/**
- * Keeps up with what's playing in the server picked. Each request waits at the bot until something starts or ends, so a
- * short sound shows while it plays. A hidden tab stops asking until it's shown again
- */
-export function watchPlaying() {
-  if (watching?.alive && watching.guildId === state.guildId) return;
-  stopWatchingPlaying();
-  const run = { guildId: state.guildId, alive: true };
-  watching = run;
-  publish(run.guildId, []);
-  void (async () => {
-    const path = api('/playing');
-    let version = null;
-    let failures = 0;
-    while (run.alive) {
-      if (document.hidden) {
-        await new Promise((resolve) => document.addEventListener('visibilitychange', resolve, { once: true }));
-        continue;
-      }
-      try {
-        const asked = performance.now();
-        const data = await request(version === null ? path : `${path}?after=${encodeURIComponent(version)}`);
-        if (!run.alive) return;
-        const unchanged = data.version === version;
-        version = data.version;
-        publish(run.guildId, data.playing);
-        if (unchanged) await new Promise((resolve) => setTimeout(resolve, Math.max(0, UNCHANGED_MS - (performance.now() - asked))));
-        failures = 0;
-        lostTouch(false);
-      } catch (err) {
-        if (!run.alive) return;
-        // Logged out: the login page takes over, and there's nothing to watch
-        if (err.status === 401) return stopWatchingPlaying();
-        // Twice in a row unanswered is the bot gone rather than a blip: say so, and stop showing what was playing
-        if ((!err.status || err.status >= 500) && ++failures === 2) {
-          lostTouch(true);
-          publish(run.guildId, []);
-        }
-        await new Promise((resolve) => setTimeout(resolve, RETRY_MS));
-      }
-    }
-  })();
-}
-
-export function stopWatchingPlaying() {
-  if (watching) watching.alive = false;
-  watching = null;
-  lostTouch(false);
-}
-
-const banner = el('div', { className: 'lost-touch', role: 'status', hidden: true }, 'Lost touch with the bot. Trying again…');
-
-/** A strip across the top while the bot isn't answering, so a failed tap isn't the first sign */
-function lostTouch(on) {
-  if (on && !banner.isConnected) document.body.prepend(banner);
-  banner.hidden = !on;
+  follow('playing', node, (data, at) => {
+    saidAt = at;
+    listener(data.playing);
+  });
 }
 
 /**
@@ -133,8 +62,8 @@ export function stopDock() {
     const guildId = state.guildId;
     try {
       const { playing } = await request(api(`/playing/${p.id}/stop`), { method: 'POST' });
-      // Unless someone switched servers meanwhile
-      if (guildId === state.guildId) publish(guildId, playing);
+      // Straight away, rather than when the update comes, unless someone switched servers meanwhile
+      if (guildId === state.guildId) paintList(playing);
     } catch (err) {
       // Already over is what was wanted
       if (err.status !== 404) toast(err.message, true);

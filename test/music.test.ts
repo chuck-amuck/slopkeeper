@@ -6,6 +6,7 @@ import { existsSync } from 'node:fs';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { getVoiceConnection, VoiceConnectionStatus } from '@discordjs/voice';
 import { recentActivity } from '../src/activity.ts';
+import { feeds } from '../src/changes.ts';
 import { config } from '../src/config.ts';
 import { db, getKv } from '../src/db.ts';
 import { Mixer, type VoiceOptions } from '../src/mixer.ts';
@@ -250,8 +251,10 @@ test('songs added without a cover get one from Spotify, the next song first, and
   addTracks(id, [{ ...song(6), cover: 'https://i.scdn.co/image/chosen' }], 'u1');
   addTracks(id, [song(4)], 'u1', true);
   covers.set(song(5).uri.slice(-22), 'none');
+  const queued = feeds.music.version(id);
   hold();
   await coversFilled();
+  assert.notEqual(feeds.music.version(id), queued, 'the page hears of the covers');
   assert.deepEqual(
     looked.map((uri) => Number(uri)),
     [90, 4, 1, 2, 3, 5],

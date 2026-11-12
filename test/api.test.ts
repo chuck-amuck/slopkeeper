@@ -1,15 +1,16 @@
 import './helpers.ts';
 import { joinVoiceChannel, VoiceConnectionStatus } from '@discordjs/voice';
-import { ChannelType, Collection, DiscordAPIError, PermissionFlagsBits, RESTJSONErrorCodes } from 'discord.js';
+import { ChannelType, Collection, DiscordAPIError, Events, PermissionFlagsBits, RESTJSONErrorCodes } from 'discord.js';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
+import { EventEmitter } from 'node:events';
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { request } from 'node:http';
 import { after, before, beforeEach, mock, test, type TestContext } from 'node:test';
 import path from 'node:path';
 import type { AddressInfo } from 'node:net';
-import { createApi, webApi } from '../src/api.ts';
+import { createApi, followVoice, webApi } from '../src/api.ts';
 import { candidatesFor } from '../src/features/games.ts';
 import { config } from '../src/config.ts';
 import { db } from '../src/db.ts';
@@ -171,6 +172,8 @@ const guild = {
 
 const client = {
   guilds: { cache: new Map([[GUILD, guild]]) },
+  // Discord's events, which the web UI's updates follow: none come here
+  on: () => client,
   channels: {
     fetch: async (channelId: string) => ({
       isTextBased: () => true,
@@ -3165,6 +3168,72 @@ test('the music queue can be filled, reordered and emptied from the page', async
   assert.deepEqual(music.queue, []);
   assert.equal(recentActivity(GUILD, 1)[0].action, 'Cleared the music queue');
   assert.equal((await call(`/guilds/${GUILD}/music/queue/shuffle`, { method: 'POST' })).status, 409, 'nothing to shuffle');
+});
+
+test('a page’s one request for updates waits for a change, then answers with only what changed', async (t) => {
+  t.after(() => ok(`/guilds/${GUILD}/music/queue`, { method: 'DELETE' }));
+  assert.match(await refused(400, `/guilds/${GUILD}/updates`), /playing, music, voice/);
+  // With nothing yet, everything asked for, straight away
+  const first = await ok(`/guilds/${GUILD}/updates?playing=&music=&voice=`);
+  assert.deepEqual(Object.keys(first).sort(), ['music', 'playing', 'voice']);
+  assert.deepEqual(first.playing.playing, []);
+  assert.deepEqual(first.music.queue, []);
+  assert.deepEqual(first.voice.channels.map((c: { id: string }) => c.id), ['702', '701']);
+  assert.equal(first.voice.soundVolume, 100);
+  const since = (have: Record<string, string>) => `/guilds/${GUILD}/updates?${new URLSearchParams(have)}`;
+  const all = { playing: first.playing.version, music: first.music.version, voice: first.voice.version };
+
+  const waiting = ok(since(all));
+  const track = { uri: `spotify:track:${'b'.repeat(22)}`, title: 'Song', artist: 'Band', album: 'Album', cover: null, durationMs: 180_000 };
+  await ok(`/guilds/${GUILD}/music/queue`, { method: 'POST', json: { track } });
+  const queued = await waiting;
+  assert.deepEqual(Object.keys(queued), ['music']);
+  assert.deepEqual(queued.music.queue.map((r: { title: string }) => r.title), ['Song']);
+  assert.notEqual(queued.music.version, all.music);
+  all.music = queued.music.version;
+
+  // People coming and going, a channel renamed and a name changed in voice
+  const discord = Object.assign(new EventEmitter(), { user: { id: 'bot' } });
+  followVoice(discord as never);
+  const guildOf = { guild: { id: GUILD } };
+  const joined = ok(since(all));
+  discord.emit(Events.VoiceStateUpdate, { channelId: null }, { ...guildOf, id: '1', channelId: '702' });
+  const voice = await joined;
+  assert.deepEqual(Object.keys(voice), ['voice']);
+  all.voice = voice.voice.version;
+  // A voice channel renamed, or someone's name changed, which the music page's queue shows too
+  for (const [event, ...args] of [
+    [Events.ChannelUpdate, { name: 'Gaming' }, { ...guildOf, name: 'Games', isDMBased: () => false, isVoiceBased: () => true }],
+    [Events.GuildMemberUpdate, { partial: false, displayName: 'Ana' }, { ...guildOf, displayName: 'Anna', voice: { channelId: '702' } }],
+  ] as const) {
+    discord.emit(event, ...args);
+    const update = await ok(since(all));
+    assert.deepEqual(Object.keys(update), ['music', 'voice'], event);
+    all.music = update.music.version;
+    all.voice = update.voice.version;
+  }
+  // Muting, a text channel renamed, or a member changed but not their name don't count
+  discord.emit(Events.VoiceStateUpdate, { channelId: '702' }, { ...guildOf, id: '1', channelId: '702' });
+  discord.emit(Events.ChannelUpdate, { name: 'Gaming' }, { ...guildOf, name: 'Gaming', isDMBased: () => false, isVoiceBased: () => true });
+  discord.emit(Events.ChannelUpdate, { name: 'chat' }, { ...guildOf, name: 'talk', isDMBased: () => false, isVoiceBased: () => false });
+  discord.emit(Events.GuildMemberUpdate, { partial: false, displayName: 'Ana' }, { ...guildOf, displayName: 'Ana', voice: { channelId: '702' } });
+  // The bot moving changes where the music page says it is
+  discord.emit(Events.VoiceStateUpdate, { channelId: null }, { ...guildOf, id: 'bot', channelId: '702' });
+  const moved = await ok(since(all));
+  assert.deepEqual(Object.keys(moved).sort(), ['music', 'voice']);
+  const changes = (version: string) => Number(version.split('-').at(-1));
+  assert.equal(changes(moved.voice.version), changes(all.voice) + 1, 'only the bot moving counted');
+  assert.equal(changes(moved.music.version), changes(all.music) + 1, 'only the bot moving counted');
+  all.music = moved.music.version;
+  all.voice = moved.voice.version;
+
+  // The sound volume, shown beside Play in
+  const louder = ok(since(all));
+  await ok(`/guilds/${GUILD}/settings/soundVolume`, { method: 'PUT', json: { value: 80 } });
+  const volume = await louder;
+  assert.deepEqual(Object.keys(volume), ['voice']);
+  assert.equal(volume.voice.soundVolume, 80);
+  await ok(`/guilds/${GUILD}/settings/soundVolume`, { method: 'DELETE' });
 });
 
 test('the page lists the Spotify account’s own playlists, and can shuffle one into the queue', async (t) => {

@@ -21,6 +21,7 @@ import path from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { logActivity } from '../activity.ts';
 import { config } from '../config.ts';
+import { feeds } from '../changes.ts';
 import { db, getKv, setKv, transaction } from '../db.ts';
 import { durationOf, hasAudio } from '../discordSounds.ts';
 import { idSetting } from '../settings.ts';
@@ -181,7 +182,7 @@ async function fillSome(): Promise<number> {
     .prepare("SELECT uri FROM music_queue WHERE cover IS NULL AND uri LIKE 'spotify:track:%' GROUP BY uri ORDER BY MIN(pos), MIN(id)")
     .all() as unknown as { uri: string }[];
   const uris = rows.map((r) => r.uri).filter((uri) => !coverless.has(uri));
-  const update = db.prepare('UPDATE music_queue SET cover = ? WHERE uri = ? AND cover IS NULL');
+  const update = db.prepare('UPDATE music_queue SET cover = ? WHERE uri = ? AND cover IS NULL RETURNING guild_id');
   let next = 0;
   let waitSeconds = 0;
   const worker = async () => {
@@ -189,8 +190,11 @@ async function fillSome(): Promise<number> {
       const uri = uris[next++]!;
       try {
         const cover = await coverFor(uri);
-        if (cover) update.run(cover, uri);
-        else coverless.add(uri);
+        if (cover) {
+          // The queue on the page and the card show it
+          const guilds = new Set((update.all(cover, uri) as unknown as { guild_id: string }[]).map((r) => r.guild_id));
+          for (const guildId of guilds) cardChanged(guildId);
+        } else coverless.add(uri);
       } catch (err) {
         // Anything else (a timeout, Spotify down) is tried again the next time songs are added
         if (err instanceof RateLimited) waitSeconds = Math.max(waitSeconds, err.retryAfterSeconds);
@@ -307,6 +311,7 @@ async function listen(signal: AbortSignal) {
       if (res.status === 401) throw new Error('the music container turned down MUSIC_TOKEN');
       if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
       unreachable = null;
+      playerMaybeChanged();
       let buffer = '';
       for await (const chunk of res.body.pipeThrough(new TextDecoderStream())) {
         buffer += chunk;
@@ -327,6 +332,7 @@ async function listen(signal: AbortSignal) {
       if (unreachable !== reason) console.error(`Music container unreachable: ${reason}`);
       unreachable = reason;
       status = null;
+      playerMaybeChanged();
       await sleep(5_000, undefined, { signal }).catch(() => {});
     }
   }
@@ -335,6 +341,16 @@ async function listen(signal: AbortSignal) {
 /** The music container's status changed. Exported for tests, which have no container to follow */
 export function onStatus(next: PlayerStatus) {
   status = next;
+  playerMaybeChanged();
+}
+
+let lastProblem: string | null | undefined;
+/** The music page says when the player can't be used, so every server's page hears when that changes */
+function playerMaybeChanged() {
+  const problem = unavailable();
+  if (problem === lastProblem) return;
+  lastProblem = problem;
+  feeds.music.changedEverywhere();
 }
 
 // ---------- playing ----------
@@ -398,6 +414,7 @@ async function playCurrent(s: Session, fromMs = 0): Promise<string | null> {
     // The next song's own problem says more than this one being skipped
     if (next) return next;
     s.note ??= note;
+    cardChanged(s.guild.id);
     return null;
   }
   const channel = channelOf(s);
@@ -480,6 +497,8 @@ export function stopMusic(guildId: string, who: string) {
   const s = sessions.get(guildId);
   if (s) endSession(s);
   db.prepare('DELETE FROM music_queue WHERE guild_id = ?').run(guildId);
+  // With nothing playing, only the queue changed
+  cardChanged(guildId);
   logActivity(guildId, who, 'Stopped the music and cleared the queue');
 }
 
@@ -581,10 +600,12 @@ async function resumeOne(client: Client, saved: SavedSession) {
   const problem = unavailable();
   if (problem) {
     s.note = 'The bot restarted and the music player didn’t come back in time, so the music paused.';
+    cardChanged(guild.id);
     return didnt(problem);
   }
   if (!humansIn(channel).length) {
     s.note = `The bot restarted while nobody was in ${channel.name}, so the music paused.`;
+    cardChanged(guild.id);
     return didnt(`nobody is in #${channel.name}`);
   }
   const failed = await startMusic(guild, channel);
@@ -644,6 +665,7 @@ export async function playFile(guild: Guild, channel: VoiceBasedChannel, file: s
   const failed = await playFileFrom(guild.id, playing, 0);
   if (failed) return failed;
   files.set(guild.id, playing);
+  feeds.music.changed(guild.id);
   const s = sessions.get(guild.id);
   if (s && s.phase !== 'paused') pauseHere(s, 'Paused for a file. Press Resume to carry on.');
   logActivity(guild.id, who, `Played the file **${name}**`);
@@ -661,6 +683,7 @@ async function playFileFrom(guildId: string, playing: PlayingFile, ms: number): 
       if (playing.turn !== turn) return;
       if (files.get(guildId) === playing) files.delete(guildId);
       rmSync(playing.file, { force: true });
+      feeds.music.changed(guildId);
     },
     ms,
   );
@@ -671,6 +694,8 @@ async function playFileFrom(guildId: string, playing: PlayingFile, ms: number): 
   }
   playing.stop = stop;
   playing.startedAt = Date.now() - ms;
+  // A jump within the file
+  feeds.music.changed(guildId);
   return null;
 }
 
@@ -887,8 +912,9 @@ function adoptCard(guildId: string, card: Card) {
   void editCard(old, { embeds: [new EmbedBuilder().setColor(0x99aab5).setDescription('🎵 The music card moved further down.')], components: [] });
 }
 
-/** Redraws the server's live card soon, once whatever changed has settled */
+/** Redraws the server's live card soon, once whatever changed has settled, and tells the web UI at once */
 function cardChanged(guildId: string) {
+  feeds.music.changed(guildId);
   const card = cards.get(guildId);
   if (!card || card.timer) return;
   card.timer = setTimeout(() => {

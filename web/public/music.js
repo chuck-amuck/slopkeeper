@@ -1,6 +1,6 @@
-import { announce, api, attempt, confirmButton, el, icon, keepFocus, notice, pickedVoice, poll, request, RequestError, session, state, toast, undoToast, volumeControl } from './lib.js';
+import { announce, api, attempt, confirmButton, el, icon, keepFocus, notice, pickedVoice, request, RequestError, session, state, toast, undoToast, volumeControl } from './lib.js';
+import { follow } from './updates.js';
 
-const REFRESH_MS = 3000;
 // A playlist adds this many songs, the first or at random
 const FROM_A_LIST = 100;
 const PLAYLISTS_SHOWN = 20;
@@ -570,10 +570,11 @@ export function renderMusic(main) {
     songBar.paint();
   }
 
-  function show(fresh) {
+  /** `age` is how long ago, in milliseconds, the bot said it, for where the song has got to */
+  function show(fresh, age = 0) {
     if (guildId !== state.guildId || !main.isConnected) return;
     data = fresh;
-    fetchedAt = Date.now();
+    fetchedAt = Date.now() - age;
     problem.textContent = data.problem ?? '';
     problem.hidden = !data.problem;
     searchNote.hidden = data.searchReady;
@@ -605,8 +606,7 @@ export function renderMusic(main) {
     paintQueue();
   }
 
-  async function loadChannels() {
-    const fresh = (await request(api('/voice'))).channels;
+  function showChannels(fresh) {
     if (guildId !== state.guildId || !main.isConnected) return;
     if (JSON.stringify(fresh) === JSON.stringify(channels)) return;
     channels = fresh;
@@ -618,14 +618,10 @@ export function renderMusic(main) {
     paintControls();
   }
 
-  const refresh = async () => show(await request(api('/music')));
-
   main.append(problem, voiceRow, now, searchCard, fileCard, queueCard);
   list.append(notice('loading', 'Loading the queue…', { compact: true, tag: 'li' }));
-  void attempt(async () => {
-    await refresh();
-    await loadChannels();
-  });
-  poll(main, REFRESH_MS, () => Promise.all([refresh(), loadChannels()]));
+  // From the bot the moment they change: the music, and who's in voice to play it to
+  follow('music', main, (fresh, at) => show(fresh, performance.now() - at));
+  follow('voice', main, (fresh) => showChannels(fresh.channels));
   const ticker = setInterval(() => (main.isConnected ? paintProgress() : clearInterval(ticker)), 500);
 }

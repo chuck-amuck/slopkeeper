@@ -50,6 +50,7 @@ import { promisify } from 'node:util';
 import { logActivity } from '../activity.ts';
 import { config } from '../config.ts';
 import { db } from '../db.ts';
+import { feeds } from '../changes.ts';
 import * as discordBoard from '../discordSounds.ts';
 import { measureGain } from '../loudness.ts';
 import { MIX_VOLUME, Mixer, type Playing, type VoiceOptions } from '../mixer.ts';
@@ -739,7 +740,7 @@ function mixInto(guildId: string, add: (mixer: Mixer) => void) {
   clearTimeout(a.idleTimer);
   if (a.mixer && !a.mixer.finished) return add(a.mixer);
   a.mixer = new Mixer(VOLUME, MAX_VOICES);
-  a.mixer.on('playing', () => playingChanged(guildId));
+  a.mixer.on('playing', () => feeds.playing.changed(guildId));
   a.mixer.setGroupGain('sound', setting(guildId, 'soundVolume') / 100);
   a.mixer.setGroupGain('speech', setting(guildId, 'ttsVolume') / 100);
   a.mixer.setGroupGain('music', setting(guildId, 'musicVolume') / 100);
@@ -973,9 +974,17 @@ export const affectsLoopRoom = (key: string) => key.startsWith('loop') || key ==
 export async function afterSettingsChanged(guild: Guild, keys: string[]) {
   // Discord's copies of the sounds, and audio already playing, have their own volume
   if (keys.includes('evenVolume')) await applyLevels(guild);
-  if (keys.includes('soundVolume')) applySoundVolume(guild.id);
+  if (keys.includes('soundVolume')) {
+    applySoundVolume(guild.id);
+    // The volume beside Play in shows it
+    feeds.voice.changed(guild.id);
+  }
   if (keys.includes('ttsVolume')) applySpeechVolume(guild.id);
-  if (keys.includes('musicVolume')) applyMusicVolume(guild.id);
+  if (keys.includes('musicVolume')) {
+    applyMusicVolume(guild.id);
+    // The music page shows it
+    feeds.music.changed(guild.id);
+  }
   if (keys.some(affectsLoopRoom)) await refreshLoopRoom(guild);
 }
 
@@ -1210,41 +1219,10 @@ export const onMusicCheck = (check: (guildId: string) => boolean) => void (music
 
 // ---------- what's playing ----------
 
-// Starts each run of the bot afresh, so a page that last heard of version 3 before a restart isn't kept waiting
-const PLAYING_RUN = Date.now().toString(36);
-const playingVersions = new Map<string, number>();
-const playingWaiters = new Map<string, Set<() => void>>();
-
-function playingChanged(guildId: string) {
-  playingVersions.set(guildId, (playingVersions.get(guildId) ?? 0) + 1);
-  const waiting = playingWaiters.get(guildId);
-  playingWaiters.delete(guildId);
-  for (const wake of waiting ?? []) wake();
-}
-
-/** Changes whenever a sound or line of speech starts or ends in a server */
-export const playingVersion = (guildId: string) => `${PLAYING_RUN}-${playingVersions.get(guildId) ?? 0}`;
-
 /** The sounds and speech playing in a server, not counting music */
 export function playingNow(guildId: string): Playing[] {
   const mixer = audio.get(guildId)?.mixer;
   return mixer && !mixer.finished ? mixer.playing() : [];
-}
-
-/** Waits until what's playing differs from `version`, or `signal` gives up */
-export function playingChange(guildId: string, version: string, signal: AbortSignal): Promise<void> {
-  if (playingVersion(guildId) !== version || signal.aborted) return Promise.resolve();
-  return new Promise((resolve) => {
-    const waiting = playingWaiters.get(guildId) ?? new Set();
-    playingWaiters.set(guildId, waiting);
-    const wake = () => {
-      waiting.delete(wake);
-      signal.removeEventListener('abort', wake);
-      resolve();
-    };
-    waiting.add(wake);
-    signal.addEventListener('abort', wake, { once: true });
-  });
 }
 
 /** Stops one sound or line of speech. Stopping the room's loop keeps it quiet until someone else joins, as Stop does */

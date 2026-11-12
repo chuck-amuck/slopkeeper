@@ -4,7 +4,8 @@ import { api, attempt, el, formProblem, icon, notice, openDialog, player, recall
 import { renderMusic } from './music.js';
 import { renderNights } from './nights.js';
 import { renderPick } from './pick.js';
-import { stopDock, stopWatchingPlaying, watchPlaying } from './playing.js';
+import { stopDock } from './playing.js';
+import { stopWatchingUpdates, watchUpdates } from './updates.js';
 import { renderSettings } from './settings.js';
 import { renderSoundboard, VIEW_KEY } from './soundboard.js';
 import { renderStats } from './stats.js';
@@ -51,7 +52,7 @@ function showLogin() {
   if (app.querySelector(':scope > .login')) return;
   document.title = 'Log in · Slopkeeper';
   player.stop();
-  stopWatchingPlaying();
+  stopWatchingUpdates();
   const password = el('input', { type: 'password', autocomplete: 'current-password', required: true, placeholder: 'Password', ariaLabel: 'Password', 'aria-describedby': 'login-error' });
   const error = el('div', { className: 'bad-text', id: 'login-error', role: 'alert', hidden: true });
   const submit = el('button', { className: 'primary', type: 'submit' }, 'Log in');
@@ -286,8 +287,8 @@ function renderFrame() {
     // In the corner of every page, so it's always in reach
     guild && stopDock(),
   );
-  if (guild) watchPlaying();
-  else stopWatchingPlaying();
+  if (guild) watchUpdates();
+  else stopWatchingUpdates();
 
   document.title = `${TABS.find(([id]) => id === tab)[1]} · Slopkeeper`;
   fitNav();

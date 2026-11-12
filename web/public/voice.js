@@ -1,6 +1,6 @@
-import { api, attempt, el, icon, pickedVoice, poll, request, soundPath, state, toast, volumeControl } from './lib.js';
+import { api, attempt, el, icon, pickedVoice, request, soundPath, toast, volumeControl } from './lib.js';
+import { follow } from './updates.js';
 
-const REFRESH_MS = 5000;
 let panels = 0;
 
 /**
@@ -8,8 +8,7 @@ let panels = 0;
  * folded away as they change it for everyone, and are rarely touched mid-call. Stop is in the corner of every page.
  * onChange runs whenever the chosen channel changes
  */
-export function voiceBar(main, onChange) {
-  const guildId = state.guildId;
+export function voiceBar(onChange) {
   // Null until it's first loaded, so an empty list still gets drawn
   let channels = null;
   let chosen = pickedVoice.get();
@@ -67,10 +66,9 @@ export function voiceBar(main, onChange) {
     icon('chevron'),
   );
 
-  async function load() {
-    const data = await request(api('/voice'));
+  /** Who's in which channel, from the bot as people come and go */
+  function show(data) {
     const fresh = data.channels;
-    if (guildId !== state.guildId || !main.isConnected) return;
     // Only the first time, so it never jumps while being dragged
     if (!volumeLoaded) {
       volume.set(data.soundVolume);
@@ -90,12 +88,11 @@ export function voiceBar(main, onChange) {
     onChange();
   }
 
-  void attempt(load);
-  // People come and go while the page is open
-  poll(main, REFRESH_MS, load);
+  const node = el('div', { className: 'voice-box' }, el('div', { className: 'toolbar voice' }, el('span', { className: 'voice-label' }, 'Play in'), picker, volumeButton), panel);
+  follow('voice', node, show);
 
   return {
-    node: el('div', { className: 'voice-box' }, el('div', { className: 'toolbar voice' }, el('span', { className: 'voice-label' }, 'Play in'), picker, volumeButton), panel),
+    node,
     addVolume,
     /** Null until the channels have loaded, then the one picked, or undefined when nobody's in voice */
     channel: () => (channels === null ? null : channels.find((c) => c.id === chosen)),

@@ -216,7 +216,7 @@ export function renderBoard(main, openManage, head = main) {
   const shownTiles = new Map();
   let nowPlaying = [];
 
-  const voice = voiceBar(main, paint);
+  const voice = voiceBar(paint);
   const search = el('input', {
     type: 'search',
     placeholder: 'Search sounds',

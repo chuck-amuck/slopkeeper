@@ -186,13 +186,14 @@ function checkVersion(res) {
   toast('There’s a new version of this page.', false, { label: 'Reload', run: () => location.reload() }, true);
 }
 
-export async function request(url, { json, body, method = 'GET' } = {}) {
+export async function request(url, { json, body, method = 'GET', signal } = {}) {
   let res;
   try {
     res = await fetch(url, {
       method,
       headers: { ...(method !== 'GET' && { 'x-slopkeeper': '1' }), ...(json !== undefined && { 'content-type': 'application/json' }) },
       body: json !== undefined ? JSON.stringify(json) : body,
+      signal,
     });
   } catch {
     throw new RequestError('Couldn’t reach the web UI. Check your connection.');
@@ -245,20 +246,6 @@ export function ago(ms) {
 
 // me: who Pangolin signed in, with the Discord member they said they are in this server. Null from the home network
 export const state = { guilds: [], guildId: null, me: null };
-
-/** Runs `load` every `ms` while `main` is on the page. A hidden tab skips it, and catches up as soon as it's shown again */
-export function poll(main, ms, load) {
-  const run = () => {
-    if (!main.isConnected) return stop();
-    if (!document.hidden) void load().catch(() => {});
-  };
-  const timer = setInterval(run, ms);
-  const stop = () => {
-    clearInterval(timer);
-    document.removeEventListener('visibilitychange', run);
-  };
-  document.addEventListener('visibilitychange', run);
-}
 
 /** The voice channel someone picked on the Soundboard or Music tab, per server, kept across tabs so a sound doesn't go somewhere else */
 const pickedVoices = new Map();

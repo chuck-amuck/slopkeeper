@@ -1,4 +1,4 @@
-import { ChannelType, type Client, type Guild, type GuildBasedChannel, type GuildTextBasedChannel, type NewsChannel, type TextChannel, type VoiceBasedChannel, type VoiceChannel } from 'discord.js';
+import { ChannelType, Events, type Client, type Guild, type GuildBasedChannel, type GuildTextBasedChannel, type NewsChannel, type TextChannel, type VoiceBasedChannel, type VoiceChannel } from 'discord.js';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { createReadStream, createWriteStream, rmSync, statSync } from 'node:fs';
@@ -6,6 +6,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { pipeline } from 'node:stream/promises';
 import path from 'node:path';
 import { FROM_WEB, fromWebUser, linkWebUser, logActivity, recentActivity, seeWebUser, webUser, webUserFor } from './activity.ts';
+import { anyChange, type FeedName, feeds } from './changes.ts';
 import { config } from './config.ts';
 import * as discordBoard from './discordSounds.ts';
 import { answerFor, cancelNight, editNight, gameNames, planNight, readWhen, stopSeries, upcomingNights, whenText } from './features/gamenight.ts';
@@ -23,7 +24,7 @@ import { addTracks, clearQueue, fileProblem, fileUploadPath, MOST_FILE_BYTES, mo
 import { phrases, previewSpeech, removePhrase, savePhrase, say, serverVoice, TooSoon, voiceGroup, VOICES } from './features/say.ts';
 import { voiceTotals } from './features/sessions.ts';
 import { checkSetting, GROUPS, LABELS, LIMITS, show, source, STEPS } from './features/setup.ts';
-import { addSound, addToDiscord, afterSettingsChanged, BIN_DAYS, changeEmoji, deletedSounds, eraseDeleted, expiresAt, favourites, findSound, joinSounds, listSounds, loopBotStatus, loopSpeechProblem, parseEmoji, playCounts, playDiscordSound, playFromWeb, playingChange, playingNow, playingVersion, postPanel, refreshPanels, removeSound, renameSound, restoreDeleted, restoreSound, saveFromDiscord, setFavourite, setJoinSound, setSoundVolume, type Sound, soundLevels, soundVolumes, stopPlayback, stopPlayingOne, swapOnDiscord, syncToDiscord, takeOffDiscord, trimmedSounds, trimProblem, trimSound, untaken, uploadProblem, volumeProblem } from './features/soundboard.ts';
+import { addSound, addToDiscord, afterSettingsChanged, BIN_DAYS, changeEmoji, deletedSounds, eraseDeleted, expiresAt, favourites, findSound, joinSounds, listSounds, loopBotStatus, loopSpeechProblem, parseEmoji, playCounts, playDiscordSound, playFromWeb, playingNow, postPanel, refreshPanels, removeSound, renameSound, restoreDeleted, restoreSound, saveFromDiscord, setFavourite, setJoinSound, setSoundVolume, type Sound, soundLevels, soundVolumes, stopPlayback, stopPlayingOne, swapOnDiscord, syncToDiscord, takeOffDiscord, trimmedSounds, trimProblem, trimSound, untaken, uploadProblem, volumeProblem } from './features/soundboard.ts';
 import { DEFAULTS, idSetting, isAllowed, setSetting, setting, type SettingKey } from './settings.ts';
 import { myPlaylists, playlistsReady, search, SpotifyError, type Track } from './spotify.ts';
 import type { Feature } from './types.ts';
@@ -43,8 +44,8 @@ const AUDIO_TYPES: Record<string, string> = {
 const TIME_ZONES = Intl.supportedValuesOf('timeZone');
 const MAX_RANKED = 15;
 const ACTIVITY_PAGE = 50;
-/** How long a request for what's playing waits for a change before answering anyway, well inside a proxy's timeout */
-const PLAYING_WAIT_MS = 25_000;
+/** How long a request waiting for a change (/playing?after, /updates) holds before answering anyway, well inside a proxy’s timeout */
+const CHANGE_WAIT_MS = 25_000;
 const REPEATS = [7, 14];
 
 class Refused extends Error {
@@ -255,6 +256,45 @@ function voiceList(guild: Guild) {
       .map((c) => ({ id: c.id, name: c.name, people: humansIn(c).map((m) => m.displayName) }))
       .sort((a, b) => b.people.length - a.people.length),
   };
+}
+
+/** What /updates answers with for each feed that changed, at its new version */
+const updates: Record<FeedName, (guild: Guild) => object> = {
+  playing: (guild) => ({ playing: playingNow(guild.id) }),
+  music: (guild) => musicList(guild),
+  voice: (guild) => ({ ...voiceList(guild), soundVolume: setting(guild.id, 'soundVolume') }),
+};
+
+/**
+ * Tells pages keeping up with who's in voice when people come and go, a channel is renamed or someone changes their
+ * name. The music page shows channel names and who queued each song too
+ */
+export function followVoice(client: Client) {
+  client.on(Events.VoiceStateUpdate, (old, state) => {
+    if (old.channelId === state.channelId) return;
+    feeds.voice.changed(state.guild.id);
+    // The music page shows where the bot is, which a sound played elsewhere moves it from
+    if (state.id === client.user?.id) feeds.music.changed(state.guild.id);
+  });
+  client.on(Events.ChannelUpdate, (old, channel) => {
+    if (channel.isDMBased() || !channel.isVoiceBased() || ('name' in old && old.name === channel.name)) return;
+    feeds.voice.changed(channel.guild.id);
+    feeds.music.changed(channel.guild.id);
+  });
+  client.on(Events.GuildMemberUpdate, (old, member) => {
+    if (!old.partial && old.displayName === member.displayName) return;
+    if (member.voice.channelId) feeds.voice.changed(member.guild.id);
+    feeds.music.changed(member.guild.id);
+  });
+}
+
+/** Aborts once whoever asked has gone, or after the longest a request waits for a change */
+function untilGone(req: IncomingMessage, res: ServerResponse) {
+  const gone = new AbortController();
+  res.once('close', () => gone.abort());
+  // Gone already, before this could listen for it
+  if (res.closed || req.destroyed) gone.abort();
+  return { gone: gone.signal, signal: AbortSignal.any([gone.signal, AbortSignal.timeout(CHANGE_WAIT_MS)]) };
 }
 
 const nameOf = (guild: Guild, id: string) => guild.members.cache.get(id)?.displayName ?? 'Someone who left';
@@ -1351,14 +1391,31 @@ async function handle(client: Client<true>, req: IncomingMessage, res: ServerRes
     // With ?after=<version>, waits for a change, so the page hears of a one-second sound as it plays rather than polling for it
     const after = url.searchParams.get('after');
     if (after !== null) {
-      const gone = new AbortController();
-      res.once('close', () => gone.abort());
-      // Gone already, before this could listen for it
-      if (res.closed || req.destroyed) gone.abort();
-      await playingChange(guild.id, after, AbortSignal.any([gone.signal, AbortSignal.timeout(PLAYING_WAIT_MS)]));
-      if (gone.signal.aborted) return;
+      const { gone, signal } = untilGone(req, res);
+      await feeds.playing.next(guild.id, after, signal);
+      if (gone.aborted) return;
     }
-    return { version: playingVersion(guild.id), playing: playingNow(guild.id) };
+    return { version: feeds.playing.version(guild.id), playing: playingNow(guild.id) };
+  }
+  if (section === 'updates' && !rest.length && req.method === 'GET') {
+    // One request per page for all it keeps up with: ?playing=&music=&voice= with the version it has of each it wants (empty
+    // for none yet). It waits until one changes, then answers with only those that did, or with nothing after a while
+    const asked: Partial<Record<FeedName, string>> = {};
+    for (const name of Object.keys(feeds) as FeedName[]) {
+      const version = url.searchParams.get(name);
+      if (version !== null) asked[name] = version;
+    }
+    const names = Object.keys(asked) as FeedName[];
+    if (!names.length) throw new Refused(400, `Ask for any of ${Object.keys(feeds).join(', ')}.`);
+    const { gone, signal } = untilGone(req, res);
+    await anyChange(guild.id, asked, signal);
+    if (gone.aborted) return;
+    const answer: Partial<Record<FeedName, object>> = {};
+    for (const name of names) {
+      const version = feeds[name].version(guild.id);
+      if (version !== asked[name]) answer[name] = { version, ...updates[name](guild) };
+    }
+    return answer;
   }
   if (section === 'playing' && rest.length === 2 && rest[1] === 'stop' && req.method === 'POST') {
     if (!stopPlayingOne(guild.id, Number(rest[0]))) throw new Refused(404, 'That’s already finished.');
@@ -1401,6 +1458,7 @@ let server: Server | undefined;
 export const webApi: Feature = {
   setup(client) {
     if (!config.apiToken) return;
+    followVoice(client);
     server = createApi(client, config.apiToken).listen(config.apiPort, () => console.log(`Management API listening on port ${config.apiPort}`));
     server.on('error', (err) => console.error('Management API failed:', err.message));
   },

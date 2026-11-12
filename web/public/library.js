@@ -57,7 +57,7 @@ export function renderLibrary(main) {
       renderList();
     },
   });
-  const voice = voiceBar(main, () => {
+  const voice = voiceBar(() => {
     players.forEach((button, name) => paintPlay(name, button));
     boardPlayers.forEach((button, name) => paintPlay(name, button));
   });
