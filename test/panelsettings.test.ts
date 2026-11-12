@@ -86,6 +86,13 @@ test('⚙️ Settings opens privately on the panel’s page', async () => {
   const [menu] = flat(c.state.shown!);
   assert.equal(menu.custom_id, 'sb:#pick:1');
   assert.deepEqual(menu.options.map((o: { value: string }) => o.value), names.slice(20));
+  assert.match(c.state.shown!.content, /\(page 2 of 2\)$/);
+  assert.deepEqual([button(c.state.shown!, 'sb:#back:0:').disabled, button(c.state.shown!, 'sb:#back:2:').disabled], [false, true]);
+
+  // Its own pages, which leave the panel where it is
+  await c.press('sb:#back:0:');
+  assert.deepEqual(flat(c.state.shown!)[0].options.map((o: { value: string }) => o.value), names.slice(0, 20));
+  assert.equal((db.prepare(`SELECT page FROM sound_panels WHERE message_id = 'panel-message'`).get() as { page: number }).page, 1);
 });
 
 test('a settings control isn’t mistaken for a panel', async () => {

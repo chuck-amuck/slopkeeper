@@ -1344,8 +1344,15 @@ function settingsMenu(i: BaseInteraction<'cached'>, page: number, note?: string)
       ),
     );
   }
+  // Its own pages, so a sound on another page of the panel is reachable without moving the panel for everyone
+  const pages = pageCount(sounds);
+  if (pages > 1) {
+    const turn = (to: number, label: string, emoji: string) => actionButton('back', to, '', label, emoji).setDisabled(to < 0 || to >= pages);
+    rows.push(new ActionRowBuilder<ButtonBuilder>().addComponents(turn(page - 1, 'Earlier sounds', '◀️'), turn(page + 1, 'Later sounds', '▶️')));
+  }
   const prompt = canChangeSounds(i) ? '⚙️ Pick a sound to change.' : `⚙️ Pick a sound to test. ${managersOnly(guildId)}`;
-  return { content: [note, shown.length ? prompt : `🔊 No sounds yet. Add one with ${commandMention(guildId, 'sound add')}.`].filter(Boolean).join('\n'), components: rows };
+  const where = pages > 1 ? ` (page ${page + 1} of ${pages})` : '';
+  return { content: [note, shown.length ? `${prompt}${where}` : `🔊 No sounds yet. Add one with ${commandMention(guildId, 'sound add')}.`].filter(Boolean).join('\n'), components: rows };
 }
 
 /** Everything that can be changed about one sound, for those allowed to */

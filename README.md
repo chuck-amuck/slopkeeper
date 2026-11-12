@@ -360,7 +360,7 @@ The bot holds a library of uploaded sounds and plays them in your voice channel.
 
 You have to be in a voice channel to play a sound. The bot joins whichever channel you're in.
 
-**⚙️ Settings** on a panel changes sounds without leaving Discord. Everything it opens is only visible to you. Pick a sound from the panel's current page to change its volume, test it, put it on or take it off Discord's soundboard, set its emoji, rename it or delete it. People with **Manage Server** also get switches for even volume and join sounds. Trimming, picking part of a long sound and uploading are on the web UI, or in the commands below.
+**⚙️ Settings** on a panel changes sounds without leaving Discord. Everything it opens is only visible to you. Pick a sound from the panel's current page, or turn its own pages to reach the rest without moving the panel for everyone, to change its volume, test it, put it on or take it off Discord's soundboard, set its emoji, rename it or delete it. People with **Manage Server** also get switches for even volume and join sounds. Trimming, picking part of a long sound and uploading are on the web UI, or in the commands below.
 
 **Join sounds** are opt-in: nothing plays until someone picks one with `/sound join`, or it's set for them on the web UI's Settings page. When you connect to voice the bot joins straight away, then waits half a second before playing, so the sound clears Discord's joining noises. Nothing plays if you leave during that wait. It doesn't play when you switch channels, or again until the cooldown is up (10 minutes unless `/setup sounds` says otherwise). If the bot is already in a different channel, it stays there rather than leaving the people using it. They don't count towards the monthly recap's top sounds.
 
