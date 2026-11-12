@@ -30,6 +30,22 @@ const ICONS = {
   star: '<path d="M12 3.5l2.6 5.4 5.9.8-4.3 4.1 1.1 5.8L12 16.8l-5.3 2.8 1.1-5.8-4.3-4.1 5.9-.8z"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
   grip: '<g fill="currentColor" stroke="none"><circle cx="9" cy="6" r="1.6"/><circle cx="15" cy="6" r="1.6"/><circle cx="9" cy="12" r="1.6"/><circle cx="15" cy="12" r="1.6"/><circle cx="9" cy="18" r="1.6"/><circle cx="15" cy="18" r="1.6"/></g>',
+  more: '<g fill="currentColor" stroke="none"><circle cx="5.5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="18.5" cy="12" r="1.8"/></g>',
+  chevron: '<path d="M6.5 9.5 12 15l5.5-5.5"/>',
+  check: '<path d="M5 12.5l4.5 4.5L19 7.5"/>',
+  note: '<path d="M9 18V5.5l10-2v12"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="16.5" cy="15.5" r="2.5"/>',
+  dice: '<rect x="4" y="4" width="16" height="16" rx="3.5"/><g fill="currentColor" stroke="none"><circle cx="8.5" cy="8.5" r="1.5"/><circle cx="15.5" cy="8.5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="8.5" cy="15.5" r="1.5"/><circle cx="15.5" cy="15.5" r="1.5"/></g>',
+  calendar: '<rect x="4" y="5.5" width="16" height="14.5" rx="2.5"/><path d="M4 10.5h16M8.5 3.5v4M15.5 3.5v4"/>',
+  chart: '<path d="M4 20h16M7 16.5v-5M12 16.5V6.5M17 16.5v-8"/>',
+  clock: '<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/>',
+  sliders: '<path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/>',
+  user: '<circle cx="12" cy="8.5" r="3.5"/><path d="M5 20a7 7 0 0 1 14 0"/>',
+  logout: '<path d="M13.5 4.5h-7v15h7"/><path d="M10.5 12H20M16.5 8.5 20 12l-3.5 3.5"/>',
+  enter: '<path d="M10.5 4.5h7v15h-7"/><path d="M4 12h10M10.5 8.5 14 12l-3.5 3.5"/>',
+  pencil: '<path d="M15 5.5l3.5 3.5L9 18.5H5.5V15z"/><path d="M13 7.5l3.5 3.5"/>',
+  smile: '<circle cx="12" cy="12" r="8.5"/><path d="M8.5 14a4.5 4.5 0 0 0 7 0"/><g fill="currentColor" stroke="none"><circle cx="9" cy="10" r="1.2"/><circle cx="15" cy="10" r="1.2"/></g>',
+  trash: '<path d="M5 7h14M10 7V4.5h4V7M7 7l1 12.5h8L17 7"/>',
+  refresh: '<path d="M19 12a7 7 0 1 1-2-4.9"/><path d="M19.5 4.5v4h-4"/>',
 };
 
 const drawn = new Map();
@@ -50,16 +66,16 @@ export function icon(name) {
 
 /**
  * A short note in the corner. `action` ({ label, run }) adds a button, such as Undo; a toast with one stays longer,
- * and stays while the pointer or focus is on it, so there's time to reach it
+ * and stays while the pointer or focus is on it, so there's time to reach it. One that `stays` waits to be closed
  */
-export function toast(text, bad = false, action = null) {
+export function toast(text, bad = false, action = null, stays = false) {
   // An error is read out at once, rather than after whatever is being read
-  const node = el('div', { className: `toast${bad ? ' bad' : ''}${action ? ' with-action' : ''}`, role: bad ? 'alert' : undefined }, el('span', {}, text));
+  const node = el('div', { className: `toast${bad ? ' bad' : ''}${action || stays ? ' with-action' : ''}`, role: bad ? 'alert' : undefined }, el('span', {}, text));
   let timer;
   const close = () => node.remove();
   const wait = () => {
     clearTimeout(timer);
-    timer = setTimeout(close, bad || action ? 8000 : 4000);
+    if (!stays) timer = setTimeout(close, bad || action ? 8000 : 4000);
   };
   if (action) {
     node.append(
@@ -78,6 +94,7 @@ export function toast(text, bad = false, action = null) {
     node.addEventListener('focusin', hold);
     node.addEventListener('focusout', wait);
   }
+  if (stays) node.append(el('button', { type: 'button', className: 'toast-close icon', ariaLabel: 'Dismiss', title: 'Dismiss', onclick: close }, icon('x')));
   // A dialog it was in may have gone without closing, when the page was redrawn under it
   if (!toasts.isConnected) document.body.append(toasts);
   toasts.append(node);
@@ -158,6 +175,17 @@ export class RequestError extends Error {
 /** Set by the app: what to do when the session has run out */
 export const session = { onExpired: () => {} };
 
+/** The version of the page's files this tab loaded. The web UI says its own with every answer, so a redeploy shows */
+const pageVersion = document.querySelector('meta[name="slopkeeper-version"]')?.content ?? null;
+let newVersionShown = false;
+
+function checkVersion(res) {
+  const version = res.headers.get('x-slopkeeper-version');
+  if (!pageVersion || !version || version === pageVersion || newVersionShown) return;
+  newVersionShown = true;
+  toast('There’s a new version of this page.', false, { label: 'Reload', run: () => location.reload() }, true);
+}
+
 export async function request(url, { json, body, method = 'GET' } = {}) {
   let res;
   try {
@@ -169,13 +197,31 @@ export async function request(url, { json, body, method = 'GET' } = {}) {
   } catch {
     throw new RequestError('Couldn’t reach the web UI. Check your connection.');
   }
+  checkVersion(res);
   if (res.status === 401 && url.startsWith('/api/')) {
     session.onExpired();
-    throw new RequestError('Log in again.');
+    throw new RequestError('Log in again.', 401);
   }
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new RequestError(data.error ?? `Request failed (${res.status}).`, res.status);
   return data;
+}
+
+/** Fetches audio to play in this browser only, such as a voice preview: a URL for it, or the bot's reason why not */
+export async function fetchAudio(url) {
+  let res;
+  try {
+    res = await fetch(url);
+  } catch {
+    throw new RequestError('Couldn’t reach the web UI. Check your connection.');
+  }
+  checkVersion(res);
+  if (res.status === 401) {
+    session.onExpired();
+    throw new RequestError('Log in again.', 401);
+  }
+  if (!res.ok) throw new RequestError((await res.json().catch(() => ({}))).error ?? `Couldn’t get that (${res.status}).`, res.status);
+  return URL.createObjectURL(await res.blob());
 }
 
 /** Runs an action from a button or field, showing any failure */
@@ -303,7 +349,7 @@ export function volumeControl({ min, max, label, onInput, onSave }) {
   };
 }
 
-export const CUSTOM_EMOJI = /^<(a?):\w+:(\d+)>$/;
+const CUSTOM_EMOJI = /^<(a?):\w+:(\d+)>$/;
 
 export function emojiNode(code, label) {
   const custom = CUSTOM_EMOJI.exec(code);
@@ -318,12 +364,13 @@ let dialogs = 0;
  * Opens a modal dialog, laid out the same way everywhere: its title, a body that scrolls when it's long, and a footer
  * that stays put. The footer has `start` on the left (such as Preview or Remove), then `actions` (such as Save), then
  * the button that closes it (`close`: Cancel, Close or Done, filled if `closePrimary`), always last on the right. With
- * `onsubmit`, the body and footer are one form, so Enter in a field submits it.
+ * `onsubmit`, the body and footer are one form, so Enter in a field submits it. The class `sheet` rises from the
+ * bottom of a phone's screen, for a short list of choices.
  *
  * Toasts show inside it while it's open, as the page behind is hidden from screen readers. On closing, focus goes back
  * to what opened it, or to its replacement if the page was redrawn meanwhile
  */
-export function openDialog(parent, { title, body = [], start = [], actions = [], close = 'Close', closePrimary = false, onsubmit, noValidate }) {
+export function openDialog(parent, { title, body = [], start = [], actions = [], close = 'Close', closePrimary = false, onsubmit, noValidate, className }) {
   const opener = document.activeElement;
   const openerKey = opener && opener !== document.body ? nameOf(opener) : null;
   const heading = el('h2', { id: `dialog-title-${++dialogs}` }, title);
@@ -338,6 +385,7 @@ export function openDialog(parent, { title, body = [], start = [], actions = [],
   const node = el(
     'dialog',
     {
+      className,
       onclose: () => {
         node.remove();
         const under = [...document.querySelectorAll('dialog[open]')].at(-1);
@@ -457,6 +505,8 @@ export const player = {
   onChange: () => {},
   stop() {
     this.audio?.pause();
+    // Audio fetched for a preview is held until it's let go
+    if (this.audio?.src.startsWith('blob:')) URL.revokeObjectURL(this.audio.src);
     this.gain?.disconnect();
     this.audio = null;
     this.gain = null;

@@ -65,9 +65,12 @@
   box-sizing: border-box;
 }
 
-/* Keyboard focus scrolls clear of the floating Stop sounds button; app.js sets the top for the sticky header */
+/* Keyboard focus scrolls clear of the floating Stop sounds button and what's playing above it; app.js sets the top
+   for the sticky header */
 html {
-  scroll-padding-bottom: 80px;
+  /* A phone's bottom bar, which everything else floating sits above */
+  --bar-h: 0px;
+  scroll-padding-bottom: calc(80px + var(--dock-extra, 0px) + var(--bar-h));
 }
 
 [hidden] {
@@ -204,7 +207,7 @@ button.confirm.icon > span:last-child {
 .stop-dock {
   position: fixed;
   right: 16px;
-  bottom: 16px;
+  bottom: calc(16px + var(--bar-h));
   z-index: 10;
   display: grid;
   justify-items: end;
@@ -472,7 +475,8 @@ nav button[aria-current='page'] {
 main {
   width: min(900px, 100%);
   margin: 0 auto;
-  padding: 16px 16px 80px;
+  /* Room to scroll the last row clear of the Stop sounds button, however tall what's playing makes it */
+  padding: 16px 16px calc(80px + var(--dock-extra, 0px) + var(--bar-h));
   display: grid;
   /* A long channel name in a picker shrinks to fit rather than widening the page */
   grid-template-columns: minmax(0, 1fr);
@@ -514,9 +518,64 @@ main {
   min-width: 0;
 }
 
+.toolbar.say {
+  flex-wrap: nowrap;
+}
+
 .toolbar.say input {
   flex: 1 1 220px;
   min-width: 0;
+}
+
+.say-send {
+  flex: none;
+  min-width: 5.5em;
+}
+
+/* The volumes, folded under the Volume button beside Play in */
+.voice-box {
+  display: grid;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.toolbar.voice {
+  flex-wrap: nowrap;
+}
+
+.volume-toggle {
+  flex: none;
+}
+
+.volume-toggle .ico-chevron {
+  transition: transform 0.15s;
+}
+
+.volume-toggle[aria-expanded='true'] .ico-chevron {
+  transform: rotate(180deg);
+}
+
+.volume-panel {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+
+.volume-panel[hidden] {
+  display: none;
+}
+
+.volume-panel .hint {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--text-sm);
+}
+
+.volume-panel .voice-label {
+  width: 4.5em;
 }
 
 .say-box {
@@ -532,13 +591,76 @@ main {
 
 .phrases {
   display: flex;
-  flex-wrap: wrap;
+  align-items: center;
   gap: var(--space-2);
+  min-width: 0;
+}
+
+.phrase-scroll {
+  display: flex;
+  flex: 1 1 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+/* Only a phone's row is folded */
+.all-lines {
+  display: none;
+}
+
+/* The search on Play, beside Play | Manage */
+.view-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+}
+
+.view-slot {
+  display: flex;
+  flex: 1 1 160px;
+  min-width: 0;
+}
+
+.view-slot:empty {
+  display: none;
+}
+
+.view-slot input[type='search'] {
+  flex: 1 1 auto;
   min-width: 0;
 }
 
 .phrases:empty {
   display: none;
+}
+
+/* The saved lines wrap along with the voice picker before them */
+.phrase-list {
+  display: contents;
+}
+
+.say-voice {
+  flex: 0 1 auto;
+  max-width: 14em;
+  min-width: 0;
+}
+
+.say-preview[aria-busy='true'],
+.phrase-say[aria-busy='true'] {
+  opacity: 0.6;
+  cursor: progress;
+}
+
+/* Removing a saved line is for Edit, so a tap on a line never lands on its × by accident */
+.phrases:not(.editing) .phrase-remove {
+  display: none;
+}
+
+.phrases:not(.editing) .phrase-say {
+  border-radius: var(--radius-pill);
 }
 
 .phrase {
@@ -1075,6 +1197,7 @@ dialog input {
   grid-column: 2;
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   gap: 2px 8px;
   color: var(--muted);
   font-size: var(--text-xs);
@@ -1769,9 +1892,21 @@ textarea {
   font-size: var(--text-sm);
 }
 
+.activity {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.activity-day h2 {
+  margin: 0 0 var(--space-2);
+  color: var(--muted);
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+
 .event {
   display: grid;
-  grid-template-columns: 130px minmax(0, 150px) minmax(0, 1fr);
+  grid-template-columns: 80px minmax(0, 150px) minmax(0, 1fr);
   gap: var(--space-3);
   padding: 8px 12px;
   border-top: 1px solid var(--line);
@@ -1988,7 +2123,7 @@ textarea {
   position: fixed;
   right: 16px;
   /* Above the Stop sounds button, and what's playing when that shows */
-  bottom: calc(76px + var(--dock-extra, 0px));
+  bottom: calc(76px + var(--dock-extra, 0px) + var(--bar-h));
   left: 16px;
   z-index: 20;
   display: grid;
@@ -2120,16 +2255,62 @@ textarea {
     white-space: nowrap;
   }
 
-  /* Saved phrases scroll sideways in one line rather than pushing the sounds down */
-  .phrases {
-    flex-wrap: nowrap;
-    overflow-x: auto;
-    scrollbar-width: none;
-  }
-
   .phrase {
     flex: none;
     max-width: 80%;
+  }
+
+  /* The voice, its preview and the saved lines scroll sideways in one row, fading at the edge so it shows there's
+     more; All unfolds them, and so does Edit */
+  .phrases:not(.unfolded, .editing) .phrase-scroll {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+    mask-image: linear-gradient(to right, #000 calc(100% - 32px), transparent);
+    padding-right: 24px;
+  }
+
+  .phrase-scroll > * {
+    flex: none;
+  }
+
+  .phrases.unfolded .phrase,
+  .phrases.editing .phrase {
+    flex: 0 1 auto;
+    max-width: 100%;
+  }
+
+  .phrases {
+    align-items: start;
+  }
+
+  .all-lines {
+    display: inline-flex;
+    flex: none;
+  }
+
+  .say-voice {
+    max-width: 10em;
+  }
+
+  /* The word goes, the speaker and arrow say it */
+  .volume-word {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+
+  /* Two lines for a long name rather than cutting it off */
+  .tile-name {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    line-height: 1.2;
   }
 
   .grip,
@@ -2584,10 +2765,28 @@ span.steam-family {
 
 /* Pick a game */
 
+/* A segmented switch: joined buttons, with the current one filled */
 .views {
-  display: flex;
+  display: inline-flex;
   flex-wrap: wrap;
-  gap: var(--space-2);
+  justify-self: start;
+  max-width: 100%;
+}
+
+.views button {
+  border-radius: 0;
+}
+
+.views button + button {
+  margin-left: -1px;
+}
+
+.views button:first-child {
+  border-radius: var(--radius-md) 0 0 var(--radius-md);
+}
+
+.views button:last-child {
+  border-radius: 0 var(--radius-md) var(--radius-md) 0;
 }
 
 /* The Soundboard tab's Play or Manage, laid out as main is */
@@ -2597,8 +2796,12 @@ span.steam-family {
   gap: var(--space-4);
 }
 
-.views button[aria-current='page'] {
-  background: var(--raised);
+.views button[aria-current='page'],
+.views button[aria-current='page']:hover {
+  position: relative;
+  border-color: var(--accent-fill);
+  background: var(--accent-fill);
+  color: var(--accent-text);
   font-weight: 500;
 }
 
@@ -2736,4 +2939,261 @@ span.steam-family {
   font-size: var(--text-md);
   white-space: pre-line;
   overflow-wrap: anywhere;
+}
+
+.now-x.up .ico {
+  transform: rotate(180deg);
+}
+
+.now-count .now-name {
+  font-weight: 600;
+}
+
+/* While the bot isn't answering, across the top of every page */
+.lost-touch {
+  position: fixed;
+  top: 0;
+  right: 0;
+  left: 0;
+  z-index: 30;
+  padding: 6px 16px;
+  background: var(--bad);
+  color: var(--on-bad);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  text-align: center;
+}
+
+.unreachable {
+  margin-top: var(--space-4);
+}
+
+.unreachable p {
+  margin: 0 0 var(--space-3);
+}
+
+/* In, Maybe and Can't on a night, with someone's own answer filled */
+.night-answer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.views button[aria-pressed='true'],
+.views button[aria-pressed='true']:hover {
+  position: relative;
+  border-color: var(--accent-fill);
+  background: var(--accent-fill);
+  color: var(--accent-text);
+  font-weight: 500;
+}
+
+.bottom-nav {
+  display: none;
+}
+
+.guild-name {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* A phone: the tabs move to a bar along the bottom, and who you are and Log out go under More */
+@media (max-width: 640px) {
+  html {
+    --bar-h: calc(60px + env(safe-area-inset-bottom, 0px));
+  }
+
+  header nav:not(.bottom-nav),
+  header .me,
+  header .log-out {
+    display: none;
+  }
+
+  .bottom-nav {
+    position: fixed;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    z-index: 9;
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    height: var(--bar-h);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+    border-top: 1px solid var(--line);
+    background: var(--surface);
+  }
+
+  .bottom-nav button {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+    min-width: 0;
+    padding: 4px 2px;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    color: var(--muted);
+    font-size: var(--text-xs);
+  }
+
+  .bottom-nav button span {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .bottom-nav .ico {
+    width: 24px;
+    height: 24px;
+  }
+
+  .bottom-nav button[aria-current='page'] {
+    background: transparent;
+    color: var(--accent);
+    font-weight: 600;
+  }
+
+  /* A short list of choices rises from the bottom of the screen */
+  dialog.sheet {
+    width: 100%;
+    max-width: 100%;
+    margin: auto 0 0;
+    border-width: 1px 0 0;
+    border-radius: var(--radius) var(--radius) 0 0;
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+}
+
+.sheet-list {
+  display: grid;
+  gap: 2px;
+}
+
+.sheet-list + .sheet-list {
+  margin-top: var(--space-2);
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--line);
+}
+
+button.sheet-item {
+  justify-content: flex-start;
+  width: 100%;
+  min-height: 48px;
+  border-color: transparent;
+  background: transparent;
+  text-align: left;
+}
+
+.sheet-item[aria-current='page'] {
+  background: var(--raised);
+  font-weight: 600;
+}
+
+/* Settings: find and jump, held under the header while scrolling */
+.settings-find {
+  position: sticky;
+  top: var(--header-visible, 0px);
+  z-index: 4;
+  margin: -8px -16px 0;
+  padding: 8px 16px;
+  background: var(--bg);
+  flex-wrap: nowrap;
+}
+
+.settings-find select {
+  flex: 0 1 12em;
+  min-width: 0;
+}
+
+.status .saved {
+  color: var(--good);
+  font-weight: 600;
+}
+
+/* A group folded until opened, saying what it's set to */
+details.fold > summary {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding-right: 16px;
+  list-style: none;
+  cursor: pointer;
+}
+
+details.fold > summary::-webkit-details-marker {
+  display: none;
+}
+
+details.fold > summary h2 {
+  flex: 1 1 auto;
+  border-bottom: 0;
+}
+
+details.fold[open] > summary {
+  border-bottom: 1px solid var(--line);
+}
+
+details.fold > summary h2::before {
+  content: '';
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-right: 10px;
+  border-right: 2px solid var(--muted);
+  border-bottom: 2px solid var(--muted);
+  transform: translateY(-2px) rotate(-45deg);
+  transition: transform 0.15s;
+}
+
+details.fold[open] > summary h2::before {
+  transform: translateY(-3px) rotate(45deg);
+}
+
+.fold-value {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: var(--text-sm);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+details.fold > summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+/* Jumping to a group leaves it clear of the find bar */
+.settings-cards > .card {
+  scroll-margin-top: 64px;
+}
+
+/* A setting at its default says nothing, and takes no room */
+.field .status:empty {
+  display: none;
+}
+
+.game-actions {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
+@media (max-width: 640px) {
+  .game {
+    flex-wrap: wrap;
+  }
+
+  .game-actions {
+    width: 100%;
+  }
 }

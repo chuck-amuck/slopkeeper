@@ -1,34 +1,113 @@
-import { api, attempt, el, emojiNode, icon, keepFocus, notice, postDialog, request, soundPath, state, toast, undoToast, volumeControl } from './lib.js';
+import { api, attempt, el, emojiNode, fetchAudio, icon, keepFocus, notice, player, recall, remember, request, soundPath, state, toast, undoToast, volumeControl } from './lib.js';
 import { elapsed, onPlaying } from './playing.js';
 import { voiceBar } from './voice.js';
 
 const byUse = (a, b) => b.plays - a.plays || a.name.localeCompare(b.name);
 
-/** Has the bot read out what's typed. Stays hidden if there's no voice to read it */
+// Voices in this order, and any the bot adds later after them
+const VOICE_GROUPS = ['Characters', 'Accents', 'Effects'];
+const PREVIEW_TEXT = 'Hello, this is how I sound.';
+
+/** The voices as a picker's options, in their groups when the bot says what they are */
+function voiceOptions(voices, chosen) {
+  const option = (v) => el('option', { value: v.id, selected: v.id === chosen }, v.name);
+  if (!voices.some((v) => v.group)) return voices.map(option);
+  const groups = [...new Set([...VOICE_GROUPS, ...voices.map((v) => v.group ?? 'Other')])];
+  return groups
+    .map((group) => [group, voices.filter((v) => (v.group ?? 'Other') === group)])
+    .filter(([, list]) => list.length)
+    .map(([group, list]) => el('optgroup', { label: group }, list.map(option)));
+}
+
+/**
+ * Has the bot read out what's typed: one row for the line and Say, then the voice, a preview only you hear, and the
+ * saved lines. Stays hidden if there's no voice to read it
+ */
 function sayBox(voice) {
   const guildId = state.guildId;
-  const text = el('input', { ariaLabel: 'What to say', placeholder: 'Say something', autocomplete: 'off' });
-  const picker = el('select', { ariaLabel: 'Voice' });
-  const send = el('button', {}, 'Say');
-  const row = el('div', { className: 'phrases' });
+  const voiceKey = `voice:${guildId}`;
+  const text = el('input', { ariaLabel: 'What to say', placeholder: 'Say something', autocomplete: 'off', enterKeyHint: 'send' });
+  const picker = el('select', { ariaLabel: 'Voice', className: 'say-voice', onchange: () => remember(voiceKey, picker.value) });
+  const send = el('button', { className: 'primary say-send' }, 'Say');
+  let saying = false;
+  const preview = el(
+    'button',
+    {
+      type: 'button',
+      className: 'icon say-preview',
+      ariaLabel: 'Preview this voice, just for you',
+      title: 'Hear it here first, just for you',
+      onclick: () =>
+        void attempt(async () => {
+          // Still fetching the last one
+          if (preview.ariaBusy) return;
+          const line = text.value.trim() || PREVIEW_TEXT;
+          const name = `preview:${picker.value}:${line}`;
+          // Pressed again while it plays: stop it
+          if (player.name === name) return player.stop();
+          preview.ariaBusy = 'true';
+          try {
+            const url = await fetchAudio(api(`/say/preview?voice=${encodeURIComponent(picker.value)}&text=${encodeURIComponent(line)}`));
+            await player.toggle(url, name);
+          } finally {
+            preview.ariaBusy = null;
+          }
+        }),
+    },
+    icon('headphones'),
+  );
+  const chips = el('div', { className: 'phrase-list' });
+  const saveLine = el('button', { type: 'button', className: 'icon save-line', ariaLabel: 'Save this line', title: 'Save this line, to say it again with one tap', hidden: true, onclick: () => saveTyped() }, icon('plus'));
+  const editLines = el('button', { type: 'button', className: 'quiet', ariaPressed: 'false', hidden: true, onclick: () => setEditing(!editing) }, 'Edit');
+  // On a phone the row scrolls sideways, so the sounds stay near the top; All unfolds it
+  const scroller = el('div', { className: 'phrase-scroll' }, picker, preview, chips, editLines);
+  const allLines = el('button', { type: 'button', className: 'quiet all-lines', ariaExpanded: 'false', hidden: true, onclick: () => setUnfolded(!unfolded) }, 'All');
+  const row = el('div', { className: 'phrases' }, scroller, allLines);
   let phrases = [];
+  let editing = false;
+  let unfolded = false;
+
   const paint = () => {
-    const title = voice.channel() ? `Say in ${voice.channel().name}` : 'Nobody’s in voice';
-    send.disabled = !voice.channel() || send.classList.contains('busy');
+    const channel = voice.channel();
+    const title = channel ? `Say in ${channel.name}` : 'Nobody’s in voice';
+    send.disabled = !channel || saying;
     send.title = title;
-    for (const button of row.querySelectorAll('.phrase-say')) {
-      button.disabled = !voice.channel();
-      button.title = voice.channel() ? `${button.textContent}\n${title}` : title;
+    for (const button of chips.querySelectorAll('.phrase-say')) {
+      button.disabled = !channel;
+      button.title = channel ? `${button.textContent}\n${title}` : title;
     }
   };
-  const remember = (saved) => {
-    phrases = saved;
-    row.replaceChildren(
-      ...phrases.map((phrase) =>
-        el(
+  const setEditing = (on) => {
+    editing = on;
+    editLines.textContent = on ? 'Done' : 'Edit';
+    editLines.ariaPressed = String(on);
+    row.classList.toggle('editing', on);
+    allLines.hidden = on || !phrases.length;
+  };
+  const setUnfolded = (on) => {
+    unfolded = on;
+    allLines.textContent = on ? 'Fewer' : 'All';
+    allLines.ariaExpanded = String(on);
+    row.classList.toggle('unfolded', on);
+    // Unfolded, it ends the lines rather than holding a column beside them
+    if (on) scroller.append(allLines);
+    else row.append(allLines);
+    allLines.focus();
+  };
+  /** Says a saved line, ignoring taps while it's on its way so a double tap doesn't hit the wait between lines */
+  const sayPhrase = (button, phrase) => {
+    if (button.ariaBusy) return;
+    button.ariaBusy = 'true';
+    void attempt(() => voice.say(phrase.text, picker.value)).finally(() => (button.ariaBusy = null));
+  };
+  const paintPhrases = () => {
+    chips.replaceChildren(
+      ...phrases.map((phrase) => {
+        const say = el('button', { className: 'phrase-say', onclick: () => sayPhrase(say, phrase) }, phrase.text);
+        return el(
           'span',
           { className: 'phrase' },
-          el('button', { className: 'phrase-say', onclick: () => void attempt(() => voice.say(phrase.text, picker.value)) }, phrase.text),
+          say,
           el(
             'button',
             {
@@ -37,54 +116,67 @@ function sayBox(voice) {
               title: 'Remove',
               onclick: () =>
                 void attempt(async () => {
-                  remember((await request(api(`/phrases/${phrase.id}`), { method: 'DELETE' })).phrases);
-                  undoToast(`Removed “${phrase.text}”.`, async () => remember((await request(api('/phrases'), { method: 'POST', json: { text: phrase.text } })).phrases));
+                  remembered((await request(api(`/phrases/${phrase.id}`), { method: 'DELETE' })).phrases);
+                  undoToast(`Removed “${phrase.text}”.`, async () => remembered((await request(api('/phrases'), { method: 'POST', json: { text: phrase.text } })).phrases));
                 }),
             },
             icon('x'),
           ),
-        ),
-      ),
+        );
+      }),
     );
+    allLines.hidden = editing || !phrases.length;
+    editLines.hidden = !phrases.length;
+    if (!phrases.length) setEditing(false);
     paint();
   };
-  const save = el(
-    'button',
-    {
-      type: 'button',
-      onclick: () => {
-        if (!text.value.trim()) return;
-        void attempt(async () => {
-          remember((await request(api('/phrases'), { method: 'POST', json: { text: text.value } })).phrases);
-          text.value = '';
-          toast('Saved.');
-        });
-      },
-    },
-    'Save',
-  );
+  const remembered = (saved) => {
+    phrases = saved;
+    paintPhrases();
+  };
+  const saveTyped = () => {
+    const line = text.value.trim();
+    if (!line) return;
+    void attempt(async () => {
+      remembered((await request(api('/phrases'), { method: 'POST', json: { text: line } })).phrases);
+      text.value = '';
+      saveLine.hidden = true;
+      toast('Saved the line. Tap it to say it.');
+    });
+  };
+  text.addEventListener('input', () => (saveLine.hidden = !text.value.trim()));
+
   const form = el(
     'form',
     {
       className: 'toolbar say',
       onsubmit: async (e) => {
         e.preventDefault();
-        if (send.disabled || !text.value.trim()) return;
-        send.classList.add('busy');
+        const line = text.value.trim();
+        if (send.disabled || !line) return;
+        // The box clears straight away, as the bot only answers once the line starts, which can take a while
+        saying = true;
+        send.textContent = 'Saying…';
+        text.value = '';
+        saveLine.hidden = true;
         paint();
         const sent = await attempt(async () => {
-          await voice.say(text.value, picker.value);
+          await voice.say(line, picker.value);
           return true;
         });
-        if (sent) text.value = '';
-        send.classList.remove('busy');
+        // Back in the box to try again, unless something new was typed meanwhile
+        if (!sent && !text.value) {
+          text.value = line;
+          saveLine.hidden = false;
+        }
+        saying = false;
+        send.textContent = 'Say';
         paint();
       },
     },
     text,
-    picker,
+    saveLine,
     send,
-    save,
   );
   // Apart from the sounds' volume, so a quiet voice can be turned up without the soundboard
   const volume = volumeControl({
@@ -97,27 +189,25 @@ function sayBox(voice) {
         toast(`Speech plays at ${value}% for everyone now.`);
       }),
   });
-  const volumeRow = el(
-    'div',
-    { className: 'toolbar' },
-    el('span', { className: 'voice-volume', title: 'How loud the bot speaks for everyone in the server. It’s the Speech volume in Settings.' }, el('span', { className: 'voice-label' }, 'Speech'), volume.node),
-  );
-  const node = el('div', { className: 'say-box', hidden: true }, form, volumeRow, row);
+  const node = el('div', { className: 'say-box', hidden: true }, form, row);
   void attempt(async () => {
-    const { on, voices, voice: chosen, volume: loudness, longest, phrases: saved } = await request(api('/say'));
+    const { on, voices, voice: serverDefault, volume: loudness, longest, phrases: saved } = await request(api('/say'));
     if (guildId !== state.guildId) return;
     volume.set(loudness);
     text.maxLength = longest;
-    picker.replaceChildren(...voices.map((v) => el('option', { value: v.id, selected: v.id === chosen }, v.name)));
+    // The voice last used on this device, while the bot still offers it
+    const mine = recall(voiceKey);
+    picker.replaceChildren(...voiceOptions(voices, voices.some((v) => v.id === mine) ? mine : serverDefault));
     node.hidden = !on;
-    remember(saved);
+    if (on) voice.addVolume('Speech', volume.node);
+    remembered(saved);
   });
   return { node, paint };
 }
 
 /** Big buttons for playing sounds during a game: favourites first, then whatever gets played most */
 /** `openManage` switches to the Soundboard tab's Manage view, where sounds are added */
-export function renderBoard(main, openManage) {
+export function renderBoard(main, openManage, head = main) {
   const guildId = state.guildId;
   let sounds = null;
   let filter = '';
@@ -137,18 +227,19 @@ export function renderBoard(main, openManage) {
     },
   });
   const board = el('div', { className: 'board' });
-  const postPanel = () =>
-    postDialog(main, 'Post a panel', 'Puts the soundboard buttons in a Discord channel. The panel keeps itself up to date as sounds change.', async (channelId, channel) => {
-      await request(api('/sound-panels'), { method: 'POST', json: { channelId } });
-      toast(`Panel posted in ${channel}.`);
-    });
   const say = sayBox(voice);
-  main.append(voice.node, say.node, el('div', { className: 'toolbar' }, search, el('button', { onclick: postPanel }, 'Post panel')), board);
+  // Tooltips don't show on a phone, so the reason the tiles are grey is said where it's seen
+  const nobody = notice('empty', 'Nobody’s in voice. Join a voice channel in Discord and these light up.', { compact: true });
+  nobody.hidden = true;
+  // Beside Play | Manage when there's a slot for it, a row higher up
+  head.append(search);
+  main.append(voice.node, say.node, nobody, board);
   board.append(notice('loading', 'Loading sounds…'));
 
   function paint() {
     const channel = voice.channel();
     say.paint();
+    nobody.hidden = !voice.loaded() || !!channel;
     for (const tile of tiles) {
       tile.disabled = !channel;
       tile.title = channel ? `Play in ${channel.name}` : 'Nobody’s in voice';
@@ -168,7 +259,7 @@ export function renderBoard(main, openManage) {
           void attempt(() => voice.play(sound.name));
         },
       },
-      el('span', { className: 'tile-emoji' }, sound.emoji ? emojiNode(sound.emoji, '') : icon('speaker')),
+      el('span', { className: 'tile-emoji', ariaHidden: 'true' }, sound.emoji ? emojiNode(sound.emoji, '') : icon('speaker')),
       el('span', { className: 'tile-name' }, sound.name),
     );
     tiles.push(button);

@@ -1,6 +1,6 @@
 import { pickClip } from './clip.js';
 import { emojiPicker } from './emojipicker.js';
-import { api, attempt, confirmButton, el, emojiNode, icon, keepFocus, notice, openDialog, player, recall, remember, request, RequestError, soundPath, state, toast, undoToast, volumeControl } from './lib.js';
+import { api, attempt, confirmButton, el, emojiNode, icon, keepFocus, notice, openDialog, player, postDialog, recall, remember, request, RequestError, soundPath, state, toast, undoToast, volumeControl } from './lib.js';
 import { pickTrim } from './trim.js';
 import { voiceBar } from './voice.js';
 
@@ -87,6 +87,18 @@ export function renderLibrary(main) {
     },
     'Sync to Discord',
   );
+  // Rarely needed mid-call, so it's here rather than on Play
+  const postPanel = el(
+    'button',
+    {
+      onclick: () =>
+        postDialog(main, 'Post a panel', 'Puts the soundboard buttons in a Discord channel. The panel keeps itself up to date as sounds change.', async (channelId, channel) => {
+          await request(api('/sound-panels'), { method: 'POST', json: { channelId } });
+          toast(`Panel posted in ${channel}.`);
+        }),
+    },
+    'Post panel',
+  );
   const picker = el('input', {
     type: 'file',
     multiple: true,
@@ -124,7 +136,8 @@ export function renderLibrary(main) {
         void attempt(async () => addFiles(entries.every(Boolean) ? (await Promise.all(entries.map(filesIn))).flat() : files));
       },
     },
-    'Drop audio files or a folder here, or click to choose',
+    // A phone has nothing to drop
+    matchMedia('(pointer: coarse)').matches ? 'Tap to choose audio files' : 'Drop audio files or a folder here, or click to choose',
   );
   const queueBox = el('div', { className: 'queue', hidden: true });
   const list = el('div', { className: 'list' });
@@ -132,7 +145,7 @@ export function renderLibrary(main) {
 
   main.append(
     voice.node,
-    el('div', { className: 'toolbar' }, search, sync),
+    el('div', { className: 'toolbar' }, search, sync, postPanel),
     board,
     dropzone,
     picker,

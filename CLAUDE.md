@@ -31,8 +31,9 @@ same static ffmpeg as the image and CI. Without ffmpeg the audio tests skip sile
 4. CI (`.github/workflows/image.yml`) runs the bot, web and music tests and builds four images: the bot (which also
    runs the loop bot), web, voice and music. If a run stalls (say.test.ts has hung),
    `gh run cancel <id>`, then `gh run rerun <id>`.
-5. A web-only change ships as its own image. Browser tabs opened before the redeploy keep the old page until
-   they're refreshed. How the deployment picks up images is in CLAUDE.local.md.
+5. A web-only change ships as its own image. Browser tabs opened before the redeploy keep the old page, and offer
+   Reload once an answer carries a different `x-slopkeeper-version`. How the deployment picks up images is in
+   CLAUDE.local.md.
 
 ## Rules
 

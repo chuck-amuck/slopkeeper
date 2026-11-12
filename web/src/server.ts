@@ -1,7 +1,8 @@
-import { createHmac, timingSafeEqual } from 'node:crypto';
+import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import { readdirSync, readFileSync } from 'node:fs';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { Readable, Transform } from 'node:stream';
+import { brotliCompressSync, constants, gzipSync } from 'node:zlib';
 
 const SESSION_DAYS = 30;
 const COOKIE = 'slopkeeper_session';
@@ -17,20 +18,81 @@ const TOO_BIG = 'That file is over 60 MB.';
 const BOT_TIMEOUT_MS = 5 * 60_000;
 
 const CONTENT_TYPES = { html: 'text/html; charset=utf-8', js: 'text/javascript; charset=utf-8', css: 'text/css; charset=utf-8', svg: 'image/svg+xml' };
-const asset = (file: string, type: keyof typeof CONTENT_TYPES) => ({ body: readFileSync(new URL(`../public/${file}`, import.meta.url)), type: CONTENT_TYPES[type] });
-const ASSETS: Record<string, ReturnType<typeof asset>> = {
-  '/': asset('index.html', 'html'),
+const read = (file: string) => readFileSync(new URL(`../public/${file}`, import.meta.url));
+const FILES: [path: string, file: string, type: keyof typeof CONTENT_TYPES][] = [
+  ['/', 'index.html', 'html'],
   // Every script in the folder, so a new page's script is served without being added here
-  ...Object.fromEntries(readdirSync(new URL('../public/', import.meta.url)).filter((f) => f.endsWith('.js')).map((file) => [`/${file}`, asset(file, 'js')])),
-  '/style.css': asset('style.css', 'css'),
-  '/icon.svg': asset('icon.svg', 'svg'),
-};
+  ...readdirSync(new URL('../public/', import.meta.url))
+    .filter((f) => f.endsWith('.js'))
+    .sort()
+    .map((file): [string, string, 'js'] => [`/${file}`, file, 'js']),
+  ['/style.css', 'style.css', 'css'],
+  ['/icon.svg', 'icon.svg', 'svg'],
+];
+const sources = new Map(FILES.map(([path, file]) => [path, read(file)]));
+const hash = (...parts: Buffer[]) => parts.reduce((h, part) => h.update(part), createHash('sha256')).digest('base64url').slice(0, 16);
+
+/** Changes with any file, so a page left open can tell it's out of date from any answer and offer a reload */
+export const VERSION = hash(...sources.values());
+
+/** Every script app.js loads without waiting for a click, so the browser can fetch them all at once instead of one level at a time */
+function staticImports(file: string, found = new Set<string>()): Set<string> {
+  for (const [, name] of sources.get(`/${file}`)!.toString().matchAll(/^import\b[^'"]*['"]\.\/([\w-]+\.js)['"]/gm)) {
+    if (found.has(name) || !sources.has(`/${name}`)) continue;
+    found.add(name);
+    staticImports(name, found);
+  }
+  return found;
+}
+
+const PRELOADS = [...staticImports('app.js')].map((name) => `<link rel="modulepreload" href="/${name}" />`).join('\n    ');
+sources.set(
+  '/',
+  Buffer.from(sources.get('/')!.toString().replace('</head>', `  <meta name="slopkeeper-version" content="${VERSION}" />\n    ${PRELOADS}\n  </head>`)),
+);
+
+interface Asset {
+  type: string;
+  etag: string;
+  plain: Buffer;
+  br?: Buffer;
+  gzip?: Buffer;
+}
+
+/** Compressed once at start, kept only where it's smaller */
+function asset(body: Buffer, type: keyof typeof CONTENT_TYPES): Asset {
+  const br = brotliCompressSync(body, { params: { [constants.BROTLI_PARAM_QUALITY]: 11, [constants.BROTLI_PARAM_SIZE_HINT]: body.length } });
+  const gzip = gzipSync(body, { level: 9 });
+  return {
+    type: CONTENT_TYPES[type],
+    etag: `"${hash(body)}"`,
+    plain: body,
+    ...(br.length < body.length && { br }),
+    ...(gzip.length < body.length && { gzip }),
+  };
+}
+const ASSETS: Record<string, Asset> = Object.fromEntries(FILES.map(([path, , type]) => [path, asset(sources.get(path)!, type)]));
+
+/** The best encoding the browser takes that's smaller, or none */
+function encoding(req: IncomingMessage, { br, gzip }: Asset): 'br' | 'gzip' | undefined {
+  const accepted = new Set(
+    (header(req, 'accept-encoding') ?? '')
+      .split(',')
+      .map((part) => part.trim().split(';'))
+      .filter(([, q]) => !q || !/^q=0(\.0*)?$/.test(q.trim()))
+      .map(([name]) => name.trim().toLowerCase()),
+  );
+  if (br && accepted.has('br')) return 'br';
+  if (gzip && accepted.has('gzip')) return 'gzip';
+}
 
 const HEADERS = {
-  // Server icons and custom emoji come from Discord's CDN, and album covers from Spotify's; nothing else is loaded from anywhere
-  'content-security-policy': "default-src 'self'; img-src 'self' https://cdn.discordapp.com https://i.scdn.co https://i.ytimg.com https://i1.sndcdn.com; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
+  // Server icons and custom emoji come from Discord's CDN, and album covers from Spotify's; nothing else is loaded from anywhere.
+  // Voice previews play from a blob: the page fetched itself
+  'content-security-policy': "default-src 'self'; media-src 'self' blob:; img-src 'self' https://cdn.discordapp.com https://i.scdn.co https://i.ytimg.com https://i1.sndcdn.com; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
   'x-content-type-options': 'nosniff',
   'referrer-policy': 'no-referrer',
+  'x-slopkeeper-version': VERSION,
 };
 
 export interface WebOptions {
@@ -191,9 +253,17 @@ export function createWeb({ password, apiToken, botUrl, proxySecret }: WebOption
   async function route(req: IncomingMessage, res: ServerResponse) {
     const path = req.url!.split('?')[0];
 
-    if (req.method === 'GET' && Object.hasOwn(ASSETS, path)) {
-      const { body, type } = ASSETS[path];
-      return res.writeHead(200, { ...HEADERS, 'content-type': type }).end(body);
+    if ((req.method === 'GET' || req.method === 'HEAD') && Object.hasOwn(ASSETS, path)) {
+      const found = ASSETS[path];
+      // Asked about every time, so a new version shows on the next load, but only sent again when it's changed
+      const encoded = encoding(req, found);
+      // Each encoding is its own body, so it gets its own tag
+      const etag = encoded ? `${found.etag.slice(0, -1)}-${encoded}"` : found.etag;
+      const cache = { 'cache-control': 'no-cache', etag, vary: 'accept-encoding' };
+      if (header(req, 'if-none-match')?.split(',').some((tag) => tag.trim().replace(/^W\//, '') === etag)) return res.writeHead(304, { ...HEADERS, ...cache }).end();
+      const body = encoded ? found[encoded]! : found.plain;
+      res.writeHead(200, { ...HEADERS, ...cache, 'content-type': found.type, 'content-length': body.length, ...(encoded && { 'content-encoding': encoded }) });
+      return res.end(req.method === 'HEAD' ? undefined : body);
     }
 
     const isApi = path.startsWith('/api/');

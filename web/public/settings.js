@@ -24,11 +24,11 @@ const FIELDS = {
   steamStatus: { kind: 'boolean', hint: 'Uses what linked members in voice are playing on Steam if Discord doesn’t show it, for game time and pings.' },
   freeGames: { kind: 'boolean', hint: 'Posts free-to-keep games on Steam, Epic and GOG.' },
   freeGamesChannel: { kind: 'channel', none: 'Same as announce channel', hint: 'Post free games here instead.' },
-  freeGamesMinRating: { kind: 'number', unit: '% positive', hint: 'From at least 50 Steam reviews. 0 turns this off.' },
+  freeGamesMinRating: { kind: 'number', unit: '% positive (0 = off)', hint: 'From at least 50 Steam reviews.' },
   freeGamesTaste: { kind: 'boolean', hint: 'Compares Steam tags with the games this server plays most.' },
   freeGamesMultiplayer: { kind: 'boolean', hint: 'Skips games with no multiplayer or co-op.' },
   freeGamesUnlisted: { kind: 'boolean', hint: 'Shows games with no Steam page, which can’t be rated or compared.' },
-  gameNightReminderMin: { kind: 'number', unit: 'min before', hint: 'Pings the people who are in. 0 turns reminders off.' },
+  gameNightReminderMin: { kind: 'number', unit: 'min before (0 = off)', hint: 'Pings the people who are in.' },
   evenVolume: { kind: 'boolean', hint: 'Levels sounds so they play about as loud as each other. Your files aren’t changed, so this can be turned off at any time.' },
   joinSounds: { kind: 'boolean', hint: 'Lets people pick a sound that plays when they join voice, with /sound join.' },
   joinSoundCooldownMin: { kind: 'number', unit: 'min', hint: 'Shortest time between one person’s join sounds.' },
@@ -63,7 +63,40 @@ const FIELDS = {
   ttsMaxChars: { kind: 'number', unit: 'characters', hint: '200 is about 15 seconds of speech.' },
   ttsCooldownSec: { kind: 'number', unit: 'seconds', hint: 'Shortest time between one person’s lines. The page counts as one person.' },
 };
+// Folded until opened, with what they're set to on the fold: long, and rarely changed once set up
+const FOLDED = new Set(['Looping sound room', 'Free games']);
+// How long "Saved" shows beside a field
+const SAVED_MS = 2000;
+// A number field's arrows change it a step at a time, so it saves once they stop
+const NUMBER_SAVE_MS = 600;
 
+/** A setting's value in words, as its control shows it: for "Reset to …" and a folded group's summary */
+function describe(spec, value, data) {
+  const named = (list, id) => list.find((item) => item.id === id)?.name;
+  if (value === null || value === '' || value === undefined) return spec.none ?? 'empty';
+  switch (spec.kind) {
+    case 'boolean':
+      return value ? 'on' : 'off';
+    case 'number':
+      return `${value}${spec.unit ? ` ${spec.unit.replace(/ \(0 = off\)$/, '')}` : ''}`;
+    case 'channel':
+      return `#${named(data.channels, value) ?? 'deleted channel'}`;
+    case 'role':
+      return `@${named(data.roles, value) ?? 'deleted role'}`;
+    case 'voice':
+      return named(data.voiceChannels, value) ?? 'deleted channel';
+    case 'speaker':
+      return named(data.voices, value) ?? value;
+    case 'choice':
+      return spec.options.find(([id]) => id === value)?.[1] ?? value;
+    case 'day':
+      return DAYS[value];
+    case 'hour':
+      return `${String(value).padStart(2, '0')}:00`;
+    default:
+      return typeof value === 'boolean' ? (value ? 'on' : 'off') : String(value);
+  }
+}
 
 export function renderSettings(main) {
   const guildId = state.guildId;
@@ -71,10 +104,14 @@ export function renderSettings(main) {
   main.append(loading);
   const fields = new Map();
 
+  /** The folded groups, whose summary follows their first setting */
+  const folds = [];
+
   async function refreshFields() {
     const fresh = await request(api('/settings'));
     if (guildId !== state.guildId || !main.isConnected) return;
     for (const [key, update] of fields) update(fresh.settings.find((s) => s.key === key), fresh);
+    for (const fold of folds) fold.paint(fresh);
   }
 
   function control(setting, spec, data, save) {
@@ -115,7 +152,24 @@ export function renderSettings(main) {
           max: setting.limits?.[1],
           step: setting.step ?? 1,
           required: true,
-          onchange: (e) => save(Number(e.target.value)),
+          // Saved even if the page has moved on by then, so a change is never dropped. Leaving the field saves at once
+          onchange: (e) => {
+            clearTimeout(e.target.saveTimer);
+            const now = () => {
+              clearTimeout(e.target.saveTimer);
+              e.target.saveTimer = null;
+              // Emptied on the way to typing a new number. Saving that as 0 would turn some settings off
+              if (e.target.value.trim() === '') {
+                e.target.value = e.target.dataset.saved ?? String(value);
+                return;
+              }
+              e.target.dataset.saved = e.target.value;
+              void save(Number(e.target.value));
+            };
+            if (document.activeElement !== e.target) return now();
+            e.target.saveTimer = setTimeout(now, NUMBER_SAVE_MS);
+            e.target.addEventListener('blur', () => e.target.saveTimer && now(), { once: true });
+          },
         });
       case 'timezone':
         return el('input', { id: `setting-${setting.key}`, value, list: 'time-zones', autocomplete: 'off', spellcheck: false, onchange: change });
@@ -149,8 +203,9 @@ export function renderSettings(main) {
 
     const refresh = async () => {
       await refreshFields();
-      if (setting.key.startsWith('freeGames')) void paintFreeGames();
-      if (setting.key.startsWith('sale')) void paintSales();
+      // Only a preview someone has opened is asked for again
+      if (setting.key.startsWith('freeGames') && freeBody.childElementCount) void paintFreeGames();
+      if (setting.key.startsWith('sale') && salesBody.childElementCount) void paintSales();
     };
 
     const save = (value) =>
@@ -161,7 +216,9 @@ export function renderSettings(main) {
           const { warning } =
             value === '' ? await request(api(`/settings/${setting.key}`), { method: 'DELETE' }) : await request(api(`/settings/${setting.key}`), { method: 'PUT', json: { value } });
           say(warning);
-          toast(`${setting.label} saved.`);
+          // Beside the field rather than in the corner, where it's easy to miss
+          savedAt = Date.now();
+          setTimeout(() => current && paintStatus(current), SAVED_MS + 50);
         } catch (err) {
           say(err.message, true);
           // The field may be scrolled out of sight by now
@@ -180,7 +237,26 @@ export function renderSettings(main) {
 
     // What the control was last drawn from, so a refresh only redraws fields that changed
     let drawn;
-    const update = (current, fresh) => {
+    let savedAt = 0;
+    let current = null;
+    let latestData = data;
+    /** Nothing for a default; "Changed" with a way back to the default otherwise; "Saved" just after a change */
+    const paintStatus = (shown) => {
+      if (Date.now() - savedAt < SAVED_MS) {
+        status.replaceChildren(el('span', { className: 'saved' }, '✓ Saved'));
+        return;
+      }
+      if (shown.source === 'set here') {
+        const to = describe(spec, shown.default, latestData);
+        status.replaceChildren(
+          el('span', {}, 'Changed'),
+          el('button', { className: 'link', ariaLabel: `Reset ${shown.label} to ${to}`, onclick: () => reset(shown.value) }, `Reset to ${to}`),
+        );
+      } else status.replaceChildren(...(shown.source === 'default' ? [] : [el('span', { title: `Set by ${shown.source} on the host` }, 'Host default')]));
+    };
+    const update = (next, fresh) => {
+      current = next;
+      latestData = fresh;
       const choices = { channel: fresh.channels, role: fresh.roles, voice: fresh.voiceChannels, sound: fresh.sounds, speaker: fresh.voices }[spec.kind];
       const from = JSON.stringify([current.value, current.limits, choices]);
       // A field someone is in keeps its control, so what they're typing or picking isn't thrown away
@@ -190,8 +266,7 @@ export function renderSettings(main) {
         box.replaceChildren(...nodes);
         drawn = from;
       }
-      status.replaceChildren(el('span', {}, current.source === 'set here' ? 'Set for this server' : current.source === 'default' ? 'Default' : `From ${current.source}`));
-      if (current.source === 'set here') status.append(el('button', { className: 'link', onclick: () => reset(current.value) }, 'Reset'));
+      paintStatus(current);
     };
 
     update(setting, data);
@@ -229,11 +304,26 @@ export function renderSettings(main) {
     }
   }
 
-  function freeGamesCard() {
-    freeBody.append(notice('loading', 'Checking what’s free…', { compact: true }));
-    void paintFreeGames();
-    return el('section', { className: 'card' }, el('h2', {}, 'Free games right now'), freeBody);
+  /** What would be posted right now, folded and only asked for once it's opened */
+  function previewCard(title, body, waiting, paint) {
+    let asked = false;
+    return el(
+      'details',
+      {
+        className: 'card fold preview',
+        ontoggle: (e) => {
+          if (!e.target.open || asked) return;
+          asked = true;
+          body.append(notice('loading', waiting, { compact: true }));
+          void paint();
+        },
+      },
+      el('summary', {}, el('h2', {}, title), el('span', { className: 'fold-value' }, 'Preview')),
+      body,
+    );
   }
+
+  const freeGamesCard = () => previewCard('Free games right now', freeBody, 'Checking what’s free…', paintFreeGames);
 
   const salesBody = el('div');
 
@@ -259,11 +349,7 @@ export function renderSettings(main) {
     }
   }
 
-  function salesCard() {
-    salesBody.append(notice('loading', 'Checking what’s on sale…', { compact: true }));
-    void paintSales();
-    return el('section', { className: 'card' }, el('h2', {}, 'On sale now'), salesBody);
-  }
+  const salesCard = () => previewCard('On sale now', salesBody, 'Checking what’s on sale…', paintSales);
 
   /** A row of its own under a list: what it does on the left, the form on the right, and any message below */
   function adder(title, hint, controls, submit) {
@@ -461,24 +547,92 @@ export function renderSettings(main) {
       const grouped = new Set(given.flatMap(([, keys]) => keys));
       const others = data.settings.filter((s) => !grouped.has(s.key)).map((s) => s.key);
       const groups = others.length ? [...given, ['Other', others]] : given;
+      const slug = (title) => `settings-${title.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
+      const cards = groups.flatMap(([title, keys]) => {
+        const shown = keys.filter((key) => byKey.has(key));
+        const parts = [
+          title === 'Looping sound room' && data.loopBot && el('p', { className: `card-note${data.loopBot.ok ? '' : ' warning'}`, id: 'loop-bot-status' }, data.loopBot.note),
+          shown.map((key) => field(byKey.get(key), data)),
+        ];
+        let card;
+        if (FOLDED.has(title)) {
+          // The fold says what the group's first setting is, such as the room's channel or Off
+          const value = el('span', { className: 'fold-value' });
+          const paintValue = () => {
+            const first = byKey.get(shown[0]);
+            value.textContent = first ? describe(FIELDS[first.key] ?? {}, first.value, data) : '';
+          };
+          paintValue();
+          folds.push({ key: shown[0], paint: (fresh) => (byKey.set(shown[0], fresh.settings.find((x) => x.key === shown[0])), paintValue()) });
+          card = el('details', { className: 'card fold', id: slug(title) }, el('summary', {}, el('h2', {}, title), value), ...parts);
+        } else card = el('section', { className: 'card', id: slug(title) }, el('h2', {}, title), ...parts);
+        // Built only for its own group: the previews share one body each
+        const extra = { 'Hop-on pings': () => gamePingCard(gamePings), 'Sale alerts': salesCard, 'Free games': freeGamesCard }[title]?.();
+        return extra ? [card, extra] : [card];
+      });
+      const joinCard = joinSoundCard(joinSounds);
+      joinCard.id = 'settings-join-sounds';
+      const nothing = notice('empty', '', { compact: true });
+      nothing.hidden = true;
+
+      /** Hides the settings whose name and hint don't have the words typed, and groups left with none */
+      const filter = (text) => {
+        const words = text.toLowerCase().split(/\s+/).filter(Boolean);
+        let any = false;
+        for (const card of main.querySelectorAll('.settings-cards > .card')) {
+          const rows = [...card.querySelectorAll(':scope > .field, :scope > div > .field')];
+          let shownRows = 0;
+          for (const row of rows) {
+            const match = words.every((word) => row.textContent.toLowerCase().includes(word));
+            row.hidden = words.length > 0 && !match;
+            if (match) shownRows++;
+          }
+          const titleMatch = words.every((word) => card.querySelector('h2')?.textContent.toLowerCase().includes(word));
+          // A group whose title matches shows whole
+          if (titleMatch) for (const row of rows) row.hidden = false;
+          card.hidden = words.length > 0 && !titleMatch && !shownRows;
+          // Opened to show what matched, and folded again once the search is cleared. A preview isn't a setting, and
+          // opening one would start its slow check
+          if (card.tagName === 'DETAILS' && !card.classList.contains('preview')) {
+            if (words.length && !card.hidden && !card.open) {
+              card.open = true;
+              card.dataset.foundOpen = '1';
+            } else if (!words.length && card.dataset.foundOpen) {
+              card.open = false;
+              delete card.dataset.foundOpen;
+            }
+          }
+          any ||= !card.hidden;
+        }
+        nothing.hidden = any || !words.length;
+        nothing.textContent = `No setting matches “${text.trim()}”.`;
+      };
+      const find = el('input', { type: 'search', placeholder: 'Find a setting', ariaLabel: 'Find a setting', enterKeyHint: 'search', oninput: (e) => filter(e.target.value) });
+      const jump = el(
+        'select',
+        {
+          ariaLabel: 'Jump to a group',
+          onchange: () => {
+            const target = document.getElementById(jump.value);
+            jump.value = '';
+            if (!target) return;
+            if (target.tagName === 'DETAILS') target.open = true;
+            target.scrollIntoView({ behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+            target.querySelector('summary, h2')?.focus?.();
+          },
+        },
+        el('option', { value: '' }, 'Jump to…'),
+        groups.map(([title]) => el('option', { value: slug(title) }, title)),
+        el('option', { value: 'settings-join-sounds' }, 'Join sounds'),
+      );
       main.replaceChildren(
         el('datalist', { id: 'time-zones' }, data.timeZones.map((zone) => el('option', { value: zone }))),
-        ...groups.flatMap(([title, keys]) => {
-          const card = el(
-            'section',
-            { className: 'card' },
-            el('h2', {}, title),
-            title === 'Looping sound room' && data.loopBot && el('p', { className: `card-note${data.loopBot.ok ? '' : ' warning'}`, id: 'loop-bot-status' }, data.loopBot.note),
-            keys.filter((key) => byKey.has(key)).map((key) => field(byKey.get(key), data)),
-          );
-          if (title === 'Hop-on pings') return [card, gamePingCard(gamePings)];
-          if (title === 'Sale alerts') return [card, salesCard()];
-          return title === 'Free games' ? [card, freeGamesCard()] : [card];
-        }),
-        joinSoundCard(joinSounds),
+        el('div', { className: 'toolbar settings-find' }, find, jump),
+        nothing,
+        el('div', { className: 'settings-cards stack' }, ...cards, joinCard),
       );
     } catch (err) {
-      loading.textContent = err.message;
+      loading.replaceWith(notice('error', err.message));
       throw err;
     }
   });

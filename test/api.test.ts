@@ -704,7 +704,7 @@ test('lists this server’s upcoming nights, with names', async () => {
   const { startsAt, when, ...rest } = nights[0];
   assert.ok(startsAt > Date.now());
   assert.match(when, /^\d{4}-\d\d-\d\d \d\d:\d\d$/);
-  assert.deepEqual(rest, { id, game: 'Halo', details: 'Bring snacks', voiceChannel: 'General', voiceChannelId: '701', hostId: 'u1', host: 'Ana', in: ['Ana'], maybe: ['Ben'], out: ['Someone who left'], repeats: 'Every week' });
+  assert.deepEqual(rest, { id, game: 'Halo', details: 'Bring snacks', voiceChannel: 'General', voiceChannelId: '701', hostId: 'u1', host: 'Ana', in: ['Ana'], maybe: ['Ben'], out: ['Someone who left'], answers: { u1: 'in', u2: 'maybe', gone: 'out' }, repeats: 'Every week' });
   assert.deepEqual(repeating.map((s: any) => [s.id, s.repeats, s.host]), [[series, 'Every week', 'Ana']]);
 });
 

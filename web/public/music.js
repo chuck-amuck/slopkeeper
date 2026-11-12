@@ -179,7 +179,8 @@ export function renderMusic(main) {
   }
 
   // ---------- search ----------
-  const query = el('input', { type: 'search', ariaLabel: 'Search Spotify', placeholder: 'Search Spotify, or paste a Spotify, YouTube or SoundCloud link', autocomplete: 'off', maxLength: 300, oninput: () => {
+  const searchHelp = el('p', { className: 'hint search-help', id: 'music-search-help' });
+  const query = el('input', { type: 'search', ariaLabel: 'Search Spotify', placeholder: 'Search or paste a link', 'aria-describedby': 'music-search-help', enterKeyHint: 'search', autocomplete: 'off', maxLength: 300, oninput: () => {
     paintLinkButtons();
     if (mode === 'playlists') showPlaylists();
   } });
@@ -188,12 +189,14 @@ export function renderMusic(main) {
   let playlists = null;
   const modes = el('div', { className: 'views' });
   const MODES = [
-    ['songs', 'Songs', 'Search Spotify, or paste a Spotify, YouTube or SoundCloud link'],
-    ['playlists', 'My playlists', 'Find one of your playlists, or paste a link to it'],
+    ['songs', 'Songs', 'Search or paste a link', 'Searches Spotify. A Spotify, YouTube or SoundCloud link works too.'],
+    ['playlists', 'My playlists', 'Find a playlist or paste a link', 'Your saved playlists, or a link to any public one.'],
   ];
   function setMode(id) {
     mode = id;
-    const [, label, hint] = MODES.find(([m]) => m === id);
+    const [, label, hint, help] = MODES.find(([m]) => m === id);
+    // A placeholder is cut short on a phone, so the whole of it is said below the box
+    searchHelp.textContent = help;
     modes.replaceChildren(...MODES.map(([m, text]) => el('button', { type: 'button', ...(m === id && { 'aria-current': 'page' }), onclick: () => setMode(m) }, text)));
     query.placeholder = hint;
     query.ariaLabel = label === 'Songs' ? 'Search Spotify' : 'Find a playlist';
@@ -326,7 +329,7 @@ export function renderMusic(main) {
     );
   }
 
-  const searchCard = el('section', { className: 'card music' }, el('h2', {}, 'Add music'), el('div', { className: 'card-body music-search' }, searchNote, modes, searchForm, results));
+  const searchCard = el('section', { className: 'card music' }, el('h2', {}, 'Add music'), el('div', { className: 'card-body music-search' }, searchNote, modes, searchForm, searchHelp, results));
   setMode('songs');
 
   // ---------- a file, played once ----------
@@ -384,7 +387,7 @@ export function renderMusic(main) {
   const fileCard = el('section', { className: 'card music' }, el('h2', {}, 'Play a file'), el('div', { className: 'card-body music-file' }, fileZone, filePicker, fileNow));
 
   function paintFileZone(text) {
-    fileZone.textContent = text ?? `Drop an audio file here, or click to choose. It plays once in the channel above and isn’t kept. Up to ${MOST_FILE_MB} MB.`;
+    fileZone.textContent = text ?? `${matchMedia('(pointer: coarse)').matches ? 'Tap to choose an audio file' : 'Drop an audio file here, or click to choose'}. It plays once in the channel above and isn’t kept. Up to ${MOST_FILE_MB} MB.`;
     fileZone.classList.toggle('busy', uploading);
   }
   paintFileZone();
@@ -405,7 +408,7 @@ export function renderMusic(main) {
         } catch {}
         if (xhr.status === 401) {
           session.onExpired();
-          return reject(new RequestError('Log in again.'));
+          return reject(new RequestError('Log in again.', 401));
         }
         if (xhr.status >= 400) return reject(new RequestError(body.error ?? `Couldn’t play it (${xhr.status}).`));
         resolve(body);

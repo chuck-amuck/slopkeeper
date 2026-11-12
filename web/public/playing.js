@@ -49,6 +49,7 @@ export function watchPlaying() {
   void (async () => {
     const path = api('/playing');
     let version = null;
+    let failures = 0;
     while (run.alive) {
       if (document.hidden) {
         await new Promise((resolve) => document.addEventListener('visibilitychange', resolve, { once: true }));
@@ -62,8 +63,17 @@ export function watchPlaying() {
         version = data.version;
         publish(run.guildId, data.playing);
         if (unchanged) await new Promise((resolve) => setTimeout(resolve, Math.max(0, UNCHANGED_MS - (performance.now() - asked))));
-      } catch {
+        failures = 0;
+        lostTouch(false);
+      } catch (err) {
         if (!run.alive) return;
+        // Logged out: the login page takes over, and there's nothing to watch
+        if (err.status === 401) return stopWatchingPlaying();
+        // Twice in a row unanswered is the bot gone rather than a blip: say so, and stop showing what was playing
+        if ((!err.status || err.status >= 500) && ++failures === 2) {
+          lostTouch(true);
+          publish(run.guildId, []);
+        }
         await new Promise((resolve) => setTimeout(resolve, RETRY_MS));
       }
     }
@@ -73,6 +83,15 @@ export function watchPlaying() {
 export function stopWatchingPlaying() {
   if (watching) watching.alive = false;
   watching = null;
+  lostTouch(false);
+}
+
+const banner = el('div', { className: 'lost-touch', role: 'status', hidden: true }, 'Lost touch with the bot. Trying again…');
+
+/** A strip across the top while the bot isn't answering, so a failed tap isn't the first sign */
+function lostTouch(on) {
+  if (on && !banner.isConnected) document.body.prepend(banner);
+  banner.hidden = !on;
 }
 
 /**
@@ -105,6 +124,10 @@ export function stopDock() {
     label,
   );
   const node = el('div', { className: 'stop-dock' }, list, button);
+  // On a phone, two or more show as one chip until it's tapped, so they don't cover the sounds
+  const narrow = matchMedia('(max-width: 640px)');
+  let expanded = false;
+  let shownPlaying = [];
 
   async function stopOne(p) {
     const guildId = state.guildId;
@@ -118,12 +141,41 @@ export function stopDock() {
     }
   }
 
-  onPlaying(node, (playing) => {
+  const paintList = (playing) => {
+    shownPlaying = playing;
     label.textContent = !playing.length ? 'Stop sounds' : playing.length === 1 ? `Stop ${playing[0].kind === 'speech' ? 'speech' : playing[0].name}` : `Stop all ${playing.length}`;
+    if (playing.length < 2) expanded = false;
+    list.hidden = !playing.length;
+    if (narrow.matches && playing.length > 1 && !expanded) {
+      list.replaceChildren(
+        el(
+          'li',
+          {},
+          el(
+            'button',
+            { type: 'button', className: 'now-sound now-count', ariaExpanded: 'false', onclick: () => ((expanded = true), paintList(shownPlaying), list.querySelector('.now-count')?.focus()) },
+            el('span', { className: 'now-name' }, `${playing.length} playing`),
+            el('span', { className: 'now-x' }, icon('chevron')),
+          ),
+        ),
+      );
+      return;
+    }
     const shown = playing.slice(-MOST_SHOWN);
     const hiddenCount = playing.length - shown.length;
+    const fold =
+      narrow.matches && expanded
+        ? [
+            el(
+              'li',
+              {},
+              el('button', { type: 'button', className: 'now-sound now-count', ariaExpanded: 'true', onclick: () => ((expanded = false), paintList(shownPlaying), list.querySelector('.now-count')?.focus()) }, el('span', { className: 'now-name' }, 'Fold up'), el('span', { className: 'now-x up' }, icon('chevron'))),
+            ),
+          ]
+        : [];
     // Oldest at the top, so the newest sits next to the button
     list.replaceChildren(
+      ...fold,
       ...(hiddenCount ? [el('li', { className: 'now-more' }, `+${hiddenCount} more`)] : []),
       ...shown.map((p) =>
         el(
@@ -145,11 +197,19 @@ export function stopDock() {
         ),
       ),
     );
-    list.hidden = !playing.length;
-  });
+  };
+  onPlaying(node, paintList);
+  const onNarrow = () => (node.isConnected ? paintList(shownPlaying) : narrow.removeEventListener('change', onNarrow));
+  narrow.addEventListener('change', onNarrow);
   // Toasts sit above the dock, wherever its top is now. Measured once it's on the page and whenever it changes size
-  new ResizeObserver(() => {
-    if (node.isConnected) document.documentElement.style.setProperty('--dock-extra', `${list.offsetHeight ? list.offsetHeight + 8 : 0}px`);
-  }).observe(list);
+  const sizes = new ResizeObserver(() => {
+    // A dock left behind by a redraw lets go, rather than being watched for the rest of the visit
+    if (!node.isConnected) {
+      narrow.removeEventListener('change', onNarrow);
+      return sizes.disconnect();
+    }
+    document.documentElement.style.setProperty('--dock-extra', `${list.offsetHeight ? list.offsetHeight + 8 : 0}px`);
+  });
+  sizes.observe(list);
   return node;
 }

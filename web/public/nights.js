@@ -1,10 +1,77 @@
-import { api, attempt, confirmButton, el, formProblem, notice, openDialog, recall, remember, request, RequestError, state, toast } from './lib.js';
+import { announce, api, attempt, confirmButton, el, formProblem, notice, openDialog, recall, remember, request, RequestError, state, toast } from './lib.js';
 
 const READ_DELAY_MS = 250;
 const WHEN_HINT = 'Try fri 8pm, tomorrow 20:30 or nov 3 7pm.';
 
+const RELATIVE = new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' });
+
+/** How long until a time, roughly: "in 3 hours", "tomorrow", "in 5 days" */
+function fromNow(ms) {
+  const minutes = Math.round((ms - Date.now()) / 60_000);
+  if (Math.abs(minutes) < 60) return RELATIVE.format(minutes, 'minute');
+  if (Math.abs(minutes) < 24 * 60) return RELATIVE.format(Math.round(minutes / 60), 'hour');
+  return RELATIVE.format(Math.round(minutes / (24 * 60)), 'day');
+}
+
+/**
+ * When a night is, in this browser's time zone, as Discord shows the bot's own posts, with how long until it. The
+ * server's time follows when that's somewhere else, as that's what /gamenight takes
+ */
 function when(ms, timeZone) {
-  return new Date(ms).toLocaleString(undefined, { timeZone, weekday: 'long', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZoneName: 'short' });
+  const local = new Date(ms).toLocaleString(undefined, { weekday: 'long', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+  const mine = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const offset = (zone) => new Date(ms).toLocaleString('en-US', { timeZone: zone, hour: 'numeric', minute: 'numeric', day: 'numeric' });
+  const elsewhere = timeZone && offset(timeZone) !== offset(mine) ? ` (${new Date(ms).toLocaleString(undefined, { timeZone, hour: 'numeric', minute: '2-digit', timeZoneName: 'short' })} for the server)` : '';
+  return `${local} · ${fromNow(ms)}${elsewhere}`;
+}
+
+const ANSWERS = [
+  ['in', 'In'],
+  ['maybe', 'Maybe'],
+  ['out', 'Can’t'],
+];
+const ANSWER_AS = 'nightAnswerAs';
+
+/**
+ * In, Maybe and Can't, as the card's buttons in Discord. Someone the page knows answers for themselves; anyone else
+ * says who they are first, remembered on this device
+ */
+function answerButtons(night, members, onAnswered) {
+  const me = state.me?.userId ?? null;
+  const picker = me
+    ? null
+    : el(
+        'select',
+        { ariaLabel: 'Answer as', onchange: () => (remember(ANSWER_AS, picker.value), paint()) },
+        el('option', { value: '' }, 'Answer as…'),
+        members.map((m) => el('option', { value: m.id, selected: m.id === recall(ANSWER_AS) }, m.name)),
+      );
+  const who = () => me ?? picker.value;
+  const buttons = ANSWERS.map(([answer, label]) =>
+    el(
+      'button',
+      {
+        type: 'button',
+        onclick: () =>
+          void attempt(async () => {
+            const userId = who();
+            await request(api(`/game-nights/${night.id}/rsvp`), { method: 'POST', json: { answer, userId } });
+            announce(`Answered ${label} for ${night.game} night.`);
+            await onAnswered();
+          }),
+      },
+      label,
+    ),
+  );
+  const paint = () => {
+    const chosen = night.answers?.[who()];
+    for (const [n, [answer]] of ANSWERS.entries()) {
+      buttons[n].disabled = !who();
+      buttons[n].ariaPressed = String(chosen === answer);
+    }
+  };
+  paint();
+  return el('div', { className: 'night-answer' }, picker, el('div', { className: 'views', role: 'group', ariaLabel: me ? 'Your answer' : 'Answer' }, buttons));
 }
 
 /** Who's in, maybe and out, as a grid of answer and names */
@@ -43,7 +110,7 @@ function pickOne(options, chosen, props = {}) {
  * Plans a night by the same rules as /gamenight plan, asking who's hosting, starting on whoever's signed in. Given a
  * night, changes that one instead, as its card's Edit button does
  */
-function planDialog(main, data, onPlanned, night = null) {
+function planDialog(main, data, onPlanned, night = null, presetGame = '') {
   const whenNote = el('span', { className: 'form-note' }, WHEN_HINT);
   let timer;
   let asked = 0;
@@ -62,7 +129,7 @@ function planDialog(main, data, onPlanned, night = null) {
     }, READ_DELAY_MS);
   }
 
-  const game = el('input', { required: true, maxLength: 90, list: 'night-games', autocomplete: 'off', value: night?.game ?? '' });
+  const game = el('input', { required: true, maxLength: 90, list: 'night-games', autocomplete: 'off', value: night?.game ?? presetGame });
   const when_ = el('input', { required: true, maxLength: 100, autocomplete: 'off', placeholder: 'fri 8pm', oninput: readWhen, value: night?.when ?? '' });
   const channel = pickOne(
     data.channels.map((c) => [c.id, `#${c.name}`]),
@@ -145,7 +212,13 @@ function planDialog(main, data, onPlanned, night = null) {
     },
   });
   if (night) readWhen();
-  game.focus();
+  // A game already filled in, as from a pick, starts on when
+  (presetGame ? when_ : game).focus();
+}
+
+/** Plan a game night for a game picked elsewhere, such as on Pick a game */
+export async function planNightFor(main, game) {
+  await attempt(async () => planDialog(main, await request(api('/game-nights')), async () => {}, null, game));
 }
 
 export function renderNights(main) {
@@ -176,12 +249,14 @@ export function renderNights(main) {
           el('div', { className: 'hint' }, [n.voiceChannel, `Hosted by ${n.host}`, n.repeats].filter(Boolean).join(' · ')),
           n.details && el('p', {}, n.details),
           answers(n),
+          answerButtons(n, data.members, load),
           n.in.length > 1 && friendsNote(n),
           el(
             'div',
             { className: 'night-actions' },
             el('button', { onclick: () => planDialog(main, data, load, n) }, 'Edit'),
-            confirmButton({ ariaLabel: `Cancel ${n.game} night` }, 'Cancel night', 'Cancel it?', async () => {
+            // Only those who are in are told, so the question says how many
+            confirmButton({ ariaLabel: `Cancel ${n.game} night` }, 'Cancel night', n.in.length ? `Cancel and tell ${n.in.length === 1 ? n.in[0] : `${n.in.length} people`}?` : 'Cancel it?', async () => {
               await request(api(`/game-nights/${n.id}/cancel`), { method: 'POST' });
               toast(n.in.length ? `${n.game} night is off, and everyone who’s in has been told.` : `${n.game} night is off.`);
               await load();

@@ -1,4 +1,5 @@
-import { ago, api, attempt, el, formProblem, notice, openDialog, request, RequestError, state, toast, undoToast } from './lib.js';
+import { ago, announce, api, attempt, el, formProblem, notice, openDialog, request, RequestError, state, toast, undoToast } from './lib.js';
+import { planNightFor } from './nights.js';
 import { achievementsView } from './achievements.js';
 import { duration } from './stats.js';
 
@@ -77,6 +78,8 @@ function voteDialog(main, options, voice, games) {
 export function renderPick(main) {
   const guildId = state.guildId;
   let options = null;
+  // Whether the bot can speak here, so Say it in voice is only offered when it can
+  let speechOn = false;
   let data = null;
   let picked = null;
   let sort = 'played';
@@ -184,7 +187,32 @@ export function renderPick(main) {
   }
 
   function paintResult() {
-    result.replaceChildren(...(picked ? [el('section', { className: 'card pick-result' }, el('h2', {}, `🎲 ${picked.name}`), el('p', {}, facts(picked)), playingNow(picked))] : []));
+    pickButton.textContent = picked ? 'Pick another' : 'Pick for us';
+    if (!picked) return result.replaceChildren();
+    const game = picked;
+    const room = voice();
+    // What comes next: tell the call, plan it for later, or rule it out
+    const actions = el(
+      'div',
+      { className: 'card-actions' },
+      room &&
+        speechOn &&
+        el(
+          'button',
+          {
+            onclick: () =>
+              attempt(async () => {
+                await request(api('/say'), { method: 'POST', json: { channelId: room.id, text: `We're playing ${game.name}.` } });
+                toast(`Said it in ${room.name}.`);
+              }),
+          },
+          'Say it in voice',
+        ),
+      el('button', { onclick: () => planNightFor(main, game.name) }, 'Plan a night'),
+      game.appid && el('button', { onclick: () => hide(game) }, 'Never suggest'),
+    );
+    result.replaceChildren(el('section', { className: 'card pick-result' }, el('h2', {}, `🎲 ${game.name}`), el('p', {}, facts(game)), playingNow(game), actions));
+    announce(`Picked ${game.name}.`);
   }
 
   const hide = (game) =>
@@ -315,6 +343,11 @@ export function renderPick(main) {
 
   showLobbies();
   void attempt(async () => {
+    // Not worth an error of its own: without it, the button just isn't offered
+    void request(api('/say')).then(
+      (say) => guildId === state.guildId && (speechOn = say.on),
+      () => {},
+    );
     try {
       options = await request(api('/pick/options'));
     } catch (err) {

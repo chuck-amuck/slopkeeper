@@ -29,9 +29,12 @@ export function renderSoundboard(main) {
     if (body) body.replaceWith(next);
     else main.append(next);
     body = next;
-    VIEWS.find(([view]) => view === id)[2](next, () => show('manage'));
+    slot.replaceChildren();
+    VIEWS.find(([view]) => view === id)[2](next, () => show('manage'), slot);
   }
 
-  main.append(views);
+  // Room beside the switch for the view's search, so Play's sounds start a row higher
+  const slot = el('div', { className: 'view-slot' });
+  main.append(el('div', { className: 'view-head' }, views, slot));
   show(recall(VIEW_KEY) === 'manage' ? 'manage' : 'play');
 }

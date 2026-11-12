@@ -82,6 +82,39 @@ test('serves every file the page needs', async () => {
   for (const name of files) assert.equal((await fetch(`${base}/${name}`)).status, 200, name);
 });
 
+test('pages are sent compressed, asked about on every load, and only sent again once they change', async () => {
+  const first = await fetch(`${base}/style.css`, { headers: { 'accept-encoding': 'br, gzip' } });
+  assert.equal(first.headers.get('content-encoding'), 'br');
+  assert.equal(first.headers.get('cache-control'), 'no-cache');
+  assert.match(first.headers.get('vary') ?? '', /accept-encoding/);
+  const css = await first.text();
+  assert.match(css, /\{/);
+  const etag = first.headers.get('etag')!;
+  const again = await fetch(`${base}/style.css`, { headers: { 'accept-encoding': 'br, gzip', 'if-none-match': etag } });
+  assert.equal(again.status, 304);
+  // Another encoding is another body, so the tag for this one doesn't match it
+  const other = await fetch(`${base}/style.css`, { headers: { 'accept-encoding': 'identity', 'if-none-match': etag } });
+  assert.equal(other.status, 200);
+  assert.equal(await other.text(), css);
+  assert.equal(await again.text(), '');
+  const gzip = await fetch(`${base}/style.css`, { headers: { 'accept-encoding': 'gzip, br;q=0' } });
+  assert.equal(gzip.headers.get('content-encoding'), 'gzip');
+  assert.equal(await gzip.text(), css);
+  const plain = await fetch(`${base}/style.css`, { headers: { 'accept-encoding': 'identity' } });
+  assert.equal(plain.headers.get('content-encoding'), null);
+  assert.equal(await plain.text(), css);
+});
+
+test('the page carries its version, which every answer repeats so an open tab can tell it is out of date', async () => {
+  const page = await (await fetch(`${base}/`)).text();
+  const version = page.match(/<meta name="slopkeeper-version" content="([\w-]+)"/)?.[1];
+  assert.ok(version);
+  // The scripts app.js loads straight away are fetched together; the emoji list waits for a picker
+  assert.match(page, /<link rel="modulepreload" href="\/lib\.js"/);
+  assert.doesNotMatch(page, /emoji\.js/);
+  for (const path of ['/app.js', '/api/guilds', '/nowhere']) assert.equal((await fetch(base + path)).headers.get('x-slopkeeper-version'), version, path);
+});
+
 test('only serves its own assets', async () => {
   for (const path of ['/server.ts', '/../package.json', '/%2e%2e/package.json', '/constructor', '/__proto__']) {
     assert.equal((await fetch(base + path)).status, 404, path);

@@ -219,7 +219,7 @@ function manageDialog(main, gameId, data, reload) {
         ),
       ),
       section('Suggestions', el('label', { className: 'game-mark' }, hide, 'Never suggest this'), hideNote),
-      section('Who has it', el('p', { className: 'hint' }, 'Ticks save as you make them.'), search, list),
+      section('Who has it', el('p', { className: 'hint' }, start.appid === null ? 'Ticks save as you make them. Wants need a Steam link, as they’re for sale alerts.' : 'Ticks save as you make them.'), search, list),
       problem,
     ],
     start: [
@@ -490,8 +490,38 @@ export function renderGames(main) {
         fact('Needs it', g.needs),
         fact('Wants it', g.wanted),
       ),
-      el('button', { ariaLabel: `Manage ${g.name}`, onclick: () => manageDialog(main, g.id, () => data, load) }, 'Manage'),
+      el('div', { className: 'game-actions' }, mine(g), el('button', { ariaLabel: `Manage ${g.name}`, onclick: () => manageDialog(main, g.id, () => data, load) }, 'Manage')),
     );
+
+  /** Someone the page knows marks their own copy or wish in one tap, rather than finding themselves under Manage */
+  function mine(g) {
+    const me = state.me?.userId;
+    if (!me || !data.members.some((m) => m.id === me)) return null;
+    const owner = g.owners.find((o) => o.id === me);
+    const wants = g.wanted.some((w) => w.id === me);
+    const mark = (field, on) =>
+      attempt(async () => {
+        await request(api(`/games/${g.id}/members/${me}`), { method: 'PATCH', json: { [field]: on } });
+        await load();
+      });
+    const have = el(
+      'button',
+      { type: 'button', ariaPressed: String(!!owner), disabled: !!owner?.steam, title: owner?.steam ? 'From your Steam library' : '', onclick: () => mark('owns', !owner) },
+      'I have it',
+    );
+    const want = el(
+      'button',
+      {
+        type: 'button',
+        ariaPressed: String(wants),
+        disabled: !!owner || g.appid === null,
+        title: g.appid === null ? 'Wants need a Steam link, as they’re for sale alerts' : owner ? 'You have it' : '',
+        onclick: () => mark('wants', !wants),
+      },
+      'I want it',
+    );
+    return el('div', { className: 'views', role: 'group', ariaLabel: `${g.name}: you` }, have, want);
+  }
 
   function library() {
     if (!data.games.length) return notice('empty', 'The library is empty. Add a game to start it off.');

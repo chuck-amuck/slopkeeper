@@ -284,6 +284,8 @@ function nightList(guild: Guild) {
       in: n.people.in.map((id) => nameOf(guild, id)),
       maybe: n.people.maybe.map((id) => nameOf(guild, id)),
       out: n.people.out.map((id) => nameOf(guild, id)),
+      // Who answered what by member id, so the page can show someone their own answer
+      answers: Object.fromEntries((['in', 'maybe', 'out'] as const).flatMap((answer) => n.people[answer].map((id) => [id, answer]))),
       repeats: n.repeats,
     })),
     series: series.map((s) => ({ id: s.id, game: s.game, repeats: s.repeats, nextAt: s.next_at, host: nameOf(guild, s.created_by) })),
