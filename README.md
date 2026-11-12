@@ -335,7 +335,7 @@ On the 1st of each month, the bot posts last month's highlights to the announce 
 
 The recap covers total game and voice time, the top games, biggest gamers, most time in voice, the longest session, top sounds and who played the most of them, and game nights held. Months follow the server's time zone.
 
-Top sounds only counts sounds played through the bot, with its panels or `/sound play`. Discord doesn't tell bots about sounds played from its own soundboard.
+Top sounds only counts sounds played through the bot, with its panels or `/sound play`. Discord does tell the bot when someone plays a sound from Discord's own soundboard, but only in the voice channel the bot is in, and the bot doesn't count those yet.
 
 | Command | What it does |
 | --- | --- |
@@ -636,7 +636,7 @@ One running bot can serve several servers. Each server gets its own:
 A page in [`web/`](web) that runs as a second container next to the bot, for your home network or behind a sign-in proxy like [Pangolin](#signing-in-through-pangolin):
 
 - **Stop sounds:** the red button in the bottom corner of every page silences every sound and line of speech. The music carries on: it has its own controls on the Music tab, and while it plays the toast after Stop offers **Pause music**.
-- **What's playing:** above the red button, every page lists the sounds and speech playing as they start and end, including join sounds and the looping room's, and marks them on the Soundboard with how far through they are. On a phone, two or more fold into one **N playing** chip until it's tapped. Tap one to stop just that one; stopping the room's loop keeps it quiet until someone else joins, as Stop does. Sounds played from Discord's own soundboard, and the loop bot's, don't show, as they don't go through the bot.
+- **What's playing:** above the red button, every page lists the sounds and speech playing as they start and end, including join sounds and the looping room's, and marks them on the Soundboard with how far through they are. On a phone, two or more fold into one **N playing** chip until it's tapped. Tap one to stop just that one; stopping the room's loop keeps it quiet until someone else joins, as Stop does. Sounds played from Discord's own soundboard, and the loop bot's, don't show: they don't go through the bot, and it doesn't use Discord's notice of a soundboard play yet, which only comes for the channel the bot is in.
 - **Undo:** removing a song from the queue, deleting a sound or a saved phrase, taking a sound off Discord, **Never suggest this** and a setting's **Reset** each show a toast with **Undo** for 8 seconds, longer while the pointer or focus is on it.
 - **On a phone:** the tabs are a bar along the bottom (Sounds, Music, Nights, Pick and **More**, which has Games, Stats, Activity, Settings, who you are and Log out), and buttons and fields are fingertip-sized on any touch screen.
 - **When the bot can't be reached:** the page says so and tries again by itself, sooner with **Retry now**, and a red strip across the top says when it loses touch partway through.
