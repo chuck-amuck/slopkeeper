@@ -2,7 +2,7 @@ import { type Guild } from 'discord.js';
 import { type IncomingMessage } from 'node:http';
 import path from 'node:path';
 import { logActivity } from '../activity.ts';
-import { addTracks, AUTOPLAY, clearQueue, fileProblem, fileUploadPath, MOST_FILE_BYTES, moveTrack, musicChannelFor, musicState, pauseMusic, playFile, queueFrom, queueOf, removeTrack, seekFile, seekMusic, shuffleQueue, skipMusic, startMusic, stopFile, stopMusic } from '../features/music.ts';
+import { addTracks, AUTOPLAY, clearQueue, discardUpload, fileProblem, MOST_FILE_BYTES, moveTrack, musicChannelFor, musicState, pauseMusic, queueFrom, queueOf, queueUpload, removeTrack, seekMusic, shuffleQueue, skipMusic, startMusic, stopMusic, uploadFile } from '../features/music.ts';
 import { setting } from '../settings.ts';
 import { myPlaylists, playlistsReady, search, SpotifyError, type Track } from '../spotify.ts';
 import { type Ask, Refused, by, plain, readJson, refuse, saveBody, voiceChannelFor, whoDid } from './common.ts';
@@ -51,7 +51,14 @@ export async function handleMusic(guild: Guild, req: IncomingMessage, url: URL, 
     return { playlists: await myPlaylists().catch(spotifyRefused), problem: null };
   }
   if (key === 'POST queue') {
-    const { query, track, next, shuffle } = await readJson(req);
+    const { query, track, file, next, shuffle } = await readJson(req);
+    if (typeof file === 'string') {
+      // An upload, waiting for this
+      const added = queueUpload(guild.id, file, by(), next === true);
+      if (added === 'gone') throw new Refused(404, 'That upload is gone. Upload it again.');
+      if (added === 'full') throw new Refused(409, 'The queue is full.');
+      return { ...musicList(guild), message: `Added ${added.title}${next === true ? ' to play next' : ''}.` };
+    }
     if (track && typeof track === 'object') {
       // A search result picked on the page, sent back as it came
       const t = track as Record<string, unknown>;
@@ -87,27 +94,16 @@ export async function handleMusic(guild: Guild, req: IncomingMessage, url: URL, 
     }
   }
   if (key === 'POST file') {
-    // Sent as the file itself, so what it is and where to play it come in the address
+    // Sent as the file itself, so what it's called comes in the address. It waits for POST queue with its id
     const name = (url.searchParams.get('name') ?? '').trim().slice(0, 200);
-    const ext = path.extname(name).toLowerCase();
-    refuse(guild, fileProblem(ext, Number(req.headers['content-length'] ?? 0)));
-    const channel = voiceChannelFor(guild, url.searchParams.get('channelId'));
-    const file = fileUploadPath(ext);
-    await saveBody(req, file, MOST_FILE_BYTES);
-    refuse(guild, await playFile(guild, channel, file, path.basename(name, path.extname(name)) || 'a file', by()));
-    return musicList(guild);
+    refuse(guild, fileProblem(guild.id, path.extname(name).toLowerCase(), Number(req.headers['content-length'] ?? 0)));
+    const upload = await uploadFile(guild.id, name, (file) => saveBody(req, file, MOST_FILE_BYTES));
+    if (typeof upload === 'string') refuse(guild, upload);
+    return { file: upload };
   }
-  if (key === 'POST file/seek') {
-    const { positionMs } = await readJson(req);
-    if (typeof positionMs !== 'number' || !Number.isFinite(positionMs)) throw new Refused(400, 'positionMs must be a number.');
-    const problem = await seekFile(guild.id, positionMs);
-    if (problem === 'No file is playing.') throw new Refused(409, problem);
-    refuse(guild, problem);
-    return musicList(guild);
-  }
-  if (key === 'POST file/stop') {
-    if (!stopFile(guild.id)) throw new Refused(409, 'No file is playing.');
-    return musicList(guild);
+  if (rest[0] === 'file' && rest.length === 2 && req.method === 'DELETE') {
+    if (!discardUpload(guild.id, rest[1]!)) throw new Refused(404, 'That upload is gone.');
+    return { ok: true };
   }
   if (key === 'POST play') {
     const { channelId } = await readJson(req);

@@ -16,14 +16,14 @@ import {
   type VoiceBasedChannel,
 } from 'discord.js';
 import { randomBytes } from 'node:crypto';
-import { mkdirSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, rmSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { logActivity } from '../activity.ts';
 import { config } from '../config.ts';
 import { feeds } from '../changes.ts';
 import { db, getKv, setKv, transaction } from '../db.ts';
-import { durationOf, hasAudio } from '../discordSounds.ts';
+import { durationOf, hasAudio, tagsOf } from '../discordSounds.ts';
 import { idSetting, setSetting, setting } from '../settings.ts';
 import { coverFor, isShortLink, MOST_FROM_LINK, myPlaylists, parseLink, playlistsReady, RateLimited, search, searchReady, SpotifyError, tracksFor, type Track } from '../spotify.ts';
 import type { Feature } from '../types.ts';
@@ -42,10 +42,8 @@ const COVER_LOOKUPS = 4;
 const CARD_PAGE = 10;
 /** How long the card waits for the music to settle before it's redrawn, so a burst of changes is one edit */
 const CARD_DELAY_MS = 1_500;
-// A file played once from the web page, which can be a whole song or a mix
+// A file uploaded from the web page, which can be a whole song or a mix
 export const MOST_FILE_BYTES = 60 * 1024 * 1024;
-// A jump within a file stops this far short of its end, which would only stop it
-const FILE_END_SLACK_MS = 500;
 const LONGEST_FILE_MS = 20 * 60_000;
 const SAFE_FILE = /^[\w.-]+$/;
 const OTHER_LINK = /^https?:\/\/((www|m|music)\.)?(youtube\.com|youtu\.be|soundcloud\.com)\//i;
@@ -292,8 +290,11 @@ export async function removeTrack(guildId: string, id: number, who: string): Pro
   const row = queueOf(guildId).find((r) => r.id === id);
   if (!row) return null;
   const s = sessions.get(guildId);
+  // An upload isn't deleted straight away, in case it was taken out by mistake
+  waitAgain(guildId, row);
   if (s?.current.id === id) await moveOn(s);
   else db.prepare('DELETE FROM music_queue WHERE id = ?').run(id);
+  tidyFiles();
   logActivity(guildId, who, `Removed **${row.title}** from the music queue`);
   fetchNext(guildId);
   cardChanged(guildId);
@@ -305,6 +306,7 @@ export async function removeTrack(guildId: string, id: number, who: string): Pro
 export function clearQueue(guildId: string, who: string) {
   const s = sessions.get(guildId);
   db.prepare('DELETE FROM music_queue WHERE guild_id = ? AND id != ?').run(guildId, s?.current.id ?? -1);
+  tidyFiles();
   cardChanged(guildId);
   logActivity(guildId, who, 'Cleared the music queue');
   if (s) void topUp(s);
@@ -330,6 +332,9 @@ async function askYoutube(where: '/fetch' | '/lookup' | '/similar', body: Record
 
 /** The audio for a song: a file the music container downloaded, with where it came from, or why there isn't one */
 async function fetchAudio(row: QueueRow): Promise<{ file: string; source: string; url: string | null } | { missing: string }> {
+  // An upload is here already
+  const uploaded = uploadedName(row.uri);
+  if (uploaded) return existsSync(fileOf(uploaded)) ? { file: fileOf(uploaded), source: 'file', url: null } : { missing: 'The uploaded file is gone.' };
   const answer = await askYoutube('/fetch', row.uri.startsWith('spotify:') ? { uri: row.uri, title: row.title, artist: row.artist, durationMs: row.duration_ms } : { url: row.uri });
   if (answer.missing) return { missing: answer.missing };
   if (typeof answer.file !== 'string' || !SAFE_FILE.test(answer.file)) throw new Error('the music container named the file oddly');
@@ -340,8 +345,9 @@ async function fetchAudio(row: QueueRow): Promise<{ file: string; source: string
 function fetchNext(guildId: string) {
   if (unavailable()) return;
   for (const row of queueOf(guildId).slice(0, FETCHED_AHEAD)) {
-    // The music container keeps what it downloads, but not what it couldn't find, so each is only asked about once in a while
-    if (askedAhead.has(row.uri)) continue;
+    // The music container keeps what it downloads, but not what it couldn't find, so each is only asked about once in a while.
+    // An upload needs nothing fetched
+    if (askedAhead.has(row.uri) || uploadedName(row.uri)) continue;
     askedAhead.add(row.uri);
     setTimeout(() => askedAhead.delete(row.uri), ASKED_AHEAD_MS).unref();
     void fetchAudio(row).catch((err: unknown) => console.error(`Music: couldn’t fetch ${row.title} ahead:`, (err as Error).message));
@@ -422,12 +428,11 @@ function newSession(guild: Guild, channelId: string, current: QueueRow, phase: S
 
 /** Starts the queue in a channel, or carries on where it paused. Returns null on success or the reason it couldn't, for the user */
 export async function startMusic(guild: Guild, channel: VoiceBasedChannel): Promise<string | null> {
-  const problem = unavailable();
-  if (problem) return problem;
   const first = queueOf(guild.id)[0];
+  // An upload plays from the bot's own folder, without the music container
+  const problem = first && uploadedName(first.uri) ? null : unavailable();
+  if (problem) return problem;
   if (!first) return 'The queue is empty. Add a song first.';
-  // The music takes over from a file, rather than playing on top of it
-  stopFile(guild.id);
   let s = sessions.get(guild.id);
   if (s && s.phase !== 'paused' && s.channelId === channel.id) return null;
   const carryOn = s?.current.id === first.id ? positionOf(s) : 0;
@@ -457,7 +462,7 @@ async function playCurrent(s: Session, fromMs = 0): Promise<string | null> {
   }
   if (s.turn !== turn || sessions.get(s.guild.id) !== s) return null;
   if ('missing' in found) {
-    const note = `Couldn’t find ${row.title} on YouTube or SoundCloud, so it was skipped.`;
+    const note = uploadedName(row.uri) ? `The file for ${row.title} is gone, so it was skipped.` : `Couldn’t find ${row.title} on YouTube or SoundCloud, so it was skipped.`;
     const next = await moveOn(s);
     if (sessions.get(s.guild.id) !== s) return note;
     // The next song's own problem says more than this one being skipped
@@ -553,6 +558,7 @@ export function stopMusic(guildId: string, who: string) {
   const s = sessions.get(guildId);
   if (s) endSession(s);
   db.prepare('DELETE FROM music_queue WHERE guild_id = ?').run(guildId);
+  tidyFiles();
   // With nothing playing, only the queue changed
   cardChanged(guildId);
   logActivity(guildId, who, 'Stopped the music and cleared the queue');
@@ -570,6 +576,7 @@ async function moveOn(s: Session): Promise<string | null> {
     if (sessions.get(s.guild.id) !== s || s.current !== current || s.turn !== turn) return null;
   }
   db.prepare('DELETE FROM music_queue WHERE id = ?').run(s.current.id);
+  if (uploadedName(s.current.uri)) tidyFiles();
   const next = queueOf(s.guild.id)[0];
   if (!next) {
     endSession(s);
@@ -829,105 +836,161 @@ async function resumeOne(client: Client, saved: SavedSession) {
   console.log(`Music: carried on ${first.title} in #${channel.name} from ${time(positionMs)} after the restart`);
 }
 
-// ---------- a file, played once ----------
+// ---------- uploaded files ----------
 
-interface PlayingFile {
-  name: string;
-  file: string;
-  channel: VoiceBasedChannel;
+/** How an uploaded file's queue row names it: `file:` and its name in the files folder */
+const FILE_URI = /^file:([0-9a-f]{16}\.[a-z0-9]+)$/;
+/** An upload waits this long for Play next or Add to end, then it's deleted */
+const UPLOAD_WAIT_MS = 60 * 60_000;
+/** The room each server's uploads take at most, those waiting and those in the queue */
+export const MOST_FILES_BYTES = 500 * 1024 * 1024;
+const FULL = `Uploaded files take up to ${MOST_FILES_BYTES / 1024 / 1024} MB for each server, and that’s used up. Remove one from the queue, or wait for one to play.`;
+
+/** An upload waiting for Play next or Add to end, as the song it'll be */
+interface Upload {
+  guildId: string;
+  track: Track;
+  bytes: number;
+  timer: NodeJS.Timeout;
+}
+
+/** What the page is told of an upload, to add it with */
+export interface UploadedFile {
+  id: string;
+  title: string;
+  artist: string;
   durationMs: number;
-  startedAt: number;
-  /** Bumped each time it starts again from somewhere else, so the copy stopped for that doesn't delete the file */
-  turn: number;
-  stop?: () => void;
 }
 
-/** The file playing in each server, which is deleted once it's over */
-const files = new Map<string, PlayingFile>();
+/** Uploads waiting, by their name in the folder */
+const uploads = new Map<string, Upload>();
+/** Uploads still arriving or being checked, which a tidy-up leaves alone */
+const arriving = new Set<string>();
 const filesDir = () => path.join(config.dataDir, 'music-files');
+const fileOf = (name: string) => path.join(filesDir(), name);
+const uploadedName = (uri: string) => FILE_URI.exec(uri)?.[1];
+const sizeOf = (file: string) => {
+  try {
+    return statSync(file).size;
+  } catch {
+    return 0;
+  }
+};
 
-/** Why a file can't be played, from its name and size alone, or null if it might */
-export function fileProblem(ext: string, size: number): string | null {
-  if (!EXTENSIONS.includes(ext)) return `That isn’t a file the bot can play. Use one of: ${EXTENSIONS.join(', ')}`;
-  return size > MOST_FILE_BYTES ? `That file is over ${MOST_FILE_BYTES / 1024 / 1024} MB.` : null;
+/** The room a server's uploads take, waiting and queued */
+function filesBytes(guildId: string): number {
+  let bytes = 0;
+  for (const upload of uploads.values()) if (upload.guildId === guildId) bytes += upload.bytes;
+  for (const { uri } of db.prepare("SELECT uri FROM music_queue WHERE guild_id = ? AND uri LIKE 'file:%'").all(guildId) as unknown as { uri: string }[]) {
+    const name = uploadedName(uri);
+    if (name) bytes += sizeOf(fileOf(name));
+  }
+  return bytes;
 }
 
-/** Where to keep an upload while it plays */
-export function fileUploadPath(ext: string): string {
-  mkdirSync(filesDir(), { recursive: true });
-  return path.join(filesDir(), `${randomBytes(8).toString('hex')}${ext}`);
+/** Why a file can't be uploaded, from its name and size alone, or null if it might */
+export function fileProblem(guildId: string, ext: string, size: number): string | null {
+  if (!EXTENSIONS.includes(ext)) return `That isn’t a file the bot can play. Use one of: ${EXTENSIONS.join(', ')}`;
+  if (size > MOST_FILE_BYTES) return `That file is over ${MOST_FILE_BYTES / 1024 / 1024} MB.`;
+  return size && filesBytes(guildId) + size > MOST_FILES_BYTES ? FULL : null;
 }
 
 /**
- * Plays an uploaded file once in a channel, pausing the music here and stopping any file already playing. The file is deleted once it's over.
- * Returns null on success or the reason it couldn't play, for the user
+ * Takes an upload: `save` writes it to the file it's given, then it's checked, and waits for Play next or Add to end. Named by its
+ * own tags, or its file name. Returns what it is, or why it can't be played, for the user
  */
-export async function playFile(guild: Guild, channel: VoiceBasedChannel, file: string, name: string, who: string): Promise<string | null> {
-  const seconds = (await hasAudio(file)) ? await durationOf(file).catch(() => NaN) : null;
-  const problem =
-    seconds === null
-      ? 'That file doesn’t have any audio the bot can read.'
-      : !Number.isFinite(seconds)
-        ? 'The bot can’t tell how long that file is, so it won’t play it.'
-        : seconds * 1000 > LONGEST_FILE_MS
-          ? `That file is over ${LONGEST_FILE_MS / 60_000} minutes long.`
-          : null;
-  if (problem) {
-    rmSync(file, { force: true });
-    return problem;
+export async function uploadFile(guildId: string, fileName: string, save: (file: string) => Promise<void>): Promise<UploadedFile | string> {
+  const ext = path.extname(fileName).toLowerCase();
+  const problem = fileProblem(guildId, ext, 0);
+  if (problem) return problem;
+  mkdirSync(filesDir(), { recursive: true });
+  const name = `${randomBytes(8).toString('hex')}${ext}`;
+  const file = fileOf(name);
+  arriving.add(name);
+  try {
+    await save(file);
+    const seconds = (await hasAudio(file)) ? await durationOf(file).catch(() => NaN) : null;
+    const tags: Awaited<ReturnType<typeof tagsOf>> = seconds === null ? {} : await tagsOf(file);
+    // From here to taking its place among the uploads has no waiting, so two at once can't both fit in the room left for one
+    const bytes = sizeOf(file);
+    const problem =
+      seconds === null
+        ? 'That file doesn’t have any audio the bot can read.'
+        : !Number.isFinite(seconds)
+          ? 'The bot can’t tell how long that file is, so it won’t play it.'
+          : seconds * 1000 > LONGEST_FILE_MS
+            ? `That file is over ${LONGEST_FILE_MS / 60_000} minutes long.`
+            : filesBytes(guildId) + bytes > MOST_FILES_BYTES
+              ? FULL
+              : null;
+    if (problem) {
+      rmSync(file, { force: true });
+      return problem;
+    }
+    const track: Track = {
+      uri: `file:${name}`,
+      title: tags.title ?? (path.basename(fileName, path.extname(fileName)).trim().slice(0, 300) || 'An uploaded file'),
+      artist: tags.artist ?? 'Uploaded file',
+      album: tags.album ?? '',
+      cover: null,
+      durationMs: Math.round(seconds! * 1000),
+    };
+    const timer = setTimeout(() => discardUpload(guildId, name), UPLOAD_WAIT_MS).unref();
+    uploads.set(name, { guildId, track, bytes, timer });
+    return { id: name, title: track.title, artist: track.artist, durationMs: track.durationMs };
+  } finally {
+    arriving.delete(name);
   }
-  stopFile(guild.id);
-  const playing: PlayingFile = { name, file, channel, durationMs: Math.round(seconds! * 1000), startedAt: Date.now(), turn: 0 };
-  const failed = await playFileFrom(guild.id, playing, 0);
-  if (failed) return failed;
-  files.set(guild.id, playing);
-  feeds.music.changed(guild.id);
-  const s = sessions.get(guild.id);
-  if (s && s.phase !== 'paused') pauseHere(s, 'Paused for a file. Press Resume to carry on.');
-  logActivity(guild.id, who, `Played the file **${name}**`);
-  return null;
 }
 
-/** Plays a file from `ms` in, stopping where it was playing. If it can't, the file is deleted and the reason returned */
-async function playFileFrom(guildId: string, playing: PlayingFile, ms: number): Promise<string | null> {
-  const turn = ++playing.turn;
-  playing.stop?.();
-  const stop = await playLong(
-    playing.channel,
-    playing.file,
-    () => {
-      if (playing.turn !== turn) return;
-      if (files.get(guildId) === playing) files.delete(guildId);
-      rmSync(playing.file, { force: true });
-      feeds.music.changed(guildId);
-    },
-    ms,
-  );
-  if (typeof stop === 'string') {
-    if (files.get(guildId) === playing) files.delete(guildId);
-    rmSync(playing.file, { force: true });
-    return stop;
+/** Adds an upload waiting to the queue, to the end or to play next. Returns the song it is, or why it couldn't */
+export function queueUpload(guildId: string, id: string, who: string, next: boolean): Track | 'gone' | 'full' {
+  const upload = uploads.get(id);
+  if (upload?.guildId !== guildId) return 'gone';
+  if (!addTracks(guildId, [upload.track], who, next)) return 'full';
+  clearTimeout(upload.timer);
+  uploads.delete(id);
+  logActivity(guildId, who, `Added the file **${upload.track.title}** to the music queue${next ? ' to play next' : ''}`);
+  return upload.track;
+}
+
+/** An upload taken out of the queue waits again for an hour, so Undo can put it back */
+function waitAgain(guildId: string, row: QueueRow) {
+  const name = uploadedName(row.uri);
+  if (!name || !existsSync(fileOf(name))) return;
+  const track: Track = { uri: row.uri, title: row.title, artist: row.artist, album: row.album, cover: row.cover, durationMs: row.duration_ms };
+  const timer = setTimeout(() => discardUpload(guildId, name), UPLOAD_WAIT_MS).unref();
+  uploads.set(name, { guildId, track, bytes: sizeOf(fileOf(name)), timer });
+}
+
+/** Deletes an upload that's still waiting. Returns whether there was one */
+export function discardUpload(guildId: string, id: string): boolean {
+  const upload = uploads.get(id);
+  if (upload?.guildId !== guildId) return false;
+  clearTimeout(upload.timer);
+  uploads.delete(id);
+  rmSync(fileOf(id), { force: true });
+  return true;
+}
+
+/** Deletes the uploaded files nothing needs: not arriving, waiting, or in a queue. Exported for tests, as a restart does it */
+export function tidyFiles() {
+  let names: string[];
+  try {
+    names = readdirSync(filesDir());
+  } catch {
+    return;
   }
-  playing.stop = stop;
-  playing.startedAt = Date.now() - ms;
-  // A jump within the file
-  feeds.music.changed(guildId);
-  return null;
-}
-
-/** Jumps to `ms` into the file playing. Returns null on success, or why it couldn't */
-export async function seekFile(guildId: string, ms: number): Promise<string | null> {
-  const playing = files.get(guildId);
-  if (!playing) return 'No file is playing.';
-  // Not right up to the end, which would only stop it
-  return playFileFrom(guildId, playing, Math.round(Math.max(0, Math.min(ms, playing.durationMs - FILE_END_SLACK_MS))));
-}
-
-/** Stops the file playing in a server, if there is one. Returns whether there was */
-export function stopFile(guildId: string): boolean {
-  const playing = files.get(guildId);
-  playing?.stop?.();
-  return !!playing;
+  const queued = new Set((db.prepare("SELECT uri FROM music_queue WHERE uri LIKE 'file:%'").all() as unknown as { uri: string }[]).map((r) => uploadedName(r.uri)));
+  for (const name of names) {
+    if (arriving.has(name) || uploads.has(name) || queued.has(name)) continue;
+    // Tidying never gets in the way of the music
+    try {
+      rmSync(fileOf(name), { force: true, recursive: true });
+    } catch (err) {
+      console.error(`Music: couldn’t delete the upload ${name}:`, (err as Error).message);
+    }
+  }
 }
 
 // ---------- adding by search or link ----------
@@ -997,13 +1060,7 @@ export function musicState(guildId: string) {
     positionMs: s ? Math.round(Math.min(positionOf(s), s.current.duration_ms)) : 0,
     note: s?.note ?? null,
     via: s?.via ?? null,
-    file: playingFile(guildId),
   };
-}
-
-function playingFile(guildId: string) {
-  const playing = files.get(guildId);
-  return playing ? { name: playing.name, durationMs: playing.durationMs, positionMs: Math.min(playing.durationMs, Date.now() - playing.startedAt) } : null;
 }
 
 const time = (ms: number) => `${Math.floor(ms / 60_000)}:${String(Math.floor((ms % 60_000) / 1000)).padStart(2, '0')}`;
@@ -1370,8 +1427,8 @@ export const music: Feature = {
     },
   ],
   setup(client) {
-    // Files left from before a restart, which nothing will play now
-    rmSync(filesDir(), { recursive: true, force: true });
+    // Uploads left from before a restart that nothing in a queue will play
+    tidyFiles();
     if (!config.musicUrl || !config.musicToken) return;
     exiting = false;
     restoreCards(client);
@@ -1401,7 +1458,7 @@ export const music: Feature = {
   },
   shutdown() {
     clearInterval(saver);
-    for (const guildId of files.keys()) stopFile(guildId);
+    for (const upload of uploads.values()) clearTimeout(upload.timer);
     for (const card of cards.values()) clearTimeout(card.timer);
     listening?.abort();
     for (const s of [...sessions.values()]) endSession(s);
@@ -1424,5 +1481,7 @@ export function resetMusic(next: PlayerStatus | null = null) {
   unreachable = null;
   exiting = false;
   coverless.clear();
+  for (const upload of uploads.values()) clearTimeout(upload.timer);
+  uploads.clear();
 }
 

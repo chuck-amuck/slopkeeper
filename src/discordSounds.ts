@@ -41,6 +41,27 @@ export async function hasAudio(file: string): Promise<boolean> {
   }
 }
 
+/** A file's title, artist and album, from its tags as far as ffprobe reads them, for an upload to be named by */
+export async function tagsOf(file: string): Promise<{ title?: string; artist?: string; album?: string }> {
+  try {
+    const { stdout } = await exec('ffprobe', ['-v', 'error', '-show_entries', 'format_tags:stream_tags', '-of', 'json', file], { maxBuffer: 4 * 1024 * 1024 });
+    const info = JSON.parse(stdout) as { format?: { tags?: Record<string, unknown> }; streams?: { tags?: Record<string, unknown> }[] };
+    // MP3s keep them on the file, Ogg and Opus on the stream, in either case
+    const sets = [info.format?.tags, ...(info.streams ?? []).map((s) => s.tags)].filter((t): t is Record<string, unknown> => !!t);
+    const pick = (key: string) => {
+      for (const tags of sets)
+        for (const [k, v] of Object.entries(tags)) {
+          const text = typeof v === 'string' ? v.replace(/[\u0000-\u001f\u007f]+/g, ' ').trim().slice(0, 300) : '';
+          if (k.toLowerCase() === key && text) return text;
+        }
+      return undefined;
+    };
+    return { title: pick('title'), artist: pick('artist'), album: pick('album') };
+  } catch {
+    return {};
+  }
+}
+
 /** A sound on the server's Discord soundboard, whoever added it */
 export interface DiscordSound {
   id: string;

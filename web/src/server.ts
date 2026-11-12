@@ -10,7 +10,7 @@ const MAX_FAILURES = 5;
 const LOCK_MS = 60_000;
 // A little over the largest sound, which is the largest thing the page sends
 const MAX_BODY = 5 * 1024 * 1024 + 1024;
-// A music file to play once is far larger, so it's passed on as it arrives rather than held here
+// A music file uploaded for the queue is far larger, so it’s passed on as it arrives rather than held here
 const STREAMED = /^\/api\/guilds\/\d+\/music\/file$/;
 const MAX_STREAMED = 60 * 1024 * 1024 + 1024;
 const TOO_BIG = 'That file is over 60 MB.';

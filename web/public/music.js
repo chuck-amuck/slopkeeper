@@ -7,11 +7,11 @@ const PLAYLISTS_SHOWN = 20;
 const LINK = /^(https?:\/\/|spotify:)/i;
 /** A Spotify album or playlist, which can be added shuffled */
 const LIST_LINK = /^(https?:\/\/open\.spotify\.com\/(intl-[a-z]+\/)?(album|playlist)\/|spotify:(album|playlist):)/i;
-// What a file played once can be. The bot checks again, and how long it is
+// What an uploaded file can be. The bot checks again, and how long it is
 const FILE_TYPES = ['.mp3', '.ogg', '.wav', '.m4a', '.opus', '.webm', '.flac'];
 const MOST_FILE_MB = 60;
 
-const SOURCES = { youtube: 'YouTube', soundcloud: 'SoundCloud' };
+const SOURCES = { youtube: 'YouTube', soundcloud: 'SoundCloud', file: 'an upload' };
 /** What follows the artist while a song plays: paused, being found, or where it's from and where it's playing */
 const whereFrom = (data) =>
   data.phase === 'paused' ? ['Paused'] : data.phase === 'starting' ? ['Finding it…'] : [SOURCES[data.via] && `from ${SOURCES[data.via]}`, data.channelName && `in ${data.channelName}`].filter(Boolean);
@@ -191,7 +191,7 @@ export function renderMusic(main) {
   let playlists = null;
   const modes = el('div', { className: 'views' });
   const MODES = [
-    ['songs', 'Songs', 'Search or paste a link', 'Searches Spotify. A Spotify, YouTube or SoundCloud link works too.'],
+    ['songs', 'Songs', 'Search, paste a link or upload a file', `Searches Spotify. A Spotify, YouTube or SoundCloud link works too, or upload an audio file (up to ${MOST_FILE_MB} MB and 20 minutes).`],
     ['playlists', 'My playlists', 'Find a playlist or paste a link', 'Your saved playlists, or a link to any public one.'],
   ];
   function setMode(id) {
@@ -207,18 +207,162 @@ export function renderMusic(main) {
     results.hidden = true;
     if (id === 'playlists') void loadPlaylists();
   }
+  // ---------- a file uploaded, to add like a song ----------
+  /** The upload under way, and the file uploaded, waiting for Play next or Add to end */
+  let sending = null;
+  let uploaded = null;
+  const filePicker = el('input', {
+    type: 'file',
+    accept: `${FILE_TYPES.join(',')},audio/*`,
+    hidden: true,
+    onchange: () => {
+      const [file] = filePicker.files;
+      filePicker.value = '';
+      if (file) void attempt(() => uploadFile(file));
+    },
+  });
+  const uploadButton = el(
+    'button',
+    { type: 'button', className: 'with-icon music-upload', ariaLabel: 'Upload a file', title: `Upload an audio file to add, up to ${MOST_FILE_MB} MB and 20 minutes`, onclick: () => filePicker.click() },
+    icon('upload'),
+    el('span', { className: 'upload-word' }, 'Upload'),
+  );
+  const chipText = el('span', { className: 'upload-text' });
+  const chipX = el('button', { type: 'button', className: 'icon quiet', onclick: () => dropUpload() }, icon('x'));
+  const fileChip = el('div', { className: 'upload-chip', hidden: true, role: 'status' }, icon('note'), chipText, chipX);
+
+  function paintChip(text, cancel) {
+    chipText.textContent = text;
+    chipX.ariaLabel = chipX.title = cancel;
+  }
+
+  /** Sends a file to the bot, saying how far it's got. fetch can't tell, so this is XMLHttpRequest */
+  function send(xhr, file) {
+    return new Promise((resolve, reject) => {
+      xhr.open('POST', api(`/music/file?name=${encodeURIComponent(file.name)}`));
+      xhr.setRequestHeader('x-slopkeeper', '1');
+      xhr.setRequestHeader('content-type', file.type || 'application/octet-stream');
+      xhr.upload.onprogress = (e) => e.lengthComputable && paintChip(`${file.name} · Uploading ${Math.round((100 * e.loaded) / e.total)}%`, 'Cancel the upload');
+      xhr.upload.onload = () => {
+        // The bot has it now, so × lets it finish and throws it away after
+        xhr.sentAll = true;
+        paintChip(`${file.name} · Checking it…`, 'Cancel the upload');
+      };
+      xhr.onload = () => {
+        let body = {};
+        try {
+          body = JSON.parse(xhr.responseText);
+        } catch {}
+        if (xhr.status === 401) {
+          session.onExpired();
+          return reject(new RequestError('Log in again.', 401));
+        }
+        if (xhr.status >= 400) return reject(new RequestError(body.error ?? `Couldn’t upload it (${xhr.status}).`));
+        resolve(body.file);
+      };
+      xhr.onerror = () => reject(new RequestError('Couldn’t reach the web UI. Check your connection.'));
+      // Cancelled with ×, which needs saying to nobody
+      xhr.onabort = () => resolve(null);
+      xhr.send(file);
+    });
+  }
+
+  /** Uploads a file, then offers Play next and Add to end for it, as for a link. One at a time */
+  async function uploadFile(file) {
+    if (sending) throw new RequestError('One file is still uploading.');
+    const ext = file.name.slice(file.name.lastIndexOf('.')).toLowerCase();
+    if (!file.name.includes('.') || !FILE_TYPES.includes(ext)) throw new RequestError(`That isn’t a file the bot can play. Use one of: ${FILE_TYPES.join(', ')}`);
+    if (file.size > MOST_FILE_MB * 1024 * 1024) throw new RequestError(`That file is over ${MOST_FILE_MB} MB.`);
+    // A file uploaded and not added yet makes way for this one
+    if (uploaded) dropUpload();
+    if (mode !== 'songs') setMode('songs');
+    paintChip(`${file.name} · Uploading…`, 'Cancel the upload');
+    const xhr = new XMLHttpRequest();
+    sending = xhr;
+    paintLinkButtons();
+    let done = null;
+    try {
+      done = await send(xhr, file);
+    } finally {
+      if (sending === xhr) sending = null;
+      // Cancelled once the bot had it, or left for another server or page: the bot would keep it an hour otherwise
+      if (done && (xhr.dropped || guildId !== state.guildId || !main.isConnected)) {
+        void request(`/api/guilds/${guildId}/music/file/${encodeURIComponent(done.id)}`, { method: 'DELETE' }).catch(() => {});
+        done = null;
+      }
+      if (guildId === state.guildId && main.isConnected) {
+        uploaded = done;
+        if (done) paintChip(`${done.title}${done.artist === 'Uploaded file' ? '' : ` · ${done.artist}`} · ${time(done.durationMs)}`, `Remove ${done.title}`);
+        paintLinkButtons();
+        // On to adding it, unless you've gone on to something else meanwhile
+        if (done && (!document.activeElement || document.activeElement === document.body || searchForm.contains(document.activeElement))) linkEnd.focus();
+        if (done) announce(`${done.title} uploaded. Play next, or Add to end.`);
+      }
+    }
+  }
+
+  /** Cancels the upload under way, or throws away the file uploaded */
+  function dropUpload() {
+    if (sending?.sentAll) sending.dropped = true;
+    else if (sending) sending.abort();
+    else if (uploaded) {
+      const { id } = uploaded;
+      // Kept a while by the bot otherwise; gone already is fine
+      void request(api(`/music/file/${encodeURIComponent(id)}`), { method: 'DELETE' }).catch(() => {});
+    }
+    sending = null;
+    uploaded = null;
+    paintLinkButtons();
+    query.focus();
+  }
+
+  async function addUpload(next) {
+    const { id } = uploaded;
+    for (const b of [linkNext, linkEnd]) b.disabled = true;
+    try {
+      const fresh = await attempt(async () => {
+        try {
+          return await request(api('/music/queue'), { method: 'POST', json: { file: id, next } });
+        } catch (err) {
+          // Gone after an hour waiting: the box comes back for another go
+          if (err.status === 404 && uploaded?.id === id) {
+            uploaded = null;
+            paintLinkButtons();
+          }
+          throw err;
+        }
+      });
+      if (!fresh) return;
+      toast(fresh.message);
+      if (uploaded?.id === id) uploaded = null;
+      show(fresh);
+      paintLinkButtons();
+      query.focus();
+    } finally {
+      for (const b of [linkNext, linkEnd]) b.disabled = false;
+    }
+  }
+
   const searchButton = el('button', { type: 'submit' }, 'Search');
-  // A pasted link is added rather than searched for, so it gets the same choice as a search result
-  const fromLink = (next, shuffle = false) => void addFrom({ query: query.value.trim(), shuffle }, next, true).then(paintLinkButtons);
+  // A pasted link, or a file uploaded, is added rather than searched for, so it gets the same choice as a search result
+  const fromLink = (next, shuffle = false) => {
+    if (uploaded) return void addUpload(next);
+    void addFrom({ query: query.value.trim(), shuffle }, next, true).then(paintLinkButtons);
+  };
   const linkNext = el('button', { type: 'button', hidden: true, onclick: () => fromLink(true) }, 'Play next');
   const linkEnd = el('button', { type: 'submit', className: 'primary', hidden: true }, 'Add to end');
   const linkShuffle = el('button', { type: 'button', hidden: true, title: 'Adds songs from it at random, to the end', onclick: () => fromLink(false, true) }, 'Shuffle');
   function paintLinkButtons() {
     const text = query.value.trim();
-    const link = LINK.test(text);
-    searchButton.hidden = link || mode === 'playlists';
-    linkNext.hidden = linkEnd.hidden = !link;
-    linkShuffle.hidden = !LIST_LINK.test(text);
+    // A file takes the box's place while it uploads, and until it's added or thrown away
+    const file = !!(sending || uploaded);
+    const link = LINK.test(text) && !file;
+    query.hidden = file;
+    fileChip.hidden = !file;
+    uploadButton.hidden = file || mode !== 'songs';
+    searchButton.hidden = file || link || mode === 'playlists';
+    linkNext.hidden = linkEnd.hidden = !(link || uploaded);
+    linkShuffle.hidden = file || !LIST_LINK.test(text);
   }
   const results = el('div', { className: 'music-results', hidden: true });
   const searchForm = el(
@@ -227,9 +371,11 @@ export function renderMusic(main) {
       className: 'toolbar',
       onsubmit: (e) => {
         e.preventDefault();
+        // Enter adds a link or a file to the end, as Add to end does
+        if (uploaded) return fromLink(false);
+        if (sending) return;
         const text = query.value.trim();
         if (!text) return;
-        // Enter adds a link to the end, as Add to end does
         if (LINK.test(text)) return fromLink(false);
         if (mode === 'playlists') return;
         searchButton.disabled = true;
@@ -241,6 +387,9 @@ export function renderMusic(main) {
       },
     },
     query,
+    fileChip,
+    uploadButton,
+    filePicker,
     searchButton,
     linkNext,
     linkEnd,
@@ -339,118 +488,34 @@ export function renderMusic(main) {
     announce(tracks.length ? `${tracks.length} song${tracks.length === 1 ? '' : 's'} found.` : `Nothing on Spotify matches ${text}.`);
   }
 
-  const searchCard = el('section', { className: 'card music' }, el('h2', {}, 'Add music'), el('div', { className: 'card-body music-search' }, searchNote, modes, searchForm, searchHelp, results));
-  setMode('songs');
-
-  // ---------- a file, played once ----------
-  let uploading = false;
-  const filePicker = el('input', {
-    type: 'file',
-    accept: `${FILE_TYPES.join(',')},audio/*`,
-    hidden: true,
-    onchange: () => {
-      const [file] = filePicker.files;
-      filePicker.value = '';
-      if (file) void attempt(() => playFile(file));
-    },
-  });
-  const choose = () => !uploading && filePicker.click();
-  const fileZone = el(
-    'div',
+  // A file dropped anywhere on the card uploads, as Upload does. Only files light it up, not text or links dragged over
+  const carriesFiles = (e) => [...(e.dataTransfer?.types ?? [])].includes('Files');
+  const searchCard = el(
+    'section',
     {
-      className: 'dropzone',
-      tabIndex: 0,
-      role: 'button',
-      onclick: choose,
-      onkeydown: (e) => {
-        if (e.key === 'Enter' || e.key === ' ') {
-          e.preventDefault();
-          choose();
-        }
-      },
+      className: 'card music add-music',
       ondragover: (e) => {
+        if (!carriesFiles(e)) return;
         e.preventDefault();
-        fileZone.classList.add('over');
+        searchCard.classList.add('drop-over');
       },
-      ondragleave: () => fileZone.classList.remove('over'),
+      ondragleave: (e) => {
+        if (!searchCard.contains(e.relatedTarget)) searchCard.classList.remove('drop-over');
+      },
       ondrop: (e) => {
+        if (!carriesFiles(e)) return;
         e.preventDefault();
-        fileZone.classList.remove('over');
-        const [file] = e.dataTransfer.files;
-        if (file && !uploading) void attempt(() => playFile(file));
+        searchCard.classList.remove('drop-over');
+        const files = [...e.dataTransfer.files];
+        if (!files.length) return;
+        if (files.length > 1) toast(`Only one file at a time, so that’s ${files[0].name}.`);
+        void attempt(() => uploadFile(files[0]));
       },
     },
+    el('h2', {}, 'Add music'),
+    el('div', { className: 'card-body music-search' }, searchNote, modes, searchForm, searchHelp, results),
   );
-  const fileName = el('div', { className: 'song-title' });
-  const fileStop = el('button', { onclick: () => void act(() => request(api('/music/file/stop'), { method: 'POST' })) }, 'Stop');
-  const fileBar = seekBar({
-    label: 'File position',
-    duration: () => data.file.durationMs,
-    position: () => Math.min(data.file.durationMs, data.file.positionMs + Date.now() - fetchedAt),
-    can: () => !!data?.file,
-    jump: async (ms) => {
-      const fresh = await attempt(() => request(api('/music/file/seek'), { method: 'POST', json: { positionMs: ms } }));
-      if (fresh?.queue) show(fresh);
-    },
-  });
-  const fileNow = el('div', { className: 'file-now', hidden: true }, el('div', { className: 'song' }, el('div', { className: 'song-text' }, fileName), el('div', { className: 'song-actions' }, fileStop)), fileBar.node);
-  const fileCard = el('section', { className: 'card music' }, el('h2', {}, 'Play a file'), el('div', { className: 'card-body music-file' }, fileZone, filePicker, fileNow));
-
-  function paintFileZone(text) {
-    fileZone.textContent = text ?? `${matchMedia('(pointer: coarse)').matches ? 'Tap to choose an audio file' : 'Drop an audio file here, or click to choose'}. It plays once in the channel above and isn’t kept. Up to ${MOST_FILE_MB} MB.`;
-    fileZone.classList.toggle('busy', uploading);
-  }
-  paintFileZone();
-
-  /** Sends a file to play, showing how far the upload has got. fetch can't tell, so this is XMLHttpRequest */
-  function upload(file, channelId) {
-    return new Promise((resolve, reject) => {
-      const xhr = new XMLHttpRequest();
-      xhr.open('POST', api(`/music/file?name=${encodeURIComponent(file.name)}&channelId=${encodeURIComponent(channelId)}`));
-      xhr.setRequestHeader('x-slopkeeper', '1');
-      xhr.setRequestHeader('content-type', file.type || 'application/octet-stream');
-      xhr.upload.onprogress = (e) => e.lengthComputable && paintFileZone(`Sending ${file.name}: ${Math.round((100 * e.loaded) / e.total)}%`);
-      xhr.upload.onload = () => paintFileZone(`Starting ${file.name}…`);
-      xhr.onload = () => {
-        let body = {};
-        try {
-          body = JSON.parse(xhr.responseText);
-        } catch {}
-        if (xhr.status === 401) {
-          session.onExpired();
-          return reject(new RequestError('Log in again.', 401));
-        }
-        if (xhr.status >= 400) return reject(new RequestError(body.error ?? `Couldn’t play it (${xhr.status}).`));
-        resolve(body);
-      };
-      xhr.onerror = () => reject(new RequestError('Couldn’t reach the web UI. Check your connection.'));
-      xhr.send(file);
-    });
-  }
-
-  async function playFile(file) {
-    const ext = file.name.slice(file.name.lastIndexOf('.')).toLowerCase();
-    if (!file.name.includes('.') || !FILE_TYPES.includes(ext)) throw new RequestError(`That isn’t a file the bot can play. Use one of: ${FILE_TYPES.join(', ')}`);
-    if (file.size > MOST_FILE_MB * 1024 * 1024) throw new RequestError(`That file is over ${MOST_FILE_MB} MB.`);
-    if (!chosen) throw new RequestError('Nobody’s in voice, so there’s nowhere to play it.');
-    uploading = true;
-    paintFileZone(`Sending ${file.name}…`);
-    try {
-      show(await upload(file, chosen));
-      toast(`Playing ${data.file?.name ?? file.name}.`);
-    } finally {
-      uploading = false;
-      paintFileZone();
-    }
-  }
-
-  function paintFile() {
-    const file = data?.file;
-    fileNow.hidden = !file;
-    if (!file) return;
-    fileName.textContent = `Playing ${file.name}`;
-    fileBar.paint();
-  }
+  setMode('songs');
 
   // ---------- queue ----------
   const list = el('ol', { className: 'music-queue' });
@@ -494,8 +559,8 @@ export function renderMusic(main) {
       const fresh = await request(api(`/music/queue/${row.id}`), { method: 'DELETE' });
       undoToast(`Removed ${row.title}.`, async () => {
         const { uri, title, artist, album, cover, durationMs } = row;
-        // A YouTube or SoundCloud song is added again from its link
-        const json = uri.startsWith('spotify:') ? { track: { uri, title, artist, album, cover, durationMs } } : { query: uri };
+        // A YouTube or SoundCloud song is added again from its link, and an upload from the file kept for this
+        const json = uri.startsWith('spotify:') ? { track: { uri, title, artist, album, cover, durationMs } } : uri.startsWith('file:') ? { file: uri.slice(5) } : { query: uri };
         const added = await request(api('/music/queue'), { method: 'POST', json });
         // It goes on the end, so it's the newest row with that song
         const back = added.queue.findLast((r) => r.uri === uri);
@@ -589,7 +654,6 @@ export function renderMusic(main) {
 
   function paintProgress() {
     if (!data) return;
-    paintFile();
     const song = data.phase !== 'stopped' ? data.queue[0] : null;
     progress.hidden = !song;
     if (!song) return;
@@ -645,7 +709,7 @@ export function renderMusic(main) {
     paintControls();
   }
 
-  main.append(problem, voiceRow, now, searchCard, fileCard, queueCard);
+  main.append(problem, voiceRow, now, searchCard, queueCard);
   list.append(notice('loading', 'Loading the queue…', { compact: true, tag: 'li' }));
   // From the bot the moment they change: the music, and who's in voice to play it to
   follow('music', main, (fresh, at) => show(fresh, performance.now() - at));

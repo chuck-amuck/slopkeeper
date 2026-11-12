@@ -2,7 +2,7 @@ import './helpers.ts';
 import assert from 'node:assert/strict';
 import { after, beforeEach, mock, test, type TestContext } from 'node:test';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, mkdirSync, rmSync, truncateSync, writeFileSync } from 'node:fs';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { getVoiceConnection, VoiceConnectionStatus } from '@discordjs/voice';
 import { recentActivity } from '../src/activity.ts';
@@ -14,9 +14,9 @@ import {
   addTracks,
   AUTOPLAY,
   clearQueue,
-  fileUploadPath,
   coversFilled,
   fillCovers,
+  MOST_FILES_BYTES,
   MOST_QUEUED,
   moveTrack,
   music,
@@ -24,20 +24,21 @@ import {
   musicState,
   onStatus,
   pauseMusic,
-  playFile,
   queueFrom,
   queueOf,
+  queueUpload,
+  discardUpload,
+  tidyFiles,
+  uploadFile,
   removeTrack,
   resetMusic,
   restoreCards,
   resumeAfterRestart,
   shuffleQueue,
-  seekFile,
   seekMusic,
   setAutoplay,
   skipMusic,
   startMusic,
-  stopFile,
   stopMusic,
   type PlayerStatus,
 } from '../src/features/music.ts';
@@ -606,49 +607,154 @@ test('the page is told playlists exist only with the Spotify account signed in',
   assert.equal(musicState(id).playlistsReady, true);
 });
 
-test('a file played from the page pauses the music, and the music takes over from it', { skip: spawnSync('ffmpeg', ['-version']).status !== 0 }, async () => {
+test('an uploaded file waits to be added, then plays from the queue like any song, and is deleted once it’s done', { skip: spawnSync('ffmpeg', ['-version']).status !== 0 }, async (t) => {
   const { id, guild, channel } = server();
-  const tone = (seconds: number) => {
-    const file = fileUploadPath('.wav');
-    execFileSync('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', `sine=frequency=440:duration=${seconds}`, file]);
-    return file;
-  };
-  addTracks(id, [song(1)], 'u1');
-  await startMusic(guild, channel);
-  const song1 = lastPlayed();
-  const file = tone(1);
-  assert.equal(await playFile(guild, channel, file, 'Tone', 'u1'), null);
-  assert.equal(song1.stopped, true);
-  assert.equal(musicState(id).phase, 'paused');
-  assert.match(musicState(id).note!, /Paused for a file/);
-  assert.deepEqual([musicState(id).file?.name, lastPlayed().file], ['Tone', file]);
-  // Jumping within it starts it again from there, and keeps the file
-  assert.equal(await seekFile(id, 500), null);
-  assert.deepEqual([lastPlayed().file, lastPlayed().options.startMs], [file, 500]);
+  t.after(() => setAutoplay(id, false, 'u1'));
+  /** An upload of a tone, with tags if given */
+  const upload = (name: string, seconds: number, tags: string[] = []) =>
+    uploadFile(id, name, async (file) => {
+      execFileSync('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', `sine=frequency=440:duration=${seconds}`, ...tags, file]);
+    });
+  const tone = await upload('Tone.wav', 10);
+  assert.ok(typeof tone === 'object');
+  assert.deepEqual([tone.title, tone.artist], ['Tone', 'Uploaded file']);
+  assert.ok(Math.abs(tone.durationMs - 10_000) < 100, String(tone.durationMs));
+  const file = `${process.env.DATA_DIR}/music-files/${tone.id}`;
   assert.ok(existsSync(file));
-  assert.ok(Math.abs(musicState(id).file!.positionMs - 500) < 50);
-  await seekFile(id, 60_000);
-  assert.equal(lastPlayed().options.startMs, 500, 'not right up to the end');
-  await seekFile(id, -5);
-  assert.equal(lastPlayed().options.startMs, undefined, 'from the top');
+  assert.equal(queueOf(id).length, 0, 'it waits for Play next or Add to end');
+
+  addTracks(id, [song(1)], 'u1');
+  const added = queueUpload(id, tone.id, 'u1', true);
+  assert.equal(typeof added === 'object' && added.title, 'Tone');
+  assert.equal(queueUpload(id, tone.id, 'u1', false), 'gone', 'it’s added once');
+  assert.equal(queueUpload('another', tone.id, 'u1', false), 'gone');
+  assert.deepEqual(titles(id), ['Tone', 'Song 1']);
+  assert.equal(recentActivity(id, 1)[0].action, 'Added the file **Tone** to the music queue to play next');
+
+  // It plays from the folder, without asking the music container, and jumps within it like a song
   assert.equal(await startMusic(guild, channel), null);
-  assert.equal(musicState(id).file, null, 'Resume stops the file rather than play over it');
-  assert.equal(await seekFile(id, 0), 'No file is playing.');
-  assert.ok(!existsSync(file));
-  assert.equal(stopFile(id), false);
-
-  // One that ends by itself is deleted, and the state says nothing's playing
-  const short = tone(0.3);
-  await playFile(guild, channel, short, 'Short', 'u1');
+  assert.deepEqual([lastPlayed().file, lastPlayed().options], [file, { group: 'music', lasting: true }]);
+  assert.ok(!fetched.some((f) => f.startsWith('file:')), String(fetched));
+  assert.equal(musicState(id).via, 'file');
+  assert.equal(await seekMusic(id, 500), null);
+  assert.deepEqual([lastPlayed().file, lastPlayed().options.startMs], [file, 500]);
+  assert.ok(existsSync(file), 'kept while it plays');
   lastPlayed().end();
-  assert.equal(musicState(id).file, null);
-  assert.ok(!existsSync(short));
+  await sleep(10);
+  assert.equal(lastPlayed().file, audioFile(1), 'then the next song');
+  assert.ok(!existsSync(file), 'deleted once it’s done');
 
-  const long = fileUploadPath('.ogg');
-  execFileSync('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', 'anullsrc=r=8000:cl=mono', '-t', '1201', '-c:a', 'libvorbis', '-q:a', '0', long]);
-  assert.match((await playFile(guild, channel, long, 'Long', 'u1'))!, /over 20 minutes/);
-  assert.ok(!existsSync(long));
+  // Its own tags name it
+  const tagged = await upload('track01.mp3', 1, ['-metadata', 'title=Real Name', '-metadata', 'artist=Real Band']);
+  assert.ok(typeof tagged === 'object');
+  assert.deepEqual([tagged.title, tagged.artist], ['Real Name', 'Real Band']);
+  // One thrown away instead is deleted, and can't be added after
+  assert.equal(discardUpload(id, tagged.id), true);
+  assert.equal(discardUpload(id, tagged.id), false);
+  assert.ok(!existsSync(`${process.env.DATA_DIR}/music-files/${tagged.id}`));
+
+  // Taken out of the queue, it waits again, so Undo can put it back
+  const again = await upload('Again.wav', 1);
+  assert.ok(typeof again === 'object');
+  queueUpload(id, again.id, 'u1', false);
+  await removeTrack(id, queueOf(id).at(-1)!.id, 'u1');
+  assert.ok(existsSync(`${process.env.DATA_DIR}/music-files/${again.id}`));
+  assert.equal(typeof queueUpload(id, again.id, 'u1', false), 'object');
+  assert.equal(titles(id).at(-1), 'Again');
+  // Clearing the queue or stopping the music deletes its files
+  for (const end of [() => clearQueue(id, 'u1'), () => stopMusic(id, 'u1')]) {
+    const one = await upload('One.wav', 1);
+    assert.ok(typeof one === 'object');
+    queueUpload(id, one.id, 'u1', false);
+    end();
+    assert.ok(!existsSync(`${process.env.DATA_DIR}/music-files/${one.id}`));
+  }
+
+  // A file gone from the folder is skipped, saying why
+  addTracks(id, [song(2)], 'u1');
+  const lost = await upload('Lost.wav', 1);
+  assert.ok(typeof lost === 'object');
+  queueUpload(id, lost.id, 'u1', true);
+  rmSync(`${process.env.DATA_DIR}/music-files/${lost.id}`);
+  assert.equal(await startMusic(guild, channel), null);
+  assert.equal(lastPlayed().file, audioFile(2));
+  assert.match(musicState(id).note!, /The file for Lost is gone, so it was skipped/);
   stopMusic(id, 'u1');
+
+  // Autoplay can't go on from a file, so it asks YouTube nothing for one
+  setAutoplay(id, true, 'u1');
+  const last = await upload('Last.wav', 1);
+  assert.ok(typeof last === 'object');
+  queueUpload(id, last.id, 'u1', false);
+  assert.equal(await startMusic(guild, channel), null);
+  await sleep(20);
+  assert.deepEqual(similarAsked, []);
+  stopMusic(id, 'u1');
+
+  // Over 20 minutes, or not audio at all, isn't kept
+  const long = await uploadFile(id, 'Long.ogg', async (file) => {
+    execFileSync('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', 'anullsrc=r=8000:cl=mono', '-t', '1201', '-c:a', 'libvorbis', '-q:a', '0', file]);
+  });
+  assert.match(String(long), /over 20 minutes/);
+  assert.match(String(await uploadFile(id, 'fake.mp3', async (file) => writeFileSync(file, 'hello'))), /doesn’t have any audio/);
+  assert.match(String(await uploadFile(id, 'notes.txt', async () => {})), /isn’t a file the bot can play/);
+
+  // Uploads alone play without the music container
+  resetMusic(null);
+  const alone = await upload('Alone.wav', 1);
+  assert.ok(typeof alone === 'object');
+  queueUpload(id, alone.id, 'u1', false);
+  assert.equal(await startMusic(guild, channel), null);
+  assert.equal(lastPlayed().file, `${process.env.DATA_DIR}/music-files/${alone.id}`);
+  stopMusic(id, 'u1');
+});
+
+test('uploads at the same time can’t both fit in the room left for one', { skip: spawnSync('ffmpeg', ['-version']).status !== 0 }, async () => {
+  const { id } = server();
+  const folder = `${process.env.DATA_DIR}/music-files`;
+  // A queued upload that leaves room for one second of tone and no more (it takes no real room)
+  const big = 'bbbbbbbbbbbbbbbb.mp3';
+  mkdirSync(folder, { recursive: true });
+  writeFileSync(`${folder}/${big}`, '');
+  truncateSync(`${folder}/${big}`, MOST_FILES_BYTES - 120_000);
+  addTracks(id, [{ uri: `file:${big}`, title: 'Big', artist: 'Uploaded file', album: '', cover: null, durationMs: 60_000 }], 'u1');
+  const tone = () =>
+    uploadFile(id, 'Tone.wav', async (file) => {
+      execFileSync('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', 'sine=duration=1', '-ar', '44100', '-ac', '1', file]);
+    });
+  const results = await Promise.all([tone(), tone()]);
+  assert.equal(results.filter((r) => typeof r === 'object').length, 1, String(results.map((r) => (typeof r === 'object' ? 'kept' : r))));
+  assert.match(String(results.find((r) => typeof r === 'string')), /500 MB for each server/);
+  stopMusic(id, 'u1');
+});
+
+test('an upload nobody adds is deleted after an hour, and a restart keeps only the files queued', { skip: spawnSync('ffmpeg', ['-version']).status !== 0 }, async (t) => {
+  const { id } = server();
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const upload = (name: string) =>
+    uploadFile(id, name, async (file) => {
+      execFileSync('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', 'sine=duration=1', file]);
+    });
+  const at = (name: string) => `${process.env.DATA_DIR}/music-files/${name}`;
+  const forgotten = await upload('Forgotten.wav');
+  assert.ok(typeof forgotten === 'object');
+  t.mock.timers.tick(59 * 60_000);
+  assert.ok(existsSync(at(forgotten.id)));
+  t.mock.timers.tick(60_000);
+  assert.ok(!existsSync(at(forgotten.id)));
+  assert.equal(queueUpload(id, forgotten.id, 'u1', false), 'gone');
+
+  const queued = await upload('Queued.wav');
+  const waiting = await upload('Waiting.wav');
+  assert.ok(typeof queued === 'object' && typeof waiting === 'object');
+  queueUpload(id, queued.id, 'u1', false);
+  // A restart forgets uploads waiting, and tidies up as it starts
+  resetMusic(RUNNING);
+  tidyFiles();
+  assert.ok(existsSync(at(queued.id)), 'one in the queue stays for the music to carry on');
+  assert.ok(!existsSync(at(waiting.id)));
+  stopMusic(id, 'u1');
+  assert.ok(!existsSync(at(queued.id)));
 });
 
 // ---------- carrying on after a restart ----------

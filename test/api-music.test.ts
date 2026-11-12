@@ -1,65 +1,76 @@
 import './helpers.ts';
-import { joinVoiceChannel, VoiceConnectionStatus } from '@discordjs/voice';
-import { PermissionFlagsBits } from 'discord.js';
 import assert from 'node:assert/strict';
-import { existsSync, readdirSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, truncateSync, writeFileSync } from 'node:fs';
 import { test } from 'node:test';
 import path from 'node:path';
 import { config } from '../src/config.ts';
 import { recentActivity } from '../src/activity.ts';
-import { Mixer } from '../src/mixer.ts';
-import { addTracks, AUTOPLAY } from '../src/features/music.ts';
-import { soundboard } from '../src/features/soundboard.ts';
+import { addTracks, AUTOPLAY, MOST_FILES_BYTES } from '../src/features/music.ts';
 import { resetSpotify } from '../src/spotify.ts';
-import { GUILD, call, guild, ok, permitted, refused, wav } from './apiFixture.ts';
+import { GUILD, call, guild, ok, refused, wav } from './apiFixture.ts';
 
 // The music queue
 
-test('a file from the page plays once at the music volume, and is deleted after', async (t) => {
-  permitted.push(PermissionFlagsBits.Connect, PermissionFlagsBits.Speak);
-  const connection = joinVoiceChannel({ channelId: '702', guildId: GUILD, adapterCreator: guild.voiceAdapterCreator as never });
-  Object.assign(connection, { state: { ...connection.state, status: VoiceConnectionStatus.Ready } });
-  t.after(async () => {
-    await ok(`/guilds/${GUILD}/stop`, { method: 'POST' });
-    soundboard.shutdown!();
-  });
-  const added = t.mock.method(Mixer.prototype, 'add', (_file: string, _gain: number, onEnd: () => void) => onEnd);
+test('a file from the page uploads, then goes in the queue with Play next or Add to end', async (t) => {
   const folder = path.join(process.env.DATA_DIR!, 'music-files');
   const leftovers = () => (existsSync(folder) ? readdirSync(folder) : []);
-  const url = (name: string, channelId = '702') => `/guilds/${GUILD}/music/file?name=${encodeURIComponent(name)}&channelId=${channelId}`;
+  const url = (name: string) => `/guilds/${GUILD}/music/file?name=${encodeURIComponent(name)}`;
+  t.after(() => ok(`/guilds/${GUILD}/music/stop`, { method: 'POST' }));
 
-  let music = await ok(url('My Song.wav'), { method: 'POST', body: wav(2) as BodyInit });
-  assert.equal(music.file.name, 'My Song');
-  assert.ok(Math.abs(music.file.durationMs - 2000) < 100, String(music.file.durationMs));
-  const [file, gain, , options] = added.mock.calls[0].arguments;
-  assert.deepEqual([gain, options], [1, { group: 'music', lasting: true }], 'at the music volume, and sounds can’t push it out');
-  assert.ok(existsSync(file));
-  assert.equal(recentActivity(GUILD, 1)[0].action, 'Played the file **My Song**');
+  const { file } = await ok(url('My Song.wav'), { method: 'POST', body: wav(2) as BodyInit });
+  assert.deepEqual([file.title, file.artist], ['My Song', 'Uploaded file']);
+  assert.ok(Math.abs(file.durationMs - 2000) < 100, String(file.durationMs));
+  assert.deepEqual(leftovers(), [file.id]);
+  assert.deepEqual((await ok(`/guilds/${GUILD}/music`)).queue, [], 'it waits to be added');
+  let music = await ok(`/guilds/${GUILD}/music/queue`, { method: 'POST', json: { file: file.id } });
+  assert.equal(music.message, 'Added My Song.');
+  assert.deepEqual(
+    music.queue.map((r: any) => [r.title, r.artist, r.uri, r.addedBy]),
+    [['My Song', 'Uploaded file', `file:${file.id}`, 'Web UI']],
+  );
+  assert.equal(recentActivity(GUILD, 1)[0].action, 'Added the file **My Song** to the music queue');
+  assert.match(await refused(404, `/guilds/${GUILD}/music/queue`, { method: 'POST', json: { file: file.id } }), /upload is gone/);
 
-  await ok(url('Another.wav'), { method: 'POST', body: wav(1) as BodyInit });
-  assert.ok(!existsSync(file), 'a second file stops the first, which is deleted');
-  music = await ok(`/guilds/${GUILD}/music/file/stop`, { method: 'POST' });
-  assert.equal(music.file, null);
+  // Thrown away instead of added
+  const other = (await ok(url('Other.wav'), { method: 'POST', body: wav(1) as BodyInit })).file;
+  await ok(`/guilds/${GUILD}/music/file/${other.id}`, { method: 'DELETE' });
+  assert.match(await refused(404, `/guilds/${GUILD}/music/file/${other.id}`, { method: 'DELETE' }), /upload is gone/);
+  assert.deepEqual(leftovers(), [file.id]);
+  // Taken out of the queue, it waits again for Undo to put it back, then can be thrown away
+  await ok(`/guilds/${GUILD}/music/queue/${music.queue[0].id}`, { method: 'DELETE' });
+  music = await ok(`/guilds/${GUILD}/music/queue`, { method: 'POST', json: { file: file.id } });
+  assert.deepEqual(music.queue.map((r: any) => r.title), ['My Song']);
+  await ok(`/guilds/${GUILD}/music/queue/${music.queue[0].id}`, { method: 'DELETE' });
+  await ok(`/guilds/${GUILD}/music/file/${file.id}`, { method: 'DELETE' });
   assert.deepEqual(leftovers(), []);
-  assert.match(await refused(409, `/guilds/${GUILD}/music/file/stop`, { method: 'POST' }), /No file is playing/);
-  assert.match(await refused(400, `/guilds/${GUILD}/music/seek`, { method: 'POST', json: { positionMs: 'half' } }), /positionMs must be a number/);
-  assert.match(await refused(400, `/guilds/${GUILD}/music/seek`, { method: 'POST', json: { positionMs: 1000 } }), /Nothing is playing/);
 
   assert.match(await refused(400, url('notes.txt'), { method: 'POST', body: 'hello' }), /isn’t a file the bot can play/);
   assert.match(await refused(400, url('fake.mp3'), { method: 'POST', body: 'hello' }), /doesn’t have any audio/);
-  assert.match(await refused(400, url('song.mp3', 'v1'), { method: 'POST', body: 'hello' }), /Nobody’s in voice/);
   const huge = 61 * 1024 * 1024;
   assert.match(await refused(400, url('huge.mp3'), { method: 'POST', headers: { 'content-length': String(huge) }, body: Buffer.alloc(huge) as BodyInit }), /over 60 MB/);
   // Sent in pieces, with no length up front, it's counted as it arrives
-  const pieces = new ReadableStream({
-    start(c) {
-      for (let i = 0; i < 62; i++) c.enqueue(new Uint8Array(1024 * 1024));
-      c.close();
-    },
-  });
-  assert.match(await refused(413, url('huge.mp3'), { method: 'POST', body: pieces, duplex: 'half' } as RequestInit), /over 60 MB/);
+  const pieces = (chunks: Uint8Array[]) =>
+    new ReadableStream({
+      start(c) {
+        for (const chunk of chunks) c.enqueue(chunk);
+        c.close();
+      },
+    });
+  const big = Array.from({ length: 62 }, () => new Uint8Array(1024 * 1024));
+  assert.match(await refused(413, url('huge.mp3'), { method: 'POST', body: pieces(big), duplex: 'half' } as RequestInit), /over 60 MB/);
   assert.deepEqual(leftovers(), [], 'nothing refused is kept');
-  assert.equal(added.mock.callCount(), 2);
+
+  // Each server's uploads take 500 MB at most, counting those in the queue (this one takes no real room)
+  const full = 'aaaaaaaaaaaaaaaa.mp3';
+  mkdirSync(folder, { recursive: true });
+  writeFileSync(path.join(folder, full), '');
+  truncateSync(path.join(folder, full), MOST_FILES_BYTES - 1000);
+  addTracks(GUILD, [{ uri: `file:${full}`, title: 'Long Mix', artist: 'Uploaded file', album: '', cover: null, durationMs: 60_000 }], 'u1');
+  assert.match(await refused(400, url('more.wav'), { method: 'POST', body: wav(1) as BodyInit }), /500 MB for each server/);
+  assert.match(await refused(400, url('more.wav'), { method: 'POST', body: pieces([new Uint8Array(wav(1))]), duplex: 'half' } as RequestInit), /500 MB for each server/, 'or once it’s arrived');
+  assert.deepEqual(leftovers(), [full]);
+  await ok(`/guilds/${GUILD}/music/stop`, { method: 'POST' });
+  assert.deepEqual(leftovers(), [], 'stopping the music empties the queue and its files');
 });
 
 test('the music queue can be filled, reordered and emptied from the page', async () => {
