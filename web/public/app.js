@@ -7,6 +7,7 @@ import { renderPick } from './pick.js';
 import { stopDock } from './playing.js';
 import { volumeDock } from './volumes.js';
 import { stopWatchingUpdates, watchUpdates } from './updates.js';
+import { playInPicker } from './voice.js';
 import { renderSettings } from './settings.js';
 import { renderSoundboard, VIEW_KEY } from './soundboard.js';
 import { renderStats } from './stats.js';
@@ -148,15 +149,19 @@ function meDialog(main) {
 }
 
 /**
- * On a phone or tablet the tabs sit on a row of their own under the server picker. The header sticks with only that
- * row showing, and the row scrolls to the tab that's open, which may be past the edge of the screen
+ * Where the header doesn't fit on one row, as on a tablet or a small laptop, the tabs get a row of their own under
+ * the server and Play in. The header sticks with only that row showing, and the row scrolls to the tab that's open,
+ * which may be past the edge of the screen. A phone has its tabs along the bottom instead
  */
 function fitNav() {
   const header = app.querySelector('header');
   const nav = header?.querySelector('nav');
   if (!nav) return;
-  // The same width as style.css gives the tabs their own row
-  const ownRow = matchMedia('(max-width: 1120px)').matches;
+  // Tried on one row first: anything that wraps starts below the logo
+  header.classList.remove('tabs-below');
+  const brand = header.querySelector('.brand');
+  const ownRow = [...header.children].some((n) => n.offsetParent && n.offsetTop >= brand.offsetTop + brand.offsetHeight);
+  header.classList.toggle('tabs-below', ownRow);
   header.style.top = ownRow ? `${-nav.offsetTop}px` : '';
   // Keyboard focus scrolls clear of the part of the header that stays on screen, and Settings' find bar sticks under it
   const visible = header.offsetHeight - (ownRow ? nav.offsetTop : 0);
@@ -264,6 +269,8 @@ function renderFrame() {
             state.guilds.map((g) => el('option', { value: g.id, selected: g.id === state.guildId }, g.name)),
           ),
         ),
+      // Where sounds, speech and music play, beside the server, as it's for every page
+      guild && playInPicker(),
       el(
         'nav',
         { ariaLabel: 'Pages' },

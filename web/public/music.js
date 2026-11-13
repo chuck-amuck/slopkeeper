@@ -1,5 +1,6 @@
-import { announce, api, attempt, confirmButton, el, icon, keepFocus, notice, pickedVoice, request, RequestError, session, state, toast, undoToast, volumeControl } from './lib.js';
+import { announce, api, attempt, confirmButton, el, icon, keepFocus, notice, request, RequestError, session, state, toast, undoToast, volumeControl } from './lib.js';
 import { follow, followWhenIdle } from './updates.js';
+import { voiceBar } from './voice.js';
 
 // A playlist adds this many songs, the first or at random
 const FROM_A_LIST = 100;
@@ -107,8 +108,6 @@ export function renderMusic(main) {
   const guildId = state.guildId;
   let data = null;
   let fetchedAt = 0;
-  let channels = null;
-  let chosen = pickedVoice.get();
   let dragging = null;
   let shownQueue = '';
 
@@ -131,7 +130,11 @@ export function renderMusic(main) {
   });
   const progress = songBar.node;
 
-  const picker = el('select', { ariaLabel: 'Voice channel', onchange: (e) => pickedVoice.set((chosen = e.target.value)) });
+  // The channel is Play in, in the header. The music's volume is the only one here
+  const voice = voiceBar(() => {
+    followMusic();
+    paintControls();
+  }, { sliders: false });
   const playButton = el('button', { className: 'primary', onclick: () => void act(playOrPause) }, 'Play');
   const skipButton = el('button', { onclick: () => void act(() => request(api('/music/skip'), { method: 'POST' })) }, 'Skip');
   const stopButton = confirmButton({ title: 'Stops the music and empties the queue' }, 'Stop and clear', 'Clear the queue?', async () => show(await request(api('/music/stop'), { method: 'POST' })));
@@ -147,8 +150,9 @@ export function renderMusic(main) {
   });
   const volumeLabel = el(
     'span',
-    { className: 'voice-volume', hidden: true, title: 'How loud music plays for everyone in the server. It’s the Music volume in Settings.' },
-    el('span', { className: 'voice-label' }, 'Volume'),
+    { className: 'voice-volume', title: 'How loud music plays for everyone in the server. It’s the Music volume in Settings.' },
+    // Named as the Soundboard's Sounds and Speech and the Volume button's sliders are, now that it's on its own
+    el('span', { className: 'voice-label' }, 'Music'),
     volume.node,
   );
 
@@ -158,15 +162,16 @@ export function renderMusic(main) {
     el('div', { className: 'now-main' }, nowCover, el('div', { className: 'now-text' }, nowTitle, nowArtist, nowNote), progress),
     el('div', { className: 'toolbar now-controls' }, playButton, skipButton, stopButton),
   );
-  // Where and how loud, at the top as on the Soundboard
-  const voiceRow = el('div', { className: 'toolbar voice music-voice' }, el('span', { className: 'voice-label' }, 'Play in'), picker, volumeLabel);
+  // How loud, at the top as on the Soundboard
+  const voiceRow = el('div', { className: 'toolbar voice music-voice', hidden: true }, volumeLabel);
   // Kept up with a change from the Volume button or anywhere else, apart from while it's being dragged or typed in
   followWhenIdle('volumes', volumeLabel, () => [volumeLabel], (levels) => levels.music !== null && volume.set(levels.music));
 
   async function playOrPause() {
     if (data?.phase === 'playing') return request(api('/music/pause'), { method: 'POST' });
-    if (!chosen) return null;
-    return request(api('/music/play'), { method: 'POST', json: { channelId: chosen } });
+    const channel = voice.channel();
+    if (!channel) return null;
+    return request(api('/music/play'), { method: 'POST', json: { channelId: channel.id } });
   }
 
   /** Runs a control, then shows what it changed */
@@ -640,8 +645,17 @@ export function renderMusic(main) {
   }
 
   // ---------- painting ----------
+  /**
+   * Until someone picks a channel by hand, Play in goes to where the music is, so Resume carries on there, or with
+   * nothing playing, to where the bot is
+   */
+  function followMusic() {
+    if (data) voice.prefer((data.phase !== 'stopped' && data.channelId) || data.defaultChannelId);
+  }
+
   function paintControls() {
     const playing = data?.phase === 'playing';
+    const chosen = voice.channel();
     playButton.textContent = playing ? 'Pause' : data?.phase === 'paused' ? 'Resume' : 'Play';
     playButton.disabled = !data || (!playing && (!!data.problem || !data.queue.length || !chosen));
     playButton.title = !data ? '' : playing ? 'Pause, keeping the queue' : !chosen ? 'Nobody’s in voice' : !data.queue.length ? 'The queue is empty' : '';
@@ -674,9 +688,9 @@ export function renderMusic(main) {
     modes.hidden = !data.playlistsReady;
     if (!data.playlistsReady && mode === 'playlists') setMode('songs');
     query.disabled = searchButton.disabled = !data.searchReady;
-    if (volumeLabel.hidden) {
+    if (voiceRow.hidden) {
       volume.set(data.volume);
-      volumeLabel.hidden = false;
+      voiceRow.hidden = false;
     }
     if (!savingAutoplay) autoplayBox.checked = !!data.autoplay;
 
@@ -690,31 +704,15 @@ export function renderMusic(main) {
         : 'Search for a song to start.';
     nowNote.textContent = data.note ?? '';
     nowNote.hidden = !data.note;
-    if (data.channelId && data.phase !== 'stopped' && channels?.some((c) => c.id === data.channelId)) {
-      chosen = data.channelId;
-      picker.value = chosen;
-    }
+    followMusic();
     paintProgress();
     paintControls();
     paintQueue();
   }
 
-  function showChannels(fresh) {
-    if (guildId !== state.guildId || !main.isConnected) return;
-    if (JSON.stringify(fresh) === JSON.stringify(channels)) return;
-    channels = fresh;
-    if (!channels.some((c) => c.id === chosen)) chosen = [data?.channelId, data?.defaultChannelId].find((id) => channels.some((c) => c.id === id)) ?? channels[0]?.id ?? null;
-    picker.disabled = !channels.length;
-    picker.replaceChildren(
-      ...(channels.length ? channels.map((c) => el('option', { value: c.id, selected: c.id === chosen }, `${c.name} · ${c.people.join(', ')}`)) : [el('option', {}, 'Nobody’s in voice')]),
-    );
-    paintControls();
-  }
-
-  main.append(problem, voiceRow, now, searchCard, queueCard);
+  main.append(voice.node, problem, voiceRow, now, searchCard, queueCard);
   list.append(notice('loading', 'Loading the queue…', { compact: true, tag: 'li' }));
-  // From the bot the moment they change: the music, and who's in voice to play it to
+  // From the bot the moment it changes. Who's in voice comes through voiceBar
   follow('music', main, (fresh, at) => show(fresh, performance.now() - at));
-  follow('voice', main, (fresh) => showChannels(fresh.channels));
   const ticker = setInterval(() => (main.isConnected ? paintProgress() : clearInterval(ticker)), 500);
 }

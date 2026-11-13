@@ -65,10 +65,14 @@ export function renderLibrary(main) {
       renderList();
     },
   });
-  const voice = voiceBar(() => {
-    players.forEach((button, name) => paintPlay(name, button));
-    boardPlayers.forEach((button, name) => paintPlay(name, button));
-  });
+  // The channel is Play in, in the header, and the volumes are behind the Volume button
+  const voice = voiceBar(
+    () => {
+      players.forEach((button, name) => paintPlay(name, button));
+      boardPlayers.forEach((button, name) => paintPlay(name, button));
+    },
+    { sliders: false },
+  );
   const slots = el('div', { className: 'slots' });
   const boardBody = el('div', { className: 'board-body' });
   const board = el(

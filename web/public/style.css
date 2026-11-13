@@ -535,6 +535,27 @@ header {
   max-width: 220px;
 }
 
+/* Play in: the voice channel everything plays in, with a speaker at the left end of the box */
+.play-in {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.play-in .ico {
+  position: absolute;
+  left: 10px;
+  color: var(--muted);
+  pointer-events: none;
+}
+
+.play-in select {
+  width: 14em;
+  max-width: 220px;
+  padding-left: 36px;
+}
+
 nav {
   display: flex;
   flex-wrap: wrap;
@@ -568,8 +589,12 @@ main {
   gap: var(--space-4);
 }
 
-/* Keeps Log out on the top row on a small window */
-@media (max-width: 1300px) {
+/* Keeps the header to one row on a laptop's screen: app.js gives the tabs a row of their own if it still doesn't fit */
+@media (max-width: 1535px) {
+  header {
+    column-gap: var(--space-3);
+  }
+
   nav button {
     padding-left: 8px;
     padding-right: 8px;
@@ -580,6 +605,10 @@ main {
   }
 
   .guild select {
+    max-width: 160px;
+  }
+
+  .play-in select {
     max-width: 160px;
   }
 }
@@ -595,11 +624,6 @@ main {
 
 .toolbar input[type='search'] {
   flex: 1 1 180px;
-  min-width: 0;
-}
-
-.toolbar.voice select {
-  flex: 1 1 200px;
   min-width: 0;
 }
 
@@ -694,7 +718,7 @@ button.fold-toggle[aria-expanded='false'] .ico {
   min-width: 5.5em;
 }
 
-/* Play in, with the sounds' and speech's volumes under it */
+/* The sounds' and speech's volumes, on Play (Play in is in the header) */
 .voice-box {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
@@ -891,7 +915,7 @@ button.fold-toggle[aria-expanded='false'] .ico {
   white-space: nowrap;
 }
 
-/* On a phone the music's volume gets a row of its own, so the channel and the slider both have room */
+/* On a phone the music's volume runs the width of the screen */
 @media (max-width: 640px) {
   .toolbar.music-voice {
     flex-wrap: wrap;
@@ -2686,19 +2710,17 @@ button.music-upload:hover:not(:disabled) {
   color: var(--bad);
 }
 
-/* Too narrow for the tabs beside the server picker, so they get a row of their own. The header sticks with only
-   that row showing: app.js sets top to minus the height above it */
-@media (max-width: 1120px) {
-  nav {
-    order: 1;
-    width: 100%;
-    flex-wrap: nowrap;
-    overflow-x: auto;
-  }
+/* Too narrow for the tabs beside the server and Play in, so app.js gives them a row of their own. The header sticks
+   with only that row showing: app.js sets top to minus the height above it */
+header.tabs-below nav {
+  order: 1;
+  width: 100%;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+}
 
-  nav button {
-    flex: none;
-  }
+header.tabs-below nav button {
+  flex: none;
 }
 
 /* Touch screens get fingertip-sized targets: 44px, as Apple and Android both suggest */
@@ -2925,6 +2947,18 @@ button.music-upload:hover:not(:disabled) {
 
   .guild select {
     flex: 1;
+    max-width: none;
+    min-width: 0;
+  }
+
+  /* The server and Play in share the row */
+  .guild,
+  .play-in {
+    flex: 1 1 0;
+  }
+
+  .play-in select {
+    width: 100%;
     max-width: none;
     min-width: 0;
   }
