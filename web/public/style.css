@@ -746,8 +746,9 @@ button.fold-toggle[aria-expanded='false'] .ico {
   min-width: 4em;
 }
 
-/* On a phone, Sounds and Speech share a row, each with its name and percentage over its slider */
-@media (max-width: 640px) {
+/* On a phone, and in Play's side column on a wide screen, Sounds and Speech share a row, each with its name and
+   percentage over its slider */
+@media (max-width: 640px), (min-width: 1100px) {
   .voice-box .volume-sliders {
     flex-wrap: nowrap;
     gap: var(--space-4);
@@ -812,7 +813,7 @@ button.fold-toggle[aria-expanded='false'] .ico {
   display: none;
 }
 
-/* Play's Arrange, at the end of the row with Play | Manage */
+/* Play | Manage, with Play's search beside it on a wide screen */
 .view-head {
   display: flex;
   flex-wrap: wrap;
@@ -1565,6 +1566,128 @@ dialog input {
 
 .star[aria-pressed='true'] {
   color: var(--warn);
+}
+
+/* Play: the volumes and Speech, then the sounds. On a wide screen they're two columns, and the first stays put */
+.board-side,
+.board-main {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+@media (min-width: 1100px) {
+  main.play-wide {
+    --side-w: 320px;
+    width: min(1440px, 100%);
+  }
+
+  /* Play | Manage over the side column, and the search over the sounds */
+  main.play-wide .view-head {
+    display: grid;
+    grid-template-columns: var(--side-w) minmax(0, 1fr);
+    gap: var(--space-5);
+  }
+
+  main.play-wide .play-view {
+    grid-template-columns: var(--side-w) minmax(0, 1fr);
+    align-items: start;
+    gap: var(--space-5);
+  }
+
+  .board-side {
+    position: sticky;
+    top: calc(var(--header-visible, 60px) + var(--space-4));
+    max-height: calc(100vh - var(--header-visible, 60px) - 2 * var(--space-4));
+    /* Room for focus rings, which the scrolling would clip */
+    padding: 2px;
+    margin: -2px;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+
+  /* The line and Say on one row, and the voice under them */
+  .board-side .say-form {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      'text send'
+      'voice voice';
+  }
+
+  .board-side .say-text {
+    grid-area: text;
+  }
+
+  .board-side .say-send {
+    grid-area: send;
+  }
+
+  .board-side .say-voices {
+    grid-area: voice;
+  }
+
+  .board-side .say-voices select {
+    flex: 1 1 auto;
+  }
+
+  /* Smaller tiles, the emoji beside a name of up to two lines, so more fit on the screen */
+  main.play-wide .tiles {
+    grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
+  }
+
+  main.play-wide .tile {
+    height: 60px;
+    flex-direction: row;
+    justify-content: flex-start;
+    gap: var(--space-2);
+    padding: 6px 26px 6px 10px;
+    text-align: left;
+  }
+
+  main.play-wide .tile-emoji {
+    flex: none;
+    width: 28px;
+    font-size: 24px;
+    text-align: center;
+  }
+
+  main.play-wide .tile-emoji img,
+  main.play-wide .tile-emoji .ico {
+    width: 26px;
+    height: 26px;
+  }
+
+  main.play-wide .tile-name {
+    display: -webkit-box;
+    flex: 1 1 auto;
+    min-width: 0;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-height: 1.25;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  main.play-wide .star {
+    top: 0;
+    right: 0;
+    width: 28px;
+    min-height: 28px;
+  }
+
+  main.play-wide .star .ico {
+    width: 16px;
+    height: 16px;
+  }
+}
+
+/* With a mouse, a star shows on the tile under the pointer, and always once it's starred */
+@media (min-width: 1100px) and (hover: hover) {
+  main.play-wide .tile-box:not(:hover, :focus-within) .star[aria-pressed='false'] {
+    opacity: 0;
+  }
 }
 
 /* Manage's list, in its groups: Play and Discord's panel follow this order */

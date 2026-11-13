@@ -221,11 +221,15 @@ function sayBox(voice) {
   return { node, paint };
 }
 
+// Wide enough for Speech in a column of its own beside the sounds, as style.css lays it out
+const WIDE = '(min-width: 1100px)';
+
 /**
  * Big buttons for playing sounds during a game: the server's groups in their order, then whatever gets played most.
- * Groups are made and sorted in Manage. `openManage` switches to the Soundboard tab's Manage view, where sounds are added
+ * Groups are made and sorted in Manage. `openManage` switches to the Soundboard tab's Manage view, where sounds are
+ * added. On a wide screen the search goes in `head`, beside Play | Manage
  */
-export function renderBoard(main, openManage) {
+export function renderBoard(main, openManage, head = null) {
   const guildId = state.guildId;
   let sounds = null;
   let groups = [];
@@ -241,9 +245,22 @@ export function renderBoard(main, openManage) {
     className: 'board-search',
     placeholder: 'Search sounds',
     ariaLabel: 'Search sounds',
+    ariaKeyShortcuts: '/',
+    title: 'Press / to search from anywhere here. Enter plays the first match',
     oninput: (e) => {
       filter = e.target.value.trim().toLowerCase();
       render();
+    },
+    onkeydown: (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        if (filter) tiles.find((tile) => !tile.disabled)?.click();
+      } else if (e.key === 'Escape' && search.value) {
+        e.preventDefault();
+        search.value = '';
+        filter = '';
+        render();
+      }
     },
   });
   const board = el('div', { className: 'board' });
@@ -251,8 +268,31 @@ export function renderBoard(main, openManage) {
   // Tooltips don't show on a phone, so the reason the tiles are grey is said where it's seen
   const nobody = notice('empty', 'Nobody’s in voice. Join a voice channel in Discord and these light up.', { compact: true });
   nobody.hidden = true;
-  main.append(voice.node, say.node, search, nobody, board);
+  // Two columns on a wide screen: the volumes and Speech, which stay put, and the sounds. One above the other otherwise
+  const area = el('div', { className: 'board-main' }, search, nobody, board);
+  main.classList.add('play-view');
+  main.append(el('div', { className: 'board-side' }, voice.node, say.node), area);
   board.append(notice('loading', 'Loading sounds…'));
+
+  // The search is over the sounds: beside Play | Manage on a wide screen, and just above them otherwise
+  const wide = matchMedia(WIDE);
+  const placeSearch = () => (wide.matches && head ? head.append(search) : area.prepend(search));
+  placeSearch();
+  const onResize = () => (main.isConnected ? placeSearch() : wide.removeEventListener('change', onResize));
+  wide.addEventListener('change', onResize);
+
+  // With a keyboard, / goes to the search, and on a wide screen so does just typing. Enter plays the first match
+  const onKey = (e) => {
+    if (!main.isConnected) return document.removeEventListener('keydown', onKey);
+    if (e.defaultPrevented || e.ctrlKey || e.metaKey || e.altKey || document.querySelector('dialog[open]')) return;
+    if (e.target.closest?.('input, textarea, select, [contenteditable="true"]')) return;
+    if (e.key === '/') {
+      e.preventDefault();
+      search.focus();
+      search.select();
+    } else if (wide.matches && e.key.length === 1 && e.key !== ' ') search.focus();
+  };
+  document.addEventListener('keydown', onKey);
 
   function paint() {
     const channel = voice.channel();
