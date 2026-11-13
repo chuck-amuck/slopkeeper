@@ -1,6 +1,6 @@
 import { pickClip } from './clip.js';
 import { emojiPicker } from './emojipicker.js';
-import { byUse, EVERYTHING_ELSE } from './board.js';
+import { byUse, EVERYTHING_ELSE } from './soundgrid.js';
 import { announce, api, attempt, confirmButton, el, emojiNode, icon, keepFocus, notice, openDialog, player, postDialog, recall, remember, request, RequestError, soundPath, state, toast, undoToast, volumeControl } from './lib.js';
 import { pickTrim } from './trim.js';
 import { followWhenIdle, older } from './updates.js';

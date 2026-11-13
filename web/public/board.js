@@ -1,33 +1,9 @@
-import { api, attempt, el, emojiNode, fetchAudio, forget, icon, keepFocus, notice, player, recall, remember, request, soundPath, state, toast, undoToast } from './lib.js';
-import { elapsed, onPlaying } from './playing.js';
-import { followWhenIdle, older } from './updates.js';
+import { api, attempt, el, fetchAudio, forget, icon, notice, player, recall, remember, request, state, toast, undoToast } from './lib.js';
+import { foldHead, soundGrid } from './soundgrid.js';
 import { voiceBar } from './voice.js';
 
-export const byUse = (a, b) => b.plays - a.plays || a.name.localeCompare(b.name);
-// What the sounds in no group are called, and the group the star puts sounds in
-export const EVERYTHING_ELSE = 'Everything else';
-const FAVOURITES = 'favourites';
 // Whether Speech is folded away, on this device
 const SPEECH_FOLDED = 'speechFolded';
-// Which groups are folded away, on this device, for each server: `g<id>`, or `rest` for Everything else
-const foldedKey = (guildId) => `foldedGroups:${guildId}`;
-
-/**
- * A section's heading, which folds `body` away and back where it is. `count` shows while it's folded, so nothing looks
- * missing. onFold(open) hears each change
- */
-function foldHead(name, open, body, onFold, count = null) {
-  const number = count === null ? null : el('span', { className: 'fold-count', hidden: open }, String(count));
-  const button = el('button', { type: 'button', className: 'fold-toggle', ariaExpanded: String(open), onclick: () => fold(button.ariaExpanded !== 'true') }, icon('chevron'), el('span', {}, name), number);
-  const fold = (on) => {
-    button.ariaExpanded = String(on);
-    body.hidden = !on;
-    if (number) number.hidden = on;
-    onFold(on);
-  };
-  body.hidden = !open;
-  return el('h2', { className: 'fold-head' }, button);
-}
 
 // Voices in this order, and any the bot adds later after them
 const VOICE_GROUPS = ['Characters', 'Accents', 'Effects'];
@@ -230,16 +206,8 @@ const WIDE = '(min-width: 1100px)';
  * added. On a wide screen the search goes in `head`, beside Play | Manage
  */
 export function renderBoard(main, openManage, head = null) {
-  const guildId = state.guildId;
-  let sounds = null;
-  let groups = [];
-  let filter = '';
-  const tiles = [];
-  /** Each tile shown, by sound name, to mark the ones playing */
-  const shownTiles = new Map();
-  let nowPlaying = [];
-
   const voice = voiceBar(paint);
+  const grid = soundGrid({ voice, stars: true, empty: () => ['No sounds yet. ', el('button', { className: 'link', onclick: openManage }, 'Add some in Manage'), '.'] });
   const search = el('input', {
     type: 'search',
     className: 'board-search',
@@ -247,36 +215,35 @@ export function renderBoard(main, openManage, head = null) {
     ariaLabel: 'Search sounds',
     ariaKeyShortcuts: '/',
     title: 'Press / to search from anywhere here. Enter plays the first match',
-    oninput: (e) => {
-      filter = e.target.value.trim().toLowerCase();
-      render();
-    },
+    oninput: () => grid.search(search.value),
     onkeydown: (e) => {
       if (e.key === 'Enter') {
         e.preventDefault();
-        if (filter) tiles.find((tile) => !tile.disabled)?.click();
+        if (search.value.trim()) grid.playFirst();
       } else if (e.key === 'Escape' && search.value) {
         e.preventDefault();
         search.value = '';
-        filter = '';
-        render();
+        grid.search('');
       }
     },
   });
-  const board = el('div', { className: 'board' });
   const say = sayBox(voice);
   // Tooltips don't show on a phone, so the reason the tiles are grey is said where it's seen
   const nobody = notice('empty', 'Nobody’s in voice. Join a voice channel in Discord and these light up.', { compact: true });
   nobody.hidden = true;
   // Two columns on a wide screen: the volumes and Speech, which stay put, and the sounds. One above the other otherwise
-  const area = el('div', { className: 'board-main' }, search, nobody, board);
+  const area = el('div', { className: 'board-main' }, search, nobody, grid.node);
   main.classList.add('play-view');
   main.append(el('div', { className: 'board-side' }, voice.node, say.node), area);
-  board.append(notice('loading', 'Loading sounds…'));
 
-  // The search is over the sounds: beside Play | Manage on a wide screen, and just above them otherwise
+  // The search is over the sounds: beside Play | Manage on a wide screen, and just above them otherwise. The tiles are
+  // smaller there, so more fit
   const wide = matchMedia(WIDE);
-  const placeSearch = () => (wide.matches && head ? head.append(search) : area.prepend(search));
+  const placeSearch = () => {
+    grid.node.classList.toggle('compact', wide.matches);
+    if (wide.matches && head) head.append(search);
+    else area.prepend(search);
+  };
   placeSearch();
   const onResize = () => (main.isConnected ? placeSearch() : wide.removeEventListener('change', onResize));
   wide.addEventListener('change', onResize);
@@ -295,190 +262,8 @@ export function renderBoard(main, openManage, head = null) {
   document.addEventListener('keydown', onKey);
 
   function paint() {
-    const channel = voice.channel();
     say.paint();
-    nobody.hidden = !voice.loaded() || !!channel;
-    for (const tile of tiles) {
-      tile.disabled = !channel;
-      tile.title = channel ? `Play in ${channel.name}` : 'Nobody’s in voice';
-    }
+    nobody.hidden = !voice.loaded() || !!voice.channel();
+    grid.paint();
   }
-
-  /**
-   * The sounds as they are now, in the order they're shown: new ones go at the end, deleted ones go, and the rest stay
-   * where they are, so the board doesn't reshuffle under someone tapping it
-   */
-  function useSounds(fresh) {
-    const now = new Map(fresh.map((s) => [s.name, s]));
-    const kept = sounds.filter((s) => now.has(s.name)).map((s) => now.get(s.name));
-    const known = new Set(kept.map((s) => s.name));
-    sounds = [...kept, ...fresh.filter((s) => !known.has(s.name)).sort(byUse)];
-  }
-
-  /** The star shows whether a sound is in Favourites */
-  function useGroups(fresh) {
-    groups = fresh;
-    const starred = new Set(groups.find((g) => g.name.toLowerCase() === FAVOURITES)?.sounds ?? []);
-    for (const s of sounds) s.favourite = starred.has(s.name);
-  }
-
-  /** Runs a change to the groups, then shows them as the bot has them. Resolves to whether it worked */
-  async function changeGroups(action) {
-    const fresh = await attempt(action);
-    if (!fresh?.groups || guildId !== state.guildId || !main.isConnected) return false;
-    useGroups(fresh.groups);
-    render();
-    return true;
-  }
-
-  function tile(sound, group = null) {
-    const button = el(
-      'button',
-      {
-        className: 'tile',
-        onclick: () => {
-          // Restarts the flash on every press, so spamming still shows
-          button.classList.remove('hit');
-          void button.offsetWidth;
-          button.classList.add('hit');
-          void attempt(() => voice.play(sound.name));
-        },
-      },
-      el('span', { className: 'tile-emoji', ariaHidden: 'true' }, sound.emoji ? emojiNode(sound.emoji, '') : icon('speaker')),
-      el('span', { className: 'tile-name' }, sound.name),
-    );
-    tiles.push(button);
-    const progress = el('span', { className: 'tile-progress', hidden: true });
-    shownTiles.set(sound.name, { button, progress, sound });
-    // A sound is in one group at most, so starring one in another group moves it out of there
-    const other = sound.favourite ? null : group;
-    const star = el(
-      'button',
-      {
-        className: 'star',
-        ariaLabel: sound.favourite ? `Remove ${sound.name} from favourites` : other ? `Move ${sound.name} from ${other.name} to favourites` : `Add ${sound.name} to favourites`,
-        title: sound.favourite ? 'Remove from favourites' : other ? `Move from ${other.name} to favourites` : 'Add to favourites',
-        ariaPressed: String(sound.favourite),
-        onclick: () =>
-          void changeGroups(() => request(soundPath(sound.name), { method: 'PATCH', json: { favourite: !sound.favourite } })).then((ok) => {
-            if (ok && other) toast(`Moved ${sound.name} from ${other.name} to Favourites.`);
-          }),
-      },
-      icon('star'),
-    );
-    return el('div', { className: 'tile-box' }, button, progress, star);
-  }
-
-  /** Marks the tiles of the sounds playing, with how far through they are */
-  function markPlaying() {
-    const playing = new Map(nowPlaying.filter((p) => p.kind === 'sound').map((p) => [p.name, p]));
-    for (const [name, { button, progress, sound }] of shownTiles) {
-      const p = playing.get(name);
-      button.classList.toggle('playing', !!p);
-      progress.hidden = !p;
-      if (!p) {
-        delete progress.dataset.id;
-        continue;
-      }
-      // Only a new play, or one that's just been heard, starts the bar again
-      const key = `${p.id}:${p.started}`;
-      if (progress.dataset.id === key) continue;
-      progress.dataset.id = key;
-      progress.classList.remove('running', 'waiting');
-      if (p.loop || !sound.seconds) continue;
-      // Empty until the sound is heard, so the bar keeps pace with it
-      if (!p.started) {
-        progress.classList.add('waiting');
-        continue;
-      }
-      progress.style.setProperty('--play-ms', `${sound.seconds * 1000}ms`);
-      progress.style.setProperty('--play-delay', `${-Math.round(elapsed(p))}ms`);
-      void progress.offsetWidth;
-      progress.classList.add('running');
-    }
-  }
-  onPlaying(board, (playing) => {
-    nowPlaying = playing;
-    markPlaying();
-  });
-
-  // Groups folded away on this device. A search shows them all, and they fold again after
-  let folded = new Set();
-  try {
-    folded = new Set(JSON.parse(recall(foldedKey(guildId)) ?? '[]'));
-  } catch {}
-  const foldId = (group) => (group ? `g${group.id}` : 'rest');
-  /** A group's heading, which folds its sounds away, unless a search has every group open */
-  const headOf = (group, list, grid) => {
-    const name = group?.name ?? EVERYTHING_ELSE;
-    if (filter) return el('h2', {}, name);
-    const id = foldId(group);
-    const onFold = (open) => {
-      if (open) folded.delete(id);
-      else folded.add(id);
-      // Groups deleted since are forgotten
-      const ids = new Set(['rest', ...groups.map(foldId)]);
-      folded = new Set([...folded].filter((x) => ids.has(x)));
-      if (folded.size) remember(foldedKey(guildId), JSON.stringify([...folded]));
-      else forget(foldedKey(guildId));
-    };
-    return foldHead(name, !folded.has(id), grid, onFold, list.length);
-  };
-
-  function render() {
-    tiles.length = 0;
-    shownTiles.clear();
-    if (!sounds.length) return board.replaceChildren(notice('empty', 'No sounds yet. ', el('button', { className: 'link', onclick: openManage }, 'Add some in Manage'), '.'));
-    const shown = sounds.filter((s) => s.name.includes(filter));
-    if (!shown.length) return board.replaceChildren(notice('empty', `Nothing matches “${filter}”.`));
-    const byName = new Map(shown.map((s) => [s.name, s]));
-    const grouped = new Set(groups.flatMap((g) => g.sounds));
-    const sections = groups.map((group) => ({ group, list: group.sounds.map((n) => byName.get(n)).filter(Boolean) })).filter((x) => x.list.length);
-    // In the order they were loaded in, most played first then, and new ones after
-    const rest = shown.filter((s) => !grouped.has(s.name));
-    const grid = (list, group) => el('div', { className: 'tiles' }, list.map((s) => tile(s, group)));
-    keepFocus(board, () =>
-      board.replaceChildren(
-        ...sections.flatMap(({ group, list }) => {
-          const box = grid(list, group);
-          return [headOf(group, list, box), box];
-        }),
-        ...(rest.length
-          ? (() => {
-              const box = grid(rest, null);
-              // Without groups, there's no heading to fold it with
-              return [...(sections.length ? [headOf(null, rest, box)] : []), box];
-            })()
-          : []),
-      ),
-    );
-    markPlaying();
-    paint();
-  }
-
-  // What's shown comes from the first load and from changes made anywhere: other tabs, Discord and the bot itself.
-  // Whichever arrives first is used, and nothing older than what's shown
-  let shown = '';
-  function useData(fresh) {
-    if (guildId !== state.guildId || !main.isConnected || older(fresh.version, shown)) return false;
-    shown = fresh.version;
-    if (sounds) useSounds(fresh.sounds);
-    else sounds = fresh.sounds.sort(byUse);
-    useGroups(fresh.groups ?? []);
-    return true;
-  }
-  // A change waits while a tile is held down, so nothing moves under the finger
-  followWhenIdle('sounds', main, () => [board], (fresh) => useData(fresh) && render());
-
-  void attempt(async () => {
-    try {
-      const fresh = await request(api('/sounds'));
-      if (guildId !== state.guildId || !main.isConnected) return;
-      useData(fresh);
-      render();
-    } catch (err) {
-      board.replaceChildren(notice('error', err.message));
-      throw err;
-    }
-  });
 }
