@@ -1,5 +1,17 @@
 const toasts = document.getElementById('toasts');
 
+/** The pop-out window while it's open: { win, toasts } */
+let second = null;
+
+/** The pop-out window, or null. Its toasts show in it while it has focus. Everything that cares hears 'second-window' */
+export const secondWindow = () => second?.win ?? null;
+export function setSecondWindow(win, region = null) {
+  second = win ? { win, toasts: region } : null;
+  dispatchEvent(new CustomEvent('second-window'));
+}
+/** The document being used: the pop-out's while it has focus, this page's otherwise */
+const docInUse = () => (second && !second.win.closed && second.win.document.hasFocus() ? second.win.document : document);
+
 /** Everything shown goes through text nodes, so a sound or channel name can't become markup */
 export function el(tag, props = {}, ...children) {
   const node = document.createElement(tag);
@@ -101,16 +113,17 @@ export function toast(text, bad = false, action = null, stays = false) {
   if (stays) node.append(el('button', { type: 'button', className: 'toast-close icon', ariaLabel: 'Dismiss', title: 'Dismiss', onclick: close }, icon('x')));
   // A dialog it was in may have gone without closing, when the page was redrawn under it
   if (!toasts.isConnected) document.body.append(toasts);
-  toasts.append(node);
+  (docInUse() !== document && second.toasts ? second.toasts : toasts).append(node);
   wait();
 }
 
 /** Says something to screen readers only, such as a change that's only shown by colour */
 export function announce(text) {
-  let region = document.getElementById('announcer');
+  const doc = docInUse();
+  let region = doc.getElementById('announcer');
   if (!region) {
     region = el('div', { id: 'announcer', className: 'visually-hidden', role: 'status' });
-    document.body.append(region);
+    doc.body.append(region);
   }
   // Emptied first, so saying the same thing twice is still heard
   region.textContent = '';
@@ -136,13 +149,15 @@ export const formProblem = () => el('div', { className: 'bad-text plan-problem',
  * it goes to the one with the same name afterwards
  */
 export function keepFocus(container, rebuild) {
-  const focused = document.activeElement;
+  // It may be in the pop-out window, which has its own focus
+  const doc = container.ownerDocument;
+  const focused = doc.activeElement;
   const inside = container.contains(focused) && focused !== container;
   const key = inside ? nameOf(focused) : null;
   // Where it was, for when the same one isn't there any more: the next one along is the most useful place
   const at = inside ? focusables(container).indexOf(focused) : -1;
   rebuild();
-  if (!inside || container.contains(document.activeElement)) return;
+  if (!inside || container.contains(doc.activeElement)) return;
   const same = [...container.querySelectorAll(focused.tagName)].find((node) => nameOf(node) === key);
   const after = focusables(container);
   (same ?? after[Math.min(at, after.length - 1)])?.focus();

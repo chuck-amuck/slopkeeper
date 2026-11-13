@@ -1,4 +1,4 @@
-import { el, request, state } from './lib.js';
+import { el, request, secondWindow, state } from './lib.js';
 
 /**
  * Keeps the page up with what's playing, the music, who's in voice, game nights, the activity log, the sounds and the
@@ -54,8 +54,12 @@ export function older(a, b) {
 
 // Where a press that hasn't been let go of started: a slider being dragged, say
 let pressing = null;
-addEventListener('pointerdown', (e) => (pressing = e.target), true);
-for (const type of ['pointerup', 'pointercancel']) addEventListener(type, () => (pressing = null), true);
+/** Keeps track of presses in `win`: this page's window, and the pop-out's once it opens */
+export function watchPresses(win) {
+  win.addEventListener('pointerdown', (e) => (pressing = e.target), true);
+  for (const type of ['pointerup', 'pointercancel']) win.addEventListener(type, () => (pressing = null), true);
+}
+watchPresses(window);
 
 // Fields that take typing, as opposed to a switch, slider or menu that's done with once used
 const TYPING = 'textarea, input:not([type=checkbox], [type=radio], [type=range], [type=button], [type=submit], [type=reset], [type=file], [type=color])';
@@ -71,7 +75,8 @@ export function followWhenIdle(part, node, areas, listener, alsoBusy = () => fal
   const busy = () =>
     alsoBusy() ||
     areas().some((area) => {
-      const at = document.activeElement;
+      // The part may be in the pop-out window, which has its own focus
+      const at = area.ownerDocument.activeElement;
       return (area.contains(at) && at.matches(TYPING)) || (pressing && area.contains(pressing)) || !!area.querySelector('.confirm.danger');
     });
   const apply = () => {
@@ -118,7 +123,10 @@ const rest = (me, ms) =>
     };
   });
 
-/** Waits until the tab is shown or hidden, or something new is followed */
+/** Whether anyone can see the page: the tab, or the pop-out window, which stays on screen while the tab's hidden */
+const seen = () => !document.hidden || !!(secondWindow() && !secondWindow().document.hidden);
+
+/** Waits until the tab or pop-out is shown or hidden, the pop-out opens or closes, or something new is followed */
 const pause = (me) =>
   new Promise((resolve) => {
     const done = new AbortController();
@@ -127,6 +135,8 @@ const pause = (me) =>
       resolve();
     };
     document.addEventListener('visibilitychange', me.wake, { signal: done.signal });
+    secondWindow()?.document.addEventListener('visibilitychange', me.wake, { signal: done.signal });
+    addEventListener('second-window', me.wake, { signal: done.signal });
   });
 
 /** Starts keeping up with the server picked, unless that's already happening */
@@ -145,7 +155,7 @@ async function loop(me) {
   while (me.alive) {
     prune();
     const parts = Object.keys(followers).filter((part) => followers[part].size);
-    if (!parts.length || document.hidden) {
+    if (!parts.length || !seen()) {
       me.asking = new Set();
       await pause(me);
       continue;

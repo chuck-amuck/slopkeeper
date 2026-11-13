@@ -24,13 +24,10 @@ export function onPlaying(node, listener) {
 }
 
 /**
- * The corner of every page: the Volume button, and while anything's playing, the Stop button beside it with what's
- * playing above. Tapping a name stops just that one; Stop stops them all, but never the music. `volume` is the Volume
- * button and the panel it opens, which goes above the rest, and `sounds` the same for the Sounds panel, if the page
- * has one. One of the two panels is open at a time
+ * Stop, shown only while something's playing: it stops every sound and line of speech, but never the music, and the
+ * toast after offers to pause that too. paint(playing) shows it for what's playing now
  */
-export function stopDock(volume, sounds = null) {
-  const list = el('ul', { className: 'now-sounds', ariaLabel: 'Playing now', hidden: true });
+export function stopButton() {
   const label = el('span', { className: 'stop-label' }, 'Stop sounds');
   const button = el(
     'button',
@@ -55,7 +52,25 @@ export function stopDock(volume, sounds = null) {
     icon('stop'),
     label,
   );
-  const node = el('div', { className: 'stop-dock' }, list, volume.panel, sounds?.panel, el('div', { className: 'dock-row' }, button, sounds?.button, volume.button));
+  return {
+    button,
+    paint(playing) {
+      button.hidden = !playing.length;
+      label.textContent = playing.length === 1 ? `Stop ${playing[0].kind === 'speech' ? 'speech' : playing[0].name}` : `Stop all ${playing.length}`;
+    },
+  };
+}
+
+/**
+ * The corner of every page: the Volume button, and while anything's playing, the Stop button beside it with what's
+ * playing above. Tapping a name stops just that one; Stop stops them all, but never the music. `volume` is the Volume
+ * button and the panel it opens, which goes above the rest, and `sounds` the same for the Sounds panel, if the page
+ * has one. One of the two panels is open at a time
+ */
+export function stopDock(volume, sounds = null) {
+  const list = el('ul', { className: 'now-sounds', ariaLabel: 'Playing now', hidden: true });
+  const stop = stopButton();
+  const node = el('div', { className: 'stop-dock' }, list, volume.panel, sounds?.panel, el('div', { className: 'dock-row' }, stop.button, sounds?.button, volume.button));
   if (sounds) {
     volume.onOpen = sounds.close;
     sounds.onOpen = volume.close;
@@ -79,9 +94,7 @@ export function stopDock(volume, sounds = null) {
 
   const paintList = (playing) => {
     shownPlaying = playing;
-    // Only while there's something to stop
-    button.hidden = !playing.length;
-    label.textContent = playing.length === 1 ? `Stop ${playing[0].kind === 'speech' ? 'speech' : playing[0].name}` : `Stop all ${playing.length}`;
+    stop.paint(playing);
     if (playing.length < 2) expanded = false;
     list.hidden = !playing.length;
     if (narrow.matches && playing.length > 1 && !expanded) {
