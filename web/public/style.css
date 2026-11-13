@@ -596,6 +596,13 @@ body.popout .mini-player {
   grid-template-columns: repeat(auto-fill, minmax(min(150px, calc(50% - 4px)), 1fr));
 }
 
+/* Narrower than two names fit side by side, one across, rather than names broken mid-word */
+@media (max-width: 299px) {
+  .popout-main .board.compact .tiles {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 .popout-main .sounds-scroll {
   margin-inline: calc(-1 * var(--space-3));
   padding: 2px var(--space-3) var(--space-3);

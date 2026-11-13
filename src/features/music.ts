@@ -108,6 +108,8 @@ interface Session {
   guild: Guild;
   channelId: string;
   phase: 'starting' | 'playing' | 'paused';
+  /** When the music started, which pauses, skips and restarts keep until it stops: the web UI's music player stays hidden till then */
+  since: number;
   /** The queue row being played */
   current: QueueRow;
   /** Where the song playing came from: youtube or soundcloud */
@@ -423,7 +425,7 @@ const channelOf = (s: Session) => {
 };
 
 function newSession(guild: Guild, channelId: string, current: QueueRow, phase: Session['phase'], positionMs: number): Session {
-  return { guild, channelId, phase, current, via: null, turn: 0, position: { ms: positionMs, at: Date.now(), speed: 0 }, note: null, played: [], seen: new Set(), mixes: new Map() };
+  return { guild, channelId, phase, since: Date.now(), current, via: null, turn: 0, position: { ms: positionMs, at: Date.now(), speed: 0 }, note: null, played: [], seen: new Set(), mixes: new Map() };
 }
 
 /** Starts the queue in a channel, or carries on where it paused. Returns null on success or the reason it couldn't, for the user */
@@ -759,6 +761,7 @@ interface SavedSession {
   /** What Autoplay knows of what played, so it neither repeats songs nor loses its place */
   played?: Session['played'];
   seen?: string[];
+  since?: number;
 }
 
 /** Once the bot is exiting, the place it saved last is the one to keep, rather than the pauses that leaving voice causes */
@@ -777,6 +780,7 @@ function saveSessions() {
     at: Date.now(),
     played: s.played.slice(-MIXES_KEPT),
     seen: [...s.seen],
+    since: s.since,
   }));
   if (!saved.length && wroteNone) return;
   wroteNone = !saved.length;
@@ -813,6 +817,7 @@ async function resumeOne(client: Client, saved: SavedSession) {
   const s = newSession(guild, channel.id, first, 'paused', positionMs);
   if (Array.isArray(saved.played)) s.played = saved.played.filter((p) => typeof p?.video === 'string' && typeof p.url === 'string' && videoOf(p.url) === p.video);
   if (Array.isArray(saved.seen)) s.seen = new Set(saved.seen.filter((v) => typeof v === 'string').slice(-PLAYED_KEPT));
+  if (Number.isFinite(saved.since)) s.since = saved.since!;
   sessions.set(guild.id, s);
   saveSessions();
   if (!saved.playing) return;
@@ -1055,6 +1060,7 @@ export function musicState(guildId: string) {
     // Only with the account's sign-in; without it the page doesn't offer them
     playlistsReady: playlistsReady(),
     phase: s?.phase ?? 'stopped',
+    since: s?.since ?? null,
     // Playing a sound elsewhere from the soundboard takes the bot, and the music, with it
     channelId: s ? ((s.stopAudio && botChannelId(guildId)) || s.channelId) : null,
     positionMs: s ? Math.round(Math.min(positionOf(s), s.current.duration_ms)) : 0,

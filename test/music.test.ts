@@ -356,6 +356,7 @@ test('playing fetches the first song and plays it, fetching the next ahead, then
   assert.deepEqual(fetched, [song(1).uri, song(2).uri, song(1).uri], 'the first two are fetched once queued, so play starts from what’s already there');
   const state = musicState(id);
   assert.deepEqual([state.phase, state.channelId, state.via], ['playing', 'voice', 'youtube']);
+  assert.equal(typeof state.since, 'number');
   tick(30_000);
   assert.equal(musicState(id).positionMs, 30_000);
   assert.equal(pauseMusic(id), null);
@@ -366,8 +367,15 @@ test('playing fetches the first song and plays it, fetching the next ahead, then
   assert.deepEqual(lastPlayed().options, { group: 'music', lasting: true, startMs: 30_000 }, 'resumes where it paused');
   assert.equal(await startMusic(guild, channel), null, 'already playing there');
   assert.equal(played.length, 2);
+  assert.equal(musicState(id).since, state.since, 'a pause doesn’t start the music afresh');
   stopMusic(id, 'u1');
   assert.equal(lastPlayed().stopped, true);
+  assert.equal(musicState(id).since, null);
+  tick(1000);
+  addTracks(id, [song(3)], 'u1');
+  await startMusic(guild, channel);
+  assert.ok(musicState(id).since! > state.since!, 'started again after a stop, it’s new music');
+  stopMusic(id, 'u1');
 });
 
 test('queueing fetches the first two songs ahead, each once, and the next as the queue moves', async () => {
@@ -778,7 +786,9 @@ test('a restart carries the music on from the same second, in the same channel',
   assert.deepEqual(savedPlace().map((p) => [p.positionMs, p.playing]), [[0, true]], 'saved as soon as it plays, in case the bot crashes');
   tick(83_000);
   const before = played.length;
+  const { since } = musicState(id);
   await restart(guild);
+  assert.equal(musicState(id).since, since, 'still the same music, so a player hidden till it stops stays hidden');
   assert.equal(played.length, before + 1);
   assert.deepEqual([lastPlayed().file, lastPlayed().options], [audioFile(1), { group: 'music', lasting: true, startMs: 83_000 }]);
   assert.equal(musicState(id).phase, 'playing');

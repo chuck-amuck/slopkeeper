@@ -27,12 +27,35 @@ export function foldHead(name, open, body, onFold, count = null) {
 }
 
 /**
+ * With a keyboard, / in `doc` goes to the search `searchBox()` gives, and so does just typing while `typing()` says so,
+ * unless it's into a field or a dialog's open
+ */
+export function searchKeys(doc, searchBox, typing, signal = undefined) {
+  doc.addEventListener(
+    'keydown',
+    (e) => {
+      const search = searchBox();
+      if (!search?.isConnected || e.defaultPrevented || e.ctrlKey || e.metaKey || e.altKey || doc.querySelector('dialog[open]')) return;
+      if (e.target.closest?.('input, textarea, select, [contenteditable="true"]')) return;
+      if (e.key === '/') {
+        e.preventDefault();
+        search.focus();
+        search.select();
+      } else if (typing() && e.key.length === 1 && e.key !== ' ') search.focus();
+    },
+    { signal },
+  );
+}
+
+/**
  * The server's sounds as buttons that play them in the channel picked: its groups in their order, then whatever gets
  * played most, each group folding away as it does wherever they're shown on this device. They keep up with changes
  * made anywhere, light up while they play, and are grey while nobody's in voice. `voice` is a voiceBar, `empty()` what
- * to show when there are no sounds, and `stars` puts a star on each to add it to Favourites
+ * to show when there are no sounds, and `stars` puts a star on each to add it to Favourites. `searchBox` narrows them,
+ * where Enter plays the first match, and `nobody` says why they're grey; both go where the page puts them. `slash`
+ * says / goes to the search, where searchKeys() is set up
  */
-export function soundGrid({ voice, empty, stars = false }) {
+export function soundGrid({ voice, empty, stars = false, slash = false }) {
   const guildId = state.guildId;
   let sounds = null;
   let groups = [];
@@ -43,9 +66,35 @@ export function soundGrid({ voice, empty, stars = false }) {
   let nowPlaying = [];
   const node = el('div', { className: 'board' }, notice('loading', 'Loading sounds…'));
 
+  const searchBox = el('input', {
+    type: 'search',
+    className: 'board-search',
+    placeholder: 'Search sounds',
+    ariaLabel: 'Search sounds',
+    autocomplete: 'off',
+    ...(slash && { ariaKeyShortcuts: '/' }),
+    title: slash ? 'Press / to search from anywhere here. Enter plays the first match' : 'Enter plays the first match',
+    oninput: () => search(searchBox.value),
+    onkeydown: (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        if (searchBox.value.trim()) tiles.find((tile) => !tile.disabled)?.click();
+      } else if (e.key === 'Escape' && searchBox.value) {
+        // Clears the search first, so it takes a second press to close what it's in
+        e.preventDefault();
+        searchBox.value = '';
+        search('');
+      }
+    },
+  });
+  // Tooltips don't show on a phone, so the reason the tiles are grey is said where it's seen
+  const nobody = notice('empty', 'Nobody’s in voice. Join a voice channel in Discord and these light up.', { compact: true });
+  nobody.hidden = true;
+
   /** Greys the tiles while nobody's in voice, and says where each plays */
   function paint() {
     const channel = voice.channel();
+    nobody.hidden = !voice.loaded() || !!channel;
     for (const tile of tiles) {
       tile.disabled = !channel;
       tile.title = channel ? `Play in ${channel.name}` : 'Nobody’s in voice';
@@ -153,11 +202,16 @@ export function soundGrid({ voice, empty, stars = false }) {
     markPlaying();
   });
 
-  // Groups folded away on this device. A search shows them all, and they fold again after
-  let folded = new Set();
-  try {
-    folded = new Set(JSON.parse(recall(foldedKey(guildId)) ?? '[]'));
-  } catch {}
+  // Groups folded away on this device. A search shows them all, and they fold again after. Read afresh each time, as
+  // the Soundboard, the Sounds panel and the pop-out can all be folding them
+  const foldedNow = () => {
+    try {
+      return new Set(JSON.parse(recall(foldedKey(guildId)) ?? '[]'));
+    } catch {
+      return new Set();
+    }
+  };
+  let folded = foldedNow();
   const foldId = (group) => (group ? `g${group.id}` : 'rest');
   /** A group's heading, which folds its sounds away, unless a search has every group open */
   const headOf = (group, list, grid) => {
@@ -165,6 +219,7 @@ export function soundGrid({ voice, empty, stars = false }) {
     if (filter) return el('h2', {}, name);
     const id = foldId(group);
     const onFold = (open) => {
+      folded = foldedNow();
       if (open) folded.delete(id);
       else folded.add(id);
       // Groups deleted since are forgotten
@@ -179,6 +234,8 @@ export function soundGrid({ voice, empty, stars = false }) {
   function render() {
     tiles.length = 0;
     shownTiles.clear();
+    // A search shows every group open, so the folds only matter without one
+    if (!filter) folded = foldedNow();
     if (!sounds.length) return node.replaceChildren(notice('empty', ...empty()));
     const shown = sounds.filter((s) => s.name.includes(filter));
     if (!shown.length) return node.replaceChildren(notice('empty', `Nothing matches “${filter}”.`));
@@ -233,15 +290,11 @@ export function soundGrid({ voice, empty, stars = false }) {
     }
   });
 
-  return {
-    node,
-    paint,
-    /** Shows only the sounds whose names hold `text` */
-    search(text) {
-      filter = text.trim().toLowerCase();
-      if (sounds) render();
-    },
-    /** Plays the first sound shown, if it can */
-    playFirst: () => tiles.find((tile) => !tile.disabled)?.click(),
-  };
+  /** Shows only the sounds whose names hold `text` */
+  function search(text) {
+    filter = text.trim().toLowerCase();
+    if (sounds) render();
+  }
+
+  return { node, searchBox, nobody, paint };
 }

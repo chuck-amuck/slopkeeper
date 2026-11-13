@@ -1,5 +1,5 @@
-import { api, attempt, el, fetchAudio, forget, icon, notice, player, recall, remember, request, state, toast, undoToast } from './lib.js';
-import { foldHead, soundGrid } from './soundgrid.js';
+import { api, attempt, el, fetchAudio, forget, icon, pageSignal, player, recall, remember, request, state, toast, undoToast } from './lib.js';
+import { foldHead, searchKeys, soundGrid } from './soundgrid.js';
 import { voiceBar } from './voice.js';
 
 // Whether Speech is folded away, on this device
@@ -207,30 +207,9 @@ const WIDE = '(min-width: 1100px)';
  */
 export function renderBoard(main, openManage, head = null) {
   const voice = voiceBar(paint);
-  const grid = soundGrid({ voice, stars: true, empty: () => ['No sounds yet. ', el('button', { className: 'link', onclick: openManage }, 'Add some in Manage'), '.'] });
-  const search = el('input', {
-    type: 'search',
-    className: 'board-search',
-    placeholder: 'Search sounds',
-    ariaLabel: 'Search sounds',
-    ariaKeyShortcuts: '/',
-    title: 'Press / to search from anywhere here. Enter plays the first match',
-    oninput: () => grid.search(search.value),
-    onkeydown: (e) => {
-      if (e.key === 'Enter') {
-        e.preventDefault();
-        if (search.value.trim()) grid.playFirst();
-      } else if (e.key === 'Escape' && search.value) {
-        e.preventDefault();
-        search.value = '';
-        grid.search('');
-      }
-    },
-  });
+  const grid = soundGrid({ voice, stars: true, slash: true, empty: () => ['No sounds yet. ', el('button', { className: 'link', onclick: openManage }, 'Add some in Manage'), '.'] });
+  const { searchBox: search, nobody } = grid;
   const say = sayBox(voice);
-  // Tooltips don't show on a phone, so the reason the tiles are grey is said where it's seen
-  const nobody = notice('empty', 'Nobody’s in voice. Join a voice channel in Discord and these light up.', { compact: true });
-  nobody.hidden = true;
   // Two columns on a wide screen: the volumes and Speech, which stay put, and the sounds. One above the other otherwise
   const area = el('div', { className: 'board-main' }, search, nobody, grid.node);
   main.classList.add('play-view');
@@ -245,25 +224,15 @@ export function renderBoard(main, openManage, head = null) {
     else area.prepend(search);
   };
   placeSearch();
-  const onResize = () => (main.isConnected ? placeSearch() : wide.removeEventListener('change', onResize));
-  wide.addEventListener('change', onResize);
+  // Play and Manage swap without the page being drawn again, so a board that's been swapped out lets go itself
+  const onWide = () => (main.isConnected ? placeSearch() : wide.removeEventListener('change', onWide));
+  wide.addEventListener('change', onWide, { signal: pageSignal() });
 
   // With a keyboard, / goes to the search, and on a wide screen so does just typing. Enter plays the first match
-  const onKey = (e) => {
-    if (!main.isConnected) return document.removeEventListener('keydown', onKey);
-    if (e.defaultPrevented || e.ctrlKey || e.metaKey || e.altKey || document.querySelector('dialog[open]')) return;
-    if (e.target.closest?.('input, textarea, select, [contenteditable="true"]')) return;
-    if (e.key === '/') {
-      e.preventDefault();
-      search.focus();
-      search.select();
-    } else if (wide.matches && e.key.length === 1 && e.key !== ' ') search.focus();
-  };
-  document.addEventListener('keydown', onKey);
+  searchKeys(document, () => search, () => wide.matches, pageSignal());
 
   function paint() {
     say.paint();
-    nobody.hidden = !voice.loaded() || !!voice.channel();
     grid.paint();
   }
 }

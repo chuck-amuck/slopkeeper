@@ -1,6 +1,7 @@
-import { el, icon, recall, remember, secondWindow, setSecondWindow, state, toast } from './lib.js';
+import { el, icon, pageSignal, recall, remember, secondWindow, setSecondWindow, state, toast } from './lib.js';
 import { musicPlayer } from './miniplayer.js';
 import { onPlaying, stopButton } from './playing.js';
+import { searchKeys } from './soundgrid.js';
 import { soundsBody } from './soundspanel.js';
 import { watchPresses } from './updates.js';
 import { playInPicker } from './voice.js';
@@ -43,8 +44,7 @@ export function popOutButton(className = 'icon quiet') {
     icon('popout'),
   );
   // Gone while the window's open, as there's only one
-  const onWindow = () => (button.isConnected ? (button.hidden = !!secondWindow()) : removeEventListener('second-window', onWindow));
-  addEventListener('second-window', onWindow);
+  addEventListener('second-window', () => (button.hidden = !!secondWindow()), { signal: pageSignal() });
   return button;
 }
 
@@ -79,15 +79,7 @@ async function popOut() {
   render();
 
   // With a keyboard, / goes to the search, and so does just typing, unless it's into Say
-  doc.addEventListener('keydown', (e) => {
-    if (!shown || e.defaultPrevented || e.ctrlKey || e.metaKey || e.altKey) return;
-    if (e.target.closest?.('input, textarea, select')) return;
-    if (e.key === '/') {
-      e.preventDefault();
-      shown.search.focus();
-      shown.search.select();
-    } else if (e.key.length === 1 && e.key !== ' ') shown.search.focus();
-  });
+  searchKeys(doc, () => shown?.search, () => true);
   // Back from the tab: the voice may have been changed on the Soundboard meanwhile
   win.addEventListener('focus', () => shown?.paint());
   win.addEventListener(
@@ -107,11 +99,14 @@ async function popOut() {
 function render() {
   const win = secondWindow();
   if (!win) return;
-  const body = soundsBody(() => {
-    openBoard();
-    // Over to the tab, where the Soundboard is
-    window.focus();
-  });
+  const body = soundsBody(
+    () => {
+      openBoard();
+      // Over to the tab, where the Soundboard is
+      window.focus();
+    },
+    { slash: true },
+  );
   const stop = stopButton();
   const foot = el('div', { className: 'popout-foot' }, stop.button);
   win.document.body.replaceChildren(musicPlayer(null, { inWindow: true }), el('div', { className: 'popout-main' }, playInPicker(), ...body.parts), foot, toasts);

@@ -1,12 +1,20 @@
-import { devicePref, el, icon, secondWindow } from './lib.js';
+import { devicePref, el, icon, pageSignal, secondWindow, state } from './lib.js';
 import { soundsBody } from './soundspanel.js';
 
 /** Whether the Sounds panel is open. It stays open from page to page until it's closed */
 let open = false;
+/**
+ * What's in the panel: the line to say, the search and the sounds. While it's open they move into the next page's
+ * panel as they are, scrolled where they were, rather than being made and loaded again
+ */
+let kept = null;
+/** Goes to the Soundboard from the panel on the page shown, which a kept panel's "Add some" link uses */
+let toBoard = () => {};
 
 /** For the Soundboard, which has every sound already, so it has no Sounds button. The panel starts closed after it */
 export function noSoundsDock() {
   open = false;
+  kept = null;
   return null;
 }
 
@@ -33,24 +41,27 @@ export function soundsDock(openBoard, extra = null) {
     el('span', { className: 'volume-fab-word' }, 'Sounds'),
   );
   const dock = { button, panel, close: () => toggle(false), onOpen: () => {} };
-  let search = null;
   const narrow = matchMedia('(max-width: 640px)');
 
-  /** What's in the panel, made the first time it opens */
+  /** What's in the panel, made the first time it opens on this page, or moved over from the last page's */
+  let built = false;
+  // How far the sounds were scrolled on the last page, to scroll back to once they're shown here
+  let scrollTo = null;
   function build() {
-    const body = soundsBody(goToBoard);
-    search = body.search;
+    built = true;
+    if (kept?.guildId !== state.guildId) {
+      const body = soundsBody(() => toBoard());
+      kept = { guildId: state.guildId, ...body, scroller: body.parts.at(-1) };
+    } else scrollTo = kept.scroller.scrollTop;
     const close = el('button', { type: 'button', className: 'icon quiet', ariaLabel: 'Close Sounds', title: 'Close', onclick: () => toggle(false, true) }, icon('x'));
-    panel.append(el('div', { className: 'sounds-head' }, el('h2', {}, 'Sounds'), el('button', { type: 'button', className: 'link', onclick: goToBoard }, 'Soundboard'), extra, close), ...body.parts);
-    // Opening it again shows the voice picked on the Soundboard since
-    return body.paint;
+    panel.append(el('div', { className: 'sounds-head' }, el('h2', {}, 'Sounds'), el('button', { type: 'button', className: 'link', onclick: goToBoard }, 'Soundboard'), extra, close), ...kept.parts);
   }
 
-  let repaint = null;
   function goToBoard() {
     toggle(false);
     openBoard();
   }
+  toBoard = goToBoard;
 
   // While it's open: Escape from anywhere closes it, and on a phone so does a press outside the corner
   let listening = null;
@@ -69,10 +80,13 @@ export function soundsDock(openBoard, extra = null) {
       return;
     }
     dock.onOpen();
-    if (!repaint) repaint = build();
-    else repaint();
+    if (!built) build();
+    // Shows the voice picked on the Soundboard since
+    kept.paint();
+    if (scrollTo !== null) kept.scroller.scrollTop = scrollTo;
+    scrollTo = null;
     // With a mouse, straight to the search; on a touch screen the keyboard would cover the panel
-    if (byHand && matchMedia('(pointer: fine)').matches) search.focus();
+    if (byHand && matchMedia('(pointer: fine)').matches) kept.search.focus();
     listening = new AbortController();
     const { signal } = listening;
     document.addEventListener(
@@ -103,12 +117,14 @@ export function soundsDock(openBoard, extra = null) {
     button.hidden = !devicePref.on('soundsButton') || !!secondWindow();
     if (button.hidden && !panel.hidden) toggle(false);
   };
-  const onPref = (e) => (button.isConnected ? e.detail === 'soundsButton' && paintPref() : removeEventListener('device-pref', onPref));
-  addEventListener('device-pref', onPref);
-  const onWindow = () => (button.isConnected ? paintPref() : removeEventListener('second-window', onWindow));
-  addEventListener('second-window', onWindow);
+  addEventListener('device-pref', (e) => e.detail === 'soundsButton' && paintPref(), { signal: pageSignal() });
+  addEventListener('second-window', paintPref, { signal: pageSignal() });
   paintPref();
-  // Open on this page too, if it was on the last
-  if (open && !button.hidden) queueMicrotask(() => button.isConnected && toggle(true));
+  // Open on this page too, if it was on the last, with what it held moved over now, while this page is drawn, so
+  // nothing in it is off the page long enough to stop keeping up with the bot. Closed, it's made afresh when opened
+  if (open && !button.hidden) {
+    build();
+    queueMicrotask(() => button.isConnected && toggle(true));
+  } else kept = null;
   return dock;
 }

@@ -1,5 +1,5 @@
 import { announce, api, attempt, confirmButton, el, icon, keepFocus, notice, request, RequestError, session, state, toast, undoToast, volumeControl } from './lib.js';
-import { follow, followWhenIdle } from './updates.js';
+import { follow, followWhenIdle, older } from './updates.js';
 import { voiceBar } from './voice.js';
 
 // A playlist adds this many songs, the first or at random
@@ -25,6 +25,37 @@ const time = (ms) => `${Math.floor(ms / 60_000)}:${String(Math.floor((ms % 60_00
 export function cover(src, size) {
   return src ? el('img', { className: 'cover', src, alt: '', width: size, height: size, loading: 'lazy' }) : el('div', { className: 'cover none', style: `width:${size}px;height:${size}px` });
 }
+
+/** Shows a song's cover in `holder`, leaving it be while it's the same one, so it doesn't flash as the music changes */
+export function paintCover(holder, src, size) {
+  const shown = src ?? '';
+  if (holder.firstChild && holder.dataset.cover === shown) return;
+  holder.dataset.cover = shown;
+  holder.replaceChildren(cover(src, size));
+}
+
+// The music's rules, for the Music tab and the music player alike
+
+/** Pauses, or plays on where it paused, in the channel picked in Play in */
+export function playOrPause(data, channel) {
+  if (data.phase === 'playing') return request(api('/music/pause'), { method: 'POST' });
+  return request(api('/music/play'), { method: 'POST', json: { channelId: channel.id } });
+}
+
+/** Why Play can't be pressed now, or '' if it can. `channel` is Play in's. Pause always can */
+export function cantPlay(data, channel) {
+  if (data.phase === 'playing') return '';
+  if (data.problem) return data.problem;
+  if (!channel) return 'Nobody’s in voice';
+  if (!data.queue.length) return 'The queue is empty';
+  return '';
+}
+
+/** Where the song playing has got to, in milliseconds, from what the bot said at `fetchedAt` */
+export const positionOf = (data, fetchedAt) => Math.min(data.queue[0].durationMs, data.positionMs + (data.phase === 'playing' ? Date.now() - fetchedAt : 0));
+
+/** Whether an answer is older than the music already shown, as a control's answer can be once an update's come in */
+export const stale = (fresh, shown) => older(fresh.version, shown?.version);
 
 /**
  * A progress bar that jumps within what's playing: click or drag it, and it jumps once let go, or use the arrow keys.
@@ -135,7 +166,7 @@ export function renderMusic(main) {
     followMusic();
     paintControls();
   }, { sliders: false });
-  const playButton = el('button', { className: 'primary', onclick: () => void act(playOrPause) }, 'Play');
+  const playButton = el('button', { className: 'primary', onclick: () => void act(() => (cantPlay(data, voice.channel()) ? null : playOrPause(data, voice.channel()))) }, 'Play');
   const skipButton = el('button', { onclick: () => void act(() => request(api('/music/skip'), { method: 'POST' })) }, 'Skip');
   const stopButton = confirmButton({ title: 'Stops the music and empties the queue' }, 'Stop and clear', 'Clear the queue?', async () => show(await request(api('/music/stop'), { method: 'POST' })));
   const volume = volumeControl({
@@ -166,13 +197,6 @@ export function renderMusic(main) {
   const voiceRow = el('div', { className: 'toolbar voice music-voice', hidden: true }, volumeLabel);
   // Kept up with a change from the Volume button or anywhere else, apart from while it's being dragged or typed in
   followWhenIdle('volumes', volumeLabel, () => [volumeLabel], (levels) => levels.music !== null && volume.set(levels.music));
-
-  async function playOrPause() {
-    if (data?.phase === 'playing') return request(api('/music/pause'), { method: 'POST' });
-    const channel = voice.channel();
-    if (!channel) return null;
-    return request(api('/music/play'), { method: 'POST', json: { channelId: channel.id } });
-  }
 
   /** Runs a control, then shows what it changed */
   async function act(action) {
@@ -657,15 +681,15 @@ export function renderMusic(main) {
     const playing = data?.phase === 'playing';
     const chosen = voice.channel();
     playButton.textContent = playing ? 'Pause' : data?.phase === 'paused' ? 'Resume' : 'Play';
-    playButton.disabled = !data || (!playing && (!!data.problem || !data.queue.length || !chosen));
-    playButton.title = !data ? '' : playing ? 'Pause, keeping the queue' : !chosen ? 'Nobody’s in voice' : !data.queue.length ? 'The queue is empty' : '';
+    const cant = data ? cantPlay(data, chosen) : '';
+    playButton.disabled = !data || !!cant;
+    playButton.title = !data ? '' : playing ? 'Pause, keeping the queue' : cant;
     skipButton.disabled = !data || data.phase === 'stopped';
     stopButton.disabled = !data || (data.phase === 'stopped' && !data.queue.length);
   }
 
   function positionNow() {
-    const song = data.queue[0];
-    return Math.min(song.durationMs, data.positionMs + (data.phase === 'playing' ? Date.now() - fetchedAt : 0));
+    return positionOf(data, fetchedAt);
   }
 
   function paintProgress() {
@@ -678,7 +702,7 @@ export function renderMusic(main) {
 
   /** `age` is how long ago, in milliseconds, the bot said it, for where the song has got to */
   function show(fresh, age = 0) {
-    if (guildId !== state.guildId || !main.isConnected) return;
+    if (guildId !== state.guildId || !main.isConnected || stale(fresh, data)) return;
     data = fresh;
     fetchedAt = Date.now() - age;
     problem.textContent = data.problem ?? '';
@@ -695,7 +719,7 @@ export function renderMusic(main) {
     if (!savingAutoplay) autoplayBox.checked = !!data.autoplay;
 
     const song = data.phase !== 'stopped' ? data.queue[0] : null;
-    nowCover.replaceChildren(cover(song?.cover, 96));
+    paintCover(nowCover, song?.cover, 96);
     nowTitle.textContent = song ? song.title : data.queue.length ? 'Not playing' : 'Nothing queued';
     nowArtist.textContent = song
       ? [song.artist, ...whereFrom(data)].join(' · ')

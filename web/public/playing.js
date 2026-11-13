@@ -96,7 +96,8 @@ export function stopDock(volume, sounds = null) {
     shownPlaying = playing;
     stop.paint(playing);
     if (playing.length < 2) expanded = false;
-    list.hidden = !playing.length;
+    // One sound on its own is named on Stop already. Speech and a loop show, for what's said and that it loops
+    list.hidden = !playing.length || (playing.length === 1 && playing[0].kind !== 'speech' && !playing[0].loop);
     if (narrow.matches && playing.length > 1 && !expanded) {
       list.replaceChildren(
         el(

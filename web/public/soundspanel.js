@@ -1,4 +1,4 @@
-import { api, attempt, el, notice, recall, request, state } from './lib.js';
+import { api, attempt, el, recall, request, state } from './lib.js';
 import { soundGrid } from './soundgrid.js';
 import { voiceBar } from './voice.js';
 
@@ -6,39 +6,20 @@ import { voiceBar } from './voice.js';
  * What the Sounds panel and the pop-out window hold: a line to say, in the voice last picked on this device's
  * Soundboard or else the server's, a search where Enter plays the first match, and the server's sounds in their
  * groups, folded as on the Soundboard, to play in the channel picked in Play in. `openBoard` goes to the Soundboard,
- * where sounds are added. `parts` go in the panel in order, and paint() shows a voice picked on the Soundboard since
+ * where sounds are added, and `slash` says / goes to the search there. `parts` go in the panel in order, and paint()
+ * shows a voice picked on the Soundboard since
  */
-export function soundsBody(openBoard) {
+export function soundsBody(openBoard, { slash = false } = {}) {
   const guildId = state.guildId;
   const voiceKey = `voice:${guildId}`;
   const voice = voiceBar(paint, { sliders: false });
   const grid = soundGrid({
     voice,
+    slash,
     empty: () => ['No sounds yet. ', el('button', { type: 'button', className: 'link', onclick: openBoard }, 'Add some on the Soundboard'), '.'],
   });
   grid.node.classList.add('compact');
-  const search = el('input', {
-    type: 'search',
-    className: 'board-search',
-    placeholder: 'Search sounds',
-    ariaLabel: 'Search sounds',
-    autocomplete: 'off',
-    title: 'Enter plays the first match',
-    oninput: () => grid.search(search.value),
-    onkeydown: (e) => {
-      if (e.key === 'Enter') {
-        e.preventDefault();
-        if (search.value.trim()) grid.playFirst();
-      } else if (e.key === 'Escape' && search.value) {
-        // Clears the search first, so it takes a second press to close the Sounds panel
-        e.preventDefault();
-        search.value = '';
-        grid.search('');
-      }
-    },
-  });
-  const nobody = notice('empty', 'Nobody’s in voice. Join a voice channel in Discord and these light up.', { compact: true });
-  nobody.hidden = true;
+  const { searchBox: search, nobody } = grid;
 
   // One line to say, in the voice last picked on this device's Soundboard, or else the server's
   let voices = [];
@@ -80,7 +61,6 @@ export function soundsBody(openBoard) {
 
   function paint() {
     const channel = voice.channel();
-    nobody.hidden = !voice.loaded() || !!channel;
     send.disabled = !channel || saying;
     const name = chosenVoice()?.name;
     text.placeholder = name ? `Say as ${name}` : 'Say something';

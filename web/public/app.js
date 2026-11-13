@@ -1,6 +1,6 @@
 import { renderActivity } from './activity.js';
 import { renderGames } from './games.js';
-import { api, attempt, el, formProblem, icon, notice, openDialog, player, recall, remember, request, RequestError, session, state, toast } from './lib.js';
+import { api, attempt, el, formProblem, icon, newPage, notice, openDialog, player, recall, remember, request, RequestError, session, state, toast } from './lib.js';
 import { musicPlayer, noMusicPlayer } from './miniplayer.js';
 import { renderMusic } from './music.js';
 import { renderNights } from './nights.js';
@@ -233,6 +233,8 @@ function moreSheet(main) {
 }
 
 function renderFrame() {
+  // The last page's listeners go before this one's parts add theirs
+  newPage();
   const main = el('main');
   const guild = state.guilds.find((g) => g.id === state.guildId);
   const guildIcon = guild?.icon ? el('img', { src: guild.icon, alt: '' }) : null;

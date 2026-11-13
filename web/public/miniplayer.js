@@ -1,8 +1,9 @@
-import { api, attempt, devicePref, el, forget, icon, pickedVoice, recall, remember, request, secondWindow, state, toast } from './lib.js';
-import { cover } from './music.js';
+import { api, attempt, devicePref, el, forget, icon, pageSignal, recall, remember, request, secondWindow, state, toast } from './lib.js';
+import { cantPlay, paintCover, playOrPause, positionOf, stale } from './music.js';
 import { follow } from './updates.js';
+import { voiceBar } from './voice.js';
 
-// Set while the music player is hidden with its ✕, for each server, until the music stops
+// For each server, when the music the player was hidden for with ✕ started, as the bot says: it's hidden until that stops
 const hiddenKey = (guildId) => `musicPlayerHidden:${guildId}`;
 
 /** Whether the page has the music player along its bottom, which what else floats there keeps clear of */
@@ -12,11 +13,11 @@ const holdRoom = (on) => document.documentElement.classList.toggle('with-player'
 export const noMusicPlayer = () => holdRoom(false);
 
 /**
- * The song playing, along the bottom of every page but Music: its cover, title and artist, which open Music, then
- * Pause or Play and Skip, with a line across the top for how far into the song it is. It shows while music plays or
- * is paused, unless it's turned off in Settings on this device, hidden with ✕ until the music stops, or in the pop-out
- * window while that's open. `extra` goes beside its buttons. `inWindow` is the pop-out's: there it shows whenever
- * music plays, without ✕, and the song opens nothing
+ * The song playing, at the bottom of every page but Music: its cover, title and artist, which open Music, then Pause
+ * or Play and Skip, with a line along the bottom for how far into the song it is. Play plays on in the channel picked
+ * in Play in, as the Music tab does. It shows while music plays or is paused, unless it's turned off in Settings on
+ * this device, hidden with ✕ until the music stops, or in the pop-out window while that's open. `extra` goes beside
+ * ✕. `inWindow` is the pop-out's: there it shows whenever music plays, without ✕, and the song opens nothing
  */
 export function musicPlayer(openMusic, { inWindow = false, extra = null } = {}) {
   const guildId = state.guildId;
@@ -29,12 +30,15 @@ export function musicPlayer(openMusic, { inWindow = false, extra = null } = {}) 
   const sub = el('span', { className: 'mini-sub' });
   const text = el('span', { className: 'mini-text' }, title, sub);
   const song = inWindow ? el('div', { className: 'mini-song' }, art, text) : el('button', { type: 'button', className: 'mini-song', title: 'Open Music', onclick: openMusic }, art, text);
-  const playButton = el('button', { type: 'button', className: 'icon mini-play', onclick: () => void act(playOrPause) });
+  const playButton = el('button', { type: 'button', className: 'icon mini-play', onclick: pressPlay });
   const skipButton = el('button', { type: 'button', className: 'icon mini-skip', ariaLabel: 'Skip', title: 'Skip to the next song', onclick: () => void act(() => request(api('/music/skip'), { method: 'POST' })) }, icon('next'));
   const close = el('button', { type: 'button', className: 'icon quiet mini-close', ariaLabel: 'Hide the music player', title: 'Hide until the music stops', onclick: hide }, icon('x'));
+  // Play in's channel, which Play plays on in, and who's in voice, which says whether it can
+  const voice = voiceBar(() => paint(), { sliders: false });
   const node = el(
     'section',
     { className: 'mini-player', ariaLabel: 'Music player', hidden: true },
+    voice.node,
     el('span', { className: 'mini-progress', ariaHidden: 'true' }, line),
     song,
     el('div', { className: 'mini-controls' }, playButton, skipButton),
@@ -42,7 +46,7 @@ export function musicPlayer(openMusic, { inWindow = false, extra = null } = {}) 
   );
 
   function hide() {
-    remember(hiddenKey(guildId), '1');
+    remember(hiddenKey(guildId), String(data.since));
     paint();
     // Focus was on ✕, which is gone now
     document.getElementById('page-title')?.focus();
@@ -56,12 +60,6 @@ export function musicPlayer(openMusic, { inWindow = false, extra = null } = {}) 
     });
   }
 
-  /** Pauses, or plays on where it was paused: in the music's own channel, or Play in's if it's left that */
-  function playOrPause() {
-    if (data.phase === 'playing') return request(api('/music/pause'), { method: 'POST' });
-    return request(api('/music/play'), { method: 'POST', json: { channelId: data.channelId ?? pickedVoice.get() } });
-  }
-
   async function act(action) {
     playButton.disabled = skipButton.disabled = true;
     try {
@@ -72,31 +70,44 @@ export function musicPlayer(openMusic, { inWindow = false, extra = null } = {}) 
     }
   }
 
+  function pressPlay() {
+    const channel = voice.channel();
+    if (!cantPlay(data, channel)) void act(() => playOrPause(data, channel));
+  }
+
   function paint() {
-    const playing = data && data.phase !== 'stopped' ? data.queue[0] : null;
-    // A hide lasts until the music stops, then the next song shows again
-    if (data && !playing) forget(hiddenKey(guildId));
-    const shown = !!playing && (inWindow || (devicePref.on('musicPlayer') && recall(hiddenKey(guildId)) !== '1' && !secondWindow()));
+    // Until the bot's said, the page keeps the room it had, so the corner's buttons don't jump about
+    if (!data) return;
+    const playing = data.phase !== 'stopped' ? data.queue[0] : null;
+    // A hide lasts until the music stops, so music started since shows, even if no player saw it stop
+    const hiddenFor = recall(hiddenKey(guildId));
+    if (hiddenFor && hiddenFor !== String(data.since)) forget(hiddenKey(guildId));
+    const hidden = !!playing && hiddenFor === String(data.since);
+    const shown = !!playing && (inWindow || (devicePref.on('musicPlayer') && !hidden && !secondWindow()));
     node.hidden = !shown;
     if (node.isConnected && !inWindow) holdRoom(shown);
     if (!shown) return;
     const paused = data.phase === 'paused';
     const starting = data.phase === 'starting';
-    art.replaceChildren(cover(playing.cover, 40));
+    paintCover(art, playing.cover, 40);
     title.textContent = playing.title;
     sub.textContent = [playing.artist, starting ? 'Finding it…' : paused ? 'Paused' : data.channelName && `in ${data.channelName}`].filter(Boolean).join(' · ');
     if (!inWindow) song.ariaLabel = `${playing.title} by ${playing.artist}. Open Music`;
-    playButton.replaceChildren(icon(paused ? 'play' : 'pause'));
+    const cant = cantPlay(data, voice.channel());
+    if (playButton.dataset.icon !== (paused ? 'play' : 'pause')) {
+      playButton.dataset.icon = paused ? 'play' : 'pause';
+      playButton.replaceChildren(icon(paused ? 'play' : 'pause'));
+    }
     playButton.ariaLabel = paused ? 'Play' : 'Pause';
-    playButton.title = paused ? 'Play on from where it paused' : 'Pause, keeping the queue';
-    playButton.disabled = starting;
+    playButton.title = !paused ? 'Pause, keeping the queue' : cant || 'Play on from where it paused, in the channel picked in Play in';
+    playButton.disabled = starting || !!cant;
     skipButton.disabled = false;
     paintLine(playing, paused || starting);
   }
 
   /** The line runs on its own, from where the song is now, and holds still while it's paused or being found */
   function paintLine(playing, still) {
-    const at = Math.min(playing.durationMs, data.positionMs + (data.phase === 'playing' ? Date.now() - fetchedAt : 0));
+    const at = positionOf(data, fetchedAt);
     const key = `${playing.id}:${data.phase}:${data.positionMs}`;
     if (line.dataset.key === key) return;
     line.dataset.key = key;
@@ -110,7 +121,7 @@ export function musicPlayer(openMusic, { inWindow = false, extra = null } = {}) 
 
   /** `age` is how long ago, in milliseconds, the bot said it, for where the song has got to */
   function show(fresh, age) {
-    if (guildId !== state.guildId || !node.isConnected) return;
+    if (guildId !== state.guildId || !node.isConnected || stale(fresh, data)) return;
     data = fresh;
     fetchedAt = Date.now() - age;
     paint();
@@ -119,9 +130,7 @@ export function musicPlayer(openMusic, { inWindow = false, extra = null } = {}) 
   follow('music', node, (fresh, at) => show(fresh, performance.now() - at));
   if (inWindow) return node;
   // Settings turns it on and off for this device, and it makes way for the pop-out window while that's open
-  const onPref = (e) => (node.isConnected ? e.detail === 'musicPlayer' && paint() : removeEventListener('device-pref', onPref));
-  addEventListener('device-pref', onPref);
-  const onWindow = () => (node.isConnected ? paint() : removeEventListener('second-window', onWindow));
-  addEventListener('second-window', onWindow);
+  addEventListener('device-pref', (e) => e.detail === 'musicPlayer' && paint(), { signal: pageSignal() });
+  addEventListener('second-window', paint, { signal: pageSignal() });
   return node;
 }

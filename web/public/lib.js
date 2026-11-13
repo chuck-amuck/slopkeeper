@@ -200,6 +200,16 @@ export function recall(key) {
   }
 }
 
+// Ends each time the page is drawn afresh, so the listeners one page's parts put on the window go with them
+let pageLife = new AbortController();
+/** For a listener on the window, the document or a media query that only this page's parts need */
+export const pageSignal = () => pageLife.signal;
+/** Lets go of the last page's listeners, before the next is drawn */
+export function newPage() {
+  pageLife.abort();
+  pageLife = new AbortController();
+}
+
 /** What's turned on or off in Settings for this device alone, each on until it's turned off: musicPlayer, soundsButton */
 export const devicePref = {
   on: (name) => recall(`device:${name}`) !== 'off',
