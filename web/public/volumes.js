@@ -6,16 +6,13 @@ const VOLUMES = {
   sounds: { key: 'soundVolume', label: 'Sounds', name: 'Sound volume', min: 0, said: 'Sounds play' },
   speech: { key: 'ttsVolume', label: 'Speech', name: 'Speech volume', min: 25, said: 'Speech plays' },
   music: { key: 'musicVolume', label: 'Music', name: 'Music volume', min: 0, said: 'Music plays' },
-  loopSound: { key: 'loopVolume', label: 'Sound', name: 'Looping sound volume', min: 5, said: 'The looping sound plays' },
-  loopSpeech: { key: 'loopTextVolume', label: 'Speech', name: 'Looping speech volume', min: 5, said: 'The looping speech plays' },
 };
 
 /**
  * Sliders for the volumes named, each shown once the bot says what it's at, and only while it's set up. They keep up
- * with whoever changes them, from anywhere, apart from one being dragged or typed in. `shown(any)` hears whether any is
- * showing
+ * with whoever changes them, from anywhere, apart from one being dragged or typed in
  */
-export function volumeSliders(names, shown = () => {}) {
+export function volumeSliders(names) {
   const rows = names.map((id) => {
     const { key, label, name, min, said } = VOLUMES[id];
     const control = volumeControl({
@@ -46,7 +43,6 @@ export function volumeSliders(names, shown = () => {}) {
         row.hidden = data[id] === null || data[id] === undefined;
         if (!row.hidden) control.set(data[id]);
       }
-      shown(rows.some((r) => !r.row.hidden));
     },
   );
   return node;
@@ -55,19 +51,17 @@ export function volumeSliders(names, shown = () => {}) {
 let docks = 0;
 
 /**
- * The Volume button in the corner of every page, and the panel it opens above itself with every volume the bot has.
- * The panel closes with the button, Escape, or a press anywhere else
+ * The Volume button in the corner of every page, and the panel it opens above itself with the volumes of sounds,
+ * speech and music. The looping room's are in Settings. The panel closes with the button, Escape, or a press anywhere
+ * else
  */
 export function volumeDock() {
-  const loop = el('section', { className: 'volume-group', hidden: true }, el('h3', {}, 'Looping room'));
-  loop.append(volumeSliders(['loopSound', 'loopSpeech'], (any) => (loop.hidden = !any)));
   const panel = el(
     'section',
     { className: 'volume-float', id: `volume-float-${++docks}`, hidden: true, ariaLabel: 'Volume' },
     el('h2', {}, 'Volume'),
     el('p', { className: 'hint' }, 'For everyone in the server, not just you.'),
     volumeSliders(['sounds', 'speech', 'music']),
-    loop,
   );
   const button = el(
     'button',

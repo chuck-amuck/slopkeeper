@@ -37,7 +37,8 @@ export function musicPlayer(openMusic, { inWindow = false, extra = null } = {}) 
     { className: 'mini-player', ariaLabel: 'Music player', hidden: true },
     el('span', { className: 'mini-progress', ariaHidden: 'true' }, line),
     song,
-    el('div', { className: 'mini-controls' }, playButton, skipButton, extra, !inWindow && close),
+    el('div', { className: 'mini-controls' }, playButton, skipButton),
+    el('div', { className: 'mini-extra' }, extra, !inWindow && close),
   );
 
   function hide() {

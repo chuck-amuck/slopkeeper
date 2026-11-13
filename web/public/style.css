@@ -75,11 +75,20 @@ html {
   --bar-h: 0px;
   /* The music player along the bottom, while it shows */
   --player-h: 0px;
+  /* How far the corner's buttons and toasts rise to clear the music player */
+  --dock-lift: var(--player-h);
   scroll-padding-bottom: calc(80px + var(--dock-page, 0px) + var(--bar-h) + var(--player-h));
 }
 
 html.with-player {
-  --player-h: 56px;
+  --player-h: 64px;
+}
+
+/* Wide enough for the corner's buttons, even with a long Stop, to sit down beside the 640px player in the middle */
+@media (min-width: 1800px) {
+  html {
+    --dock-lift: 0px;
+  }
 }
 
 [hidden] {
@@ -216,7 +225,7 @@ button.confirm.icon > span:last-child {
 .stop-dock {
   position: fixed;
   right: 16px;
-  bottom: calc(16px + var(--bar-h) + var(--player-h));
+  bottom: calc(16px + var(--bar-h) + var(--dock-lift));
   z-index: 10;
   display: grid;
   justify-items: end;
@@ -337,31 +346,38 @@ button.volume-fab[aria-expanded='true'] {
   color: var(--accent);
 }
 
-/* The song playing, along the bottom of every page but Music: above a phone's tabs, and the corner's buttons above it */
+/* The song playing, in a card at the bottom of every page but Music, above a phone's tabs, with the corner's buttons
+   above it. --player-h is the room it takes, with the gap under it */
 .mini-player {
   position: fixed;
   right: 0;
-  bottom: var(--bar-h);
+  bottom: calc(var(--bar-h) + 8px);
   left: 0;
   z-index: 9;
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
   align-items: center;
-  gap: var(--space-2);
-  height: var(--player-h);
-  padding: 0 8px 0 12px;
-  border-top: 1px solid var(--line);
+  gap: var(--space-1);
+  width: min(640px, calc(100% - 16px));
+  height: 56px;
+  margin-inline: auto;
+  padding: 0 4px 0 6px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
   background: var(--surface);
-  box-shadow: 0 -2px 12px rgb(0 0 0 / 10%);
+  box-shadow: 0 4px 16px rgb(0 0 0 / 18%);
 }
 
-/* How far into the song it is, across the top edge */
+/* How far into the song it is, along the bottom inside the card */
 .mini-progress {
   position: absolute;
-  top: -1px;
-  right: 0;
-  left: 0;
+  right: 10px;
+  bottom: 3px;
+  left: 10px;
   height: 2px;
   overflow: hidden;
+  border-radius: 1px;
+  background: var(--line);
   pointer-events: none;
 }
 
@@ -385,7 +401,6 @@ button.volume-fab[aria-expanded='true'] {
 
 .mini-song {
   display: flex;
-  flex: 1 1 auto;
   align-items: center;
   gap: 10px;
   min-width: 0;
@@ -425,14 +440,18 @@ button.volume-fab[aria-expanded='true'] {
   font-size: var(--text-sm);
 }
 
-.mini-controls {
+.mini-controls,
+.mini-extra {
   display: flex;
-  flex: none;
   align-items: center;
   gap: 2px;
 }
 
-.mini-controls button.icon {
+.mini-extra:empty {
+  display: none;
+}
+
+.mini-player button.icon {
   width: 44px;
   min-height: 44px;
   border-color: transparent;
@@ -441,40 +460,33 @@ button.volume-fab[aria-expanded='true'] {
   color: var(--text);
 }
 
-.mini-controls button.icon:hover:not(:disabled) {
+.mini-player button.icon:hover:not(:disabled) {
   background: var(--raised);
 }
 
-.mini-controls button.icon .ico {
+.mini-player button.icon .ico {
   width: 22px;
   height: 22px;
 }
 
-.mini-controls button.mini-close {
+.mini-extra button.icon {
   color: var(--muted);
 }
 
-.mini-controls button.mini-close .ico {
+.mini-extra button.icon .ico {
   width: 18px;
   height: 18px;
 }
 
-/* Wider than a phone: the controls sit by the song, and ✕ in the far corner */
+/* Wider than a phone: Pause and Skip in the middle, the song to their left, and Pop out and ✕ to their right */
 @media (min-width: 641px) {
   .mini-player {
-    padding-inline: 16px;
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+    padding-inline: 6px;
   }
 
-  .mini-song {
-    flex: 0 1 440px;
-  }
-
-  .mini-controls {
-    flex: 1 1 auto;
-  }
-
-  .mini-controls button.mini-close {
-    margin-left: auto;
+  .mini-extra {
+    justify-self: end;
   }
 }
 
@@ -485,7 +497,7 @@ button.volume-fab[aria-expanded='true'] {
   gap: var(--space-2);
   box-sizing: border-box;
   width: min(400px, calc(100vw - 32px));
-  height: min(620px, calc(100dvh - 160px - var(--bar-h) - var(--player-h)));
+  height: min(620px, calc(100dvh - 160px - var(--bar-h) - var(--dock-lift)));
   padding: var(--space-3) var(--space-4) 0;
   border: 1px solid var(--line);
   border-radius: var(--radius-md);
@@ -536,7 +548,7 @@ button.volume-fab[aria-expanded='true'] {
 /* A phone keeps some of the page in sight above it */
 @media (max-width: 640px) {
   .sounds-float {
-    height: min(60dvh, calc(100dvh - 140px - var(--bar-h) - var(--player-h)));
+    height: min(60dvh, calc(100dvh - 140px - var(--bar-h) - var(--dock-lift)));
   }
 }
 
@@ -558,15 +570,11 @@ body.popout .mini-player {
   position: relative;
   inset: auto;
   flex: none;
-  height: 56px;
-  border-top: 0;
-  border-bottom: 1px solid var(--line);
+  width: auto;
+  margin: 0;
+  border-width: 0 0 1px;
+  border-radius: 0;
   box-shadow: none;
-}
-
-body.popout .mini-progress {
-  top: auto;
-  bottom: -1px;
 }
 
 .popout-main {
@@ -631,19 +639,11 @@ body.popout #toasts {
   font-size: var(--text-lg);
 }
 
-.volume-float h3 {
-  margin: var(--space-2) 0 0;
-  color: var(--muted);
-  font-size: var(--text-sm);
-  font-weight: 600;
-}
-
 .volume-float .hint {
   margin: 0;
 }
 
-.volume-float .volume-sliders,
-.volume-group {
+.volume-float .volume-sliders {
   display: grid;
   gap: var(--space-2);
 }
@@ -3064,7 +3064,7 @@ button.music-upload:hover:not(:disabled) {
   position: fixed;
   right: 16px;
   /* Above the Stop sounds button, and what's playing when that shows */
-  bottom: calc(76px + var(--dock-extra, 0px) + var(--bar-h) + var(--player-h));
+  bottom: calc(76px + var(--dock-extra, 0px) + var(--bar-h) + var(--dock-lift));
   left: 16px;
   z-index: 20;
   display: grid;
