@@ -1,7 +1,11 @@
-import { api, attempt, el, needsVoice, recall, remember, request, state } from './lib.js';
-import { soundGrid } from './soundgrid.js';
+import { api, attempt, el, forget, needsVoice, recall, remember, request, state } from './lib.js';
+import { foldHead, soundGrid } from './soundgrid.js';
 import { previewButton, showPicked, voiceOptions } from './speech.js';
 import { voiceBar } from './voice.js';
+import { volumeSliders } from './volumes.js';
+
+// Whether the volumes are open, on this device
+const VOLUMES_KEY = 'soundsVolumesOpen';
 
 /**
  * What the Sounds panel and the pop-out window hold: a line to say, with its voice and a preview only you hear (the
@@ -9,9 +13,10 @@ import { voiceBar } from './voice.js';
  * match, and the server's sounds in their
  * groups, folded as on the Soundboard, to play in the channel picked in Play in. `openBoard` goes to the Soundboard,
  * where sounds are added, and `slash` says / goes to the search there. `parts` go in the panel in order, and paint()
- * shows a voice picked on the Soundboard since
+ * shows a voice picked on the Soundboard since. `volumes` fold away above the line to say, closed until opened on this
+ * device
  */
-export function soundsBody(openBoard, { slash = false } = {}) {
+export function soundsBody(openBoard, { slash = false, volumes = ['sounds', 'speech', 'music'] } = {}) {
   const guildId = state.guildId;
   const voiceKey = `voice:${guildId}`;
   const voice = voiceBar(paint, { sliders: false });
@@ -79,5 +84,9 @@ export function soundsBody(openBoard, { slash = false } = {}) {
     paint();
   });
 
-  return { parts: [voice.node, say, search, el('div', { className: 'sounds-scroll' }, grid.node)], search, paint };
+  const levels = el('div', { className: 'sounds-volumes' }, volumeSliders(volumes));
+  const levelsHead = foldHead('Volume', recall(VOLUMES_KEY) === 'open', levels, (open) => (open ? remember(VOLUMES_KEY, 'open') : forget(VOLUMES_KEY)));
+  const volume = el('section', { className: 'sounds-volume', title: 'For everyone in the server, not just you' }, levelsHead, levels);
+
+  return { parts: [voice.node, volume, say, search, el('div', { className: 'sounds-scroll' }, grid.node)], search, paint };
 }

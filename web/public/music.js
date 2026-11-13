@@ -5,9 +5,9 @@ import { voiceBar } from './voice.js';
 // A playlist adds this many songs, the first or at random
 const FROM_A_LIST = 100;
 const PLAYLISTS_SHOWN = 20;
-const LINK = /^(https?:\/\/|spotify:)/i;
+export const LINK = /^(https?:\/\/|spotify:)/i;
 /** A Spotify album or playlist, which can be added shuffled */
-const LIST_LINK = /^(https?:\/\/open\.spotify\.com\/(intl-[a-z]+\/)?(album|playlist)\/|spotify:(album|playlist):)/i;
+export const LIST_LINK = /^(https?:\/\/open\.spotify\.com\/(intl-[a-z]+\/)?(album|playlist)\/|spotify:(album|playlist):)/i;
 // What an uploaded file can be. The bot checks again, and how long it is
 const FILE_TYPES = ['.mp3', '.ogg', '.wav', '.m4a', '.opus', '.webm', '.flac'];
 const MOST_FILE_MB = 60;
@@ -20,7 +20,7 @@ const whereFrom = (data) =>
 const SEEK_STEP_MS = 10_000;
 // How long after the last arrow key it jumps
 const KEYS_SETTLE_MS = 400;
-const time = (ms) => `${Math.floor(ms / 60_000)}:${String(Math.floor((ms % 60_000) / 1000)).padStart(2, '0')}`;
+export const time = (ms) => `${Math.floor(ms / 60_000)}:${String(Math.floor((ms % 60_000) / 1000)).padStart(2, '0')}`;
 
 export function cover(src, size) {
   return src ? el('img', { className: 'cover', src, alt: '', width: size, height: size, loading: 'lazy' }) : el('div', { className: 'cover none', style: `width:${size}px;height:${size}px` });
@@ -53,6 +53,35 @@ export function cantPlay(data, channel) {
 
 /** Where the song playing has got to, in milliseconds, from what the bot said at `fetchedAt` */
 export const positionOf = (data, fetchedAt) => Math.min(data.queue[0].durationMs, data.positionMs + (data.phase === 'playing' ? Date.now() - fetchedAt : 0));
+
+/** Takes a song out, with Undo putting it back where it was. `shown` hears what Undo changed */
+export async function removeSong(row, index, shown) {
+  const fresh = await request(api(`/music/queue/${row.id}`), { method: 'DELETE' });
+  undoToast(`Removed ${row.title}.`, async () => {
+    const { uri, title, artist, album, cover, durationMs } = row;
+    // A YouTube or SoundCloud song is added again from its link, and an upload from the file kept for this
+    const json = uri.startsWith('spotify:') ? { track: { uri, title, artist, album, cover, durationMs } } : uri.startsWith('file:') ? { file: uri.slice(5) } : { query: uri };
+    const added = await request(api('/music/queue'), { method: 'POST', json });
+    // It goes on the end, so it's the newest row with that song
+    const back = added.queue.findLast((r) => r.uri === uri);
+    shown(back && index < added.queue.length - 1 ? await request(api(`/music/queue/${back.id}/move`), { method: 'POST', json: { to: index } }) : added);
+  });
+  return fresh;
+}
+
+/** Takes out one of Autoplay's songs. No Undo: put back, it would count as queued by a person, and Autoplay finds another */
+export const removeAutoplaySong = (row) => request(api(`/music/queue/${row.id}`), { method: 'DELETE' });
+
+/** Adds to the queue, saying so. Play next with nothing queued plays it at once in `channel`, Play in's. Returns the bot's answer */
+export async function addToQueue(body, next, channel) {
+  const fresh = await attempt(() => request(api('/music/queue'), { method: 'POST', json: { ...body, next, ...(next && channel && { channelId: channel.id }) } }));
+  if (fresh) toast(fresh.message ?? `Added ${body.track?.title ?? 'it'}${next ? ' to play next' : ''}.`);
+  return fresh;
+}
+
+/** The heading over Autoplay's songs, in Up next on the Music tab and in the pop-out */
+export const autoplayHead = (data) =>
+  el('li', { className: 'autoplay-head' }, icon('infinity'), el('span', {}, data.autoplayLike ? ['Autoplay · songs like ', el('b', {}, data.autoplayLike)] : 'Autoplay'));
 
 /** Whether an answer is older than the music already shown, as a control's answer can be once an update's come in */
 export const stale = (fresh, shown) => older(fresh.version, shown?.version);
@@ -432,9 +461,8 @@ export function renderMusic(main) {
   const playingIn = (next) => (next && voice.channel() ? { channelId: voice.channel().id } : {});
 
   async function addFrom(body, next, clear = false) {
-    const fresh = await attempt(() => request(api('/music/queue'), { method: 'POST', json: { ...body, next, ...playingIn(next) } }));
+    const fresh = await addToQueue(body, next, voice.channel());
     if (!fresh) return;
-    toast(fresh.message ?? `Added ${body.track?.title ?? 'it'}${next ? ' to play next' : ''}.`);
     if (clear) query.value = '';
     show(fresh);
   }
@@ -588,20 +616,7 @@ export function renderMusic(main) {
   const move = (row, to) => void act(() => request(api(`/music/queue/${row.id}/move`), { method: 'POST', json: { to } }));
 
   /** Takes a song out, with Undo putting it back where it was */
-  const remove = (row, index) =>
-    act(async () => {
-      const fresh = await request(api(`/music/queue/${row.id}`), { method: 'DELETE' });
-      undoToast(`Removed ${row.title}.`, async () => {
-        const { uri, title, artist, album, cover, durationMs } = row;
-        // A YouTube or SoundCloud song is added again from its link, and an upload from the file kept for this
-        const json = uri.startsWith('spotify:') ? { track: { uri, title, artist, album, cover, durationMs } } : uri.startsWith('file:') ? { file: uri.slice(5) } : { query: uri };
-        const added = await request(api('/music/queue'), { method: 'POST', json });
-        // It goes on the end, so it's the newest row with that song
-        const back = added.queue.findLast((r) => r.uri === uri);
-        show(back && index < added.queue.length - 1 ? await request(api(`/music/queue/${back.id}/move`), { method: 'POST', json: { to: index } }) : added);
-      });
-      return fresh;
-    });
+  const remove = (row, index) => act(() => removeSong(row, index, show));
 
   /** Keeps one of Autoplay's songs, as if it had been queued here */
   const keep = (row) =>
@@ -623,8 +638,7 @@ export function renderMusic(main) {
         'div',
         { className: 'song-actions' },
         el('button', { className: 'icon', ariaLabel: `Add ${row.title} to the queue`, title: 'Add to the queue', onclick: () => keep(row) }, icon('plus')),
-        // No Undo: put back, it would count as queued by a person. Autoplay finds another instead
-        el('button', { className: 'icon', ariaLabel: `Remove ${row.title}`, title: 'Remove', onclick: () => void act(() => request(api(`/music/queue/${row.id}`), { method: 'DELETE' })) }, icon('x')),
+        el('button', { className: 'icon', ariaLabel: `Remove ${row.title}`, title: 'Remove', onclick: () => void act(() => removeAutoplaySong(row)) }, icon('x')),
       ),
     );
   }
@@ -704,7 +718,7 @@ export function renderMusic(main) {
         // Autoplay's songs follow, under a heading of their own, like Spotify's
         ...(autoplay.length
           ? [
-              el('li', { className: 'autoplay-head' }, icon('infinity'), el('span', {}, data.autoplayLike ? ['Autoplay · songs like ', el('b', {}, data.autoplayLike)] : 'Autoplay')),
+              autoplayHead(data),
               ...autoplay.map((row) => autoplayRow(row)),
             ]
           : []),

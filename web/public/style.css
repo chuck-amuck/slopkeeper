@@ -632,6 +632,131 @@ body.popout #toasts {
   left: 12px;
 }
 
+/* While the box to add a song is open, the player and the box go over the corner's buttons, under toasts */
+.mini-player:has(> .mini-add:not([hidden])) {
+  z-index: 11;
+}
+
+/* + on the music player: a search or a link to add, in a card over the page above the player */
+.mini-add {
+  position: absolute;
+  right: -1px;
+  bottom: calc(100% + 8px);
+  left: -1px;
+  z-index: 1;
+  display: grid;
+  gap: var(--space-2);
+  max-height: min(60vh, 520px);
+  padding: var(--space-3);
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: 0 4px 16px rgb(0 0 0 / 18%);
+}
+
+.mini-add-form {
+  flex-wrap: nowrap;
+}
+
+/* Waiting on the bot to add a song */
+.mini-add.busy button {
+  pointer-events: none;
+  opacity: 0.6;
+}
+
+/* A phone can't pop out, and the song's title needs the room */
+@media (max-width: 640px) {
+  .mini-extra .pop-out {
+    display: none;
+  }
+}
+
+.mini-add-results .song {
+  padding: 6px 0;
+}
+
+.mini-add-results .song-actions,
+.mini-next-list .song > button {
+  flex: none;
+}
+
+/* The pop-out's music: the player, then the box to add a song, the music's volume and Up next */
+.popout-music {
+  flex: none;
+  border-bottom: 1px solid var(--line);
+}
+
+body.popout .popout-music .mini-player {
+  border-bottom: 0;
+}
+
+body.popout .mini-add {
+  position: static;
+  max-height: 40vh;
+  padding: 0 var(--space-3) var(--space-2);
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.mini-volume {
+  padding: 0 var(--space-3) var(--space-2);
+}
+
+.mini-volume .voice-volume,
+.sounds-volumes .voice-volume {
+  display: flex;
+  flex: 1 1 100%;
+}
+
+.mini-volume .voice-volume input[type='range'],
+.sounds-volumes .voice-volume input[type='range'] {
+  flex: 1 1 auto;
+  width: auto;
+}
+
+.mini-next-section {
+  padding: 0 var(--space-3) var(--space-2);
+}
+
+.mini-next {
+  max-height: 30vh;
+  overflow: auto;
+}
+
+.mini-next-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.mini-next-list .song {
+  gap: 8px;
+  padding: 4px 0;
+}
+
+.mini-next-list li.autoplay-head {
+  padding: 8px 0 4px;
+}
+
+.mini-next-more {
+  padding: 4px 0;
+  color: var(--muted);
+  font-size: var(--text-sm);
+}
+
+/* The Sounds panel's and the pop-out's volumes, folded under their heading */
+.sounds-volume {
+  flex: none;
+}
+
+.sounds-volumes .volume-sliders {
+  display: grid;
+  gap: var(--space-2);
+  padding-top: var(--space-1);
+}
+
 /* Every volume, above the Volume button */
 .volume-float {
   display: grid;
@@ -2781,7 +2906,7 @@ button.music-upload:hover:not(:disabled) {
   box-shadow: inset 0 -2px 0 var(--accent);
 }
 
-.music-queue .autoplay-head {
+:is(.music-queue, .mini-next-list) .autoplay-head {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -2792,23 +2917,23 @@ button.music-upload:hover:not(:disabled) {
   min-width: 0;
 }
 
-.music-queue .autoplay-head:first-child {
+:is(.music-queue, .mini-next-list) .autoplay-head:first-child {
   border-top: 0;
 }
 
-.music-queue .autoplay-head span {
+:is(.music-queue, .mini-next-list) .autoplay-head span {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.music-queue .autoplay-head b {
+:is(.music-queue, .mini-next-list) .autoplay-head b {
   color: var(--text);
   font-weight: 600;
 }
 
 /* Autoplay's songs line up with the people's titles */
-.music-queue .autoplay-head + .song.autoplay {
+:is(.music-queue, .mini-next-list) .autoplay-head + .song.autoplay {
   border-top: 0;
 }
 
@@ -3363,11 +3488,11 @@ header.tabs-below nav button {
     display: none;
   }
 
-  .music-results .song {
+  .music-results:not(.mini-add-results) .song {
     flex-wrap: wrap;
   }
 
-  .music-results .song-actions {
+  .music-results:not(.mini-add-results) .song-actions {
     width: 100%;
     justify-content: flex-end;
   }

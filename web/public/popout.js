@@ -105,7 +105,8 @@ function render() {
       // Over to the tab, where the Soundboard is
       window.focus();
     },
-    { slash: true },
+    // The music's volume is on its player, above
+    { slash: true, volumes: ['sounds', 'speech'] },
   );
   const stop = stopButton();
   const foot = el('div', { className: 'popout-foot' }, stop.button);
