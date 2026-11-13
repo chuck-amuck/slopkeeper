@@ -579,7 +579,7 @@ export function renderMusic(main) {
     },
   });
   // The words are a text node rather than a span, which a phone would hide
-  const autoplaySwitch = el('label', { className: 'toggle autoplay', title: 'Keeps a few songs like the last one people queued waiting at the end, from YouTube. Songs people add always play first.' }, autoplayBox, 'Autoplay');
+  const autoplaySwitch = el('label', { className: 'toggle autoplay', title: 'Keeps a few songs waiting at the end, from YouTube, like the last song in the queue that someone added. Songs people add always play first.' }, autoplayBox, 'Autoplay');
   const queueCard = el('section', { className: 'card music' }, el('div', { className: 'card-head' }, el('h2', {}, 'Up next', queueCount), el('div', { className: 'toolbar' }, autoplaySwitch, shuffleButton, clearButton)), list);
 
   /** The first song stays put while it's playing or paused, so the list starts after it */

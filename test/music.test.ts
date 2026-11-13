@@ -1130,7 +1130,7 @@ test('Autoplay keeps three songs from YouTube’s mix waiting, like the song som
   stopMusic(id, 'u1');
 });
 
-test('songs people add play before Autoplay’s, whose songs then follow the song added last', async () => {
+test('songs people add play before Autoplay’s, whose songs follow the last song in the queue', async () => {
   const { id, guild, channel } = server();
   setSetting(id, 'musicAutoplay', true);
   addTracks(id, [song(1)], 'u1');
@@ -1142,13 +1142,15 @@ test('songs people add play before Autoplay’s, whose songs then follow the son
   assert.deepEqual(titles(id), ['Song 1', 'Song 2', 'Like 0002 1', 'Like 0002 2', 'Like 0002 3'], 'for songs like Song 2');
   addTracks(id, [song(3)], 'u1', true);
   await settle();
-  assert.deepEqual(titles(id), ['Song 1', 'Song 3', 'Song 2', 'Like 0003 1', 'Like 0003 2', 'Like 0003 3'], 'like the song added last, wherever it went');
-  assert.equal(musicState(id).autoplayLike, 'Song 3');
+  assert.deepEqual(titles(id), ['Song 1', 'Song 3', 'Song 2', 'Like 0002 1', 'Like 0002 2', 'Like 0002 3'], 'Play next leaves them be, as Song 2 is still last');
+  assert.equal(musicState(id).autoplayLike, 'Song 2');
   // Autoplay's songs don't move, and people's stay ahead of them
   const rows = queueOf(id);
   assert.equal(moveTrack(id, rows[3].id, 1), false);
   assert.equal(moveTrack(id, rows[1].id, 5), true);
-  assert.deepEqual(titles(id), ['Song 1', 'Song 2', 'Song 3', 'Like 0003 1', 'Like 0003 2', 'Like 0003 3']);
+  assert.deepEqual(titles(id), ['Song 1', 'Song 2', 'Song 3'], 'moved last, Song 3 leads now');
+  await settle();
+  assert.deepEqual(titles(id).slice(3), ['Like 0003 1', 'Like 0003 2', 'Like 0003 3']);
   stopMusic(id, 'u1');
 });
 
@@ -1177,7 +1179,7 @@ test('a song kept from Autoplay goes after people’s, Autoplay follows it, and 
   stopMusic(id, 'u1');
 });
 
-test('a song played next leads Autoplay until someone queues another, even with older songs still waiting', async () => {
+test('Autoplay goes on from the last song in the queue, not the one added last, and keeps it once it’s played', async () => {
   const { id, guild, channel } = server();
   setSetting(id, 'musicAutoplay', true);
   addTracks(id, [song(1)], 'u1');
@@ -1185,13 +1187,16 @@ test('a song played next leads Autoplay until someone queues another, even with 
   addTracks(id, [song(2)], 'u1');
   addTracks(id, [song(3)], 'u1', true);
   await settle();
-  assert.deepEqual(titles(id), ['Song 1', 'Song 3', 'Song 2', 'Like 0003 1', 'Like 0003 2', 'Like 0003 3']);
+  assert.deepEqual(titles(id), ['Song 1', 'Song 3', 'Song 2', 'Like 0002 1', 'Like 0002 2', 'Like 0002 3']);
   lastPlayed().end();
   await settle();
   lastPlayed().end();
   await settle();
-  assert.deepEqual(titles(id), ['Song 2', 'Like 0003 1', 'Like 0003 2', 'Like 0003 3'], 'Song 2 playing doesn’t swap them');
-  assert.equal(musicState(id).autoplayLike, 'Song 3');
+  assert.deepEqual(titles(id), ['Song 2', 'Like 0002 1', 'Like 0002 2', 'Like 0002 3'], 'Song 3 played next, and changed nothing');
+  lastPlayed().end();
+  await settle();
+  assert.deepEqual(titles(id), ['Like 0002 1', 'Like 0002 2', 'Like 0002 3', 'Like 0002 4'], 'Song 2 still leads once it’s played');
+  assert.equal(musicState(id).autoplayLike, 'Song 2');
   stopMusic(id, 'u1');
 });
 
@@ -1372,10 +1377,16 @@ test('shuffling leaves Autoplay’s songs at the end', async () => {
   await settle();
   addTracks(id, [2, 3, 4, 5, 6].map((n) => song(n)), 'u1');
   await settle();
+  assert.deepEqual(titles(id).slice(-3), ['Like 0006 1', 'Like 0006 2', 'Like 0006 3'], 'like the last of the songs added');
   for (let n = 0; n < 5; n++) {
     shuffleQueue(id, 'u1');
-    assert.deepEqual(titles(id).slice(-3), ['Like 0006 1', 'Like 0006 2', 'Like 0006 3'], 'like the last of the songs added');
-    assert.deepEqual(titles(id).slice(1, -3).sort(), ['Song 2', 'Song 3', 'Song 4', 'Song 5', 'Song 6']);
+    await settle();
+    const rows = queueOf(id);
+    const autoplayed = rows.map((r) => r.added_by === AUTOPLAY);
+    assert.deepEqual(autoplayed.slice(0, 6), [false, false, false, false, false, false]);
+    assert.ok(autoplayed.slice(6).every(Boolean), 'Autoplay’s songs stay at the end');
+    assert.deepEqual(rows.slice(1, 6).map((r) => r.title).sort(), ['Song 2', 'Song 3', 'Song 4', 'Song 5', 'Song 6']);
+    assert.equal(musicState(id).autoplayLike, rows[5].title, 'like whichever song is last now');
   }
   stopMusic(id, 'u1');
 });

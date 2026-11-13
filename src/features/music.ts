@@ -135,7 +135,7 @@ interface Session {
   matched: Map<string, string>;
 }
 
-/** What Autoplay goes on from: the latest song someone queued, or failing that, the latest played */
+/** What Autoplay goes on from: the last song in the queue someone added, or failing that, the latest played */
 interface AutoplaySeed {
   /** Changes when Autoplay should start again from another song */
   key: string;
@@ -144,15 +144,13 @@ interface AutoplaySeed {
   title: string | null;
   /** The queued song, to find its YouTube video */
   uri: string | null;
-  /** When it was queued: a song queued later takes over, but one queued earlier doesn't once this has played */
-  addedAt: number;
   /** Its YouTube video once looked for, or null if it has none */
   video?: string | null;
   /** Taken out of the queue before it played, so the song queued before it leads again */
   gone?: boolean;
 }
 
-const FROM_PLAYED: AutoplaySeed = { key: 'played', id: null, title: null, uri: null, addedAt: 0 };
+const FROM_PLAYED: AutoplaySeed = { key: 'played', id: null, title: null, uri: null };
 
 const sessions = new Map<string, Session>();
 let status: PlayerStatus | null = null;
@@ -309,6 +307,9 @@ export function moveTrack(guildId: string, id: number, to: number): boolean {
   transaction(() => rows.forEach((r, i) => update.run(i, r.id)));
   fetchNext(guildId);
   cardChanged(guildId);
+  // Another song may be last now, which Autoplay follows
+  const s = sessions.get(guildId);
+  if (s) void topUp(s);
   return true;
 }
 
@@ -331,6 +332,9 @@ export function shuffleQueue(guildId: string, who: string): number {
   fetchNext(guildId);
   cardChanged(guildId);
   logActivity(guildId, who, 'Shuffled the music queue');
+  // Another song may be last now, which Autoplay follows
+  const s = sessions.get(guildId);
+  if (s) void topUp(s);
   return rest.length;
 }
 
@@ -741,20 +745,15 @@ const nothingAfter = (s: Session) => !waitingAfter.get(s.guild.id, s.current.id)
 const autoplayWaiting = (s: Session) => (autoplayRows.get(s.guild.id, AUTOPLAY, s.current.id) as { n: number }).n;
 
 /**
- * The song Autoplay goes on from: the latest one someone added that's still queued, the one playing included. Once those have
- * all played, it keeps the last one, so its songs don't change under people as the music runs on
+ * The song Autoplay goes on from: the last song in the queue that someone added, the one playing included, so the music carries on
+ * in the style of whatever plays last. Once those have all played, it keeps the last of them, so its songs don't change under people
+ * as the music runs on
  */
 function seedOf(s: Session): AutoplaySeed {
-  const later = (at: number, id: number, than: { at: number; id: number }) => at > than.at || (at === than.at && id > than.id);
-  let latest: QueueRow | undefined;
-  for (const r of queueOf(s.guild.id)) {
-    if (r.added_by !== AUTOPLAY && (!latest || later(r.added_at, r.id, { at: latest.added_at, id: latest.id }))) latest = r;
-  }
+  const last = queueOf(s.guild.id).findLast((r) => r.added_by !== AUTOPLAY);
   const from = s.autoplayFrom?.gone ? null : s.autoplayFrom;
-  // A song that played leads until someone queues one after it, even with songs queued before it still waiting
-  if (from?.id != null && (!latest || from.id === latest.id || later(from.addedAt, from.id, { at: latest.added_at, id: latest.id }))) return from;
-  if (latest) return { key: `song:${latest.id}`, id: latest.id, title: latest.title, uri: latest.uri, addedAt: latest.added_at };
-  return from ?? FROM_PLAYED;
+  if (!last) return from ?? FROM_PLAYED;
+  return from?.id === last.id ? from : { key: `song:${last.id}`, id: last.id, title: last.title, uri: last.uri };
 }
 
 /** Notes that the song Autoplay follows was taken out before it played, when it's among `ids` */
@@ -763,7 +762,7 @@ function seedTakenOut(s: Session, ids: number[]) {
   if (id != null && id !== s.current.id && ids.includes(id)) s.autoplayFrom = { ...s.autoplayFrom!, gone: true };
 }
 
-/** Autoplay's songs follow the latest song someone queued: once that changes, the ones waiting go, to make way for songs like it */
+/** Autoplay's songs follow the last song in the queue someone added: once that changes, the ones waiting go, to make way for songs like it */
 function followSeed(s: Session) {
   const seed = seedOf(s);
   const before = s.autoplayFrom;
@@ -834,7 +833,7 @@ async function untilToppedUp(s: Session) {
 }
 
 /**
- * Keeps Autoplay's songs waiting at the end while it's on, like the latest song someone queued. A look already going is waited on, and
+ * Keeps Autoplay's songs waiting at the end while it's on, like the last song in the queue someone added. A look already going is waited on, and
  * looks again afterwards if that song changed meanwhile
  */
 function topUp(s: Session): Promise<void> {
@@ -882,7 +881,7 @@ function topUp(s: Session): Promise<void> {
 }
 
 /**
- * Up to `wanted` songs not played yet from YouTube's mix of the latest song someone queued, which keeps Autoplay close to what people
+ * Up to `wanted` songs not played yet from YouTube's mix of the last song in the queue someone added, which keeps Autoplay close to what people
  * chose. Once that runs out, or can't be read, from the mix of the latest song someone played, then the latest played. Throws when no
  * mix could be read
  */
@@ -1043,7 +1042,6 @@ async function resumeOne(client: Client, saved: SavedSession) {
       id: Number.isInteger(seed.id) ? seed.id : null,
       title: typeof seed.title === 'string' ? seed.title : null,
       uri: typeof seed.uri === 'string' ? seed.uri : null,
-      addedAt: Number(seed.addedAt) || 0,
       ...(seed.video === null || (typeof seed.video === 'string' && /^[\w-]{11}$/.test(seed.video)) ? { video: seed.video } : {}),
       ...(seed.gone === true ? { gone: true } : {}),
     };
