@@ -1,11 +1,11 @@
-import { announce, api, attempt, confirmButton, el, emojiNode, fetchAudio, forget, icon, keepFocus, notice, player, recall, remember, request, soundPath, state, toast, undoToast } from './lib.js';
+import { api, attempt, el, emojiNode, fetchAudio, forget, icon, keepFocus, notice, player, recall, remember, request, soundPath, state, toast, undoToast } from './lib.js';
 import { elapsed, onPlaying } from './playing.js';
 import { followWhenIdle, older } from './updates.js';
 import { voiceBar } from './voice.js';
 
-const byUse = (a, b) => b.plays - a.plays || a.name.localeCompare(b.name);
+export const byUse = (a, b) => b.plays - a.plays || a.name.localeCompare(b.name);
 // What the sounds in no group are called, and the group the star puts sounds in
-const EVERYTHING_ELSE = 'Everything else';
+export const EVERYTHING_ELSE = 'Everything else';
 const FAVOURITES = 'favourites';
 // Whether Speech is folded away, on this device
 const SPEECH_FOLDED = 'speechFolded';
@@ -222,17 +222,14 @@ function sayBox(voice) {
 }
 
 /**
- * Big buttons for playing sounds during a game: the server's groups in their order, then whatever gets played most. Arrange sorts
- * them into groups. `openManage` switches to the Soundboard tab's Manage view, where sounds are added; `arrange` opens in Arrange
+ * Big buttons for playing sounds during a game: the server's groups in their order, then whatever gets played most.
+ * Groups are made and sorted in Manage. `openManage` switches to the Soundboard tab's Manage view, where sounds are added
  */
-export function renderBoard(main, openManage, head = main, arrange = false) {
+export function renderBoard(main, openManage) {
   const guildId = state.guildId;
   let sounds = null;
   let groups = [];
   let filter = '';
-  let arranging = false;
-  /** The sound picked up in Arrange, to put where the next tap says */
-  let picked = null;
   const tiles = [];
   /** Each tile shown, by sound name, to mark the ones playing */
   const shownTiles = new Map();
@@ -254,67 +251,16 @@ export function renderBoard(main, openManage, head = main, arrange = false) {
   // Tooltips don't show on a phone, so the reason the tiles are grey is said where it's seen
   const nobody = notice('empty', 'Nobody’s in voice. Join a voice channel in Discord and these light up.', { compact: true });
   nobody.hidden = true;
-  const arrangeLabel = el('span', { className: 'arrange-label' }, 'Arrange');
-  const arrangeButton = el('button', { type: 'button', className: 'with-icon arrange-toggle', title: 'Sort sounds into groups and put them in order', onclick: () => setArranging(!arranging) }, icon('grip'), arrangeLabel);
-  const newGroup = el('input', { ariaLabel: 'New group’s name', placeholder: 'New group', maxLength: 40, autocomplete: 'off' });
-  const arrangeBar = el(
-    'div',
-    { className: 'arrange-bar' },
-    el('p', { className: 'hint' }, 'Tap a sound, then tap where it goes: a sound to go in front of, or the end of a group. With a mouse, drag them. Sounds in no group come last, most played first. Discord’s panel follows this order.'),
-    el(
-      'form',
-      {
-        className: 'toolbar',
-        onsubmit: (e) => {
-          e.preventDefault();
-          const name = newGroup.value.trim();
-          if (!name) return;
-          void changeGroups(() => request(api('/sound-groups'), { method: 'POST', json: { name } })).then((ok) => {
-            if (!ok) return;
-            newGroup.value = '';
-            toast(`Made ${name}. Move sounds into it.`);
-          });
-        },
-      },
-      newGroup,
-      el('button', { type: 'submit' }, 'Add group'),
-    ),
-  );
-  // Beside Play | Manage when there's a slot for it, a row higher up. The search is just above the sounds it searches
-  head.append(arrangeButton);
   main.append(voice.node, say.node, search, nobody, board);
   board.append(notice('loading', 'Loading sounds…'));
 
   function paint() {
     const channel = voice.channel();
     say.paint();
-    nobody.hidden = arranging || !voice.loaded() || !!channel;
+    nobody.hidden = !voice.loaded() || !!channel;
     for (const tile of tiles) {
-      // Arranging works with nobody in voice
-      tile.disabled = !arranging && !channel;
-      tile.title = arranging ? '' : channel ? `Play in ${channel.name}` : 'Nobody’s in voice';
-    }
-  }
-
-  // ---------- arranging ----------
-  function setArranging(on) {
-    arranging = on;
-    picked = null;
-    // The words change, so it's not a pressed/unpressed toggle to a screen reader
-    arrangeLabel.textContent = on ? 'Done' : 'Arrange';
-    arrangeButton.replaceChildren(icon(on ? 'check' : 'grip'), arrangeLabel);
-    arrangeButton.classList.toggle('primary', on);
-    board.classList.toggle('arranging', on);
-    render();
-    if (on) announce('Arranging. Pick a sound, then where it goes.');
-  }
-
-  /** Marks the sound picked up, and shows the places at the end of each group it can go */
-  function markPicked() {
-    board.classList.toggle('moving', !!picked);
-    for (const [name, { button }] of shownTiles) {
-      button.classList.toggle('picked', name === picked);
-      if (arranging) button.ariaPressed = String(name === picked);
+      tile.disabled = !channel;
+      tile.title = channel ? `Play in ${channel.name}` : 'Nobody’s in voice';
     }
   }
 
@@ -345,116 +291,22 @@ export function renderBoard(main, openManage, head = main, arrange = false) {
     return true;
   }
 
-  /** Puts the picked sound before `before` in `group`, or at its end, or with no group among the rest */
-  function putPicked(group, before = null) {
-    const name = picked;
-    picked = null;
-    markPicked();
-    if (!name || name === before) return;
-    void changeGroups(() => request(soundPath(name), { method: 'PATCH', json: { place: { group: group?.id ?? null, before: group ? before : null } } })).then(
-      (ok) => ok && announce(`Moved ${name} ${group ? `to ${group.name}` : `to ${EVERYTHING_ELSE}`}.`),
-    );
-  }
-
-  /** A tile pressed while arranging: picks it up, puts it down again, or puts the one picked up in front of it */
-  function arrangeTap(sound, group) {
-    if (!picked) {
-      picked = sound.name;
-      markPicked();
-      return announce(`Picked ${sound.name}. Now pick where it goes.`);
-    }
-    if (picked === sound.name) {
-      picked = null;
-      return markPicked();
-    }
-    putPicked(group, sound.name);
-  }
-
-  /** Where a dragged sound can land: on a tile, in front of it, or the end of a group */
-  const dropOn = (node, group, before) => ({
-    ondragover: (e) => {
-      if (!arranging || !picked || picked === before) return;
-      e.preventDefault();
-      node.classList.add('drop-before');
-    },
-    ondragleave: () => node.classList.remove('drop-before'),
-    ondrop: (e) => {
-      e.preventDefault();
-      node.classList.remove('drop-before');
-      putPicked(group, before);
-    },
-  });
-
-  /** The place at the end of a group, shown while a sound is picked up */
-  function endOf(group) {
-    const slot = el('button', { type: 'button', className: 'tile drop-slot', onclick: () => putPicked(group) }, group ? `End of ${group.name}` : EVERYTHING_ELSE);
-    Object.assign(slot, dropOn(slot, group, null));
-    return slot;
-  }
-
-  /** A group's heading while arranging: its name to change, moving it, and deleting it */
-  function groupHead(group, index) {
-    const name = el('input', {
-      className: 'group-name',
-      value: group.name,
-      maxLength: 40,
-      ariaLabel: `Group name: ${group.name}`,
-      onchange: () => {
-        const to = name.value.trim();
-        if (!to || to === group.name) return void (name.value = group.name);
-        void changeGroups(() => request(api(`/sound-groups/${group.id}`), { method: 'PATCH', json: { name: to } })).then((ok) => ok || (name.value = group.name));
-      },
-    });
-    const moveTo = (to) => void changeGroups(() => request(api(`/sound-groups/${group.id}`), { method: 'PATCH', json: { to } }));
-    return el(
-      'div',
-      { className: 'group-head' },
-      name,
-      el('button', { type: 'button', className: 'icon', ariaLabel: `Move ${group.name} up`, title: 'Move up', disabled: index === 0, onclick: () => moveTo(index - 1) }, icon('up')),
-      el('button', { type: 'button', className: 'icon', ariaLabel: `Move ${group.name} down`, title: 'Move down', disabled: index === groups.length - 1, onclick: () => moveTo(index + 1) }, icon('down')),
-      confirmButton({ type: 'button', className: 'quiet', title: `Its sounds go back to ${EVERYTHING_ELSE}` }, 'Delete', `Delete ${group.name}?`, () =>
-        changeGroups(() => request(api(`/sound-groups/${group.id}`), { method: 'DELETE' })).then(
-          (ok) =>
-            ok &&
-            undoToast(`Deleted ${group.name}. Its sounds are in ${EVERYTHING_ELSE}.`, () =>
-              changeGroups(() => request(api('/sound-groups'), { method: 'POST', json: { name: group.name, sounds: group.sounds, at: index } })),
-            ),
-        ),
-      ),
-    );
-  }
-
   function tile(sound, group = null) {
     const button = el(
       'button',
       {
         className: 'tile',
-        draggable: arranging,
         onclick: () => {
-          if (arranging) return arrangeTap(sound, group);
           // Restarts the flash on every press, so spamming still shows
           button.classList.remove('hit');
           void button.offsetWidth;
           button.classList.add('hit');
           void attempt(() => voice.play(sound.name));
         },
-        ondragstart: (e) => {
-          dragging = true;
-          picked = sound.name;
-          e.dataTransfer.effectAllowed = 'move';
-          e.dataTransfer.setData('text/plain', sound.name);
-          markPicked();
-        },
-        ondragend: () => {
-          dragging = false;
-          picked = null;
-          markPicked();
-        },
       },
       el('span', { className: 'tile-emoji', ariaHidden: 'true' }, sound.emoji ? emojiNode(sound.emoji, '') : icon('speaker')),
       el('span', { className: 'tile-name' }, sound.name),
     );
-    if (arranging) Object.assign(button, dropOn(button, group, sound.name));
     tiles.push(button);
     const progress = el('span', { className: 'tile-progress', hidden: true });
     shownTiles.set(sound.name, { button, progress, sound });
@@ -474,7 +326,7 @@ export function renderBoard(main, openManage, head = main, arrange = false) {
       },
       icon('star'),
     );
-    return el('div', { className: 'tile-box' }, button, progress, ...(arranging ? [] : [star]));
+    return el('div', { className: 'tile-box' }, button, progress, star);
   }
 
   /** Marks the tiles of the sounds playing, with how far through they are */
@@ -510,7 +362,7 @@ export function renderBoard(main, openManage, head = main, arrange = false) {
     markPlaying();
   });
 
-  // Groups folded away on this device. A search or Arrange shows them all, and they fold again after
+  // Groups folded away on this device. A search shows them all, and they fold again after
   let folded = new Set();
   try {
     folded = new Set(JSON.parse(recall(foldedKey(guildId)) ?? '[]'));
@@ -538,42 +390,34 @@ export function renderBoard(main, openManage, head = main, arrange = false) {
     shownTiles.clear();
     if (!sounds.length) return board.replaceChildren(notice('empty', 'No sounds yet. ', el('button', { className: 'link', onclick: openManage }, 'Add some in Manage'), '.'));
     const shown = sounds.filter((s) => s.name.includes(filter));
-    if (!shown.length && !arranging) return board.replaceChildren(notice('empty', `Nothing matches “${filter}”.`));
+    if (!shown.length) return board.replaceChildren(notice('empty', `Nothing matches “${filter}”.`));
     const byName = new Map(shown.map((s) => [s.name, s]));
     const grouped = new Set(groups.flatMap((g) => g.sounds));
-    // Arranging shows every group, empty or not, to move sounds into
-    const sections = groups.map((group, index) => ({ group, index, list: group.sounds.map((n) => byName.get(n)).filter(Boolean) })).filter((x) => arranging || x.list.length);
+    const sections = groups.map((group) => ({ group, list: group.sounds.map((n) => byName.get(n)).filter(Boolean) })).filter((x) => x.list.length);
     // In the order they were loaded in, most played first then, and new ones after
     const rest = shown.filter((s) => !grouped.has(s.name));
-    const grid = (list, group) => el('div', { className: 'tiles' }, list.map((s) => tile(s, group)), arranging ? endOf(group) : []);
+    const grid = (list, group) => el('div', { className: 'tiles' }, list.map((s) => tile(s, group)));
     keepFocus(board, () =>
       board.replaceChildren(
-        ...(arranging ? [arrangeBar] : []),
-        ...sections.flatMap(({ group, index, list }) => {
+        ...sections.flatMap(({ group, list }) => {
           const box = grid(list, group);
-          return [
-            arranging ? groupHead(group, index) : headOf(group, list, box),
-            ...(arranging && !list.length ? [el('p', { className: 'hint' }, filter ? `None of its sounds match “${filter}”.` : 'Empty. Pick a sound and put it here.')] : []),
-            box,
-          ];
+          return [headOf(group, list, box), box];
         }),
-        ...(rest.length || arranging
+        ...(rest.length
           ? (() => {
               const box = grid(rest, null);
               // Without groups, there's no heading to fold it with
-              return [...(sections.length ? [arranging ? el('h2', {}, EVERYTHING_ELSE) : headOf(null, rest, box)] : []), box];
+              return [...(sections.length ? [headOf(null, rest, box)] : []), box];
             })()
           : []),
       ),
     );
-    markPicked();
     markPlaying();
     paint();
   }
 
   // What's shown comes from the first load and from changes made anywhere: other tabs, Discord and the bot itself.
   // Whichever arrives first is used, and nothing older than what's shown
-  let dragging = false;
   let shown = '';
   function useData(fresh) {
     if (guildId !== state.guildId || !main.isConnected || older(fresh.version, shown)) return false;
@@ -581,20 +425,17 @@ export function renderBoard(main, openManage, head = main, arrange = false) {
     if (sounds) useSounds(fresh.sounds);
     else sounds = fresh.sounds.sort(byUse);
     useGroups(fresh.groups ?? []);
-    if (picked && !sounds.some((s) => s.name === picked)) picked = null;
     return true;
   }
-  // A change that comes while a group's name is being typed, a Delete waits for its second press or a sound is being
-  // dragged waits until that's done
-  followWhenIdle('sounds', main, () => [board], (fresh) => useData(fresh) && render(), () => dragging);
+  // A change waits while a tile is held down, so nothing moves under the finger
+  followWhenIdle('sounds', main, () => [board], (fresh) => useData(fresh) && render());
 
   void attempt(async () => {
     try {
       const fresh = await request(api('/sounds'));
       if (guildId !== state.guildId || !main.isConnected) return;
       useData(fresh);
-      if (arrange) setArranging(true);
-      else render();
+      render();
     } catch (err) {
       board.replaceChildren(notice('error', err.message));
       throw err;

@@ -1,6 +1,7 @@
 import { pickClip } from './clip.js';
 import { emojiPicker } from './emojipicker.js';
-import { api, attempt, confirmButton, el, emojiNode, icon, keepFocus, notice, openDialog, player, postDialog, recall, remember, request, RequestError, soundPath, state, toast, undoToast, volumeControl } from './lib.js';
+import { byUse, EVERYTHING_ELSE } from './board.js';
+import { announce, api, attempt, confirmButton, el, emojiNode, icon, keepFocus, notice, openDialog, player, postDialog, recall, remember, request, RequestError, soundPath, state, toast, undoToast, volumeControl } from './lib.js';
 import { pickTrim } from './trim.js';
 import { followWhenIdle, older } from './updates.js';
 import { voiceBar } from './voice.js';
@@ -34,8 +35,11 @@ async function filesIn(entry) {
   }
 }
 
-/** `openArrange` switches to Play, arranging the sounds into groups */
-export function renderLibrary(main, openArrange) {
+/**
+ * Manage: adding sounds, Discord's own soundboard, and sorting the sounds into groups, which Play and Discord's panel
+ * follow
+ */
+export function renderLibrary(main) {
   const guildId = state.guildId;
   let data = null;
   // The version of the sounds shown, so an answer that's been overtaken isn't shown over a newer one
@@ -144,16 +148,19 @@ export function renderLibrary(main, openArrange) {
     matchMedia('(pointer: coarse)').matches ? 'Tap to choose audio files' : 'Drop audio files or a folder here, or click to choose',
   );
   const queueBox = el('div', { className: 'queue', hidden: true });
+  const listHint = el('p', { className: 'hint list-hint', hidden: true });
   const list = el('div', { className: 'list' });
+  const makeGroup = el('button', { type: 'button', className: 'with-icon', onclick: () => newGroup() }, icon('plus'), el('span', {}, 'New group'));
   const bin = el('div', { className: 'stack bin' });
 
   main.append(
     voice.node,
-    el('div', { className: 'toolbar' }, search, sync, postPanel, el('button', { type: 'button', title: 'Sort sounds into groups and put them in order, on Play', onclick: openArrange }, 'Arrange')),
+    el('div', { className: 'toolbar' }, search, makeGroup, sync, postPanel),
     board,
     dropzone,
     picker,
     queueBox,
+    listHint,
     list,
     bin,
   );
@@ -181,7 +188,7 @@ export function renderLibrary(main, openArrange) {
   }
 
   // Changes from other tabs, from Discord and from the bot itself. One that comes while you're renaming, sliding a
-  // volume or about to delete something waits until you're done, so nothing is pulled out from under you
+  // volume, moving a sound or about to delete something waits until you're done, so nothing is pulled out from under you
   followWhenIdle('sounds', main, () => [list, boardBody, bin], ({ bin: deleted, ...fresh }) => {
     if (guildId !== state.guildId || older(fresh.version, shown)) return;
     shown = fresh.version;
@@ -190,7 +197,7 @@ export function renderLibrary(main, openArrange) {
     renderBoard();
     renderList();
     renderBin(deleted);
-  });
+  }, () => !!moving);
 
   function renderBin({ days, sounds }) {
     bin.replaceChildren(
@@ -401,15 +408,364 @@ export function renderLibrary(main, openArrange) {
     ));
   }
 
+  /** The sounds in their groups, in the order Play and Discord's panel show them */
   function renderList() {
     if (!data) return;
-    const shown = data.sounds.filter((s) => s.name.includes(filter));
+    // A redraw mid-move puts the sound back; the change it waited for has come
+    settle(false);
     previews.clear();
     players.clear();
+    listHint.hidden = !data.sounds.length || !!filter;
     if (!data.sounds.length) return list.replaceChildren(notice('empty', 'No sounds yet. Drop some files above.'));
+    const byName = new Map(data.sounds.map((s) => [s.name, s]));
+    const grouped = new Set(groups().flatMap((g) => g.sounds));
+    const sections = [
+      ...groups().map((group, index) => ({ group, index, sounds: group.sounds.map((n) => byName.get(n)).filter(Boolean) })),
+      { group: null, index: -1, sounds: data.sounds.filter((s) => !grouped.has(s.name)).sort(byUse) },
+    ];
+    placed = new Map(sections.map(({ group, sounds }) => [keyOf(group), sounds.map((s) => s.name)]));
+    const shown = filter ? sections.map((x) => ({ ...x, sounds: x.sounds.filter((s) => s.name.includes(filter)) })).filter((x) => x.sounds.length) : sections;
     if (!shown.length) return list.replaceChildren(notice('empty', `Nothing matches “${filter}”.`));
-    keepFocus(list, () => list.replaceChildren(...shown.map(soundRow)));
+    // With no groups, there's nothing to move sounds between, and Everything else needs no heading
+    const grouping = groups().length > 0;
+    listHint.textContent = !grouping
+      ? 'New group sorts sounds into sections on Play and on Discord’s panel.'
+      : matchMedia('(pointer: coarse)').matches
+        ? 'Play and Discord’s panel show the sounds in this order. Tap a sound’s handle to move it to another group, or drag it.'
+        : 'Play and Discord’s panel show the sounds in this order. Drag a sound by its handle to move it.';
+    keepFocus(list, () =>
+      list.replaceChildren(
+        ...shown.flatMap(({ group, index, sounds }) => [
+          ...(grouping ? [sectionHead(group, index, sounds.length)] : []),
+          ...(sounds.length ? sounds.map((s) => soundRow(s, group, grouping)) : [emptyRow(group)]),
+        ]),
+      ),
+    );
   }
+
+  // ---------- groups ----------
+  // Play and Discord's panel show the sounds in these groups, in this order, then the rest, most played first
+  const groups = () => data?.groups ?? [];
+  const keyOf = (group) => (group ? String(group.id) : 'rest');
+  /** The sounds in each group as listed, by keyOf, for working out where a moved sound lands */
+  let placed = new Map();
+
+  /** Runs a change to the groups, then shows them as the bot has them. Resolves to whether it worked */
+  async function changeGroups(action) {
+    const fresh = await attempt(action);
+    if (!fresh?.groups || guildId !== state.guildId || !main.isConnected) return false;
+    data.groups = fresh.groups;
+    renderList();
+    return true;
+  }
+
+  /** Puts a sound in a group, before `before` or at its end, or with no group among the rest */
+  const place = (name, group, before = null) =>
+    changeGroups(() => request(soundPath(name), { method: 'PATCH', json: { place: { group: group?.id ?? null, before: group ? before : null } } }));
+
+  function newGroup() {
+    const name = el('input', { ariaLabel: 'Group name', placeholder: 'Reactions', maxLength: 40, required: true, autocomplete: 'off' });
+    const node = openDialog(main, {
+      title: 'New group',
+      body: [el('p', {}, 'Groups sort the sounds into sections on Play and on Discord’s panel.'), name],
+      actions: [el('button', { type: 'submit', className: 'primary' }, 'Make group')],
+      close: 'Cancel',
+      onsubmit: (e) => {
+        e.preventDefault();
+        const text = name.value.trim();
+        if (!text) return;
+        void changeGroups(() => request(api('/sound-groups'), { method: 'POST', json: { name: text } })).then((ok) => {
+          if (!ok) return;
+          node.close();
+          toast(`Made ${text}. Move sounds into it with their handles.`);
+        });
+      },
+    });
+    name.focus();
+  }
+
+  const deleteGroup = (group, index) =>
+    changeGroups(() => request(api(`/sound-groups/${group.id}`), { method: 'DELETE' })).then(
+      (ok) =>
+        ok &&
+        undoToast(`Deleted ${group.name}. Its sounds are in ${EVERYTHING_ELSE}.`, () =>
+          changeGroups(() => request(api('/sound-groups'), { method: 'POST', json: { name: group.name, sounds: group.sounds, at: index } })),
+        ),
+    );
+
+  /** A group's heading in the list: its name to change, moving it up or down, and deleting it */
+  function sectionHead(group, index, count) {
+    const sounds = el('span', { className: 'meta' }, count === 1 ? '1 sound' : `${count} sounds`);
+    if (!group) return el('div', { className: 'list-head', 'data-group': 'rest' }, el('h3', {}, EVERYTHING_ELSE), el('span', { className: 'meta' }, 'Most played first'));
+    const title = el('h3', {});
+    const showName = () => title.replaceChildren(el('button', { type: 'button', className: 'group-name', title: 'Rename', ariaLabel: `${group.name}, rename`, onclick: rename }, group.name));
+    function rename() {
+      let done = false;
+      const finish = async (save) => {
+        if (done) return;
+        done = true;
+        const to = input.value.trim();
+        if (save && to && to !== group.name && (await changeGroups(() => request(api(`/sound-groups/${group.id}`), { method: 'PATCH', json: { name: to } })))) return;
+        const typing = document.activeElement === input;
+        showName();
+        if (typing) title.querySelector('button').focus();
+      };
+      const input = el('input', {
+        value: group.name,
+        maxLength: 40,
+        ariaLabel: `New name for ${group.name}`,
+        onkeydown: (e) => {
+          if (e.key === 'Enter') void finish(true);
+          if (e.key === 'Escape') void finish(false);
+        },
+        onblur: () => void finish(true),
+      });
+      title.replaceChildren(input);
+      input.select();
+    }
+    showName();
+    const moveTo = (to) => void changeGroups(() => request(api(`/sound-groups/${group.id}`), { method: 'PATCH', json: { to } }));
+    const last = groups().length - 1;
+    return el(
+      'div',
+      { className: 'list-head', 'data-group': keyOf(group) },
+      title,
+      sounds,
+      el(
+        'span',
+        { className: 'list-head-actions' },
+        el('button', { type: 'button', className: 'quiet icon', ariaLabel: `Move ${group.name} up`, title: 'Move the group up', disabled: index === 0, onclick: () => moveTo(index - 1) }, icon('up')),
+        el('button', { type: 'button', className: 'quiet icon', ariaLabel: `Move ${group.name} down`, title: 'Move the group down', disabled: index === last, onclick: () => moveTo(index + 1) }, icon('down')),
+        confirmButton({ type: 'button', className: 'quiet icon', title: `Delete the group. Its sounds go to ${EVERYTHING_ELSE}`, ariaLabel: `Delete ${group.name}` }, icon('trash'), 'Delete?', () => deleteGroup(group, index)),
+      ),
+    );
+  }
+
+  const emptyRow = (group) =>
+    el('p', { className: 'list-empty', 'data-group': keyOf(group) }, group ? 'Empty. Move sounds here with their handles.' : 'Every sound is in a group.');
+
+  /** Picks a group for a sound from a list, for a tap or a click on its handle */
+  function moveSheet(sound, group) {
+    const item = (to, label) => {
+      const here = (to?.id ?? null) === (group?.id ?? null);
+      return el(
+        'button',
+        {
+          type: 'button',
+          className: 'sheet-item with-icon',
+          disabled: here,
+          ariaCurrent: here ? 'true' : undefined,
+          onclick: () => {
+            node.close();
+            void place(sound.name, to).then((ok) => ok && toast(`Moved ${sound.name} to ${label}.`));
+          },
+        },
+        el('span', { className: 'sheet-mark' }, here ? icon('check') : null),
+        el('span', {}, label),
+      );
+    };
+    const node = openDialog(main, {
+      title: `Move ${sound.name}`,
+      className: 'sheet',
+      body: [el('div', { className: 'sheet-list' }, ...groups().map((g) => item(g, g.name)), item(null, EVERYTHING_ELSE))],
+      close: 'Cancel',
+    });
+  }
+
+  // ---------- moving a sound by its handle ----------
+  // Dragged with a mouse or a finger, or picked up with Space and moved with the arrow keys. The row dims and a line
+  // shows where it lands; nothing changes until it's put down
+  /** The sound being moved, where it came from, and where it would land: null for where it already is */
+  let moving = null;
+  let marked = [];
+  let ghost = null;
+  let scrollFrame = 0;
+  let lastPoint = null;
+  /** A drag ends in a click on the handle, which isn't a tap */
+  let afterDrag = false;
+
+  const rowOf = (name) => [...list.querySelectorAll('.sound')].find((row) => row.dataset.sound === name);
+
+  function lift(sound, group, row) {
+    moving = { name: sound.name, from: keyOf(group), row, target: null };
+    row.classList.add('lifted');
+    list.classList.add('moving');
+  }
+
+  /** Whether landing there leaves the sound where it is */
+  function samePlace(spot) {
+    const key = keyOf(spot.group);
+    if (key !== moving.from) return false;
+    if (!spot.group) return true;
+    const names = placed.get(key);
+    return spot.before === moving.name || spot.before === (names[names.indexOf(moving.name) + 1] ?? null);
+  }
+
+  /** Every place the sound could go, top to bottom, for the arrow keys */
+  function spots() {
+    const all = [];
+    for (const group of groups()) {
+      for (const name of placed.get(keyOf(group)).filter((n) => n !== moving.name)) all.push({ group, before: name });
+      all.push({ group, before: null });
+    }
+    all.push({ group: null, before: null });
+    return all;
+  }
+
+  const describe = (spot) => (samePlace(spot) ? 'Where it was' : !spot.group ? EVERYTHING_ELSE : spot.before ? `${spot.group.name}, before ${spot.before}` : `End of ${spot.group.name}`);
+
+  /** Marks where the sound would land */
+  function aim(spot) {
+    for (const [node, name] of marked) node.classList.remove(name);
+    marked = [];
+    moving.target = spot && !samePlace(spot) ? spot : null;
+    const to = moving.target;
+    if (!to) return;
+    const mark = (node, name) => node && (node.classList.add(name), marked.push([node, name]));
+    const key = keyOf(to.group);
+    if (!to.group) return mark(list.querySelector('.list-head[data-group="rest"]') ?? list.querySelector('.list-empty[data-group="rest"]'), 'drop-into');
+    if (to.before) return mark(rowOf(to.before), 'drop-before');
+    const last = placed.get(key).filter((n) => n !== moving.name).at(-1);
+    if (last) mark(rowOf(last), 'drop-after');
+    else mark(list.querySelector(`.list-empty[data-group="${key}"]`), 'drop-into');
+  }
+
+  /** Where a dragged sound would land, from what's under the pointer */
+  function aimAt(x, y) {
+    const at = document.elementFromPoint(x, y)?.closest('.sound, .list-head, .list-empty');
+    if (!at || !list.contains(at)) return;
+    const key = at.dataset.group;
+    const group = key === 'rest' ? null : groups().find((g) => keyOf(g) === key);
+    if (group === undefined) return;
+    if (!group) return aim({ group: null, before: null });
+    const names = placed.get(key).filter((n) => n !== moving.name);
+    // A group's heading is its top
+    if (at.classList.contains('list-head')) return aim({ group, before: names[0] ?? null });
+    if (!at.classList.contains('sound')) return aim({ group, before: null });
+    const name = at.dataset.sound;
+    if (name === moving.name) return aim(null);
+    const box = at.getBoundingClientRect();
+    aim({ group, before: y < box.top + box.height / 2 ? name : (names[names.indexOf(name) + 1] ?? null) });
+  }
+
+  /** Puts the sound down where it's aimed, or back where it was */
+  function settle(save) {
+    if (!moving) return;
+    const { name, target, row, done } = moving;
+    done?.();
+    aim(null);
+    moving = null;
+    row.classList.remove('lifted');
+    list.classList.remove('moving');
+    ghost?.remove();
+    ghost = null;
+    cancelAnimationFrame(scrollFrame);
+    scrollFrame = 0;
+    if (!save || !target) return announce(`${name} stays where it was.`);
+    void place(name, target.group, target.before).then((ok) => ok && announce(`Moved ${name} to ${target.group?.name ?? EVERYTHING_ELSE}.`));
+  }
+
+  /** Scrolls the page while a dragged sound is held near the top or bottom of what's in view */
+  function edgeScroll() {
+    scrollFrame = 0;
+    if (!moving || !lastPoint) return;
+    const [x, y] = lastPoint;
+    const top = (document.querySelector('header')?.getBoundingClientRect().bottom ?? 0) + 60;
+    const bottom = Math.min(innerHeight, document.querySelector('.bottom-nav')?.getBoundingClientRect().top || innerHeight) - 60;
+    const step = y < top ? -Math.min(24, Math.ceil((top - y) / 4)) : y > bottom ? Math.min(24, Math.ceil((y - bottom) / 4)) : 0;
+    if (!step) return;
+    scrollBy(0, step);
+    aimAt(x, y);
+    scrollFrame = requestAnimationFrame(edgeScroll);
+  }
+
+  function dragFrom(e, sound, group, row, grip) {
+    if (filter || e.button !== 0 || moving) return;
+    const [startX, startY] = [e.clientX, e.clientY];
+    let started = false;
+    grip.setPointerCapture(e.pointerId);
+    const onMove = (ev) => {
+      if (!started) {
+        // A tap that wobbles is still a tap
+        if (Math.hypot(ev.clientX - startX, ev.clientY - startY) < 6) return;
+        started = true;
+        lift(sound, group, row);
+        ghost = el('div', { className: 'drag-ghost', ariaHidden: 'true' }, sound.emoji ? emojiNode(sound.emoji, '') : icon('speaker'), el('span', {}, sound.name));
+        document.body.append(ghost);
+      }
+      // The list was redrawn under it, which put the sound back
+      if (moving?.name !== sound.name) return;
+      lastPoint = [ev.clientX, ev.clientY];
+      ghost.style.transform = `translate(${ev.clientX + 14}px, ${ev.clientY - 18}px)`;
+      aimAt(ev.clientX, ev.clientY);
+      if (!scrollFrame) scrollFrame = requestAnimationFrame(edgeScroll);
+    };
+    const finish = (ev) => {
+      grip.removeEventListener('pointermove', onMove);
+      grip.removeEventListener('pointerup', finish);
+      grip.removeEventListener('pointercancel', finish);
+      if (!started) return;
+      afterDrag = true;
+      setTimeout(() => (afterDrag = false));
+      settle(ev.type === 'pointerup');
+    };
+    grip.addEventListener('pointermove', onMove);
+    grip.addEventListener('pointerup', finish);
+    grip.addEventListener('pointercancel', finish);
+  }
+
+  function keyMove(e, sound, group, row, grip) {
+    // While searching, Enter and Space open the list of groups instead, as a click does
+    if (filter) return;
+    const held = moving?.name === sound.name;
+    if (e.key === ' ' || e.key === 'Enter') {
+      e.preventDefault();
+      if (held) return settle(true);
+      if (moving) return;
+      lift(sound, group, row);
+      moving.spots = spots();
+      moving.at = moving.spots.findIndex(samePlace);
+      // Tabbing or clicking away leaves it where it was
+      const away = () => settle(false);
+      grip.addEventListener('blur', away);
+      moving.done = () => grip.removeEventListener('blur', away);
+      return announce(`Picked up ${sound.name}. The up and down arrows move it, Space puts it down, Escape leaves it.`);
+    }
+    if (!held) return;
+    if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+      e.preventDefault();
+      moving.at = Math.max(0, Math.min(moving.spots.length - 1, moving.at + (e.key === 'ArrowUp' ? -1 : 1)));
+      const spot = moving.spots[moving.at];
+      aim(spot);
+      marked[0]?.[0].scrollIntoView({ block: 'nearest' });
+      announce(describe(spot));
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      settle(false);
+    }
+  }
+
+  /** The handle at the start of a row: drag it, pick it up with the keyboard, or tap it for a list of groups */
+  const handle = (sound, group, row) => {
+    const grip = el(
+      'button',
+      {
+        type: 'button',
+        className: 'quiet icon grip',
+        ariaLabel: `Move ${sound.name}`,
+        title: 'Drag to move it, or click for a list of groups',
+        onpointerdown: (e) => dragFrom(e, sound, group, row, grip),
+        onkeydown: (e) => keyMove(e, sound, group, row, grip),
+        // Space clicks as it comes up, after keyMove has already used the press
+        onkeyup: (e) => e.key === ' ' && !filter && e.preventDefault(),
+        // A tap, a click or a screen reader's press, but not the click that ends a drag
+        onclick: () => afterDrag || moveSheet(sound, group),
+      },
+      icon('grip'),
+    );
+    return grip;
+  };
+
 
   // Only these change when a preview starts or stops, since redrawing the list would lose a rename being typed
   function paintPreview(name, button, key = name) {
@@ -429,7 +785,7 @@ export function renderLibrary(main, openArrange) {
     button.ariaLabel = `Play ${name} in voice`;
   }
 
-  function soundRow(sound) {
+  function soundRow(sound, group = null, grouping = false) {
     const nameBox = el('div', { className: 'name' });
     const showName = () =>
       nameBox.replaceChildren(
@@ -517,6 +873,7 @@ export function renderLibrary(main, openArrange) {
             item('volume', `Volume (${sound.percent}%)`, () => pickVolume(sound)),
             item('scissors', sound.trimmed ? 'Trim or restore' : 'Trim', () => attempt(() => trim(sound))),
             item('pencil', 'Rename', rename),
+            grouping && item('grip', 'Move to group', () => moveSheet(sound, group)),
           ),
           el(
             'div',
@@ -538,23 +895,26 @@ export function renderLibrary(main, openArrange) {
     players.set(sound.name, play);
     paintPlay(sound.name, play);
 
-    return el(
-      'div',
-      { className: 'sound' },
-      play,
-      preview,
-      el(
-        'button',
-        { className: 'quiet icon emoji', title: 'Set emoji', ariaLabel: `Emoji for ${sound.name}`, onclick: () => pickEmoji(sound) },
-        sound.emoji ? emojiNode(sound.emoji, 'emoji') : el('span', { className: 'none' }, icon('plus')),
-      ),
-      nameBox,
-      el('button', { className: 'quiet icon sound-extra', title: 'Volume', ariaLabel: `Volume for ${sound.name}`, onclick: () => pickVolume(sound) }, icon('volume')),
-      el('button', { className: 'quiet icon sound-extra', title: 'Trim', ariaLabel: `Trim ${sound.name}`, onclick: () => attempt(() => trim(sound)) }, icon('scissors')),
-      el('label', { className: 'toggle' }, toggle, el('span', {}, 'On Discord')),
-      remove,
-      el('button', { type: 'button', className: 'quiet icon sound-more', ariaLabel: `More for ${sound.name}`, ariaHasPopup: 'dialog', onclick: moreSheet }, icon('more')),
+    const row = el('div', { className: grouping ? 'sound with-grip' : 'sound', 'data-sound': sound.name, 'data-group': keyOf(group) });
+    row.append(
+      ...[
+        grouping && handle(sound, group, row),
+        play,
+        preview,
+        el(
+          'button',
+          { className: 'quiet icon emoji', title: 'Set emoji', ariaLabel: `Emoji for ${sound.name}`, onclick: () => pickEmoji(sound) },
+          sound.emoji ? emojiNode(sound.emoji, 'emoji') : el('span', { className: 'none' }, icon('plus')),
+        ),
+        nameBox,
+        el('button', { className: 'quiet icon sound-extra', title: 'Volume', ariaLabel: `Volume for ${sound.name}`, onclick: () => pickVolume(sound) }, icon('volume')),
+        el('button', { className: 'quiet icon sound-extra', title: 'Trim', ariaLabel: `Trim ${sound.name}`, onclick: () => attempt(() => trim(sound)) }, icon('scissors')),
+        el('label', { className: 'toggle' }, toggle, el('span', {}, 'On Discord')),
+        remove,
+        el('button', { type: 'button', className: 'quiet icon sound-more', ariaLabel: `More for ${sound.name}`, ariaHasPopup: 'dialog', onclick: moreSheet }, icon('more')),
+      ].filter(Boolean),
     );
+    return row;
   }
 
   function levelNote({ gainDb }) {

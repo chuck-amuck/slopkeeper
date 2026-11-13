@@ -18,8 +18,7 @@ export function renderSoundboard(main) {
   const views = el('div', { className: 'views', role: 'group', ariaLabel: 'Soundboard view' });
   let body = null;
 
-  /** `arrange` opens Play in Arrange, from Manage */
-  function show(id, arrange = false) {
+  function show(id) {
     remember(VIEW_KEY, id);
     player.stop();
     keepFocus(views, () =>
@@ -31,8 +30,8 @@ export function renderSoundboard(main) {
     else main.append(next);
     body = next;
     slot.replaceChildren();
-    // Each view can open the other: Play's empty board opens Manage, and Manage's Arrange opens Play arranging
-    VIEWS.find(([view]) => view === id)[2](next, id === 'play' ? () => show('manage') : () => show('play', true), slot, arrange);
+    // Play's empty board opens Manage
+    VIEWS.find(([view]) => view === id)[2](next, () => show('manage'), slot);
   }
 
   // Room beside the switch for the view's search, so Play's sounds start a row higher
