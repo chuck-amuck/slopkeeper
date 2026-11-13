@@ -1,4 +1,4 @@
-import { api, attempt, confirmButton, el, formProblem, notice, openDialog, postDialog, request, RequestError, state, toast, undoToast } from './lib.js';
+import { api, attempt, confirmButton, devicePref, el, formProblem, notice, openDialog, postDialog, request, RequestError, state, toast, undoToast } from './lib.js';
 
 const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
@@ -97,6 +97,22 @@ function describe(spec, value, data) {
     default:
       return typeof value === 'boolean' ? (value ? 'on' : 'off') : String(value);
   }
+}
+
+/** What this browser shows, as opposed to the rest of the page, which is the server's. Each takes effect at once */
+const DEVICE = [['musicPlayer', 'Music player at the bottom', 'While music plays, the song with Pause and Skip along the bottom of every page but Music.']];
+
+function deviceCard() {
+  const row = ([name, label, hint]) => {
+    const id = `device-${name}`;
+    return el(
+      'div',
+      { className: 'field' },
+      el('div', {}, el('label', { htmlFor: id }, label), el('p', { className: 'hint' }, hint)),
+      el('div', { className: 'control' }, el('label', { className: 'toggle' }, el('input', { id, type: 'checkbox', checked: devicePref.on(name), onchange: (e) => devicePref.set(name, e.target.checked) }))),
+    );
+  };
+  return el('section', { className: 'card', id: 'settings-on-this-device' }, el('h2', {}, 'On this device'), el('p', { className: 'card-note' }, 'Just for this browser. Everything else here is for the whole server.'), DEVICE.map(row));
 }
 
 export function renderSettings(main) {
@@ -623,6 +639,7 @@ export function renderSettings(main) {
           },
         },
         el('option', { value: '' }, 'Jump to…'),
+        el('option', { value: 'settings-on-this-device' }, 'On this device'),
         groups.map(([title]) => el('option', { value: slug(title) }, title)),
         el('option', { value: 'settings-join-sounds' }, 'Join sounds'),
       );
@@ -630,7 +647,7 @@ export function renderSettings(main) {
         el('datalist', { id: 'time-zones' }, data.timeZones.map((zone) => el('option', { value: zone }))),
         el('div', { className: 'toolbar settings-find' }, find, jump),
         nothing,
-        el('div', { className: 'settings-cards stack' }, ...cards, joinCard),
+        el('div', { className: 'settings-cards stack' }, deviceCard(), ...cards, joinCard),
       );
     } catch (err) {
       loading.replaceWith(notice('error', err.message));

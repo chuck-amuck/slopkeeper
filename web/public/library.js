@@ -675,7 +675,9 @@ export function renderLibrary(main) {
     if (!moving || !lastPoint) return;
     const [x, y] = lastPoint;
     const top = (document.querySelector('header')?.getBoundingClientRect().bottom ?? 0) + 60;
-    const bottom = Math.min(innerHeight, document.querySelector('.bottom-nav')?.getBoundingClientRect().top || innerHeight) - 60;
+    // Above a phone's tabs and the music player, whichever of them is showing
+    const floor = [...document.querySelectorAll('.bottom-nav, .mini-player')].map((n) => n.getBoundingClientRect()).filter((b) => b.height).reduce((top, b) => Math.min(top, b.top), innerHeight);
+    const bottom = floor - 60;
     const step = y < top ? -Math.min(24, Math.ceil((top - y) / 4)) : y > bottom ? Math.min(24, Math.ceil((y - bottom) / 4)) : 0;
     if (!step) return;
     scrollBy(0, step);

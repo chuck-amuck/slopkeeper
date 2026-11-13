@@ -1,6 +1,7 @@
 import { renderActivity } from './activity.js';
 import { renderGames } from './games.js';
 import { api, attempt, el, formProblem, icon, notice, openDialog, player, recall, remember, request, RequestError, session, state, toast } from './lib.js';
+import { musicPlayer, noMusicPlayer } from './miniplayer.js';
 import { renderMusic } from './music.js';
 import { renderNights } from './nights.js';
 import { renderPick } from './pick.js';
@@ -54,6 +55,7 @@ function showLogin() {
   if (app.querySelector(':scope > .login')) return;
   document.title = 'Log in · Slopkeeper';
   player.stop();
+  noMusicPlayer();
   stopWatchingUpdates();
   const password = el('input', { type: 'password', autocomplete: 'current-password', required: true, placeholder: 'Password', ariaLabel: 'Password', 'aria-describedby': 'login-error' });
   const error = el('div', { className: 'bad-text', id: 'login-error', role: 'alert', hidden: true });
@@ -231,6 +233,8 @@ function renderFrame() {
   // Outside main, as a page may redraw all of main. Only screen readers see it
   const title = el('h1', { className: 'visually-hidden', tabIndex: -1, id: 'page-title' }, TABS.find(([id]) => id === tab)[1]);
 
+  // Until a music player on the new page says it's showing
+  noMusicPlayer();
   app.replaceChildren(
     el(
       'a',
@@ -282,6 +286,8 @@ function renderFrame() {
     ),
     title,
     main,
+    // The song playing, along the bottom of every page but Music, which has it at the top
+    guild && tab !== 'music' && musicPlayer(() => openTab('music')),
     // A phone's tabs, in reach of a thumb. Hidden by style.css on anything wider
     el(
       'nav',
@@ -332,6 +338,7 @@ function showUnreachable(err, tries = 0) {
   };
   const retryButton = el('button', { className: 'primary', onclick: () => retry(true) }, 'Retry now');
   paintCountdown();
+  noMusicPlayer();
   timer = setInterval(() => {
     if (!retryButton.isConnected) return clearInterval(timer);
     left -= 1;

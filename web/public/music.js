@@ -22,7 +22,7 @@ const SEEK_STEP_MS = 10_000;
 const KEYS_SETTLE_MS = 400;
 const time = (ms) => `${Math.floor(ms / 60_000)}:${String(Math.floor((ms % 60_000) / 1000)).padStart(2, '0')}`;
 
-function cover(src, size) {
+export function cover(src, size) {
   return src ? el('img', { className: 'cover', src, alt: '', width: size, height: size, loading: 'lazy' }) : el('div', { className: 'cover none', style: `width:${size}px;height:${size}px` });
 }
 

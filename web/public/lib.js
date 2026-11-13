@@ -17,6 +17,8 @@ export function el(tag, props = {}, ...children) {
 // One set of line icons, drawn on a 24-unit grid in the text colour, so they look the same on every device
 const ICONS = {
   play: '<path d="M8 5.5v13l10.5-6.5z" fill="currentColor"/>',
+  pause: '<g fill="currentColor" stroke="none"><rect x="6.5" y="5.5" width="4" height="13" rx="1"/><rect x="13.5" y="5.5" width="4" height="13" rx="1"/></g>',
+  next: '<path d="M6 5.5v13l9.5-6.5z" fill="currentColor"/><path d="M18.5 5.5v13"/>',
   stop: '<rect x="6.5" y="6.5" width="11" height="11" rx="1.5" fill="currentColor"/>',
   headphones: '<path d="M4 15v-3a8 8 0 0 1 16 0v3"/><rect x="3.5" y="14" width="4" height="6.5" rx="1.5"/><rect x="16.5" y="14" width="4" height="6.5" rx="1.5"/>',
   volume: '<path d="M4 9.5h3l5-4v13l-5-4H4z"/><path d="M15.5 9.5a3.5 3.5 0 0 1 0 5"/>',
@@ -171,6 +173,16 @@ export function recall(key) {
     return null;
   }
 }
+
+/** What's turned on or off in Settings for this device alone, each on until it's turned off: musicPlayer, soundsButton */
+export const devicePref = {
+  on: (name) => recall(`device:${name}`) !== 'off',
+  set(name, on) {
+    if (on) forget(`device:${name}`);
+    else remember(`device:${name}`, 'off');
+    dispatchEvent(new CustomEvent('device-pref', { detail: name }));
+  },
+};
 
 export class RequestError extends Error {
   constructor(message, status = 0) {

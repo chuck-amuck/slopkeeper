@@ -73,7 +73,13 @@
 html {
   /* A phone's bottom bar, which everything else floating sits above */
   --bar-h: 0px;
-  scroll-padding-bottom: calc(80px + var(--dock-extra, 0px) + var(--bar-h));
+  /* The music player along the bottom, while it shows */
+  --player-h: 0px;
+  scroll-padding-bottom: calc(80px + var(--dock-extra, 0px) + var(--bar-h) + var(--player-h));
+}
+
+html.with-player {
+  --player-h: 56px;
 }
 
 [hidden] {
@@ -210,7 +216,7 @@ button.confirm.icon > span:last-child {
 .stop-dock {
   position: fixed;
   right: 16px;
-  bottom: calc(16px + var(--bar-h));
+  bottom: calc(16px + var(--bar-h) + var(--player-h));
   z-index: 10;
   display: grid;
   justify-items: end;
@@ -331,13 +337,154 @@ button.volume-fab[aria-expanded='true'] {
   color: var(--accent);
 }
 
+/* The song playing, along the bottom of every page but Music: above a phone's tabs, and the corner's buttons above it */
+.mini-player {
+  position: fixed;
+  right: 0;
+  bottom: var(--bar-h);
+  left: 0;
+  z-index: 9;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: var(--player-h);
+  padding: 0 8px 0 12px;
+  border-top: 1px solid var(--line);
+  background: var(--surface);
+  box-shadow: 0 -2px 12px rgb(0 0 0 / 10%);
+}
+
+/* How far into the song it is, across the top edge */
+.mini-progress {
+  position: absolute;
+  top: -1px;
+  right: 0;
+  left: 0;
+  height: 2px;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.mini-line {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  transform: scaleX(0);
+  transform-origin: left;
+}
+
+.mini-line.running {
+  animation: mini-song var(--song-ms) linear var(--song-delay) both;
+}
+
+@keyframes mini-song {
+  to {
+    transform: scaleX(1);
+  }
+}
+
+button.mini-song {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  height: 48px;
+  padding: 4px;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: inherit;
+  text-align: left;
+}
+
+.mini-cover .cover {
+  width: 40px;
+  height: 40px;
+}
+
+.mini-text {
+  display: grid;
+  min-width: 0;
+  line-height: 1.3;
+}
+
+.mini-title,
+.mini-sub {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mini-title {
+  font-weight: 600;
+}
+
+.mini-sub {
+  color: var(--muted);
+  font-size: var(--text-sm);
+}
+
+.mini-controls {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 2px;
+}
+
+.mini-controls button.icon {
+  width: 44px;
+  min-height: 44px;
+  border-color: transparent;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--text);
+}
+
+.mini-controls button.icon:hover:not(:disabled) {
+  background: var(--raised);
+}
+
+.mini-controls button.icon .ico {
+  width: 22px;
+  height: 22px;
+}
+
+.mini-controls button.mini-close {
+  color: var(--muted);
+}
+
+.mini-controls button.mini-close .ico {
+  width: 18px;
+  height: 18px;
+}
+
+/* Wider than a phone: the controls sit by the song, and ✕ in the far corner */
+@media (min-width: 641px) {
+  .mini-player {
+    padding-inline: 16px;
+  }
+
+  button.mini-song {
+    flex: 0 1 440px;
+  }
+
+  .mini-controls {
+    flex: 1 1 auto;
+  }
+
+  .mini-controls button.mini-close {
+    margin-left: auto;
+  }
+}
+
 /* Every volume, above the Volume button */
 .volume-float {
   display: grid;
   gap: var(--space-2);
   box-sizing: border-box;
   width: min(380px, calc(100vw - 32px));
-  max-height: calc(100dvh - 160px - var(--bar-h));
+  max-height: calc(100dvh - 160px - var(--bar-h) - var(--player-h));
   overflow-y: auto;
   padding: var(--space-4);
   border: 1px solid var(--line);
@@ -582,7 +729,7 @@ main {
   width: min(900px, 100%);
   margin: 0 auto;
   /* Room to scroll the last row clear of the Stop sounds button, however tall what's playing makes it */
-  padding: 16px 16px calc(80px + var(--dock-extra, 0px) + var(--bar-h));
+  padding: 16px 16px calc(80px + var(--dock-extra, 0px) + var(--bar-h) + var(--player-h));
   display: grid;
   /* A long channel name in a picker shrinks to fit rather than widening the page */
   grid-template-columns: minmax(0, 1fr);
@@ -1599,7 +1746,7 @@ dialog input {
   .board-side {
     position: sticky;
     top: calc(var(--header-visible, 60px) + var(--space-4));
-    max-height: calc(100vh - var(--header-visible, 60px) - 2 * var(--space-4));
+    max-height: calc(100vh - var(--header-visible, 60px) - 2 * var(--space-4) - var(--player-h));
     /* Room for focus rings, which the scrolling would clip */
     padding: 2px;
     margin: -2px;
@@ -2784,7 +2931,7 @@ button.music-upload:hover:not(:disabled) {
   position: fixed;
   right: 16px;
   /* Above the Stop sounds button, and what's playing when that shows */
-  bottom: calc(76px + var(--dock-extra, 0px) + var(--bar-h));
+  bottom: calc(76px + var(--dock-extra, 0px) + var(--bar-h) + var(--player-h));
   left: 16px;
   z-index: 20;
   display: grid;
