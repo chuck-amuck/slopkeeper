@@ -1,4 +1,4 @@
-import { api, attempt, devicePref, el, forget, icon, pageSignal, recall, remember, request, secondWindow, state, toast } from './lib.js';
+import { api, attempt, devicePref, el, forget, icon, needsVoice, NOBODY_IN_VOICE, pageSignal, recall, remember, request, secondWindow, state, toast } from './lib.js';
 import { cantPlay, paintCover, playOrPause, positionOf, stale } from './music.js';
 import { follow } from './updates.js';
 import { voiceBar } from './voice.js';
@@ -100,7 +100,8 @@ export function musicPlayer(openMusic, { inWindow = false, extra = null } = {}) 
     }
     playButton.ariaLabel = paused ? 'Play' : 'Pause';
     playButton.title = !paused ? 'Pause, keeping the queue' : cant || 'Play on from where it paused, in the channel picked in Play in';
-    playButton.disabled = starting || !!cant;
+    playButton.disabled = starting || (!!cant && cant !== NOBODY_IN_VOICE);
+    needsVoice(playButton, cant !== NOBODY_IN_VOICE);
     skipButton.disabled = false;
     paintLine(playing, paused || starting);
   }

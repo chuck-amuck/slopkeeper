@@ -145,7 +145,7 @@ button {
   cursor: pointer;
 }
 
-button:hover:not(:disabled) {
+button:hover:not(:disabled, [aria-disabled='true']) {
   background: var(--raised);
 }
 
@@ -161,7 +161,7 @@ button.primary {
   color: var(--accent-text);
 }
 
-button.primary:hover:not(:disabled) {
+button.primary:hover:not(:disabled, [aria-disabled='true']) {
   filter: brightness(1.08);
   background: var(--accent-fill);
 }
@@ -460,7 +460,7 @@ button.volume-fab[aria-expanded='true'] {
   color: var(--text);
 }
 
-.mini-player button.icon:hover:not(:disabled) {
+.mini-player button.icon:hover:not(:disabled, [aria-disabled='true']) {
   background: var(--raised);
 }
 
@@ -1779,7 +1779,7 @@ dialog input {
   border-radius: var(--radius);
 }
 
-.tile:active:not(:disabled) {
+.tile:active:not(:disabled, [aria-disabled='true']) {
   transform: scale(0.97);
 }
 
@@ -2781,6 +2781,41 @@ button.music-upload:hover:not(:disabled) {
   box-shadow: inset 0 -2px 0 var(--accent);
 }
 
+.music-queue .autoplay-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 12px 6px;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 0.85rem;
+  min-width: 0;
+}
+
+.music-queue .autoplay-head:first-child {
+  border-top: 0;
+}
+
+.music-queue .autoplay-head span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.music-queue .autoplay-head b {
+  color: var(--text);
+  font-weight: 600;
+}
+
+/* Autoplay's songs line up with the people's titles */
+.music-queue .autoplay-head + .song.autoplay {
+  border-top: 0;
+}
+
+.music-queue .song.autoplay {
+  padding-left: 64px;
+}
+
 .music-queue .notice {
   padding: 14px 16px;
   color: var(--muted);
@@ -3200,6 +3235,16 @@ header.tabs-below nav button {
   .music-queue .song-actions {
     width: 100%;
     justify-content: flex-end;
+  }
+
+  /* Autoplay's two buttons fit beside the title */
+  .music-queue .song.autoplay {
+    flex-wrap: nowrap;
+    padding-left: 8px;
+  }
+
+  .music-queue .song.autoplay .song-actions {
+    width: auto;
   }
 
   .card-head {

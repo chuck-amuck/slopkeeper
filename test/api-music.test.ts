@@ -149,8 +149,35 @@ test('Autoplay switches from the page, its songs say so, and the page’s songs 
   let music = await ok(`/guilds/${GUILD}/music/queue`, { method: 'POST', json: { track: track(2) } });
   assert.equal(music.autoplay, true);
   assert.deepEqual(music.queue.map((r: any) => [r.title, r.addedBy, r.autoplay]), [['Song 2', 'Web UI', false], ['Song 1', 'Autoplay', true]]);
+  addTracks(GUILD, [{ ...track(3), uri: 'https://www.youtube.com/watch?v=ddddddddddd' }], AUTOPLAY);
+  const [, one, three] = (await ok(`/guilds/${GUILD}/music`)).queue;
+  assert.match(await refused(409, `/guilds/${GUILD}/music/queue/${three.id}/move`, { method: 'POST', json: { to: 0 } }), /one of Autoplay’s/);
+
+  // Kept, one of Autoplay's songs joins the people's, after them
+  music = await ok(`/guilds/${GUILD}/music/queue/${three.id}/keep`, { method: 'POST' });
+  assert.equal(music.message, 'Added Song 3 to the queue.');
+  assert.deepEqual(music.queue.map((r: any) => [r.title, r.addedBy, r.autoplay]), [['Song 2', 'Web UI', false], ['Song 3', 'Web UI', false], ['Song 1', 'Autoplay', true]]);
+  assert.equal(recentActivity(GUILD, 1)[0].action, 'Added **Song 3** to the music queue from Autoplay');
+  assert.match(await refused(404, `/guilds/${GUILD}/music/queue/${three.id}/keep`, { method: 'POST' }), /isn’t one of Autoplay’s/);
+
   await ok(`/guilds/${GUILD}/settings/musicAutoplay`, { method: 'PUT', json: { value: false } });
   music = await ok(`/guilds/${GUILD}/music`);
-  assert.deepEqual([music.autoplay, music.queue.map((r: any) => r.title)], [false, ['Song 2']], 'turning it off takes its songs out');
+  assert.deepEqual([music.autoplay, music.queue.map((r: any) => r.title)], [false, ['Song 2', 'Song 3']], 'turning it off takes its songs out');
+  assert.ok(!music.queue.some((r: any) => r.id === one.id));
+  await ok(`/guilds/${GUILD}/music/queue`, { method: 'DELETE' });
+});
+
+test('Play next with nothing queued plays the song now, in the channel the page picked', async () => {
+  const track = (n: number) => ({ uri: `spotify:track:${String(n).padStart(22, 'e')}`, title: `Song ${n}`, artist: 'Band', album: 'Album', cover: null, durationMs: 180_000 });
+  const add = (n: number, json: Record<string, unknown>) => ok(`/guilds/${GUILD}/music/queue`, { method: 'POST', json: { track: track(n), ...json } });
+  let music = await add(1, { next: true, channelId: 'v1' });
+  assert.equal(music.message, 'Added Song 1 to play next. Join a voice channel in Discord, then press Play.', 'nobody’s in that channel');
+  music = await add(2, { next: true, channelId: '701' });
+  assert.equal(music.message, 'Added Song 2 to play next.', 'with a song already queued, it only goes first');
+  music = await add(3, { channelId: '701' });
+  assert.equal(music.message, 'Added Song 3.');
+  await ok(`/guilds/${GUILD}/music/queue`, { method: 'DELETE' });
+  music = await add(4, { next: true, channelId: '701' });
+  assert.match(music.message, /^Added Song 4 to play next\. Music isn’t set up on this bot\./, 'it tried to play, which this bot can’t');
   await ok(`/guilds/${GUILD}/music/queue`, { method: 'DELETE' });
 });

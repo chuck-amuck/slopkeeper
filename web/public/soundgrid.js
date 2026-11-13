@@ -1,4 +1,4 @@
-import { api, attempt, el, emojiNode, forget, icon, keepFocus, notice, recall, remember, request, soundPath, state, toast } from './lib.js';
+import { api, attempt, el, emojiNode, forget, icon, keepFocus, needsVoice, notice, recall, remember, request, soundPath, state, toast } from './lib.js';
 import { elapsed, onPlaying } from './playing.js';
 import { followWhenIdle, older } from './updates.js';
 
@@ -52,7 +52,7 @@ export function searchKeys(doc, searchBox, typing, signal = undefined) {
  * played most, each group folding away as it does wherever they're shown on this device. They keep up with changes
  * made anywhere, light up while they play, and are grey while nobody's in voice. `voice` is a voiceBar, `empty()` what
  * to show when there are no sounds, and `stars` puts a star on each to add it to Favourites. `searchBox` narrows them,
- * where Enter plays the first match, and `nobody` says why they're grey; both go where the page puts them. `slash`
+ * where Enter plays the first match, which goes where the page puts it; a grey tile says why when it's tapped. `slash`
  * says / goes to the search, where searchKeys() is set up
  */
 export function soundGrid({ voice, empty, stars = false, slash = false }) {
@@ -78,7 +78,7 @@ export function soundGrid({ voice, empty, stars = false, slash = false }) {
     onkeydown: (e) => {
       if (e.key === 'Enter') {
         e.preventDefault();
-        if (searchBox.value.trim()) tiles.find((tile) => !tile.disabled)?.click();
+        if (searchBox.value.trim()) tiles[0]?.click();
       } else if (e.key === 'Escape' && searchBox.value) {
         // Clears the search first, so it takes a second press to close what it's in
         e.preventDefault();
@@ -87,16 +87,11 @@ export function soundGrid({ voice, empty, stars = false, slash = false }) {
       }
     },
   });
-  // Tooltips don't show on a phone, so the reason the tiles are grey is said where it's seen
-  const nobody = notice('empty', 'Nobody’s in voice. Join a voice channel in Discord and these light up.', { compact: true });
-  nobody.hidden = true;
-
-  /** Greys the tiles while nobody's in voice, and says where each plays */
+  /** Greys the tiles while nobody's in voice, where a tap says why, and says where each plays */
   function paint() {
     const channel = voice.channel();
-    nobody.hidden = !voice.loaded() || !!channel;
     for (const tile of tiles) {
-      tile.disabled = !channel;
+      needsVoice(tile, channel);
       tile.title = channel ? `Play in ${channel.name}` : 'Nobody’s in voice';
     }
   }
@@ -296,5 +291,5 @@ export function soundGrid({ voice, empty, stars = false, slash = false }) {
     if (sounds) render();
   }
 
-  return { node, searchBox, nobody, paint };
+  return { node, searchBox, paint };
 }

@@ -1,4 +1,4 @@
-import { announce, api, attempt, confirmButton, el, icon, keepFocus, notice, request, RequestError, session, state, toast, undoToast, volumeControl } from './lib.js';
+import { announce, api, attempt, confirmButton, el, icon, keepFocus, needsVoice, NOBODY_IN_VOICE, notice, request, RequestError, session, state, toast, undoToast, volumeControl } from './lib.js';
 import { follow, followWhenIdle, older } from './updates.js';
 import { voiceBar } from './voice.js';
 
@@ -46,7 +46,7 @@ export function playOrPause(data, channel) {
 export function cantPlay(data, channel) {
   if (data.phase === 'playing') return '';
   if (data.problem) return data.problem;
-  if (!channel) return 'Nobody’s in voice';
+  if (!channel) return NOBODY_IN_VOICE;
   if (!data.queue.length) return 'The queue is empty';
   return '';
 }
@@ -351,7 +351,7 @@ export function renderMusic(main) {
     try {
       const fresh = await attempt(async () => {
         try {
-          return await request(api('/music/queue'), { method: 'POST', json: { file: id, next } });
+          return await request(api('/music/queue'), { method: 'POST', json: { file: id, next, ...playingIn(next) } });
         } catch (err) {
           // Gone after an hour waiting: the box comes back for another go
           if (err.status === 404 && uploaded?.id === id) {
@@ -428,8 +428,11 @@ export function renderMusic(main) {
   );
   const searchNote = el('p', { className: 'card-note', hidden: true }, 'Search needs a Spotify app’s Client ID and Secret (SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET).');
 
+  /** Play next on an empty queue starts it straight away, in Play in's channel */
+  const playingIn = (next) => (next && voice.channel() ? { channelId: voice.channel().id } : {});
+
   async function addFrom(body, next, clear = false) {
-    const fresh = await attempt(() => request(api('/music/queue'), { method: 'POST', json: { ...body, next } }));
+    const fresh = await attempt(() => request(api('/music/queue'), { method: 'POST', json: { ...body, next, ...playingIn(next) } }));
     if (!fresh) return;
     toast(fresh.message ?? `Added ${body.track?.title ?? 'it'}${next ? ' to play next' : ''}.`);
     if (clear) query.value = '';
@@ -576,7 +579,7 @@ export function renderMusic(main) {
     },
   });
   // The words are a text node rather than a span, which a phone would hide
-  const autoplaySwitch = el('label', { className: 'toggle autoplay', title: 'When the song playing is the last, adds two similar songs from YouTube, and more as they run out. Songs people add play first.' }, autoplayBox, 'Autoplay');
+  const autoplaySwitch = el('label', { className: 'toggle autoplay', title: 'Keeps a few songs like the last one people queued waiting at the end, from YouTube. Songs people add always play first.' }, autoplayBox, 'Autoplay');
   const queueCard = el('section', { className: 'card music' }, el('div', { className: 'card-head' }, el('h2', {}, 'Up next', queueCount), el('div', { className: 'toolbar' }, autoplaySwitch, shuffleButton, clearButton)), list);
 
   /** The first song stays put while it's playing or paused, so the list starts after it */
@@ -600,9 +603,36 @@ export function renderMusic(main) {
       return fresh;
     });
 
+  /** Keeps one of Autoplay's songs, as if it had been queued here */
+  const keep = (row) =>
+    void attempt(async () => {
+      const fresh = await request(api(`/music/queue/${row.id}/keep`), { method: 'POST' });
+      toast(fresh.message);
+      show(fresh);
+    });
+
+  /** One of Autoplay's songs: it stays at the end, where it can be kept or taken out */
+  function autoplayRow(row) {
+    return el(
+      'li',
+      { className: 'song autoplay' },
+      cover(row.cover, 40),
+      el('div', { className: 'song-text' }, el('div', { className: 'song-title' }, row.title), el('div', { className: 'song-sub' }, row.artist)),
+      el('span', { className: 'song-time' }, time(row.durationMs)),
+      el(
+        'div',
+        { className: 'song-actions' },
+        el('button', { className: 'icon', ariaLabel: `Add ${row.title} to the queue`, title: 'Add to the queue', onclick: () => keep(row) }, icon('plus')),
+        // No Undo: put back, it would count as queued by a person. Autoplay finds another instead
+        el('button', { className: 'icon', ariaLabel: `Remove ${row.title}`, title: 'Remove', onclick: () => void act(() => request(api(`/music/queue/${row.id}`), { method: 'DELETE' })) }, icon('x')),
+      ),
+    );
+  }
+
   function queueRow(row, index) {
     const first = held();
-    const last = data.queue.length - 1;
+    // People's songs stay ahead of Autoplay's
+    const last = data.queue.findLastIndex((r) => !r.autoplay);
     const item = el(
       'li',
       {
@@ -620,7 +650,7 @@ export function renderMusic(main) {
           for (const n of list.querySelectorAll('.drop-before, .drop-after')) n.classList.remove('drop-before', 'drop-after');
         },
         ondragover: (e) => {
-          if (!dragging || dragging === row) return;
+          if (!dragging || dragging === row || dragging.autoplay) return;
           e.preventDefault();
           const after = e.offsetY > item.offsetHeight / 2;
           item.classList.toggle('drop-after', after);
@@ -658,14 +688,28 @@ export function renderMusic(main) {
 
   function paintQueue() {
     const rows = data.queue.slice(held());
+    const people = rows.filter((r) => !r.autoplay);
+    const autoplay = rows.filter((r) => r.autoplay);
     // Rebuilding mid-drag would drop what's being dragged
-    const key = JSON.stringify([held(), data.queue.map((r) => r.id)]);
+    const key = JSON.stringify([held(), data.queue.map((r) => [r.id, r.autoplay]), data.autoplayLike]);
     if (dragging || key === shownQueue) return;
     shownQueue = key;
-    queueCount.textContent = rows.length ? `${rows.length} song${rows.length === 1 ? '' : 's'}` : '';
+    queueCount.textContent = people.length ? `${people.length} song${people.length === 1 ? '' : 's'}` : '';
     clearButton.hidden = !rows.length;
-    shuffleButton.hidden = rows.length < 2;
-    keepFocus(list, () => list.replaceChildren(...(rows.length ? rows.map((row, n) => queueRow(row, n + held())) : [notice('empty', 'Nothing queued. Search for a song above.', { compact: true, tag: 'li' })])));
+    shuffleButton.hidden = people.length < 2;
+    const at = (row) => data.queue.indexOf(row);
+    keepFocus(list, () =>
+      list.replaceChildren(
+        ...(people.length ? people.map((row) => queueRow(row, at(row))) : [notice('empty', autoplay.length ? 'Nothing queued. Autoplay’s songs play next.' : 'Nothing queued. Search for a song above.', { compact: true, tag: 'li' })]),
+        // Autoplay's songs follow, under a heading of their own, like Spotify's
+        ...(autoplay.length
+          ? [
+              el('li', { className: 'autoplay-head' }, icon('infinity'), el('span', {}, data.autoplayLike ? ['Autoplay · songs like ', el('b', {}, data.autoplayLike)] : 'Autoplay')),
+              ...autoplay.map((row) => autoplayRow(row)),
+            ]
+          : []),
+      ),
+    );
   }
 
   // ---------- painting ----------
@@ -682,7 +726,9 @@ export function renderMusic(main) {
     const chosen = voice.channel();
     playButton.textContent = playing ? 'Pause' : data?.phase === 'paused' ? 'Resume' : 'Play';
     const cant = data ? cantPlay(data, chosen) : '';
-    playButton.disabled = !data || !!cant;
+    // Nobody in voice greys it, and a tap says so; anything else can't be pressed
+    playButton.disabled = !data || (!!cant && cant !== NOBODY_IN_VOICE);
+    needsVoice(playButton, cant !== NOBODY_IN_VOICE);
     playButton.title = !data ? '' : playing ? 'Pause, keeping the queue' : cant;
     skipButton.disabled = !data || data.phase === 'stopped';
     stopButton.disabled = !data || (data.phase === 'stopped' && !data.queue.length);

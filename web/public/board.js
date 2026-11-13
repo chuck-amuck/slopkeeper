@@ -1,4 +1,4 @@
-import { api, attempt, el, forget, icon, pageSignal, recall, remember, request, state, toast, undoToast } from './lib.js';
+import { api, attempt, el, forget, icon, needsVoice, pageSignal, recall, remember, request, state, toast, undoToast } from './lib.js';
 import { foldHead, searchKeys, soundGrid } from './soundgrid.js';
 import { previewButton, showPicked, voiceOptions } from './speech.js';
 import { voiceBar } from './voice.js';
@@ -34,10 +34,11 @@ function sayBox(voice) {
   const paint = () => {
     const channel = voice.channel();
     const title = channel ? `Say in ${channel.name}` : 'Nobody’s in voice';
-    send.disabled = !channel || saying;
+    send.disabled = saying;
+    needsVoice(send, channel);
     send.title = title;
     for (const button of chips.querySelectorAll('.phrase-say')) {
-      button.disabled = !channel;
+      needsVoice(button, channel);
       button.title = channel ? `${button.textContent}\n${title}` : title;
     }
   };
@@ -171,10 +172,10 @@ const WIDE = '(min-width: 1100px)';
 export function renderBoard(main, openManage, head = null) {
   const voice = voiceBar(paint);
   const grid = soundGrid({ voice, stars: true, slash: true, empty: () => ['No sounds yet. ', el('button', { className: 'link', onclick: openManage }, 'Add some in Manage'), '.'] });
-  const { searchBox: search, nobody } = grid;
+  const { searchBox: search } = grid;
   const say = sayBox(voice);
   // Two columns on a wide screen: the volumes and Speech, which stay put, and the sounds. One above the other otherwise
-  const area = el('div', { className: 'board-main' }, search, nobody, grid.node);
+  const area = el('div', { className: 'board-main' }, search, grid.node);
   main.classList.add('play-view');
   main.append(el('div', { className: 'board-side' }, voice.node, say.node), area);
 

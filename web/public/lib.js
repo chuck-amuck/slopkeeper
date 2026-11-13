@@ -72,6 +72,7 @@ const ICONS = {
   smile: '<circle cx="12" cy="12" r="8.5"/><path d="M8.5 14a4.5 4.5 0 0 0 7 0"/><g fill="currentColor" stroke="none"><circle cx="9" cy="10" r="1.2"/><circle cx="15" cy="10" r="1.2"/></g>',
   trash: '<path d="M5 7h14M10 7V4.5h4V7M7 7l1 12.5h8L17 7"/>',
   refresh: '<path d="M19 12a7 7 0 1 1-2-4.9"/><path d="M19.5 4.5v4h-4"/>',
+  infinity: '<path d="M12 12c-2-2.7-3.6-4-5.2-4a4 4 0 0 0 0 8c1.6 0 3.2-1.3 5.2-4zm0 0c2 2.7 3.6 4 5.2 4a4 4 0 0 0 0-8c-1.6 0-3.2 1.3-5.2 4z"/>',
 };
 
 const drawn = new Map();
@@ -123,8 +124,31 @@ export function toast(text, bad = false, action = null, stays = false) {
   if (stays) node.append(el('button', { type: 'button', className: 'toast-close icon', ariaLabel: 'Dismiss', title: 'Dismiss', onclick: close }, icon('x')));
   // A dialog it was in may have gone without closing, when the page was redrawn under it
   if (!toasts.isConnected) document.body.append(toasts);
-  (docInUse() !== document && second.toasts ? second.toasts : toasts).append(node);
+  const shelf = docInUse() !== document && second.toasts ? second.toasts : toasts;
+  // Said again, it replaces the one still showing, so tapping away doesn't stack them up. One with a button, such as Undo, stays
+  if (!action && !stays) for (const shown of [...shelf.children]) if (!shown.classList.contains('with-action') && shown.firstChild?.textContent === text) shown.remove();
+  shelf.append(node);
   wait();
+}
+
+/** What a button that plays in voice says while nobody's there */
+export const NOBODY_IN_VOICE = 'Nobody’s in voice';
+
+function nobodyThere(e) {
+  if (e.currentTarget.ariaDisabled !== 'true') return;
+  // Before the button's own click, and stopping a form it sends
+  e.preventDefault();
+  e.stopImmediatePropagation();
+  toast('Nobody’s in voice. Join a voice channel in Discord first.');
+}
+
+/** Greys a button that plays in voice while nobody's there, unless `someone`. It still answers a tap, with a note saying why */
+export function needsVoice(button, someone) {
+  if (!button.dataset.needsVoice) {
+    button.dataset.needsVoice = '1';
+    button.addEventListener('click', nobodyThere, { capture: true });
+  }
+  button.ariaDisabled = someone ? null : 'true';
 }
 
 /** Says something to screen readers only, such as a change that's only shown by colour */

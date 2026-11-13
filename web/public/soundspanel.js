@@ -1,4 +1,4 @@
-import { api, attempt, el, recall, remember, request, state } from './lib.js';
+import { api, attempt, el, needsVoice, recall, remember, request, state } from './lib.js';
 import { soundGrid } from './soundgrid.js';
 import { previewButton, showPicked, voiceOptions } from './speech.js';
 import { voiceBar } from './voice.js';
@@ -21,7 +21,7 @@ export function soundsBody(openBoard, { slash = false } = {}) {
     empty: () => ['No sounds yet. ', el('button', { type: 'button', className: 'link', onclick: openBoard }, 'Add some on the Soundboard'), '.'],
   });
   grid.node.classList.add('compact');
-  const { searchBox: search, nobody } = grid;
+  const { searchBox: search } = grid;
 
   // One line to say, in the voice picked here, which is the one the Soundboard has on this device too
   let saying = false;
@@ -62,7 +62,8 @@ export function soundsBody(openBoard, { slash = false } = {}) {
     // Picked on the Soundboard since, or in the pop-out
     showPicked(picker, recall(voiceKey));
     const channel = voice.channel();
-    send.disabled = !channel || saying;
+    send.disabled = saying;
+    needsVoice(send, channel);
     send.title = channel ? `Say in ${channel.name}` : 'Nobody’s in voice';
     grid.paint();
   }
@@ -78,5 +79,5 @@ export function soundsBody(openBoard, { slash = false } = {}) {
     paint();
   });
 
-  return { parts: [voice.node, say, search, nobody, el('div', { className: 'sounds-scroll' }, grid.node)], search, paint };
+  return { parts: [voice.node, say, search, el('div', { className: 'sounds-scroll' }, grid.node)], search, paint };
 }
