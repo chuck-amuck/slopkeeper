@@ -1,4 +1,4 @@
-import { api, attempt, devicePref, el, forget, icon, pickedVoice, recall, remember, request, state, toast } from './lib.js';
+import { api, attempt, devicePref, el, forget, icon, pickedVoice, recall, remember, request, secondWindow, state, toast } from './lib.js';
 import { cover } from './music.js';
 import { follow } from './updates.js';
 
@@ -14,9 +14,11 @@ export const noMusicPlayer = () => holdRoom(false);
 /**
  * The song playing, along the bottom of every page but Music: its cover, title and artist, which open Music, then
  * Pause or Play and Skip, with a line across the top for how far into the song it is. It shows while music plays or
- * is paused, unless it's turned off in Settings on this device, or hidden with ✕ until the music stops
+ * is paused, unless it's turned off in Settings on this device, hidden with ✕ until the music stops, or in the pop-out
+ * window while that's open. `extra` goes beside its buttons. `inWindow` is the pop-out's: there it shows whenever
+ * music plays, without ✕, and the song opens nothing
  */
-export function musicPlayer(openMusic) {
+export function musicPlayer(openMusic, { inWindow = false, extra = null } = {}) {
   const guildId = state.guildId;
   let data = null;
   let fetchedAt = 0;
@@ -25,7 +27,8 @@ export function musicPlayer(openMusic) {
   const art = el('span', { className: 'mini-cover' });
   const title = el('span', { className: 'mini-title' });
   const sub = el('span', { className: 'mini-sub' });
-  const song = el('button', { type: 'button', className: 'mini-song', title: 'Open Music', onclick: openMusic }, art, el('span', { className: 'mini-text' }, title, sub));
+  const text = el('span', { className: 'mini-text' }, title, sub);
+  const song = inWindow ? el('div', { className: 'mini-song' }, art, text) : el('button', { type: 'button', className: 'mini-song', title: 'Open Music', onclick: openMusic }, art, text);
   const playButton = el('button', { type: 'button', className: 'icon mini-play', onclick: () => void act(playOrPause) });
   const skipButton = el('button', { type: 'button', className: 'icon mini-skip', ariaLabel: 'Skip', title: 'Skip to the next song', onclick: () => void act(() => request(api('/music/skip'), { method: 'POST' })) }, icon('next'));
   const close = el('button', { type: 'button', className: 'icon quiet mini-close', ariaLabel: 'Hide the music player', title: 'Hide until the music stops', onclick: hide }, icon('x'));
@@ -34,7 +37,7 @@ export function musicPlayer(openMusic) {
     { className: 'mini-player', ariaLabel: 'Music player', hidden: true },
     el('span', { className: 'mini-progress', ariaHidden: 'true' }, line),
     song,
-    el('div', { className: 'mini-controls' }, playButton, skipButton, close),
+    el('div', { className: 'mini-controls' }, playButton, skipButton, extra, !inWindow && close),
   );
 
   function hide() {
@@ -72,16 +75,16 @@ export function musicPlayer(openMusic) {
     const playing = data && data.phase !== 'stopped' ? data.queue[0] : null;
     // A hide lasts until the music stops, then the next song shows again
     if (data && !playing) forget(hiddenKey(guildId));
-    const shown = !!playing && devicePref.on('musicPlayer') && recall(hiddenKey(guildId)) !== '1';
+    const shown = !!playing && (inWindow || (devicePref.on('musicPlayer') && recall(hiddenKey(guildId)) !== '1' && !secondWindow()));
     node.hidden = !shown;
-    if (node.isConnected) holdRoom(shown);
+    if (node.isConnected && !inWindow) holdRoom(shown);
     if (!shown) return;
     const paused = data.phase === 'paused';
     const starting = data.phase === 'starting';
     art.replaceChildren(cover(playing.cover, 40));
     title.textContent = playing.title;
     sub.textContent = [playing.artist, starting ? 'Finding it…' : paused ? 'Paused' : data.channelName && `in ${data.channelName}`].filter(Boolean).join(' · ');
-    song.ariaLabel = `${playing.title} by ${playing.artist}. Open Music`;
+    if (!inWindow) song.ariaLabel = `${playing.title} by ${playing.artist}. Open Music`;
     playButton.replaceChildren(icon(paused ? 'play' : 'pause'));
     playButton.ariaLabel = paused ? 'Play' : 'Pause';
     playButton.title = paused ? 'Play on from where it paused' : 'Pause, keeping the queue';
@@ -113,8 +116,11 @@ export function musicPlayer(openMusic) {
   }
 
   follow('music', node, (fresh, at) => show(fresh, performance.now() - at));
-  // Settings turns it on and off for this device
+  if (inWindow) return node;
+  // Settings turns it on and off for this device, and it makes way for the pop-out window while that's open
   const onPref = (e) => (node.isConnected ? e.detail === 'musicPlayer' && paint() : removeEventListener('device-pref', onPref));
   addEventListener('device-pref', onPref);
+  const onWindow = () => (node.isConnected ? paint() : removeEventListener('second-window', onWindow));
+  addEventListener('second-window', onWindow);
   return node;
 }

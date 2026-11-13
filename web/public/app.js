@@ -5,6 +5,7 @@ import { musicPlayer, noMusicPlayer } from './miniplayer.js';
 import { renderMusic } from './music.js';
 import { renderNights } from './nights.js';
 import { renderPick } from './pick.js';
+import { closePopOut, popOutButton, popOutFollows, popOutGoesTo } from './popout.js';
 import { stopDock } from './playing.js';
 import { noSoundsDock, soundsDock } from './soundsdock.js';
 import { volumeDock } from './volumes.js';
@@ -57,6 +58,7 @@ function showLogin() {
   document.title = 'Log in · Slopkeeper';
   player.stop();
   noMusicPlayer();
+  closePopOut();
   stopWatchingUpdates();
   const password = el('input', { type: 'password', autocomplete: 'current-password', required: true, placeholder: 'Password', ariaLabel: 'Password', 'aria-describedby': 'login-error' });
   const error = el('div', { className: 'bad-text', id: 'login-error', role: 'alert', hidden: true });
@@ -178,6 +180,9 @@ addEventListener('resize', fitNav);
 /** Set when a tab is picked, so its heading takes focus once it's drawn, as the button pressed is gone */
 let focusTitle = false;
 
+// The pop-out window's way back to the Soundboard, when there are no sounds to show
+popOutGoesTo(() => openTab('board'));
+
 function openTab(id) {
   if (id !== tab) history.pushState(null, '', `#${id}`);
   tab = id;
@@ -288,7 +293,7 @@ function renderFrame() {
     title,
     main,
     // The song playing, along the bottom of every page but Music, which has it at the top
-    guild && tab !== 'music' && musicPlayer(() => openTab('music')),
+    guild && tab !== 'music' && musicPlayer(() => openTab('music'), { extra: popOutButton('icon') }),
     // A phone's tabs, in reach of a thumb. Hidden by style.css on anything wider
     el(
       'nav',
@@ -300,8 +305,11 @@ function renderFrame() {
       el('button', { type: 'button', ...(!BAR.includes(tab) && { 'aria-current': 'page' }), ariaHasPopup: 'dialog', onclick: () => moreSheet(main) }, icon('more'), el('span', {}, BAR.includes(tab) ? 'More' : TABS.find(([t]) => t === tab)[1])),
     ),
     // In the corner of every page, so they're always in reach. The Soundboard has every sound already
-    guild && stopDock(volumeDock(), tab === 'board' ? noSoundsDock() : soundsDock(() => openTab('board'))),
+    guild && stopDock(volumeDock(), tab === 'board' ? noSoundsDock() : soundsDock(() => openTab('board'), popOutButton())),
   );
+  // The pop-out window, if it's open, shows the server picked here, and closes if there isn't one
+  if (guild) popOutFollows();
+  else closePopOut();
   if (guild) watchUpdates();
   else stopWatchingUpdates();
 

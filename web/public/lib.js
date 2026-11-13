@@ -2,15 +2,24 @@ const toasts = document.getElementById('toasts');
 
 /** The pop-out window while it's open: { win, toasts } */
 let second = null;
+/** The document last pressed or typed in, this page's or the pop-out's, where what that leads to is said */
+let lastUsed = document;
+const used = (e) => (lastUsed = e.target.ownerDocument ?? document);
+for (const type of ['pointerdown', 'keydown']) addEventListener(type, used, true);
 
-/** The pop-out window, or null. Its toasts show in it while it has focus. Everything that cares hears 'second-window' */
+/**
+ * The pop-out window, or null. Toasts for what's done in it show in it, even once a game has the focus. Everything
+ * that cares hears 'second-window' when it opens or closes
+ */
 export const secondWindow = () => second?.win ?? null;
 export function setSecondWindow(win, region = null) {
   second = win ? { win, toasts: region } : null;
+  if (win) for (const type of ['pointerdown', 'keydown']) win.addEventListener(type, used, true);
+  lastUsed = document;
   dispatchEvent(new CustomEvent('second-window'));
 }
-/** The document being used: the pop-out's while it has focus, this page's otherwise */
-const docInUse = () => (second && !second.win.closed && second.win.document.hasFocus() ? second.win.document : document);
+/** The document being used: the pop-out's if it was last pressed or typed in, this page's otherwise */
+const docInUse = () => (second && !second.win.closed && lastUsed === second.win.document ? lastUsed : document);
 
 /** Everything shown goes through text nodes, so a sound or channel name can't become markup */
 export function el(tag, props = {}, ...children) {
@@ -34,6 +43,7 @@ const ICONS = {
   stop: '<rect x="6.5" y="6.5" width="11" height="11" rx="1.5" fill="currentColor"/>',
   headphones: '<path d="M4 15v-3a8 8 0 0 1 16 0v3"/><rect x="3.5" y="14" width="4" height="6.5" rx="1.5"/><rect x="16.5" y="14" width="4" height="6.5" rx="1.5"/>',
   volume: '<path d="M4 9.5h3l5-4v13l-5-4H4z"/><path d="M15.5 9.5a3.5 3.5 0 0 1 0 5"/>',
+  popout: '<path d="M10 5.5H6.5a1.5 1.5 0 0 0-1.5 1.5v10.5A1.5 1.5 0 0 0 6.5 19H17a1.5 1.5 0 0 0 1.5-1.5V14"/><path d="M13.5 4.5h6v6M19.5 4.5l-8 8"/>',
   pads: '<rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="4" width="7" height="7" rx="1.5"/><rect x="4" y="13" width="7" height="7" rx="1.5"/><rect x="13" y="13" width="7" height="7" rx="1.5"/>',
   speaker: '<path d="M3.5 9.5h3l5-4v13l-5-4h-3z"/><path d="M15 9.5a3.5 3.5 0 0 1 0 5"/><path d="M17.5 6.5a7.5 7.5 0 0 1 0 11"/>',
   scissors: '<circle cx="6" cy="7" r="2.5"/><circle cx="6" cy="17" r="2.5"/><path d="M8.2 8.3 19 17M8.2 15.7 19 7"/>',

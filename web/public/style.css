@@ -383,7 +383,7 @@ button.volume-fab[aria-expanded='true'] {
   }
 }
 
-button.mini-song {
+.mini-song {
   display: flex;
   flex: 1 1 auto;
   align-items: center;
@@ -465,7 +465,7 @@ button.mini-song {
     padding-inline: 16px;
   }
 
-  button.mini-song {
+  .mini-song {
     flex: 0 1 440px;
   }
 
@@ -528,7 +528,8 @@ button.mini-song {
 }
 
 /* No star here, so the name has the room */
-.sounds-float .board.compact .tile {
+.sounds-float .board.compact .tile,
+.popout-main .board.compact .tile {
   padding-right: 10px;
 }
 
@@ -542,6 +543,72 @@ button.mini-song {
 /* The tiles show what's playing while the panel's open, so the list over it goes */
 .stop-dock:has(.sounds-float:not([hidden])) .now-sounds {
   display: none;
+}
+
+/* The pop-out window: the music along the top, then Play in, a line to say, the search and the sounds, which scroll,
+   and Stop while something's playing */
+body.popout {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
+}
+
+body.popout .mini-player {
+  position: relative;
+  inset: auto;
+  flex: none;
+  height: 56px;
+  border-top: 0;
+  border-bottom: 1px solid var(--line);
+  box-shadow: none;
+}
+
+body.popout .mini-progress {
+  top: auto;
+  bottom: -1px;
+}
+
+.popout-main {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-height: 0;
+  padding: var(--space-3) var(--space-3) 0;
+}
+
+.popout-main .play-in select {
+  width: 100%;
+  max-width: none;
+}
+
+/* Two across even in a narrow window, and more once there's room for 150px each */
+.popout-main .board.compact .tiles {
+  grid-template-columns: repeat(auto-fill, minmax(min(150px, calc(50% - 4px)), 1fr));
+}
+
+.popout-main .sounds-scroll {
+  margin-inline: calc(-1 * var(--space-3));
+  padding: 2px var(--space-3) var(--space-3);
+}
+
+.popout-foot {
+  display: flex;
+  flex: none;
+  justify-content: center;
+  padding: var(--space-2) var(--space-3);
+  border-top: 1px solid var(--line);
+}
+
+.popout-foot:has(> .stop-all[hidden]) {
+  display: none;
+}
+
+body.popout #toasts {
+  right: 12px;
+  bottom: 72px;
+  left: 12px;
 }
 
 /* Every volume, above the Volume button */

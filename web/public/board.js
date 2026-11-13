@@ -241,7 +241,7 @@ export function renderBoard(main, openManage, head = null) {
   const wide = matchMedia(WIDE);
   const placeSearch = () => {
     grid.node.classList.toggle('compact', wide.matches);
-    if (wide.matches && head) head.append(search);
+    if (wide.matches && head) head.prepend(search);
     else area.prepend(search);
   };
   placeSearch();

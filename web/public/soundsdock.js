@@ -1,4 +1,4 @@
-import { devicePref, el, icon } from './lib.js';
+import { devicePref, el, icon, secondWindow } from './lib.js';
 import { soundsBody } from './soundspanel.js';
 
 /** Whether the Sounds panel is open. It stays open from page to page until it's closed */
@@ -16,7 +16,7 @@ export function noSoundsDock() {
  * in the header. On a wide screen the panel stays open while you use the page, until the button, ✕ or Escape closes
  * it; on a phone a press anywhere else closes it too. `openBoard` goes to the Soundboard
  */
-export function soundsDock(openBoard) {
+export function soundsDock(openBoard, extra = null) {
   const panel = el('section', { className: 'sounds-float', id: 'sounds-float', hidden: true, ariaLabel: 'Sounds' });
   const button = el(
     'button',
@@ -41,7 +41,7 @@ export function soundsDock(openBoard) {
     const body = soundsBody(goToBoard);
     search = body.search;
     const close = el('button', { type: 'button', className: 'icon quiet', ariaLabel: 'Close Sounds', title: 'Close', onclick: () => toggle(false, true) }, icon('x'));
-    panel.append(el('div', { className: 'sounds-head' }, el('h2', {}, 'Sounds'), el('button', { type: 'button', className: 'link', onclick: goToBoard }, 'Soundboard'), close), ...body.parts);
+    panel.append(el('div', { className: 'sounds-head' }, el('h2', {}, 'Sounds'), el('button', { type: 'button', className: 'link', onclick: goToBoard }, 'Soundboard'), extra, close), ...body.parts);
     // Opening it again shows the voice picked on the Soundboard since
     return body.paint;
   }
@@ -56,7 +56,8 @@ export function soundsDock(openBoard) {
   let listening = null;
   /** `byHand` is a press of the button or ✕, after which focus goes where it's useful */
   function toggle(on, byHand = false) {
-    if (on && !devicePref.on('soundsButton')) on = false;
+    // Turned off in Settings, or the pop-out window has it
+    if (on && button.hidden) on = false;
     const was = !panel.hidden;
     panel.hidden = !on;
     button.ariaExpanded = String(on);
@@ -97,13 +98,15 @@ export function soundsDock(openBoard) {
     );
   }
 
-  // Settings turns the button on and off for this device
+  // Settings turns the button on and off for this device, and it makes way for the pop-out window while that's open
   const paintPref = () => {
-    button.hidden = !devicePref.on('soundsButton');
+    button.hidden = !devicePref.on('soundsButton') || !!secondWindow();
     if (button.hidden && !panel.hidden) toggle(false);
   };
   const onPref = (e) => (button.isConnected ? e.detail === 'soundsButton' && paintPref() : removeEventListener('device-pref', onPref));
   addEventListener('device-pref', onPref);
+  const onWindow = () => (button.isConnected ? paintPref() : removeEventListener('second-window', onWindow));
+  addEventListener('second-window', onWindow);
   paintPref();
   // Open on this page too, if it was on the last
   if (open && !button.hidden) queueMicrotask(() => button.isConnected && toggle(true));
