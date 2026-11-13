@@ -9,6 +9,23 @@ import { createFetcher } from './youtube.mjs';
 // What Spotify Soloist left in the volume before Spotify playback was removed. Downloaded songs, in audio/, stay
 export const LEFTOVERS = ['bin', 'soloist', 'cache', 'run'];
 
+/** This container's memory and CPU from its cgroup, as `docker stats` counts them, or this process's outside one (as src/perf.ts) */
+export function containerUsage(root = '/sys/fs/cgroup') {
+  try {
+    const file = (name) => fs.readFileSync(`${root}/${name}`, 'utf8');
+    const stat = (text, key) => Number(new RegExp(`^${key} (\\d+)$`, 'm').exec(text)?.[1] ?? 0);
+    const max = file('memory.max').trim();
+    return {
+      memoryBytes: Math.max(0, Number(file('memory.current')) - stat(file('memory.stat'), 'inactive_file')),
+      memoryLimitBytes: max === 'max' ? null : Number(max),
+      cpuSeconds: stat(file('cpu.stat'), 'usage_usec') / 1e6,
+    };
+  } catch {
+    const { user, system } = process.cpuUsage();
+    return { memoryBytes: process.memoryUsage.rss(), memoryLimitBytes: null, cpuSeconds: (user + system) / 1e6 };
+  }
+}
+
 export function createBridge(options = {}) {
   const env = process.env;
   const o = {
@@ -47,6 +64,8 @@ export function createBridge(options = {}) {
     if (!authorized(req)) return json(res, 401, { error: 'unauthorized' });
     const route = `${req.method} ${new URL(req.url, 'http://x').pathname}`;
     if (route === 'GET /status') return json(res, 200, status);
+    // For the bot's health numbers
+    if (route === 'GET /stats') return json(res, 200, { ...containerUsage(o.cgroupDir), ready: youtube.state.ready });
     if (route === 'GET /events') {
       res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-store' });
       res.write(`event: status\ndata: ${JSON.stringify(status)}\n\n`);
@@ -67,6 +86,7 @@ export function createBridge(options = {}) {
     const link = typeof body?.url === 'string' && /^https:\/\//.test(body.url);
     if (route === 'POST /fetch' ? !song && !link : !link) return json(res, 400, { error: 'say which song or link' });
     if (!youtube.state.ready) return json(res, 503, { error: youtube.state.message || 'yt-dlp isn’t ready' });
+    const asked = performance.now();
     try {
       const answer =
         route === 'POST /lookup'
@@ -74,6 +94,8 @@ export function createBridge(options = {}) {
           : route === 'POST /similar'
             ? await youtube.similar(body.url)
             : await youtube.fetchAudio(link ? { url: body.url } : { uri: body.uri, title: body.title, artist: body.artist, durationMs: body.durationMs });
+      // How long yt-dlp took, for the bot's timing of a song's start. A song that was here already took none
+      if (route === 'POST /fetch' && !answer.kept) res.setHeader('server-timing', `ytdlp;dur=${(performance.now() - asked).toFixed(1)}`);
       if (answer.error) return json(res, answer.missing ? 404 : 502, { error: answer.error });
       return json(res, 200, answer);
     } catch (err) {

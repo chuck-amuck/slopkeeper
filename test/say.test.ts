@@ -11,6 +11,7 @@ import { PermissionFlagsBits } from 'discord.js';
 import { recentActivity } from '../src/activity.ts';
 import { config } from '../src/config.ts';
 import { Mixer } from '../src/mixer.ts';
+import * as perf from '../src/perf.ts';
 import { announceAloud, forgetRemovedVoices, forgetSpoken, lengthFor, phrases, readMessage, removePhrase, savePhrase, say, sayOut, serverVoice, speak, speechFor } from '../src/features/say.ts';
 import { applySpeechVolume, stopPlayback } from '../src/features/voiceAudio.ts';
 import { loopSpeechProblem } from '../src/features/loopRoom.ts';
@@ -101,6 +102,38 @@ test('reads out a line in the server’s voice, or the one asked for, and logs w
   const lines = recentActivity(voice.guild.id, 5).map((r) => `${r.actor}: ${r.action}`).toReversed();
   assert.deepEqual(lines, ['ana: Said “hello there” in <#voice>', 'ben: Said “and again” in <#voice>']);
   assert.deepEqual(leftovers(), []);
+});
+
+test('a slow line keeps how long each step took, with its voice and length but never its words', { skip: !hasFfmpeg }, async (t) => {
+  perf.testing();
+  perf.keep(true);
+  t.after(() => perf.keep(false));
+  // The voice container takes five seconds, as the clock sees it
+  const real = performance.now.bind(performance);
+  let ahead = 0;
+  t.mock.method(performance, 'now', () => real() + ahead);
+  fakeVoice(t, async () => {
+    ahead = 5000;
+    return new Response(readFileSync(speechFile), { headers: { 'server-timing': 'load;dur=0, synth;dur=812.5, total;dur=820' } });
+  });
+  const voice = channel();
+  assert.equal(await say(voice, 'secret plans', 'hal', 'ana'), null);
+  await sleep(300);
+  const { slow } = perf.take(true);
+  assert.equal(slow.length, 1);
+  assert.deepEqual([slow[0].what, slow[0].guildId, slow[0].detail], ['Speech', voice.guild.id, { voice: 'hal', characters: 12, waitingAhead: 0, kept: false }]);
+  assert.deepEqual(
+    slow[0].steps.map(([name, , of]) => (of ? `${of} > ${name}` : name)),
+    ['waiting', 'making > voice container', 'voice container > saying it', 'making > levelling and effects', 'making', 'starting'],
+  );
+  assert.ok(slow[0].seconds >= 5);
+  assert.doesNotMatch(JSON.stringify(slow), /secret|plans/);
+  const text = perf.prometheus();
+  assert.match(text, /^slopkeeper_speech_seconds_count 1$/m);
+  assert.match(text, /^slopkeeper_voice_synth_seconds_sum\{voice="hal"\} 0.8125$/m);
+  assert.match(text, /^slopkeeper_speech_make_seconds_count 1$/m);
+  assert.match(text, /^slopkeeper_audio_start_seconds_count\{kind="speech"\} 1$/m);
+  assert.doesNotMatch(text, /voice_model_load_seconds_count/, 'a model already loaded took no loading');
 });
 
 test('a line said again soon in the same voice and speed is made once, and a new speed makes it again', { skip: !hasFfmpeg }, async (t) => {

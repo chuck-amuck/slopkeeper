@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { after, test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { createBridge, LEFTOVERS } from './bridge.mjs';
+import { containerUsage, createBridge, LEFTOVERS } from './bridge.mjs';
 
 const TOKEN = 'music-token';
 const temp = () => fs.mkdtempSync(path.join(tmpdir(), 'slopkeeper-music-'));
@@ -167,4 +167,23 @@ test('without a working yt-dlp, fetching says why', async () => {
   const res = await fetchSong(base, song(1));
   assert.equal(res.status, 503);
   assert.match((await res.json()).error, /yt-dlp didn’t run/);
+});
+
+test('GET /stats says what the container uses, and a download says how long yt-dlp took', async () => {
+  const cgroup = temp();
+  fs.writeFileSync(path.join(cgroup, 'memory.current'), '300000000\n');
+  fs.writeFileSync(path.join(cgroup, 'memory.max'), 'max\n');
+  fs.writeFileSync(path.join(cgroup, 'memory.stat'), 'inactive_file 100000000\n');
+  fs.writeFileSync(path.join(cgroup, 'cpu.stat'), 'usage_usec 1500000\n');
+  const { base } = await bridge({ cgroupDir: cgroup });
+  assert.equal((await fetch(`${base}/stats`)).status, 401);
+  assert.deepEqual(await (await ask(base, '/stats')).json(), { memoryBytes: 200000000, memoryLimitBytes: null, cpuSeconds: 1.5, ready: true });
+  const first = await fetchSong(base, song(7));
+  assert.match(first.headers.get('server-timing'), /^ytdlp;dur=\d+\.\d$/);
+  assert.equal((await first.json()).kept, undefined);
+  const again = await fetchSong(base, song(7));
+  assert.equal(again.headers.get('server-timing'), null, 'a song it had took no yt-dlp');
+  assert.equal((await again.json()).kept, true);
+  const outside = containerUsage(path.join(cgroup, 'none'));
+  assert.ok(outside.memoryBytes > 0 && outside.memoryLimitBytes === null);
 });

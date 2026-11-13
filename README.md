@@ -829,6 +829,31 @@ It applies the same rules as `/sound` and `/setup`, and every request needs an `
 | `GET /guilds/:id/settings` | Lists settings, the `groups` they're shown in (as in `/setup show`), channels, roles and time zones |
 | `PUT /guilds/:id/settings/:key` | Changes a setting: `{ "value": ... }` |
 | `DELETE /guilds/:id/settings/:key` | Puts a setting back to its default |
+| `GET /metrics` | The [performance numbers](#performance-numbers), in Prometheus's text format |
+| `POST /perf/web` | The web UI's report of itself every 30 seconds: `{ "memoryBytes": ..., "memoryLimitBytes": ..., "cpuSeconds": ..., "requests": { "2xx": 40 }, "botUnreachable": 0 }` |
+
+### Performance numbers
+
+The bot keeps track of how it and its containers are doing, so a slow moment can be traced to where it came from. It needs nothing set up, and keeps everything in its own database.
+
+- **Discord:** whether the bot is connected, the gateway's heartbeat round trip and reconnects, and how long each command, button and menu takes to get its first answer to Discord. Discord gives up after 3 seconds, and answers that came too late are counted.
+- **Playing:** how long a sound, a line of speech or a song takes from being asked for to being heard, including joining voice. A line is timed step by step: waiting behind other lines, the voice container saying it (and loading the voice, if it wasn't in memory), levelling and effects, and starting. A song is timed through its download, and whether the music container had it already. Also how long joining voice takes, voice connections that drop, and audio mixed late, which people hear as a stutter.
+- **The bot itself:** how late its timers run (event loop delay), how busy it is, and its JavaScript memory.
+- **Every container:** memory as `docker stats` counts it, its limit, and CPU. The bot asks the voice, music and loop containers on `GET /stats` every 30 seconds, and the web UI reports itself to the bot. A container that doesn't answer for 90 seconds is marked down.
+- **The web UI and the API:** the web UI's answers by status, requests the bot didn't answer, and how long the management API takes to answer, by area. Requests that wait for a change on purpose (live updates) are counted but not timed.
+
+They're kept a minute at a time for 2 days, then 15 minutes at a time for 30 days, about 25 MB in all. The [daily backups](#hosting-the-bot) leave them out. Anything slow is kept for 30 days with how long each step took, up to the newest 500: a command that took 2 seconds or more to answer, a sound 2 seconds to start, a line 4, a song 8, or a page's data 2. Speech keeps its voice and length, never its words.
+
+`GET /metrics` answers in Prometheus's text format, for Prometheus and Grafana if you run them, though nothing needs them. Every name starts with `slopkeeper_`, in seconds and bytes. A Prometheus on the same container network can scrape it with the API token:
+
+```yaml
+scrape_configs:
+  - job_name: slopkeeper
+    authorization:
+      credentials: <API_TOKEN>
+    static_configs:
+      - targets: ["slopkeeper:8787"]
+```
 
 ## Setup
 
@@ -956,7 +981,7 @@ For whoever runs the bot.
 
 Local dev (Node 24+): `npm install && npm run dev`. `npm run typecheck` runs tsc, and `npm test` runs the tests (the audio ones need ffmpeg and are skipped without it). GitHub Actions runs them on every push, with the same static ffmpeg as the image, and each image is only built once its own checks pass.
 
-Data (SQLite DB and uploaded sounds) lives in the `slopkeeper-data` volume at `/data`, with each server's sounds in `sounds/<server id>/`, and the first version of any trimmed sound in `originals/` inside that. The bot copies its database to `backups/` in that volume once a day and keeps the last 7 copies. Those guard against a bad update or a damaged database, not against losing the disk, and they don't include sounds, so back the volume up elsewhere too.
+Data (SQLite DB and uploaded sounds) lives in the `slopkeeper-data` volume at `/data`, with each server's sounds in `sounds/<server id>/`, and the first version of any trimmed sound in `originals/` inside that. The bot copies its database to `backups/` in that volume once a day and keeps the last 7 copies, leaving out the [performance numbers](#performance-numbers). Those guard against a bad update or a damaged database, not against losing the disk, and they don't include sounds, so back the volume up elsewhere too.
 
 Voice sessions in progress are saved when the bot stops, without a recap, so a restart mid-session splits it in two. A crash loses them. Game stats are saved every 5 minutes and when the bot stops, so a crash loses at most a few minutes of them.
 

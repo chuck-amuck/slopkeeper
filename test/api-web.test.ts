@@ -403,3 +403,29 @@ test('a page’s one request for updates waits for a change, then answers with o
   assert.equal(volume.volumes.sounds, 80);
   await ok(`/guilds/${GUILD}/settings/soundVolume`, { method: 'DELETE' });
 });
+
+test('GET /metrics answers in Prometheus’s format, with the token, and times the API’s own answers', async () => {
+  assert.equal((await fetch(`${base}/metrics`)).status, 401);
+  await ok(`/guilds/${GUILD}/settings`);
+  const res = await fetch(`${base}/metrics`, { headers: { authorization: `Bearer ${TOKEN}` } });
+  assert.equal(res.status, 200);
+  assert.match(res.headers.get('content-type')!, /^text\/plain; version=0\.0\.4/);
+  const text = await res.text();
+  assert.match(text, /^# TYPE slopkeeper_api_requests_total counter$/m);
+  assert.match(text, /^slopkeeper_api_requests_total\{area="settings",status="2xx"\} \d+$/m);
+  assert.match(text, /^slopkeeper_api_request_seconds_count\{area="settings"\} \d+$/m);
+  assert.equal((await fetch(`${base}/metrics`, { method: 'POST', headers: { authorization: `Bearer ${TOKEN}` } })).status, 405);
+  await fetch(`${base}/guilds/${GUILD}/no-such-area/x`, { headers: { authorization: `Bearer ${TOKEN}` } });
+  const after = await (await fetch(`${base}/metrics`, { headers: { authorization: `Bearer ${TOKEN}` } })).text();
+  assert.doesNotMatch(after, /no-such-area/, 'a path the API doesn’t have counts as other');
+  assert.match(after, /area="other",status="4xx"/);
+});
+
+test('the web UI reports how it’s doing to POST /perf/web', async () => {
+  const send = (body: unknown) => fetch(`${base}/perf/web`, { method: 'POST', headers: { authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  assert.equal((await send({ hello: 1 })).status, 400);
+  assert.equal((await send({ memoryBytes: 5e7, memoryLimitBytes: 1.3e8, cpuSeconds: 2, requests: { '2xx': 3 }, botUnreachable: 0 })).status, 200);
+  const text = await (await fetch(`${base}/metrics`, { headers: { authorization: `Bearer ${TOKEN}` } })).text();
+  assert.match(text, /^slopkeeper_container_memory_bytes\{container="web"\} 50000000$/m);
+  assert.match(text, /^slopkeeper_web_requests_total\{status="2xx"\} 3$/m);
+});

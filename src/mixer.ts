@@ -1,6 +1,7 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import path from 'node:path';
 import { Readable } from 'node:stream';
+import * as perf from './perf.ts';
 
 // 20 ms of 48 kHz 16-bit stereo PCM, the frame size @discordjs/voice encodes
 const FRAME_MS = 20;
@@ -9,6 +10,8 @@ const FRAME_BYTES = (48_000 * 2 * 2 * FRAME_MS) / 1000;
 const MAX_LEAD_MS = 60;
 // Audio a new sound buffers before it's mixed in, enough to cover the lead
 const START_BYTES = FRAME_BYTES * 4;
+// Frames mixed are counted together, once a second
+const FRAMES_COUNTED_TOGETHER = 50;
 // Music drops to this while someone's line is spoken, easing down and back up over a few frames
 const DUCKED = 0.3;
 const DUCK_STEP = 0.05;
@@ -34,6 +37,8 @@ export interface VoiceOptions {
   label?: string;
   /** Shows as speech in that list, for speech that plays at the sound volume, like the looping room's */
   spoken?: boolean;
+  /** Runs once it's first heard, after ffmpeg has started and it's mixed in */
+  onHeard?: () => void;
 }
 
 /** A sound or line of speech playing, for showing what's on and stopping one of them */
@@ -241,6 +246,9 @@ export class Mixer extends Readable {
   private readonly groupGains = new Map<string, number>();
   /** How far music is turned down under speech right now */
   private duck = 1;
+  private readonly hearing = new WeakMap<Source, () => void>();
+  /** Frames mixed and not yet counted */
+  private uncounted = 0;
   private readonly labels = new WeakMap<Source, { id: number; name: string; startedAt: number; loop: boolean; spoken: boolean }>();
 
   constructor(volume: number, maxVoices: number) {
@@ -265,6 +273,7 @@ export class Mixer extends Readable {
       if (shown) this.emit('playing');
     };
     const voice = options.loop && options.everyMs ? new LayeredVoice(file, gain, options.everyMs, ended, options) : new Voice(file, gain, ended, options);
+    if (options.onHeard) this.hearing.set(voice, options.onHeard);
     this.labels.set(voice, { id: ++playingIds, name: options.label ?? path.parse(file).name, startedAt: Date.now(), loop: options.loop ?? false, spoken: options.spoken ?? options.group === 'speech' });
     // A restart keeps the playing copy going until the new one has audio, so spamming leaves no gap while ffmpeg starts.
     // A copy from an earlier click that hasn't started yet is dropped, since this one supersedes it. A loop is never restarted by a click
@@ -352,13 +361,20 @@ export class Mixer extends Readable {
 
   override _destroy(err: Error | null, callback: (err?: Error | null) => void) {
     clearTimeout(this.timer);
+    this.countFrames();
     this.stopAll();
     callback(err);
+  }
+
+  private countFrames() {
+    if (this.uncounted) perf.count('mixer_frames_total', {}, this.uncounted);
+    this.uncounted = 0;
   }
 
   private pushFrame() {
     this.voices = this.voices.filter((v) => !v.ended);
     if (!this.voices.length) {
+      this.countFrames();
       this.done = true;
       this.push(null);
       return;
@@ -388,6 +404,8 @@ export class Mixer extends Readable {
       // Timed from when it's first heard, after ffmpeg has started, so a page's progress bar keeps pace with the sound
       const label = this.labels.get(voice);
       if (label) label.startedAt = Date.now();
+      this.hearing.get(voice)?.();
+      this.hearing.delete(voice);
       if (voice.group !== 'music') this.emit('playing');
       starting.add(voice);
       let crossfade = false;
@@ -426,6 +444,10 @@ export class Mixer extends Readable {
       frame.writeInt16LE(Math.max(-32768, Math.min(32767, Math.round(sum[s] * this.volume))), s * 2);
     }
 
+    // Counted a second at a time, to keep this loop light
+    if (++this.uncounted >= FRAMES_COUNTED_TOGETHER) this.countFrames();
+    // Due when the one before it has played; much later than that and there was a gap
+    if (performance.now() - this.nextFrameAt > FRAME_MS) perf.count('mixer_late_frames_total');
     this.nextFrameAt += FRAME_MS;
     this.push(frame);
   }

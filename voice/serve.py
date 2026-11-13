@@ -9,15 +9,21 @@ sounds of that language first (see there).
 Piper keeps every model it has loaded for good, about 135 MB each, so after a call that tried every voice it holds about 1.5 GB. A
 model other than the default one that hasn't spoken for VOICE_IDLE_MINUTES (30 by default, 0 to keep them all) is let go, and loaded
 again the next time it's asked for, which adds about a second to that line.
+
+For the bot's health numbers, each line's answer says in a Server-Timing header how long went on loading a model, turning the words
+into sounds and saying them, and GET /stats says how much memory and CPU the container uses and how many models it holds.
 """
 
 import ctypes
 import gc
+import logging
 import os
+import resource
 import runpy
 import threading
 import time
 
+import flask
 import onnxruntime
 from piper import PiperVoice
 
@@ -33,14 +39,28 @@ def _session(*args, sess_options=None, **kwargs):
     return _Session(*args, sess_options=options, **kwargs)
 
 
+# Each request's times so far, by step, while one is being answered on this thread
+_timing = threading.local()
+
+
+def _took(step, seconds):
+    times = getattr(_timing, "times", None)
+    if times is not None:
+        times[step] = times.get(step, 0.0) + seconds
+
+
 _phonemize = PiperVoice.phonemize
 
 
 def _phonemize_accented(self, text):
-    # Piper's [[ raw phonemes ]] go through as they are, as they do for the other voices
-    if not accent.accented(self.config.espeak_voice) or "[[" in text:
-        return _phonemize(self, text)
-    return accent.phonemize(self, text, _phonemize)
+    started = time.monotonic()
+    try:
+        # Piper's [[ raw phonemes ]] go through as they are, as they do for the other voices
+        if not accent.accented(self.config.espeak_voice) or "[[" in text:
+            return _phonemize(self, text)
+        return accent.phonemize(self, text, _phonemize)
+    finally:
+        _took("phonemize", time.monotonic() - started)
 
 
 def _idle_minutes():
@@ -69,7 +89,9 @@ def _load_tracked(*args, **kwargs):
     with _loading:
         if path in _by_path:
             return _by_path[path]
+        started = time.monotonic()
         voice = _load(*args, **kwargs)
+        _took("load", time.monotonic() - started)
         voice._reload = (args, kwargs)
         voice._reloading = threading.Lock()
         voice._users = 0
@@ -91,9 +113,15 @@ def _to_audio_tracked(self, *args, **kwargs):
         if tracked and self.session is None:
             with self._reloading:
                 if self.session is None:
+                    started = time.monotonic()
                     load_args, load_kwargs = self._reload
                     self.session = _load(*load_args, **load_kwargs).session
-        return _to_audio(self, *args, **kwargs)
+                    _took("load", time.monotonic() - started)
+        started = time.monotonic()
+        try:
+            return _to_audio(self, *args, **kwargs)
+        finally:
+            _took("synth", time.monotonic() - started)
     finally:
         if tracked:
             with _lock:
@@ -123,10 +151,76 @@ def _let_go_of_idle():
             print(f"Let go of idle voice models: {', '.join(freed)}", flush=True)
 
 
+def _container_usage():
+    """This container's memory and CPU from its cgroup, as `docker stats` counts them, or this process's outside one"""
+
+    def read(name):
+        with open(f"/sys/fs/cgroup/{name}", encoding="utf-8") as file:
+            return file.read()
+
+    def stat(text, key):
+        for line in text.splitlines():
+            name, _, value = line.partition(" ")
+            if name == key:
+                return int(value)
+        return 0
+
+    try:
+        limit = read("memory.max").strip()
+        return {
+            "memoryBytes": max(0, int(read("memory.current")) - stat(read("memory.stat"), "inactive_file")),
+            "memoryLimitBytes": None if limit == "max" else int(limit),
+            "cpuSeconds": stat(read("cpu.stat"), "usage_usec") / 1e6,
+        }
+    except (OSError, ValueError):
+        # The most it has used, which is the nearest this has
+        usage = resource.getrusage(resource.RUSAGE_SELF)
+        return {"memoryBytes": usage.ru_maxrss * 1024, "memoryLimitBytes": None, "cpuSeconds": usage.ru_utime + usage.ru_stime}
+
+
+def _stats():
+    # A snapshot, as a model may be loading meanwhile
+    loaded = sum(1 for voice in list(_by_path.values()) if voice.session is not None)
+    return {**_container_usage(), "modelsLoaded": loaded}
+
+
+class _QuietStats(logging.Filter):
+    """The bot asks for /stats every 30 seconds, which would bury everything else in the log"""
+
+    def filter(self, record):
+        return " /stats " not in record.getMessage()
+
+
+_run = flask.Flask.run
+
+
+def _run_measured(self, *args, **kwargs):
+    """Adds the timings and GET /stats to Piper's own server, which it makes and runs in one go"""
+
+    @self.before_request
+    def _start_timing():
+        _timing.times = {}
+        _timing.started = time.monotonic()
+
+    @self.after_request
+    def _server_timing(response):
+        times = getattr(_timing, "times", None)
+        if times is not None and flask.request.path == "/synthesize":
+            times["total"] = time.monotonic() - _timing.started
+            response.headers["Server-Timing"] = ", ".join(f"{step};dur={seconds * 1000:.1f}" for step, seconds in times.items())
+        _timing.times = None
+        return response
+
+    self.add_url_rule("/stats", "stats", _stats)
+    logging.getLogger("werkzeug").addFilter(_QuietStats())
+    return _run(self, *args, **kwargs)
+
+
 onnxruntime.InferenceSession = _session
 PiperVoice.phonemize = _phonemize_accented
+PiperVoice.load = staticmethod(_load_tracked)
+PiperVoice.phoneme_ids_to_audio = _to_audio_tracked
+flask.Flask.run = _run_measured
 if IDLE_S > 0:
-    PiperVoice.load = staticmethod(_load_tracked)
-    PiperVoice.phoneme_ids_to_audio = _to_audio_tracked
     threading.Thread(target=_let_go_of_idle, daemon=True).start()
 runpy.run_module("piper.http_server", run_name="__main__", alter_sys=True)

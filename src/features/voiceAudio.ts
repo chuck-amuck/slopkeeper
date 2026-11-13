@@ -6,6 +6,7 @@ import path from 'node:path';
 import { feeds } from '../changes.ts';
 import * as discordBoard from '../discordSounds.ts';
 import { Mixer, type Playing, type VoiceOptions } from '../mixer.ts';
+import * as perf from '../perf.ts';
 import { setting } from '../settings.ts';
 import type { DiscordSound } from '../discordSounds.ts';
 import { humansIn } from '../util.ts';
@@ -21,6 +22,9 @@ const IDLE_LEAVE_MS = 5 * 60_000;
 const CONNECT_TIMEOUT_MS = 15_000;
 
 const RECONNECT_TIMEOUT_MS = 5_000;
+
+/** A sound that takes this long to be heard is kept for a look */
+const SLOW_SOUND_S = 2;
 
 const VOICE_PERMISSIONS = [
   [PermissionFlagsBits.ViewChannel, 'View Channel'],
@@ -86,6 +90,7 @@ function watch(connection: VoiceConnection, guildId: string) {
   // Without a listener, a voice network error would be thrown and take the whole bot down
   connection.on('error', (err) => console.error(`Voice connection error in server ${guildId}:`, err.message));
   connection.on(VoiceConnectionStatus.Disconnected, async () => {
+    perf.count('voice_disconnects_total');
     try {
       // Being dragged to another channel also lands here, and reconnects by itself
       await Promise.race([
@@ -107,6 +112,8 @@ export async function connect(channel: VoiceBasedChannel): Promise<string | null
   const a = audioFor(channel.guild.id);
   clearTimeout(a.idleTimer);
   let connection = getVoiceConnection(channel.guild.id);
+  const joining = performance.now();
+  let joined = false;
   // Joining again also revives a connection that dropped, which is otherwise only cleared up a few seconds later
   if (!connection || connection.joinConfig.channelId !== channel.id || connection.state.status === VoiceConnectionStatus.Disconnected) {
     const isNew = !connection;
@@ -120,10 +127,13 @@ export async function connect(channel: VoiceBasedChannel): Promise<string | null
     });
     if (isNew) watch(connection, channel.guild.id);
     connection.subscribe(a.player);
+    joined = true;
   }
   try {
     await entersState(connection, VoiceConnectionStatus.Ready, CONNECT_TIMEOUT_MS);
+    if (joined) perf.time('voice_connect_seconds', (performance.now() - joining) / 1000);
   } catch {
+    perf.count('voice_connect_failures_total');
     console.error(`Voice connection to ${channel.name} in ${channel.guild.name} (${channel.guild.id}) timed out in state ${connection.state.status}`);
     // Left in place it would be reused, and every later click would time out as well
     destroy(connection);
@@ -156,12 +166,27 @@ export function mixIn(guildId: string, file: string, gain: number, onEnd?: (byIt
  * Plays a long file, like a song, at the music volume, where newer sounds can't push it out, from `startMs` in.
  * `onEnd` runs once it's over, saying whether it played to the end. Returns a way to stop it, or the reason it couldn't play, for the user
  */
-export async function playLong(channel: VoiceBasedChannel, file: string, onEnd: (byItself: boolean) => void, startMs = 0): Promise<(() => void) | string> {
+export async function playLong(channel: VoiceBasedChannel, file: string, onEnd: (byItself: boolean) => void, startMs = 0, onHeard?: () => void): Promise<(() => void) | string> {
+  const heard = timeStart(channel, 'music');
   const problem = await connect(channel);
   if (problem) return problem;
+  heard.step('joining voice');
   let stop!: () => void;
-  mixInto(channel.guild.id, (mixer) => (stop = mixer.add(file, 1, onEnd, { group: 'music', lasting: true, ...(startMs > 0 && { startMs }) })));
+  mixInto(channel.guild.id, (mixer) => (stop = mixer.add(file, 1, onEnd, { group: 'music', lasting: true, ...(startMs > 0 && { startMs }), onHeard: () => (heard.end(), onHeard?.()) })));
   return stop;
+}
+
+/** Times from asking to play until it's heard. Only a sound is kept when slow: speech and music time the rest of their wait too */
+function timeStart(channel: VoiceBasedChannel, kind: 'sound' | 'speech' | 'music', name?: string) {
+  const trace = new perf.Trace('audio_start_seconds', 'Sound', channel.guild.id, kind === 'sound' ? SLOW_SOUND_S : Infinity, { kind });
+  if (name) trace.detail.sound = name;
+  return {
+    step: (step: string) => trace.step(step),
+    end: () => {
+      trace.step('starting');
+      trace.end();
+    },
+  };
 }
 
 /** Applies the music volume to music already playing */
@@ -174,9 +199,14 @@ export const botChannelId = (guildId: string) => getVoiceConnection(guildId)?.jo
 
 /** Plays a sound in a channel. Returns null on success or the reason it couldn't, for the user. `onEnd` runs once it's over, if it played */
 export async function play(channel: VoiceBasedChannel, file: string, gain = 1, onEnd?: () => void, options: VoiceOptions = {}): Promise<string | null> {
+  const kind = options.group === 'speech' ? 'speech' : 'sound';
+  // A line's label is what it says, which isn't kept
+  const heard = timeStart(channel, kind, kind === 'sound' ? (options.label ?? path.parse(file).name) : undefined);
   const problem = await connect(channel);
-  if (!problem) mixIn(channel.guild.id, file, gain, onEnd, options);
-  return problem;
+  if (problem) return problem;
+  heard.step('joining voice');
+  mixIn(channel.guild.id, file, gain, onEnd, { ...options, onHeard: () => (heard.end(), options.onHeard?.()) });
+  return null;
 }
 
 /** Applies the soundboard volume to sounds already playing */

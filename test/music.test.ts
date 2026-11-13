@@ -10,6 +10,7 @@ import { feeds } from '../src/changes.ts';
 import { config } from '../src/config.ts';
 import { db, getKv } from '../src/db.ts';
 import { Mixer, type VoiceOptions } from '../src/mixer.ts';
+import * as perf from '../src/perf.ts';
 import {
   addTracks,
   AUTOPLAY,
@@ -124,16 +125,17 @@ mock.method(globalThis, 'fetch', async (url: string, init: RequestInit = {}) => 
   throw new Error(`unexpected ${where}`);
 });
 
-// What the mixer is asked to play, instead of playing it. `end` finishes it as a song ending would
+// What the mixer is asked to play, instead of playing it. `heard` is it starting to be heard, and `end` finishes it as a song ending would
 interface Played {
   file: string;
   options: VoiceOptions;
   stopped: boolean;
+  heard: () => void;
   end: () => void;
 }
 const played: Played[] = [];
-mock.method(Mixer.prototype, 'add', (file: string, _gain: number, onEnd: (byItself: boolean) => void, options: VoiceOptions) => {
-  const voice: Played = { file, options, stopped: false, end: () => onEnd(true) };
+mock.method(Mixer.prototype, 'add', (file: string, _gain: number, onEnd: (byItself: boolean) => void, { onHeard, ...options }: VoiceOptions) => {
+  const voice: Played = { file, options, stopped: false, heard: () => onHeard?.(), end: () => onEnd(true) };
   played.push(voice);
   return () => {
     voice.stopped = true;
@@ -1348,4 +1350,20 @@ test('Autoplay remembers what played through a restart', async (t) => {
   await settle();
   assert.deepEqual(titles(id), ['Like 0001 2', 'Like 0001 3', 'Like 0001 4'], 'Song 1 still leads, and nothing played comes back');
   stopMusic(id, 'u1');
+});
+
+test('a song’s start is timed from being due to being heard, its download included', async () => {
+  perf.testing();
+  perf.keep(true);
+  const { id, guild, channel } = server();
+  addTracks(id, [song(1)], 'u1');
+  assert.equal(await startMusic(guild, channel), null);
+  assert.doesNotMatch(perf.prometheus(), /music_start_seconds_count/, 'not until it’s heard');
+  lastPlayed().heard();
+  const text = perf.prometheus();
+  assert.match(text, /^slopkeeper_music_start_seconds_count 1$/m);
+  assert.match(text, /^slopkeeper_audio_start_seconds_count\{kind="music"\} 1$/m);
+  assert.match(text, /^slopkeeper_music_download_seconds_count\{kept="no"\} \d+$/m);
+  stopMusic(id, 'u1');
+  perf.keep(false);
 });

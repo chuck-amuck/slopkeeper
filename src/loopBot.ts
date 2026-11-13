@@ -15,6 +15,7 @@ import {
 } from '@discordjs/voice';
 import { PermissionFlagsBits, type Client, type Guild, type VoiceBasedChannel } from 'discord.js';
 import { MIX_VOLUME, Mixer } from './mixer.ts';
+import { containerUsage } from './perf.ts';
 
 /**
  * The loop bot: a second Discord bot that only plays the looping room, so the main bot is free to play everywhere else.
@@ -267,7 +268,8 @@ async function readJson(req: IncomingMessage): Promise<unknown> {
 
 /**
  * The loop bot's API, for the main bot only, inside the stack:
- * `GET /status`, `PUT /guilds/:id/loop` with a program, and `DELETE /guilds/:id/loop`
+ * `GET /status`, `GET /stats` (its memory and CPU, for the main bot's health numbers), `PUT /guilds/:id/loop` with a
+ * program, and `DELETE /guilds/:id/loop`
  */
 export function createLoopApi(client: Client, token: string, filesRoot: string, rooms = new Map<string, LoopRoom>()): Server {
   const roomFor = (guild: Guild) => rooms.get(guild.id) ?? rooms.set(guild.id, new LoopRoom(guild)).get(guild.id)!;
@@ -279,6 +281,7 @@ export function createLoopApi(client: Client, token: string, filesRoot: string, 
       if (url.pathname === '/status' && req.method === 'GET') {
         return reply(200, { ready: client.isReady(), name: client.user?.displayName ?? null, guilds: [...client.guilds.cache.keys()] });
       }
+      if (url.pathname === '/stats' && req.method === 'GET') return reply(200, { ...containerUsage(), ready: client.isReady() });
       const match = /^\/guilds\/(\d{1,20})\/loop$/.exec(url.pathname);
       if (!match) return reply(404, { error: 'Not found.' });
       const guild = client.guilds.cache.get(match[1]);

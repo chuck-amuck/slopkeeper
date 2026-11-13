@@ -386,6 +386,35 @@ db.exec(`
     value TEXT NOT NULL
   );
 
+  -- How the bot and its containers did (see perf.ts): a minute per row (span 1) for 2 days, and 15 minutes per row
+  -- (span 15) for 30. Counters add up count; a gauge's average is sum / count. A minute cut short by a restart may
+  -- have two rows, so read them added up
+  CREATE TABLE IF NOT EXISTS perf_minutes (
+    at INTEGER NOT NULL,
+    span INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    labels TEXT NOT NULL,
+    count REAL NOT NULL,
+    sum REAL NOT NULL,
+    max REAL NOT NULL,
+    -- A timing's count in each of perf.ts's BUCKETS, as JSON
+    buckets TEXT
+  );
+  CREATE INDEX IF NOT EXISTS perf_minutes_by_name ON perf_minutes (span, name, at);
+  CREATE INDEX IF NOT EXISTS perf_minutes_by_time ON perf_minutes (span, at);
+
+  -- Things people waited on that took a while, with how long each step took. Speech keeps its voice and length, never its words
+  CREATE TABLE IF NOT EXISTS perf_slow (
+    id INTEGER PRIMARY KEY,
+    at INTEGER NOT NULL,
+    guild_id TEXT,
+    what TEXT NOT NULL,
+    seconds REAL NOT NULL,
+    steps TEXT NOT NULL,
+    detail TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS perf_slow_by_time ON perf_slow (at);
+
   PRAGMA user_version = ${SCHEMA_VERSION};
 `);
 

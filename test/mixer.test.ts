@@ -6,6 +6,7 @@ import path from 'node:path';
 import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { Mixer } from '../src/mixer.ts';
+import * as perf from '../src/perf.ts';
 
 const hasFfmpeg = spawnSync('ffmpeg', ['-version']).status === 0;
 const dir = mkdtempSync(path.join(process.env.DATA_DIR!, 'mixer-'));
@@ -345,4 +346,22 @@ test('a tap on the room’s looping sound shows beside the loop, and stopping th
   );
   mixer.stopAll();
   await done;
+});
+
+test('says when a sound is first heard, once, and counts the frames it mixed', { skip: !hasFfmpeg }, async () => {
+  perf.testing();
+  const mixer = new Mixer(0.5, 12);
+  const { peaks, done } = record(mixer);
+  let heardAt = -1;
+  let times = 0;
+  mixer.add(tone('heard.wav', 440, 0.3), 1, undefined, {
+    onHeard: () => {
+      heardAt = peaks.length;
+      times += 1;
+    },
+  });
+  await done;
+  assert.equal(times, 1);
+  assert.equal(heardAt, peaks.findIndex((p) => p > 0), 'as its first frame is mixed');
+  assert.match(perf.prometheus(), new RegExp(`^slopkeeper_mixer_frames_total ${peaks.length}$`, 'm'));
 });

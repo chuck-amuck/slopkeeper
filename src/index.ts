@@ -6,6 +6,7 @@ import { config } from './config.ts';
 import { db } from './db.ts';
 import { idSetting, isAllowed } from './settings.ts';
 import { features, startOrder } from './features/all.ts';
+import { timeInteraction } from './features/health.ts';
 import { servedGuilds } from './util.ts';
 
 const commands = new Map(features.flatMap((f) => f.commands ?? []).map((c) => [c.data.name, c]));
@@ -62,6 +63,8 @@ function describe(i: Interaction): string {
 }
 
 client.on(Events.InteractionCreate, async (i) => {
+  const handled = timeInteraction(i);
+  let failed = false;
   try {
     if (i.isChatInputCommand()) await commands.get(i.commandName)?.run(i);
     else if (i.isAutocomplete()) await commands.get(i.commandName)?.autocomplete?.(i);
@@ -71,12 +74,15 @@ client.on(Events.InteractionCreate, async (i) => {
       await (i.isButton() ? feature?.onButton?.(i) : feature?.onSelect?.(i));
     } else if (i.isModalSubmit()) await features.find((f) => f.componentPrefix === i.customId.split(':')[0])?.onModal?.(i);
   } catch (err) {
+    failed = true;
     console.error(`${describe(i)} failed:`, err);
     if (!i.isRepliable()) return;
     const msg = { content: 'Something went wrong on the bot’s side. Try again, and if it keeps happening, tell whoever runs the bot.', flags: MessageFlags.Ephemeral } as const;
     // A public "thinking…" would turn into the error for everyone, so it goes and only whoever asked sees the error
     if (i.deferred && !i.replied && i.ephemeral === false) await i.deleteReply().catch(() => {});
     await (i.replied || i.deferred ? i.followUp(msg) : i.reply(msg)).catch(() => {});
+  } finally {
+    handled(failed);
   }
 });
 

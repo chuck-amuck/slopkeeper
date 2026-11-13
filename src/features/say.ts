@@ -21,6 +21,7 @@ import { logActivity } from '../activity.ts';
 import { config } from '../config.ts';
 import { db } from '../db.ts';
 import { levelSpeech } from '../loudness.ts';
+import * as perf from '../perf.ts';
 import { DEFAULTS, idSetting, setting } from '../settings.ts';
 import type { Feature } from '../types.ts';
 import { canSee, humansIn } from '../util.ts';
@@ -253,6 +254,8 @@ export function forgetRemovedVoices(): number {
 const SPEAK_TIMEOUT_MS = 15_000;
 /** Lines waiting behind the one being said */
 const MOST_WAITING = 5;
+/** A line that takes this long from being asked for to being heard is kept for a look */
+const SLOW_SPEECH_S = 4;
 const MOST_PHRASES = 25;
 /** After this, the next message from the same person gets their name read again */
 const SAME_SPEAKER_MS = 30_000;
@@ -268,6 +271,8 @@ interface Line {
   voice: Voice;
   /** Runs once the line starts playing, or with why it never will */
   started: (problem: string | null) => void;
+  /** From being asked for to being heard */
+  trace: perf.Trace;
 }
 
 interface Queue {
@@ -329,7 +334,8 @@ export function lengthFor(speed: number, stretches = STRETCHES) {
   return Math.round((fromLength + ((toLength - fromLength) * (stretch - fromStretch)) / (toStretch - fromStretch)) * 100) / 100;
 }
 
-async function speech(text: string, voice: Voice, speed: number, signal: AbortSignal) {
+async function speech(text: string, voice: Voice, speed: number, signal: AbortSignal, trace?: perf.Trace) {
+  const asked = performance.now();
   // A model the container doesn't have gets its default one instead, with no error, so voice/start.sh fetches every model named here
   const res = await fetch(`${config.voiceUrl}/synthesize`, {
     method: 'POST',
@@ -345,7 +351,17 @@ async function speech(text: string, voice: Voice, speed: number, signal: AbortSi
     signal: AbortSignal.any([signal, AbortSignal.timeout(SPEAK_TIMEOUT_MS)]),
   });
   if (!res.ok) throw new Error(`Voice container said HTTP ${res.status}`);
-  return Buffer.from(await res.arrayBuffer());
+  const audio = Buffer.from(await res.arrayBuffer());
+  // Its own times (voice/serve.py): loading a model it had let go, and saying the line
+  const took = perf.serverTiming(res.headers.get('server-timing'));
+  const load = took.get('load') ?? 0;
+  const synth = took.get('synth');
+  if (load > 0) perf.time('voice_model_load_seconds', load);
+  if (synth !== undefined) perf.time('voice_synth_seconds', synth, { voice: voice.id });
+  trace?.part('voice container', (performance.now() - asked) / 1000, 'making');
+  if (load > 0) trace?.part('loading the voice', load, 'voice container');
+  if (synth !== undefined) trace?.part('saying it', synth, 'voice container');
+  return audio;
 }
 
 /** Most of what's said again soon is a saved line, a preview then the same line said, or a looping room's speech */
@@ -383,16 +399,18 @@ function keepLine(key: string, audio: Buffer) {
   }
 }
 
-async function makeLine(text: string, voice: Voice, speed: number): Promise<Buffer> {
+async function makeLine(text: string, voice: Voice, speed: number, trace?: perf.Trace): Promise<Buffer> {
   folder ??= mkdtempSync(path.join(tmpdir(), 'slopkeeper-say-'));
   const file = path.join(folder, `made-${randomUUID()}.wav`);
   const unlevelled = `${file}.raw.wav`;
   try {
-    const raw = await speech(text, voice, speed, new AbortController().signal).catch((err: unknown) => {
+    const raw = await speech(text, voice, speed, new AbortController().signal, trace).catch((err: unknown) => {
       throw new VoiceDown(err instanceof Error ? err.message : String(err));
     });
     writeFileSync(unlevelled, raw);
+    const levelling = performance.now();
     await levelSpeech(unlevelled, file, voice.effects);
+    trace?.part('levelling and effects', (performance.now() - levelling) / 1000, 'making');
     return readFileSync(file);
   } finally {
     rmSync(file, { force: true });
@@ -400,24 +418,34 @@ async function makeLine(text: string, voice: Voice, speed: number): Promise<Buff
   }
 }
 
-/** A line levelled and ready to play, made again only if it isn't one of the lines lately made or being made */
-async function lineAudio(text: string, voice: Voice, speed: number, signal: AbortSignal): Promise<Buffer> {
+/**
+ * A line levelled and ready to play, made again only if it isn't one of the lines lately made or being made. `trace`
+ * hears how it was made, if this is the ask that makes it
+ */
+async function lineAudio(text: string, voice: Voice, speed: number, signal: AbortSignal, trace?: perf.Trace): Promise<Buffer> {
   const key = JSON.stringify([voice.id, speed, text]);
   const kept = spoken.get(key);
   if (kept && Date.now() - kept.at < KEEP_SPOKEN_MS) {
     // To the newest end, so lines said often are the last to go
     spoken.delete(key);
     spoken.set(key, kept);
+    if (trace) trace.detail.kept = true;
     return kept.audio;
   }
+  if (trace) trace.detail.kept = false;
   forgetLine(key);
   let made = making.get(key);
+  // Someone else asked for it a moment ago: its steps are in their timing
+  if (made && trace) trace.detail.sharedWithAnother = true;
   if (!made) {
     // Made for whoever asks for it meanwhile, so one caller's Stop doesn't fail the others. A stopped line is still
     // finished and kept, as it's often said again straight after
-    made = makeLine(text, voice, speed).then(
-      (audio) => (keepLine(key, audio), audio),
-    );
+    const from = performance.now();
+    made = makeLine(text, voice, speed, trace).then((audio) => {
+      perf.time('speech_make_seconds', (performance.now() - from) / 1000);
+      keepLine(key, audio);
+      return audio;
+    });
     making.set(key, made);
     const settled = () => void (making.get(key) === made && making.delete(key));
     made.then(settled, settled);
@@ -461,18 +489,24 @@ export class TooSoon extends Error {
   }
 }
 
-async function sayLine(queue: Queue, { channel, text, voice, started }: Line) {
+async function sayLine(queue: Queue, { channel, text, voice, started, trace }: Line) {
   const guildId = channel.guild.id;
   const cancel = (queue.cancel = new AbortController());
+  trace.step('waiting');
   folder ??= mkdtempSync(path.join(tmpdir(), 'slopkeeper-say-'));
   // Each line has its own file, as the mixer takes a file it's already playing to be a restart
   const file = path.join(folder, `${randomUUID()}.wav`);
   try {
-    writeFileSync(file, await lineAudio(text, voice, setting(guildId, 'ttsSpeed'), cancel.signal));
+    writeFileSync(file, await lineAudio(text, voice, setting(guildId, 'ttsSpeed'), cancel.signal, trace));
     cancel.signal.throwIfAborted();
+    trace.step('making');
+    const heard = () => {
+      trace.step('starting');
+      trace.end();
+    };
     // At full gain: the speech volume is the group's, so moving it changes a line already being said
     await new Promise<void>((finished, failed) => {
-      play(channel, file, 1, finished, { group: 'speech', label: text })
+      play(channel, file, 1, finished, { group: 'speech', label: text, onHeard: heard })
         .then((problem) => {
           started(problem);
           if (problem) finished();
@@ -480,7 +514,10 @@ async function sayLine(queue: Queue, { channel, text, voice, started }: Line) {
         .catch(failed);
     });
   } catch (err) {
-    if (!cancel.signal.aborted) console.error(`Couldn’t say a line in server ${guildId}:`, err);
+    if (!cancel.signal.aborted) {
+      console.error(`Couldn’t say a line in server ${guildId}:`, err);
+      perf.count('speech_failures_total');
+    }
     started(cancel.signal.aborted ? STOPPED : UNAVAILABLE);
   } finally {
     rmSync(file, { force: true });
@@ -587,7 +624,10 @@ export const removePhrase = (guildId: string, id: number) => db.prepare('DELETE 
 function queueLine(channel: VoiceBasedChannel, text: string, voice: Voice) {
   const queue = queueFor(channel.guild.id);
   const { promise, resolve } = Promise.withResolvers<string | null>();
-  queue.lines.push({ channel, text, voice, started: resolve });
+  // The voice and how long it is, never the words
+  const trace = new perf.Trace('speech_seconds', 'Speech', channel.guild.id, SLOW_SPEECH_S);
+  Object.assign(trace.detail, { voice: voice.id, characters: text.length, waitingAhead: queue.lines.length + (queue.running ? 1 : 0) });
+  queue.lines.push({ channel, text, voice, started: resolve, trace });
   void run(queue);
   return promise;
 }

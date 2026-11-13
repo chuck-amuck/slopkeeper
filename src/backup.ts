@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, readdirSync, renameSync, rmSync } from 'node:fs';
 import path from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { config } from './config.ts';
 import { db } from './db.ts';
 import type { Feature } from './types.ts';
@@ -7,7 +8,10 @@ import type { Feature } from './types.ts';
 const KEEP = 7;
 const CHECK_EVERY = 6 * 3_600_000;
 
-/** Copies the database to backups/bot-<date>.db once a day, keeping the last week */
+/** How the bot did lately, which is many times the size of everything else and not worth getting back */
+const NOT_KEPT = ['perf_minutes', 'perf_slow'];
+
+/** Copies the database to backups/bot-<date>.db once a day, keeping the last week. Health numbers are left out */
 export function backUp(date = new Date()) {
   const dir = path.join(config.dataDir, 'backups');
   mkdirSync(dir, { recursive: true });
@@ -17,6 +21,12 @@ export function backUp(date = new Date()) {
   const partial = `${file}.partial`;
   rmSync(partial, { force: true });
   db.prepare('VACUUM INTO ?').run(partial);
+  const copy = new DatabaseSync(partial);
+  try {
+    copy.exec(`${NOT_KEPT.map((table) => `DELETE FROM ${table};`).join(' ')} VACUUM;`);
+  } finally {
+    copy.close();
+  }
   renameSync(partial, file);
   const old = readdirSync(dir)
     .filter((f) => /^bot-.*\.db$/.test(f))

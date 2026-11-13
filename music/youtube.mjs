@@ -111,7 +111,7 @@ export function createFetcher(o) {
       // Marks it as just used, so it's the last to go
       const now = new Date();
       fs.utimesSync(path.join(o.audioDir, kept.file), now, now);
-      return kept;
+      return { ...kept, kept: true };
     }
     if (pending.has(key)) return pending.get(key);
     const job = (async () => {

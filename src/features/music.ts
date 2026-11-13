@@ -24,6 +24,7 @@ import { config } from '../config.ts';
 import { feeds } from '../changes.ts';
 import { db, getKv, setKv, transaction } from '../db.ts';
 import { durationOf, hasAudio, tagsOf } from '../discordSounds.ts';
+import * as perf from '../perf.ts';
 import { idSetting, setSetting, setting } from '../settings.ts';
 import { coverFor, isShortLink, MOST_FROM_LINK, myPlaylists, parseLink, playlistsReady, RateLimited, search, searchReady, SpotifyError, tracksFor, type Track } from '../spotify.ts';
 import type { Feature } from '../types.ts';
@@ -320,25 +321,34 @@ export function clearQueue(guildId: string, who: string) {
 const FETCHED_AHEAD = 2;
 const ASKED_AHEAD_MS = 10 * 60_000;
 const askedAhead = new Set<string>();
+/** A song that takes this long from being due to being heard is kept for a look */
+const SLOW_SONG_S = 8;
 
 const asBridge = () => ({ authorization: `Bearer ${config.musicToken}`, 'content-type': 'application/json' });
 
 /** Asks the music container something about YouTube. A 404 is "not found", with the reason; anything else that isn't fine throws */
-async function askYoutube(where: '/fetch' | '/lookup' | '/similar', body: Record<string, unknown>): Promise<Record<string, unknown> & { missing?: string }> {
+async function askYoutube(where: '/fetch' | '/lookup' | '/similar', body: Record<string, unknown>, trace?: perf.Trace): Promise<Record<string, unknown> & { missing?: string }> {
   const res = await fetch(`${config.musicUrl}${where}`, { method: 'POST', headers: asBridge(), body: JSON.stringify(body), signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
   const answer = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+  const ytdlp = perf.serverTiming(res.headers.get('server-timing')).get('ytdlp');
+  if (ytdlp !== undefined) trace?.part('yt-dlp', ytdlp, 'download');
   if (res.status === 404) return { missing: String(answer.error ?? 'Not found.') };
   if (!res.ok) throw new Error(String(answer.error ?? `HTTP ${res.status}`));
   return answer;
 }
 
 /** The audio for a song: a file the music container downloaded, with where it came from, or why there isn't one */
-async function fetchAudio(row: QueueRow): Promise<{ file: string; source: string; url: string | null } | { missing: string }> {
+async function fetchAudio(row: QueueRow, trace?: perf.Trace): Promise<{ file: string; source: string; url: string | null } | { missing: string }> {
   // An upload is here already
   const uploaded = uploadedName(row.uri);
   if (uploaded) return existsSync(fileOf(uploaded)) ? { file: fileOf(uploaded), source: 'file', url: null } : { missing: 'The uploaded file is gone.' };
-  const answer = await askYoutube('/fetch', row.uri.startsWith('spotify:') ? { uri: row.uri, title: row.title, artist: row.artist, durationMs: row.duration_ms } : { url: row.uri });
+  const asked = performance.now();
+  const answer = await askYoutube('/fetch', row.uri.startsWith('spotify:') ? { uri: row.uri, title: row.title, artist: row.artist, durationMs: row.duration_ms } : { url: row.uri }, trace);
+  // The music container says when it had the song already
   if (answer.missing) return { missing: answer.missing };
+  const kept = answer.kept === true;
+  perf.time('music_download_seconds', (performance.now() - asked) / 1000, { kept: kept ? 'yes' : 'no' });
+  if (trace) trace.detail.kept = kept;
   if (typeof answer.file !== 'string' || !SAFE_FILE.test(answer.file)) throw new Error('the music container named the file oddly');
   return { file: path.join(config.musicAudioDir, answer.file), source: String(answer.source ?? 'youtube'), url: typeof answer.url === 'string' ? answer.url : null };
 }
@@ -453,9 +463,11 @@ async function playCurrent(s: Session, fromMs = 0): Promise<string | null> {
   s.phase = 'starting';
   cardChanged(s.guild.id);
   stopAudioOf(s);
+  const trace = new perf.Trace('music_start_seconds', 'Music', s.guild.id, SLOW_SONG_S);
   let found: Awaited<ReturnType<typeof fetchAudio>>;
   try {
-    found = await fetchAudio(row);
+    found = await fetchAudio(row, trace);
+    trace.step('download');
   } catch (err) {
     if (s.turn !== turn) return null;
     console.error(`Music: couldn’t get ${row.title}:`, (err as Error).message);
@@ -474,7 +486,12 @@ async function playCurrent(s: Session, fromMs = 0): Promise<string | null> {
     return null;
   }
   const channel = channelOf(s);
-  const stop = channel ? await playLong(channel, found.file, (byItself) => onSongEnd(s, turn, byItself), fromMs) : 'That voice channel is gone.';
+  trace.detail.source = found.source;
+  const heard = () => {
+    trace.step('starting');
+    trace.end();
+  };
+  const stop = channel ? await playLong(channel, found.file, (byItself) => onSongEnd(s, turn, byItself), fromMs, heard) : 'That voice channel is gone.';
   if (s.turn !== turn) {
     if (typeof stop !== 'string') stop();
     return null;

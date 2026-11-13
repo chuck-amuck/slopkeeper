@@ -3,6 +3,7 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { Readable, Transform } from 'node:stream';
 import { brotliCompressSync, constants, gzipSync } from 'node:zlib';
+import { answered, counts } from './stats.ts';
 
 const SESSION_DAYS = 30;
 const COOKIE = 'slopkeeper_session';
@@ -249,6 +250,7 @@ export function createWeb({ password, apiToken, botUrl, proxySecret }: WebOption
       if (gone.signal.aborted) return;
       if (over) return json(res, 413, { error: TOO_BIG }, { connection: 'close' });
       console.error('Bot request failed:', err instanceof Error ? err.message : err);
+      counts.botUnreachable += 1;
       return json(res, 502, { error: 'The bot isn’t answering. It may be restarting.' });
     }
     const headers: Record<string, string> = { ...HEADERS };
@@ -278,7 +280,8 @@ export function createWeb({ password, apiToken, botUrl, proxySecret }: WebOption
       return res.end(req.method === 'HEAD' ? undefined : body);
     }
 
-    const isApi = path.startsWith('/api/');
+    // Only what the page uses: the bot's other routes are for the web UI itself, like its report every 30 seconds, and scrapers
+    const isApi = path === '/api/guilds' || path.startsWith('/api/guilds/');
     const isAuth = path === '/auth/login' || path === '/auth/logout';
     if (!isApi && !isAuth) return json(res, 404, { error: 'Not found.' });
 
@@ -296,6 +299,7 @@ export function createWeb({ password, apiToken, botUrl, proxySecret }: WebOption
   }
 
   return createServer((req, res) => {
+    res.once('finish', () => answered(res.statusCode));
     route(req, res).catch((err: unknown) => {
       console.error(`${req.method} ${req.url} failed:`, err);
       if (res.headersSent) res.destroy();
