@@ -100,7 +100,10 @@ function describe(spec, value, data) {
 }
 
 /** What this browser shows, as opposed to the rest of the page, which is the server's. Each takes effect at once */
-const DEVICE = [['musicPlayer', 'Music player at the bottom', 'While music plays, the song with Pause and Skip along the bottom of every page but Music.']];
+const DEVICE = [
+  ['musicPlayer', 'Music player at the bottom', 'While music plays, the song with Pause and Skip along the bottom of every page but Music.'],
+  ['soundsButton', 'Sounds button', 'Beside Volume on every page but the Soundboard: the sounds and a line to say, without leaving the page.'],
+];
 
 function deviceCard() {
   const row = ([name, label, hint]) => {

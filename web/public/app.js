@@ -6,6 +6,7 @@ import { renderMusic } from './music.js';
 import { renderNights } from './nights.js';
 import { renderPick } from './pick.js';
 import { stopDock } from './playing.js';
+import { noSoundsDock, soundsDock } from './soundsdock.js';
 import { volumeDock } from './volumes.js';
 import { stopWatchingUpdates, watchUpdates } from './updates.js';
 import { playInPicker } from './voice.js';
@@ -298,8 +299,8 @@ function renderFrame() {
       }),
       el('button', { type: 'button', ...(!BAR.includes(tab) && { 'aria-current': 'page' }), ariaHasPopup: 'dialog', onclick: () => moreSheet(main) }, icon('more'), el('span', {}, BAR.includes(tab) ? 'More' : TABS.find(([t]) => t === tab)[1])),
     ),
-    // In the corner of every page, so they're always in reach
-    guild && stopDock(volumeDock()),
+    // In the corner of every page, so they're always in reach. The Soundboard has every sound already
+    guild && stopDock(volumeDock(), tab === 'board' ? noSoundsDock() : soundsDock(() => openTab('board'))),
   );
   if (guild) watchUpdates();
   else stopWatchingUpdates();

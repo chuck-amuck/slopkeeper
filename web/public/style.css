@@ -75,7 +75,7 @@ html {
   --bar-h: 0px;
   /* The music player along the bottom, while it shows */
   --player-h: 0px;
-  scroll-padding-bottom: calc(80px + var(--dock-extra, 0px) + var(--bar-h) + var(--player-h));
+  scroll-padding-bottom: calc(80px + var(--dock-page, 0px) + var(--bar-h) + var(--player-h));
 }
 
 html.with-player {
@@ -478,6 +478,72 @@ button.mini-song {
   }
 }
 
+/* The Sounds panel above its button: a line to say, a search, and every sound, which scroll on their own */
+.sounds-float {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  box-sizing: border-box;
+  width: min(400px, calc(100vw - 32px));
+  height: min(620px, calc(100dvh - 160px - var(--bar-h) - var(--player-h)));
+  padding: var(--space-3) var(--space-4) 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 25%);
+}
+
+.sounds-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.sounds-head h2 {
+  margin: 0 auto 0 0;
+  font-size: var(--text-lg);
+}
+
+.sounds-say {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.sounds-say input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.sounds-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  margin-inline: calc(-1 * var(--space-4));
+  padding: 2px var(--space-4) var(--space-4);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.sounds-float .board.compact .tiles {
+  grid-template-columns: repeat(auto-fill, minmax(136px, 1fr));
+}
+
+/* No star here, so the name has the room */
+.sounds-float .board.compact .tile {
+  padding-right: 10px;
+}
+
+/* A phone keeps some of the page in sight above it */
+@media (max-width: 640px) {
+  .sounds-float {
+    height: min(60dvh, calc(100dvh - 140px - var(--bar-h) - var(--player-h)));
+  }
+}
+
+/* The tiles show what's playing while the panel's open, so the list over it goes */
+.stop-dock:has(.sounds-float:not([hidden])) .now-sounds {
+  display: none;
+}
+
 /* Every volume, above the Volume button */
 .volume-float {
   display: grid;
@@ -729,7 +795,7 @@ main {
   width: min(900px, 100%);
   margin: 0 auto;
   /* Room to scroll the last row clear of the Stop sounds button, however tall what's playing makes it */
-  padding: 16px 16px calc(80px + var(--dock-extra, 0px) + var(--bar-h) + var(--player-h));
+  padding: 16px 16px calc(80px + var(--dock-page, 0px) + var(--bar-h) + var(--player-h));
   display: grid;
   /* A long channel name in a picker shrinks to fit rather than widening the page */
   grid-template-columns: minmax(0, 1fr);

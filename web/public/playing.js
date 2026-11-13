@@ -26,9 +26,10 @@ export function onPlaying(node, listener) {
 /**
  * The corner of every page: the Volume button, and while anything's playing, the Stop button beside it with what's
  * playing above. Tapping a name stops just that one; Stop stops them all, but never the music. `volume` is the Volume
- * button and the panel it opens, which goes above the rest
+ * button and the panel it opens, which goes above the rest, and `sounds` the same for the Sounds panel, if the page
+ * has one. One of the two panels is open at a time
  */
-export function stopDock(volume) {
+export function stopDock(volume, sounds = null) {
   const list = el('ul', { className: 'now-sounds', ariaLabel: 'Playing now', hidden: true });
   const label = el('span', { className: 'stop-label' }, 'Stop sounds');
   const button = el(
@@ -54,7 +55,11 @@ export function stopDock(volume) {
     icon('stop'),
     label,
   );
-  const node = el('div', { className: 'stop-dock' }, list, volume.panel, el('div', { className: 'dock-row' }, button, volume.button));
+  const node = el('div', { className: 'stop-dock' }, list, volume.panel, sounds?.panel, el('div', { className: 'dock-row' }, button, sounds?.button, volume.button));
+  if (sounds) {
+    volume.onOpen = sounds.close;
+    sounds.onOpen = volume.close;
+  }
   // On a phone, two or more show as one chip until it's tapped, so they don't cover the sounds
   const narrow = matchMedia('(max-width: 640px)');
   let expanded = false;
@@ -134,18 +139,22 @@ export function stopDock(volume) {
   onPlaying(node, paintList);
   const onNarrow = () => (node.isConnected ? paintList(shownPlaying) : narrow.removeEventListener('change', onNarrow));
   narrow.addEventListener('change', onNarrow);
-  // Toasts sit above the corner, wherever its top is now: above what's playing and the Volume panel when open. Measured
-  // once it's on the page and whenever either changes size
+  // Toasts sit above the corner, wherever its top is now: above what's playing and a panel when one's open. Measured
+  // once it's on the page and whenever any of them changes size. The page's end keeps clear of all but the Sounds
+  // panel, which is tall, and on a wide screen made to be used beside the page
   const sizes = new ResizeObserver(() => {
     // A dock left behind by a redraw lets go, rather than being watched for the rest of the visit
     if (!node.isConnected) {
       narrow.removeEventListener('change', onNarrow);
       return sizes.disconnect();
     }
-    const above = [list, volume.panel].reduce((sum, part) => sum + (part.offsetHeight ? part.offsetHeight + 8 : 0), 0);
-    document.documentElement.style.setProperty('--dock-extra', `${above}px`);
+    const height = (part) => (part?.offsetHeight ? part.offsetHeight + 8 : 0);
+    const page = height(list) + height(volume.panel);
+    document.documentElement.style.setProperty('--dock-extra', `${page + height(sounds?.panel)}px`);
+    document.documentElement.style.setProperty('--dock-page', `${page}px`);
   });
   sizes.observe(list);
   sizes.observe(volume.panel);
+  if (sounds) sizes.observe(sounds.panel);
   return node;
 }

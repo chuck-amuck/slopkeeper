@@ -22,6 +22,7 @@ const ICONS = {
   stop: '<rect x="6.5" y="6.5" width="11" height="11" rx="1.5" fill="currentColor"/>',
   headphones: '<path d="M4 15v-3a8 8 0 0 1 16 0v3"/><rect x="3.5" y="14" width="4" height="6.5" rx="1.5"/><rect x="16.5" y="14" width="4" height="6.5" rx="1.5"/>',
   volume: '<path d="M4 9.5h3l5-4v13l-5-4H4z"/><path d="M15.5 9.5a3.5 3.5 0 0 1 0 5"/>',
+  pads: '<rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="4" width="7" height="7" rx="1.5"/><rect x="4" y="13" width="7" height="7" rx="1.5"/><rect x="13" y="13" width="7" height="7" rx="1.5"/>',
   speaker: '<path d="M3.5 9.5h3l5-4v13l-5-4h-3z"/><path d="M15 9.5a3.5 3.5 0 0 1 0 5"/><path d="M17.5 6.5a7.5 7.5 0 0 1 0 11"/>',
   scissors: '<circle cx="6" cy="7" r="2.5"/><circle cx="6" cy="17" r="2.5"/><path d="M8.2 8.3 19 17M8.2 15.7 19 7"/>',
   x: '<path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/>',

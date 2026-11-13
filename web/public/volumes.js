@@ -84,6 +84,9 @@ export function volumeDock() {
     el('span', { className: 'volume-fab-word' }, 'Volume'),
   );
 
+  // onOpen hears it open, so the Sounds panel can close: one panel at a time
+  const dock = { button, panel, close: () => toggle(false), onOpen: () => {} };
+
   // While it's open: a press outside the corner, or Escape from anywhere, closes it
   let listening = null;
   function toggle(open) {
@@ -92,6 +95,7 @@ export function volumeDock() {
     listening?.abort();
     listening = null;
     if (!open) return;
+    dock.onOpen();
     listening = new AbortController();
     const { signal } = listening;
     const corner = button.parentElement?.closest('.stop-dock') ?? button;
@@ -118,5 +122,5 @@ export function volumeDock() {
     );
   }
 
-  return { button, panel };
+  return dock;
 }
