@@ -3632,11 +3632,12 @@ span.steam-family {
 
 /* A phone: the tabs move to a bar along the bottom, and who you are and Log out go under More */
 @media (max-width: 640px) {
-  /* Firefox for Android lets the end of the page lift off the bottom of the screen as its toolbar slides away, and
-     the strip it leaves under the bar shows the page's base colour, which nothing on the page can paint over. That
-     colour is the bar's, so the bar seems to run on down, and the page keeps its own colour by filling the screen */
+  /* Firefox for Android never draws behind Android's navigation bar, so a strip under the tab bar shows the page's
+     base colour, which nothing on the page can paint over. That colour is the bar's, so the bar seems to run on
+     down, and the page keeps its own colour by filling the screen */
   html {
-    --bar-h: calc(60px + env(safe-area-inset-bottom, 0px));
+    --safe-bottom: env(safe-area-inset-bottom, 0px);
+    --bar-h: calc(60px + var(--safe-bottom));
     background: var(--surface);
   }
 
@@ -3660,7 +3661,7 @@ span.steam-family {
     display: grid;
     grid-template-columns: repeat(5, minmax(0, 1fr));
     height: var(--bar-h);
-    padding-bottom: env(safe-area-inset-bottom, 0px);
+    padding-bottom: var(--safe-bottom);
     border-top: 1px solid var(--line);
     background: var(--surface);
   }
@@ -3705,7 +3706,18 @@ span.steam-family {
     margin: auto 0 0;
     border-width: 1px 0 0;
     border-radius: var(--radius) var(--radius) 0 0;
-    padding-bottom: env(safe-area-inset-bottom, 0px);
+    padding-bottom: var(--safe-bottom);
+  }
+}
+
+/* Firefox for Android 150 and later also says the navigation bar is the page's bottom safe area while its toolbar
+   shows (Bugzilla 2073972, 2057232), though it doesn't draw there, which lifted the tab bar's icons that much off the
+   bottom of the screen. In a Firefox tab the bar leaves it out; installed as an app, Firefox reports it right */
+@supports (-moz-appearance: none) {
+  @media (max-width: 640px) and (display-mode: browser) {
+    html {
+      --safe-bottom: 0px;
+    }
   }
 }
 
