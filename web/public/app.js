@@ -293,7 +293,8 @@ function renderFrame() {
     title,
     main,
     // The song playing, along the bottom of every page but Music, which has it at the top
-    guild && tab !== 'music' && musicPlayer(() => openTab('music'), { extra: popOutButton('icon') }),
+    // (replaceChildren, unlike el(), would print a false as text)
+    ...(guild && tab !== 'music' ? [musicPlayer(() => openTab('music'), { extra: popOutButton('icon') })] : []),
     // A phone's tabs, in reach of a thumb. Hidden by style.css on anything wider
     el(
       'nav',
@@ -305,7 +306,7 @@ function renderFrame() {
       el('button', { type: 'button', ...(!BAR.includes(tab) && { 'aria-current': 'page' }), ariaHasPopup: 'dialog', onclick: () => moreSheet(main) }, icon('more'), el('span', {}, BAR.includes(tab) ? 'More' : TABS.find(([t]) => t === tab)[1])),
     ),
     // In the corner of every page, so they're always in reach. The Soundboard has every sound already
-    guild && stopDock(volumeDock(), tab === 'board' ? noSoundsDock() : soundsDock(() => openTab('board'), popOutButton())),
+    ...(guild ? [stopDock(volumeDock(), tab === 'board' ? noSoundsDock() : soundsDock(() => openTab('board'), popOutButton()))] : []),
   );
   // The pop-out window, if it's open, shows the server picked here, and closes if there isn't one
   if (guild) popOutFollows();
