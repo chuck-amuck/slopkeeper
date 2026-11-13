@@ -1,24 +1,10 @@
-import { api, attempt, el, fetchAudio, forget, icon, pageSignal, player, recall, remember, request, state, toast, undoToast } from './lib.js';
+import { api, attempt, el, forget, icon, pageSignal, recall, remember, request, state, toast, undoToast } from './lib.js';
 import { foldHead, searchKeys, soundGrid } from './soundgrid.js';
+import { previewButton, showPicked, voiceOptions } from './speech.js';
 import { voiceBar } from './voice.js';
 
 // Whether Speech is folded away, on this device
 const SPEECH_FOLDED = 'speechFolded';
-
-// Voices in this order, and any the bot adds later after them
-const VOICE_GROUPS = ['Characters', 'Accents', 'Effects'];
-const PREVIEW_TEXT = 'Hello, this is how I sound.';
-
-/** The voices as a picker's options, in their groups when the bot says what they are */
-function voiceOptions(voices, chosen) {
-  const option = (v) => el('option', { value: v.id, selected: v.id === chosen }, v.name);
-  if (!voices.some((v) => v.group)) return voices.map(option);
-  const groups = [...new Set([...VOICE_GROUPS, ...voices.map((v) => v.group ?? 'Other')])];
-  return groups
-    .map((group) => [group, voices.filter((v) => (v.group ?? 'Other') === group)])
-    .filter(([, list]) => list.length)
-    .map(([group, list]) => el('optgroup', { label: group }, list.map(option)));
-}
 
 /**
  * Has the bot read out what's typed: one row for the line, the voice with a preview only you hear, and Say, then the
@@ -31,32 +17,9 @@ function sayBox(voice) {
   const picker = el('select', { ariaLabel: 'Voice', className: 'say-voice', onchange: () => remember(voiceKey, picker.value) });
   const send = el('button', { className: 'primary say-send' }, 'Say');
   let saying = false;
-  const preview = el(
-    'button',
-    {
-      type: 'button',
-      className: 'icon say-preview',
-      ariaLabel: 'Preview this voice, just for you',
-      title: 'Hear it here first, just for you',
-      onclick: () =>
-        void attempt(async () => {
-          // Still fetching the last one
-          if (preview.ariaBusy) return;
-          const line = text.value.trim() || PREVIEW_TEXT;
-          const name = `preview:${picker.value}:${line}`;
-          // Pressed again while it plays: stop it
-          if (player.name === name) return player.stop();
-          preview.ariaBusy = 'true';
-          try {
-            const url = await fetchAudio(api(`/say/preview?voice=${encodeURIComponent(picker.value)}&text=${encodeURIComponent(line)}`));
-            await player.toggle(url, name);
-          } finally {
-            preview.ariaBusy = null;
-          }
-        }),
-    },
-    icon('headphones'),
-  );
+  const preview = previewButton(picker, text);
+  // Back from the pop-out, where the voice may have been changed meanwhile
+  addEventListener('focus', () => showPicked(picker, recall(voiceKey)), { signal: pageSignal() });
   const chips = el('div', { className: 'phrase-list' });
   const saveLine = el('button', { type: 'button', className: 'icon save-line', ariaLabel: 'Save this line', title: 'Save this line, to say it again with one tap', hidden: true, onclick: () => saveTyped() }, icon('plus'));
   const editLines = el('button', { type: 'button', className: 'quiet', ariaPressed: 'false', hidden: true, onclick: () => setEditing(!editing) }, 'Edit');

@@ -1,10 +1,12 @@
-import { api, attempt, el, recall, request, state } from './lib.js';
+import { api, attempt, el, recall, remember, request, state } from './lib.js';
 import { soundGrid } from './soundgrid.js';
+import { previewButton, showPicked, voiceOptions } from './speech.js';
 import { voiceBar } from './voice.js';
 
 /**
- * What the Sounds panel and the pop-out window hold: a line to say, in the voice last picked on this device's
- * Soundboard or else the server's, a search where Enter plays the first match, and the server's sounds in their
+ * What the Sounds panel and the pop-out window hold: a line to say, with its voice and a preview only you hear (the
+ * voice is this device's choice, as on the Soundboard, or else the server's), a search where Enter plays the first
+ * match, and the server's sounds in their
  * groups, folded as on the Soundboard, to play in the channel picked in Play in. `openBoard` goes to the Soundboard,
  * where sounds are added, and `slash` says / goes to the search there. `parts` go in the panel in order, and paint()
  * shows a voice picked on the Soundboard since
@@ -21,16 +23,11 @@ export function soundsBody(openBoard, { slash = false } = {}) {
   grid.node.classList.add('compact');
   const { searchBox: search, nobody } = grid;
 
-  // One line to say, in the voice last picked on this device's Soundboard, or else the server's
-  let voices = [];
-  let serverVoice = null;
+  // One line to say, in the voice picked here, which is the one the Soundboard has on this device too
   let saying = false;
   const text = el('input', { ariaLabel: 'What to say', placeholder: 'Say something', autocomplete: 'off', enterKeyHint: 'send' });
+  const picker = el('select', { ariaLabel: 'Voice', className: 'say-voice', onchange: () => remember(voiceKey, picker.value) });
   const send = el('button', { className: 'primary say-send' }, 'Say');
-  const chosenVoice = () => {
-    const mine = recall(voiceKey);
-    return voices.find((v) => v.id === mine) ?? voices.find((v) => v.id === serverVoice) ?? null;
-  };
   const say = el(
     'form',
     {
@@ -46,7 +43,7 @@ export function soundsBody(openBoard, { slash = false } = {}) {
         text.value = '';
         paint();
         const sent = await attempt(async () => {
-          await voice.say(line, chosenVoice()?.id);
+          await voice.say(line, picker.value);
           return true;
         });
         if (!sent && !text.value) text.value = line;
@@ -56,23 +53,26 @@ export function soundsBody(openBoard, { slash = false } = {}) {
       },
     },
     text,
+    picker,
+    previewButton(picker, text),
     send,
   );
 
   function paint() {
+    // Picked on the Soundboard since, or in the pop-out
+    showPicked(picker, recall(voiceKey));
     const channel = voice.channel();
     send.disabled = !channel || saying;
-    const name = chosenVoice()?.name;
-    text.placeholder = name ? `Say as ${name}` : 'Say something';
-    send.title = channel ? `Say in ${channel.name}${name ? ` as ${name}` : ''}. The voice is the one picked on the Soundboard` : 'Nobody’s in voice';
+    send.title = channel ? `Say in ${channel.name}` : 'Nobody’s in voice';
     grid.paint();
   }
 
   void attempt(async () => {
-    const { on, voices: offered, voice: fallback, longest } = await request(api('/say'));
+    const { on, voices, voice: serverVoice, longest } = await request(api('/say'));
     if (guildId !== state.guildId || !search.isConnected) return;
-    voices = offered;
-    serverVoice = fallback;
+    // The voice last picked on this device, while the bot still offers it
+    const mine = recall(voiceKey);
+    picker.replaceChildren(...voiceOptions(voices, voices.some((v) => v.id === mine) ? mine : serverVoice));
     text.maxLength = longest;
     say.hidden = !on;
     paint();

@@ -516,14 +516,20 @@ button.volume-fab[aria-expanded='true'] {
   font-size: var(--text-lg);
 }
 
+/* The line across the top, then its voice, the preview and Say */
 .sounds-say {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
   gap: var(--space-2);
 }
 
 .sounds-say input {
-  flex: 1 1 auto;
+  grid-column: 1 / -1;
   min-width: 0;
+}
+
+.sounds-say .say-voice {
+  max-width: none;
 }
 
 .sounds-scroll {
