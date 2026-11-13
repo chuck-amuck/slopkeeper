@@ -1,7 +1,7 @@
 import './helpers.ts';
 import { PermissionFlagsBits } from 'discord.js';
 import assert from 'node:assert/strict';
-import { mock, test, type TestContext } from 'node:test';
+import { beforeEach, mock, test, type TestContext } from 'node:test';
 import { candidatesFor } from '../src/features/games.ts';
 import { config } from '../src/config.ts';
 import { db } from '../src/db.ts';
@@ -47,13 +47,19 @@ test('lists what’s on sale with the reasons in plain names', async (t) => {
   ]);
 });
 
+// One moment for each test's rows, so plays meant to overlap exactly don't land a millisecond apart
+let now = Date.now();
+beforeEach(() => {
+  now = Date.now();
+});
+
 function addPlay(user: string, game: string, hoursAgo: number, hours: number, guildId = GUILD) {
-  const start = Date.now() - hoursAgo * HOUR;
+  const start = now - hoursAgo * HOUR;
   db.prepare(`INSERT INTO game_plays (guild_id, user_id, game, channel_id, started_at, ended_at) VALUES (?, ?, ?, 'voice', ?, ?)`).run(guildId, user, game, start, start + hours * HOUR);
 }
 
 function addSession(members: [string, number][], hoursAgo: number) {
-  const start = Date.now() - hoursAgo * HOUR;
+  const start = now - hoursAgo * HOUR;
   const id = db.prepare("INSERT INTO sessions (guild_id, channel_id, started_at, ended_at) VALUES (?, '701', ?, ?)").run(GUILD, start, start + HOUR).lastInsertRowid;
   for (const [user, seconds] of members) db.prepare('INSERT INTO session_members (session_id, user_id, seconds) VALUES (?, ?, ?)').run(id, user, seconds);
 }
