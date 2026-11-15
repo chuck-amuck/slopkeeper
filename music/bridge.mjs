@@ -1,5 +1,5 @@
 // The music container: finds songs on YouTube or SoundCloud with yt-dlp and downloads their audio, for the bot to play from the
-// shared volume, and lists songs like one for Autoplay. The bot asks over HTTP, with MUSIC_TOKEN
+// shared volume, lists songs like one for Autoplay, and downloads videos for the soundboard to cut sounds from. The bot asks over HTTP, with MUSIC_TOKEN
 import { timingSafeEqual } from 'node:crypto';
 import fs from 'node:fs';
 import http from 'node:http';
@@ -41,7 +41,7 @@ export function createBridge(options = {}) {
     ...options,
   };
 
-  const youtube = createFetcher({ ...o, audioDir: o.audioDir ?? path.join(o.dataDir, 'audio') });
+  const youtube = createFetcher({ ...o, audioDir: o.audioDir ?? path.join(o.dataDir, 'audio'), clipDir: o.clipDir ?? path.join(o.dataDir, 'clips') });
   const status = { youtube: youtube.state };
   const sse = new Set();
   let pingTimer;
@@ -73,7 +73,7 @@ export function createBridge(options = {}) {
       req.once('close', () => sse.delete(res));
       return;
     }
-    if (route !== 'POST /fetch' && route !== 'POST /lookup' && route !== 'POST /similar') return json(res, 404, { error: 'not found' });
+    if (!['POST /fetch', 'POST /lookup', 'POST /similar', 'POST /clip'].includes(route)) return json(res, 404, { error: 'not found' });
     let body;
     try {
       let raw = '';
@@ -91,9 +91,11 @@ export function createBridge(options = {}) {
       const answer =
         route === 'POST /lookup'
           ? await youtube.lookup(body.url)
-          : route === 'POST /similar'
-            ? await youtube.similar(body.url)
-            : await youtube.fetchAudio(link ? { url: body.url } : { uri: body.uri, title: body.title, artist: body.artist, durationMs: body.durationMs });
+          : route === 'POST /clip'
+            ? await youtube.clip(body.url)
+            : route === 'POST /similar'
+              ? await youtube.similar(body.url)
+              : await youtube.fetchAudio(link ? { url: body.url } : { uri: body.uri, title: body.title, artist: body.artist, durationMs: body.durationMs });
       // How long yt-dlp took, for the bot's timing of a song's start. A song that was here already took none
       if (route === 'POST /fetch' && !answer.kept) res.setHeader('server-timing', `ytdlp;dur=${(performance.now() - asked).toFixed(1)}`);
       if (answer.error) return json(res, answer.missing ? 404 : 502, { error: answer.error });

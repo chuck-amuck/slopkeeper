@@ -7,7 +7,7 @@ const STEP = 0.01;
 
 const rounded = (s) => Math.round(s / STEP) * STEP;
 
-/** Resolves with 'trimmed' or 'restored' once the sound has changed, or null if it's dismissed */
+/** Resolves with 'trimmed' or 'restored' once the sound has changed, 'again' to pick again from its link, or null if it's dismissed */
 export function pickTrim(main, sound) {
   return new Promise((resolve) => {
     const seconds = sound.seconds ?? 0;
@@ -109,7 +109,15 @@ export function pickTrim(main, sound) {
         problem,
         el('div', { className: 'trim-times' }, el('label', { className: 'start' }, 'Start', startInput), el('label', { className: 'start' }, 'End', endInput), length),
       ],
-      start: [preview, sound.trimmed && el('button', { type: 'button', onclick: () => change('/restore', null, 'restored') }, 'Restore original')],
+      start: [
+        preview,
+        sound.trimmed && el('button', { type: 'button', onclick: () => change('/restore', null, 'restored') }, 'Restore original'),
+        // Trimming only shortens, so a sound from a link can have its part picked again from the whole video
+        sound.link && el('button', { type: 'button', title: sound.link.url, onclick: () => {
+          outcome = 'again';
+          node.close();
+        } }, 'Pick again from the link'),
+      ],
       actions: [save],
       close: 'Cancel',
       noValidate: true,

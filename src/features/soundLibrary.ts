@@ -141,6 +141,8 @@ export async function saveUpload(guildId: string, name: string, ext: string, dat
   // Its trim original goes with it, as restoring that now would bring back the wrong sound
   if (existing) moveToBin(guildId, existing);
   renameSync(upload, target);
+  // New audio under the name isn't from the link the old was. A sound from a link says so after this
+  db.prepare('DELETE FROM sound_links WHERE guild_id = ? AND name = ?').run(guildId, name);
   libraryChanged(guildId);
   return true;
 }
@@ -256,9 +258,10 @@ function moveToBin(guildId: string, sound: Sound): number {
   const level = soundLevels(guildId).get(sound.name);
   // Where it was: which group, and how many sounds were ahead of it there
   const group = soundGroups(guildId).find((g) => g.sounds.includes(sound.name));
+  const link = db.prepare('SELECT url, title, start_s, end_s FROM sound_links WHERE guild_id = ? AND name = ?').get(guildId, sound.name);
   const { lastInsertRowid } = db
-    .prepare('INSERT INTO deleted_sounds (guild_id, name, emoji, favourite, gain_db, percent, deleted_at, group_id, place) VALUES (?, ?, ?, 0, ?, ?, ?, ?, ?)')
-    .run(guildId, sound.name, sound.emoji ?? null, level?.gainDb ?? null, level?.percent ?? 100, Date.now(), group?.id ?? null, group ? group.sounds.indexOf(sound.name) : null);
+    .prepare('INSERT INTO deleted_sounds (guild_id, name, emoji, favourite, gain_db, percent, deleted_at, group_id, place, link) VALUES (?, ?, ?, 0, ?, ?, ?, ?, ?, ?)')
+    .run(guildId, sound.name, sound.emoji ?? null, level?.gainDb ?? null, level?.percent ?? 100, Date.now(), group?.id ?? null, group ? group.sounds.indexOf(sound.name) : null, link ? JSON.stringify(link) : null);
   const dir = binDir(guildId, Number(lastInsertRowid));
   mkdirSync(path.join(dir, 'originals'), { recursive: true });
   const original = originalOf(guildId, sound.name);
@@ -278,12 +281,14 @@ export interface DeletedSound {
   gain_db: number | null;
   percent: number;
   deleted_at: number;
+  /** The sound_links row it had, as JSON */
+  link: string | null;
 }
 
 /** What's in the bin, newest first */
 export function deletedSounds(guildId: string): DeletedSound[] {
   return db
-    .prepare('SELECT id, name, emoji, favourite, group_id, place, gain_db, percent, deleted_at FROM deleted_sounds WHERE guild_id = ? ORDER BY deleted_at DESC, id DESC')
+    .prepare('SELECT id, name, emoji, favourite, group_id, place, gain_db, percent, deleted_at, link FROM deleted_sounds WHERE guild_id = ? ORDER BY deleted_at DESC, id DESC')
     .all(guildId) as unknown as DeletedSound[];
 }
 
@@ -339,6 +344,10 @@ export function restoreDeleted(guildId: string, id: number): string | null {
   if (group) placeSound(guildId, name, group.id, group.sounds[sound.place ?? group.sounds.length] ?? null);
   else if (sound.favourite === 1) setFavourite(guildId, name, true);
   db.prepare('INSERT OR REPLACE INTO sound_levels (guild_id, name, gain_db, percent) VALUES (?, ?, ?, ?)').run(guildId, name, sound.gain_db, sound.percent);
+  if (sound.link) {
+    const link = JSON.parse(sound.link) as { url: string; title: string | null; start_s: number; end_s: number };
+    db.prepare('INSERT OR REPLACE INTO sound_links (guild_id, name, url, title, start_s, end_s) VALUES (?, ?, ?, ?, ?, ?)').run(guildId, name, link.url, link.title, link.start_s, link.end_s);
+  }
   eraseDeleted(guildId, id);
   libraryChanged(guildId);
   return name;
@@ -356,6 +365,7 @@ export async function removeSound(guild: Guild, sound: Sound): Promise<{ problem
   setEmoji(guild.id, sound.name, null);
   placeSound(guild.id, sound.name, null);
   db.prepare('DELETE FROM sound_levels WHERE guild_id = ? AND name = ?').run(guild.id, sound.name);
+  db.prepare('DELETE FROM sound_links WHERE guild_id = ? AND name = ?').run(guild.id, sound.name);
   db.prepare('DELETE FROM join_sounds WHERE guild_id = ? AND name = ?').run(guild.id, sound.name);
   if (storedSetting(guild.id, 'loopIntro') === sound.name) setSetting(guild.id, 'loopIntro', '');
   if (storedSetting(guild.id, 'loopSound') === sound.name) {
@@ -538,6 +548,7 @@ export async function renameSound(guild: Guild, sound: Sound, name: string): Pro
   db.prepare('UPDATE sound_plays SET name = ? WHERE guild_id = ? AND name = ?').run(name, guild.id, sound.name);
   db.prepare('UPDATE OR REPLACE sound_places SET name = ? WHERE guild_id = ? AND name = ?').run(name, guild.id, sound.name);
   db.prepare('UPDATE OR REPLACE sound_levels SET name = ? WHERE guild_id = ? AND name = ?').run(name, guild.id, sound.name);
+  db.prepare('UPDATE OR REPLACE sound_links SET name = ? WHERE guild_id = ? AND name = ?').run(name, guild.id, sound.name);
   db.prepare('UPDATE join_sounds SET name = ? WHERE guild_id = ? AND name = ?').run(name, guild.id, sound.name);
   if (storedSetting(guild.id, 'loopSound') === sound.name) setSetting(guild.id, 'loopSound', name);
   if (storedSetting(guild.id, 'loopIntro') === sound.name) setSetting(guild.id, 'loopIntro', name);

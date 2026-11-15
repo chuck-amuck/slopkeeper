@@ -7,7 +7,7 @@ services:
     env_file: .env
     volumes:
       - slopkeeper-data:/data
-      - slopkeeper-music:/music:ro # the music container's downloaded songs
+      - slopkeeper-music:/music:ro # the music container's downloaded songs, and videos to cut sounds from
     deploy:
       resources:
         limits:

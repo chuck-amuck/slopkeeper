@@ -345,6 +345,16 @@ db.exec(`
     percent INTEGER NOT NULL DEFAULT 100,
     PRIMARY KEY (guild_id, name)
   );
+  -- The video or track a sound was cut from, and the part picked, so another part can be picked later
+  CREATE TABLE IF NOT EXISTS sound_links (
+    guild_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    url TEXT NOT NULL,
+    title TEXT,
+    start_s REAL NOT NULL,
+    end_s REAL NOT NULL,
+    PRIMARY KEY (guild_id, name)
+  );
   CREATE TABLE IF NOT EXISTS join_sounds (
     guild_id TEXT NOT NULL,
     user_id TEXT NOT NULL,
@@ -499,6 +509,11 @@ if (!db.prepare("SELECT 1 FROM pragma_table_info('game_plays') WHERE name = 'cha
 if (!db.prepare("SELECT 1 FROM pragma_table_info('deleted_sounds') WHERE name = 'group_id'").get()) {
   db.exec('ALTER TABLE deleted_sounds ADD COLUMN group_id INTEGER');
   db.exec('ALTER TABLE deleted_sounds ADD COLUMN place REAL');
+}
+
+// And still knows the link it was cut from, as JSON, so it can be picked again
+if (!db.prepare("SELECT 1 FROM pragma_table_info('deleted_sounds') WHERE name = 'link'").get()) {
+  db.exec('ALTER TABLE deleted_sounds ADD COLUMN link TEXT');
 }
 
 // Favourites were a star on each sound before groups, and become a Favourites group at the top, most played first as they showed

@@ -5,6 +5,7 @@ import path from 'node:path';
 import { after, test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { containerUsage, createBridge, LEFTOVERS } from './bridge.mjs';
+import { CLIP_KEEP_MS } from './youtube.mjs';
 
 const TOKEN = 'music-token';
 const temp = () => fs.mkdtempSync(path.join(tmpdir(), 'slopkeeper-music-'));
@@ -21,7 +22,13 @@ const FAKE_FETCH = `
   let raw = '';
   process.stdin.on('data', (c) => (raw += c)).on('end', () => {
     const r = JSON.parse(raw);
-    fs.appendFileSync(r.dir + '/../runs.log', (r.uri ?? r.url ?? r.similar) + (r.info ? ' info' : r.similar ? ' similar' : '') + '\\n');
+    fs.appendFileSync(r.dir + '/../runs.log', (r.uri ?? r.url ?? r.similar) + (r.info ? ' info' : r.similar ? ' similar' : r.clip ? ' clip' : '') + '\\n');
+    if (r.clip && r.url.includes('missing')) return console.log(JSON.stringify({ error: 'Video unavailable', missing: true }));
+    if (r.clip) {
+      const file = 'TikTok-' + r.url.replace(/\\W/g, '') + '.mp4';
+      fs.writeFileSync(r.dir + '/' + file, Buffer.alloc(2048));
+      return console.log(JSON.stringify({ url: r.url, title: 'A Clip', artist: 'Someone', durationMs: 12000, cover: null, source: 'tiktok', file, video: true }));
+    }
     if (r.similar) return console.log(JSON.stringify({ songs: [{ url: 'https://www.youtube.com/watch?v=bbbbbbbbbbb', title: 'Next', artist: 'Band', durationMs: 200000, cover: null }] }));
     if (r.title === 'Broken') process.exit(1);
     if (r.title === 'Missing') return console.log(JSON.stringify({ error: 'No match on YouTube or SoundCloud.', missing: true }));
@@ -64,7 +71,7 @@ test('what Spotify Soloist left behind is deleted on start, and downloaded songs
   fs.mkdirSync(path.join(dataDir, 'audio'));
   fs.writeFileSync(path.join(dataDir, 'audio', 'youtube-kept.webm'), 'song');
   await bridge({ dataDir });
-  assert.deepEqual(fs.readdirSync(dataDir).sort(), ['audio']);
+  assert.deepEqual(fs.readdirSync(dataDir).sort(), ['audio', 'clips']);
   assert.equal(fs.readFileSync(path.join(dataDir, 'audio', 'youtube-kept.webm'), 'utf8'), 'song');
 });
 
@@ -186,4 +193,55 @@ test('GET /stats says what the container uses, and a download says how long yt-d
   assert.equal((await again.json()).kept, true);
   const outside = containerUsage(path.join(cgroup, 'none'));
   assert.ok(outside.memoryBytes > 0 && outside.memoryLimitBytes === null);
+});
+
+const clip = (base, url) => ask(base, '/clip', { method: 'POST', body: JSON.stringify({ url }) });
+
+test('a video for the soundboard is downloaded into its own folder, once, and kept a while', async () => {
+  const dataDir = temp();
+  const { base } = await bridge({ dataDir, cacheBytes: 1024 });
+  const url = 'https://www.tiktok.com/@someone/video/123';
+  const res = await clip(base, url);
+  assert.equal(res.status, 200);
+  const answer = await res.json();
+  assert.deepEqual(answer, { file: 'TikTok-httpswwwtiktokcomsomeonevideo123.mp4', source: 'tiktok', url, title: 'A Clip', artist: 'Someone', durationMs: 12000, video: true });
+  assert.ok(fs.existsSync(path.join(dataDir, 'clips', answer.file)));
+  assert.deepEqual(fs.readdirSync(path.join(dataDir, 'audio')), [], 'the music cache is left alone');
+  const again = await Promise.all([clip(base, url), clip(base, url)].map((p) => p.then((r) => r.json())));
+  assert.deepEqual(again.map((a) => a.kept), [true, true]);
+  assert.deepEqual(runs(dataDir), [`${url} clip`]);
+  // Over its cap, the music cache still doesn't count it
+  await fetchSong(base, song(1));
+  assert.ok(fs.existsSync(path.join(dataDir, 'clips', answer.file)));
+});
+
+test('videos nobody asked for in an hour are deleted, and the rest kept', async () => {
+  const dataDir = temp();
+  const { b, base } = await bridge({ dataDir });
+  const old = (await (await clip(base, 'https://www.tiktok.com/@a/video/1')).json()).file;
+  const fresh = (await (await clip(base, 'https://www.tiktok.com/@a/video/2')).json()).file;
+  const then = new Date(Date.now() - CLIP_KEEP_MS - 1000);
+  fs.utimesSync(path.join(dataDir, 'clips', old), then, then);
+  fs.writeFileSync(path.join(dataDir, 'clips', 'half.mp4.part'), '');
+  fs.utimesSync(path.join(dataDir, 'clips', 'half.mp4.part'), then, then);
+  // Each new download sweeps first
+  await clip(base, 'https://www.tiktok.com/@a/video/3');
+  const left = fs.readdirSync(path.join(dataDir, 'clips')).sort();
+  assert.ok(!left.includes(old) && !left.includes('half.mp4.part'));
+  assert.ok(left.includes(fresh));
+  const index = JSON.parse(fs.readFileSync(path.join(dataDir, 'clips', 'index.json'), 'utf8'));
+  assert.deepEqual(Object.keys(index).sort(), ['https://www.tiktok.com/@a/video/2', 'https://www.tiktok.com/@a/video/3']);
+  // Asked for again once it's gone, it's downloaded again
+  assert.equal((await clip(base, 'https://www.tiktok.com/@a/video/1')).status, 200);
+  assert.equal(runs(dataDir).filter((r) => r.endsWith('/1 clip')).length, 2);
+  assert.ok(b.status.youtube.ready);
+});
+
+test('a video that can’t be had, or a link that isn’t one, says so', async () => {
+  const { base } = await bridge();
+  const missing = await clip(base, 'https://www.tiktok.com/@a/video/missing');
+  assert.equal(missing.status, 404);
+  assert.equal((await missing.json()).error, 'Video unavailable');
+  assert.equal((await clip(base, 'file:///etc/passwd')).status, 400);
+  assert.equal((await ask(base, '/clip', { method: 'POST', body: JSON.stringify({ uri: 'spotify:track:1' }) })).status, 400);
 });

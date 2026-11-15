@@ -1,5 +1,6 @@
 import { pickClip } from './clip.js';
 import { emojiPicker } from './emojipicker.js';
+import { downloadLink, pickPart } from './linkclip.js';
 import { byUse, EVERYTHING_ELSE } from './soundgrid.js';
 import { announce, api, attempt, confirmButton, el, emojiNode, icon, keepFocus, needsVoice, notice, openDialog, player, postDialog, recall, remember, request, RequestError, soundPath, state, toast, undoToast, volumeControl } from './lib.js';
 import { pickTrim } from './trim.js';
@@ -151,6 +152,28 @@ export function renderLibrary(main) {
     // A phone has nothing to drop
     matchMedia('(pointer: coarse)').matches ? 'Tap to choose audio files' : 'Drop audio files or a folder here, or click to choose',
   );
+  const linkInput = el('input', {
+    type: 'url',
+    placeholder: 'Or paste a video or SoundCloud link',
+    title: 'A YouTube video or Short, a TikTok, an Instagram Reel or a SoundCloud track',
+    ariaLabel: 'Link to a video or track to add a sound from',
+    required: true,
+  });
+  const linkButton = el('button', { type: 'submit' }, 'Get');
+  const linkForm = el(
+    'form',
+    {
+      className: 'link-add',
+      hidden: true,
+      onsubmit: (e) => {
+        e.preventDefault();
+        const url = linkInput.value.trim();
+        if (url) void attempt(() => addFromLink(url));
+      },
+    },
+    linkInput,
+    linkButton,
+  );
   const queueBox = el('div', { className: 'queue', hidden: true });
   const listHint = el('p', { className: 'hint list-hint', hidden: true });
   const list = el('div', { className: 'list' });
@@ -162,6 +185,7 @@ export function renderLibrary(main) {
     el('div', { className: 'toolbar' }, search, makeGroup, sync, postPanel),
     board,
     dropzone,
+    linkForm,
     picker,
     queueBox,
     listHint,
@@ -184,6 +208,7 @@ export function renderLibrary(main) {
     if (guildId !== state.guildId || !main.isConnected || older(fresh.version, shown)) return;
     shown = fresh.version;
     data = fresh;
+    linkForm.hidden = !data.links;
     renderSlots();
     renderBoard();
     renderList();
@@ -197,6 +222,7 @@ export function renderLibrary(main) {
     if (guildId !== state.guildId || older(fresh.version, shown)) return;
     shown = fresh.version;
     data = fresh;
+    linkForm.hidden = !data.links;
     renderSlots();
     renderBoard();
     renderList();
@@ -797,7 +823,7 @@ export function renderLibrary(main) {
       nameBox.replaceChildren(
         // Says what pressing it does, after the name people see
         el('button', { title: 'Rename', ariaLabel: `${sound.name}, rename`, onclick: rename }, sound.name),
-        el('span', { className: 'meta' }, [formatSeconds(sound.seconds), sound.percent !== 100 && `${sound.percent}%`, sound.trimmed && 'trimmed'].filter(Boolean).join(' · ')),
+        el('span', { className: 'meta' }, [formatSeconds(sound.seconds), sound.percent !== 100 && `${sound.percent}%`, sound.trimmed && 'trimmed', sound.link && 'from a link'].filter(Boolean).join(' · ')),
       );
 
     function rename() {
@@ -930,8 +956,30 @@ export function renderLibrary(main) {
     return `Even volume turned this one ${gainDb > 0 ? 'up' : 'down'} by ${Math.abs(gainDb)} dB. This slider goes on top of that.`;
   }
 
+  /** Downloads a link and picks part of it, as a new sound, or again for `sound`, a sound that came from a link */
+  async function addFromLink(url, sound = null) {
+    if (linkButton.disabled) return;
+    linkButton.disabled = true;
+    linkButton.textContent = 'Downloading…';
+    if (sound) toast(`Downloading ${sound.link.title ?? 'the link'} again…`);
+    try {
+      const got = await downloadLink(url);
+      linkButton.textContent = 'Get';
+      const saved = await pickPart(main, got, { longest: data.links.longest, clipSeconds: data.clipSeconds, isSound, sound });
+      if (!saved) return;
+      if (!sound) linkInput.value = '';
+      const done = saved.replaced ? `Replaced ${saved.name}. The old one is in Recently deleted.` : `Added ${saved.name}.`;
+      toast(saved.discordProblem ? `${done}\nBot soundboard only: ${saved.discordProblem}.` : done);
+      await load();
+    } finally {
+      linkButton.disabled = false;
+      linkButton.textContent = 'Get';
+    }
+  }
+
   async function trim(sound) {
     const done = await pickTrim(main, sound);
+    if (done === 'again') return attempt(() => addFromLink(sound.link.url, sound));
     if (!done) return;
     toast(done === 'restored' ? `Restored ${sound.name}.` : `Trimmed ${sound.name}.`);
     await load();

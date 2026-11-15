@@ -15,7 +15,7 @@ COPY bridge.mjs youtube.mjs fetch.py ./
 
 ENV DATA_DIR=/data
 # Named volumes inherit this ownership on first creation, so the node user can write to them
-RUN mkdir -p /data/audio && chown -R node:node /data
+RUN mkdir -p /data/audio /data/clips && chown -R node:node /data
 VOLUME /data
 USER node
 CMD ["node", "bridge.mjs"]

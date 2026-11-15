@@ -4,10 +4,12 @@
 #   {"url", "dir"}                            a YouTube or SoundCloud link, downloaded
 #   {"url", "info": true}                     what a link is, without downloading it
 #   {"similar"}                               songs like a YouTube video, from YouTube Music's mix for it
+#   {"url", "clip": true, "dir"}              a video or track to cut a soundboard sound from, downloaded with its picture
 import json
+import os
 import re
 import sys
-from urllib.parse import quote
+from urllib.parse import quote, urlparse
 
 # A match can be this many seconds longer or shorter than Spotify says
 SLACK = 5
@@ -20,6 +22,12 @@ LINK = re.compile(r'^https?://((www|m|music)\.)?(youtube\.com|youtu\.be|soundclo
 VIDEO = re.compile(r'^https://(?:(?:www|m|music)\.)?(?:youtube\.com/watch\?(?:.*&)?v=|youtu\.be/)(?P<video>[\w-]{11})')
 # How much of a mix is read. Its first songs are the closest, and reading more takes no longer
 MIX_LENGTH = 40
+# Where a soundboard sound can come from, including any subdomain, like m.youtube.com or vm.tiktok.com
+CLIP_HOSTS = ('youtube.com', 'youtu.be', 'soundcloud.com', 'tiktok.com', 'instagram.com')
+# The editor shows the video, so it's downloaded small, and only in a format that has the sound in it too, as there's no ffmpeg
+# here to join a separate picture and sound. Without one, it's the sound alone, as from SoundCloud
+CLIP_FORMAT = 'b[height<=?480]/b/ba'
+CLIP_MAX_BYTES = 200 * 1024 * 1024
 # What a video's title says besides the song, like (Official Video) or [4K Remaster]
 EXTRAS = re.compile(r'\s*[(\[][^)\]]*\b(official|video|audio|lyrics?|visuali[sz]er|remaster(ed)?|hd|4k|mv)\b[^)\]]*[)\]]', re.I)
 
@@ -158,7 +166,81 @@ def similar(url):
     return {'songs': songs}
 
 
+def clip_link(url):
+    """Whether a link is from somewhere a soundboard sound can come from"""
+    try:
+        parts = urlparse(url)
+    except ValueError:
+        return False
+    host = (parts.hostname or '').lower()
+    return parts.scheme == 'https' and any(host == h or host.endswith(f'.{h}') for h in CLIP_HOSTS)
+
+
+def plain_error(err):
+    """yt-dlp's error for a link, without its label, colour codes and advice for the command line"""
+    message = re.sub(r'\x1b\[[0-9;]*m', '', str(err)).replace('ERROR: ', '').strip()
+    if re.search(r'instagram', message, re.I) and re.search(r'log(ged)?[ -]?in|cookies|empty media', message, re.I):
+        return 'Instagram wouldn’t share that one without signing in. Some public Reels work, but not this one.'
+    if re.search(r'IP address is blocked', message, re.I):
+        return 'That site won’t share this one with the bot’s internet connection.'
+    # "[TikTok] 1234: Video unavailable" is just "Video unavailable"
+    return re.sub(r'^\[[^\]]+\]\s*[^:]*:\s*', '', message)[:300] or type(err).__name__
+
+
+def clip(url, folder):
+    """A video or track, downloaded small for the soundboard's editor. A problem with the link is an answer, not an error"""
+    try:
+        return download_clip(url, folder)
+    except Exception as err:
+        return {'error': plain_error(err), 'missing': True}
+
+
+def download_clip(url, folder):
+    if not clip_link(url):
+        return {'error': 'Use a link to a YouTube video or Short, a TikTok, an Instagram Reel or a SoundCloud track.', 'missing': True}
+    options = {
+        'format': CLIP_FORMAT,
+        'outtmpl': f'{folder}/%(extractor_key)s-%(id)s.%(ext)s',
+        'restrictfilenames': True,
+        'noplaylist': True,
+        'max_filesize': CLIP_MAX_BYTES,
+        # A short link only says how long it is once it's followed
+        'match_filter': lambda info, *, incomplete: 'too long' if (info.get('duration') or 0) > LONGEST else None,
+    }
+    with ydl(options) as y:
+        # Read first without downloading, so a playlist is turned down rather than every video in it downloaded
+        info = y.extract_info(url, download=False, process=False)
+        if info.get('_type') == 'playlist':
+            return {'error': 'That’s a playlist. Use a link to one video or track.', 'missing': True}
+        if (info.get('duration') or 0) > LONGEST:
+            return {'error': f'That’s over {LONGEST // 60} minutes long.', 'missing': True}
+        info = y.process_ie_result(info, download=True)
+    downloads = (info or {}).get('requested_downloads') or []
+    if not downloads:
+        # The length filter is what skips one
+        too_long = info is None or (info.get('duration') or 0) > LONGEST
+        return {'error': f'That’s over {LONGEST // 60} minutes long.' if too_long else 'That link had nothing to download.', 'missing': True}
+    got = downloads[0]
+    # A video the length filter or the size limit stopped is listed, but with no file
+    if not got.get('filepath') or not os.path.exists(got['filepath']):
+        if (info.get('duration') or 0) > LONGEST:
+            return {'error': f'That’s over {LONGEST // 60} minutes long.', 'missing': True}
+        return {'error': f'That’s over {CLIP_MAX_BYTES // 1024 // 1024} MB even at 480p, so it wasn’t downloaded.', 'missing': True}
+    if (got.get('acodec') or info.get('acodec')) == 'none':
+        # Instagram sends some Reels without their sound to anyone who isn't signed in
+        os.remove(got['filepath'])
+        return {'error': 'That came without its sound, so there’s nothing to cut. Instagram does this to some Reels without a sign-in.', 'missing': True}
+    return {
+        **about(info, url),
+        'source': info.get('extractor_key', '').lower(),
+        'file': got['filepath'].rsplit('/', 1)[-1],
+        'video': (got.get('vcodec') or info.get('vcodec') or 'none') != 'none',
+    }
+
+
 def answer(request):
+    if request.get('clip'):
+        return clip(request['url'], request['dir'])
     if 'similar' in request:
         return similar(request['similar'])
     if 'url' in request:

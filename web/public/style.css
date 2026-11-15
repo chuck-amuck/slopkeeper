@@ -4447,3 +4447,54 @@ details.fold > summary:focus-visible {
     width: 100%;
   }
 }
+
+/* Adding a sound from a link: the field under the drop zone, and the editor */
+.link-add {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.link-add input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.link-media {
+  display: block;
+  width: 100%;
+}
+
+video.link-media {
+  max-height: 45vh;
+  border-radius: var(--radius-sm);
+  background: #000;
+}
+
+.link-source {
+  color: var(--muted);
+  font-size: var(--text-md);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.link-name input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.link-dialog .note.choice {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-2);
+  font-size: var(--text-sm);
+}
+
+.link-dialog .note.choice:empty {
+  display: none;
+}
+
+.link-dialog .note.choice span {
+  flex: 1 1 200px;
+}

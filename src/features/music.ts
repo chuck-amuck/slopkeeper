@@ -402,7 +402,7 @@ const SLOW_SONG_S = 8;
 const asBridge = () => ({ authorization: `Bearer ${config.musicToken}`, 'content-type': 'application/json' });
 
 /** Asks the music container something about YouTube. A 404 is "not found", with the reason; anything else that isn't fine throws */
-async function askYoutube(where: '/fetch' | '/lookup' | '/similar', body: Record<string, unknown>, trace?: perf.Trace): Promise<Record<string, unknown> & { missing?: string }> {
+export async function askYoutube(where: '/fetch' | '/lookup' | '/similar' | '/clip', body: Record<string, unknown>, trace?: perf.Trace): Promise<Record<string, unknown> & { missing?: string }> {
   const res = await fetch(`${config.musicUrl}${where}`, { method: 'POST', headers: asBridge(), body: JSON.stringify(body), signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
   const answer = (await res.json().catch(() => ({}))) as Record<string, unknown>;
   const ytdlp = perf.serverTiming(res.headers.get('server-timing')).get('ytdlp');
