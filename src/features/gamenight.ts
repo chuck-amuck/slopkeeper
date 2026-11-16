@@ -303,8 +303,27 @@ async function postNext(client: Client<true>, guild: Guild, series: Series, now:
 // When the last tick looked for nights dropping off the web UI's list
 let lastTick = Date.now();
 
-/** Reminders, starting and ending the Discord events, and new cards for repeating nights, once a minute */
+// When the tick still going started, or 0
+let ticking = 0;
+// Discord's calls give up long before this, so a tick this old is stuck, and the next shouldn't wait on it forever
+const STUCK_TICK_MS = 10 * 60_000;
+
+/**
+ * Reminders, starting and ending the Discord events, and new cards for repeating nights, once a minute. A tick still
+ * going when the next is due, held up by Discord, is left to finish: the next would post a repeating night's card again
+ */
 export async function tick(client: Client<true>) {
+  if (ticking && Date.now() - ticking < STUCK_TICK_MS) return;
+  if (ticking) console.error('Game nights: the last check never finished, so this one goes ahead');
+  const mine = (ticking = Date.now());
+  try {
+    await tickNow(client);
+  } finally {
+    if (ticking === mine) ticking = 0;
+  }
+}
+
+async function tickNow(client: Client<true>) {
   const now = Date.now();
   const nights = db
     .prepare('SELECT * FROM game_nights WHERE cancelled = 0 AND (reminded = 0 OR (event_id IS NOT NULL AND event_stage < 2)) AND starts_at < ?')

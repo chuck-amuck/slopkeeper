@@ -266,6 +266,26 @@ test('a card missed while the bot was down goes on to the next night ahead', asy
   assert.ok(nights[1].starts_at < Date.now() + 8 * DAY, 'the very next one, not one further on');
 });
 
+test('a check that’s still posting when the next is due doesn’t post the repeating night again', async () => {
+  await plan('slow', 7);
+  makeDue('slow');
+  const before = allNights('slow').length;
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => (release = resolve));
+  let sent = 0;
+  const client = fakeClient([{ id: 'slow', name: 'Slow' }], async () => {
+    sent++;
+    await held;
+    return { id: 'x' };
+  });
+  const first = tick(client);
+  await tick(client);
+  release();
+  await first;
+  assert.equal(sent, 1);
+  assert.equal(allNights('slow').length, before + 1);
+});
+
 test('a card that can’t be posted leaves nothing behind and is tried again in an hour', async () => {
   mock.method(console, 'error', () => {});
   await plan('blocked', 7);
