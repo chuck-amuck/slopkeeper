@@ -19,6 +19,8 @@ same static ffmpeg as the image and CI. Without ffmpeg the audio tests skip sile
 - Music container: `node --test 'music/*.test.mjs'`. `voice/` has only syntax checks, which CI runs too:
   `python3 -m py_compile voice/*.py` and `sh -n voice/start.sh`.
 - Front end: `for f in web/public/*.js; do node --check "$f"; done`.
+- Charts and the calendar are ECharts and Cally, built into `web/public/vendor-*.js` by `scripts/build-vendor.sh` (the
+  command is at its top). Don't edit those files; change a version there and build again.
 - Web UI by hand: run `web/src/index.ts` against a fake bot (`BOT_URL`) and drive `chromium --headless=new` over CDP.
   Non-GET calls need the header `x-slopkeeper: 1`.
 

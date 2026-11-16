@@ -246,10 +246,12 @@ export function peopleWithStats(guildId: string): Set<string> {
   return new Set(rows.map((r) => r.id));
 }
 
-/** How many times someone has played a game since a moment */
-export function sessionCount(guildId: string, user: string, game: string, since: number) {
+/** How many times someone has played a game between two moments */
+export function sessionCount(guildId: string, user: string, game: string, since: number, until = Number.MAX_SAFE_INTEGER) {
   return (
-    db.prepare('SELECT COUNT(*) AS n FROM named_plays WHERE guild_id = ? AND channel_id IS NOT NULL AND user_id = ? AND game = ? COLLATE NOCASE AND ended_at > ?').get(guildId, user, game, since) as {
+    db
+      .prepare('SELECT COUNT(*) AS n FROM named_plays WHERE guild_id = ? AND channel_id IS NOT NULL AND user_id = ? AND game = ? COLLATE NOCASE AND ended_at > ? AND started_at < ?')
+      .get(guildId, user, game, since, until) as {
       n: number;
     }
   ).n;

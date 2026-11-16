@@ -51,6 +51,8 @@ const ICONS = {
   scissors: '<circle cx="6" cy="7" r="2.5"/><circle cx="6" cy="17" r="2.5"/><path d="M8.2 8.3 19 17M8.2 15.7 19 7"/>',
   x: '<path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/>',
   up: '<path d="M12 19V5M6.5 10.5 12 5l5.5 5.5"/>',
+  left: '<path d="M14.5 6 8.5 12l6 6"/>',
+  right: '<path d="M9.5 6l6 6-6 6"/>',
   down: '<path d="M12 5v14M6.5 13.5 12 19l5.5-5.5"/>',
   top: '<path d="M5 4.5h14M12 20V9M7 13.5l5-5 5 5"/>',
   shuffle: '<path d="M16 4h4v4M4 20 20 4M20 16v4h-4M15 15l5 5M4 4l5 5"/>',

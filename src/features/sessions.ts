@@ -177,15 +177,15 @@ export function resync(client: Client<true>) {
   pickUp(client, now);
 }
 
-/** Everyone's voice time since a moment, most first */
-export function voiceTotals(guildId: string, sinceMs: number) {
+/** Everyone's voice time in sessions that started between two moments, most first */
+export function voiceTotals(guildId: string, sinceMs: number, untilMs = Number.MAX_SAFE_INTEGER) {
   const rows = db
     .prepare(
       `SELECT sm.user_id AS userId, sm.seconds AS secs, s.started_at AS startedAt
        FROM session_members sm JOIN sessions s ON s.id = sm.session_id
-       WHERE s.guild_id = ? AND s.started_at >= ?`,
+       WHERE s.guild_id = ? AND s.started_at >= ? AND s.started_at < ?`,
     )
-    .all(guildId, sinceMs) as { userId: string; secs: number; startedAt: number }[];
+    .all(guildId, sinceMs, untilMs) as { userId: string; secs: number; startedAt: number }[];
   // Nights are counted by the server's own calendar, so this happens here instead of in SQL
   const timeZone = setting(guildId, 'timezone');
   const byUser = new Map<string, { userId: string; secs: number; dates: Set<string> }>();

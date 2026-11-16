@@ -36,15 +36,20 @@ if (recall('tab') === 'library') {
   remember(VIEW_KEY, 'manage');
 }
 const isTab = (id) => TABS.some(([t]) => t === id);
-// The address names the tab, so Back, a bookmark or a shared link opens it. Without one, the tab used last
-const fromHash = () => location.hash.slice(1);
+// The address names the tab, so Back, a bookmark or a shared link opens it. Without one, the tab used last. After the
+// tab, a tab may name what it has open, like Stats' view and range: #stats/health?range=7d
+const fromHash = () => location.hash.slice(1).split(/[/?]/)[0];
 let tab = isTab(fromHash()) ? fromHash() : isTab(recall('tab')) ? recall('tab') : 'board';
-history.replaceState(null, '', `#${tab}`);
+history.replaceState(null, '', fromHash() === tab ? location.hash : `#${tab}`);
 
 addEventListener('popstate', () => {
   const id = fromHash();
   if (!isTab(id)) return history.replaceState(null, '', `#${tab}`);
-  if (id === tab) return;
+  // The same tab with something else open in it, like another Stats range: drawn again from the address
+  if (id === tab) {
+    if (location.hash.slice(1) !== id && app.querySelector('.bottom-nav')) renderFrame();
+    return;
+  }
   tab = id;
   remember('tab', id);
   // Over the login or a retry screen it's just remembered, and shown once the tabs are

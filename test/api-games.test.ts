@@ -126,6 +126,36 @@ test('the period decides what counts', async () => {
   for (const period of ['decade', 'constructor']) await refused(400, `/guilds/${GUILD}/stats?period=${period}`);
 });
 
+test('a from and to date range counts only what’s between them, voice included', async () => {
+  seedStats();
+  const now = Date.now();
+  const week = await ok(`/guilds/${GUILD}/stats?from=${now - 7 * 24 * HOUR}&to=${now}`);
+  assert.equal(Math.round(week.players[0].ms / HOUR), 5, 'the same as the past week');
+  assert.equal(week.since, now - 7 * 24 * HOUR);
+  const before = await ok(`/guilds/${GUILD}/stats?from=0&to=${now - 7 * 24 * HOUR}`);
+  assert.equal(Math.round(before.players[0].ms / HOUR), 1, 'only what came before the week');
+  assert.deepEqual(before.voice, [], 'the voice session was this week');
+  await refused(400, `/guilds/${GUILD}/stats?from=${now}&to=${now - HOUR}`);
+  await refused(400, `/guilds/${GUILD}/stats?from=x`);
+});
+
+test('whole days are counted in the server’s time zone, and the web UI’s own ranges start from its midnight', async () => {
+  seedStats();
+  const day = (ms: number) => new Date(ms).toISOString().slice(0, 10);
+  const now = Date.now();
+  const weekAgo = await ok(`/guilds/${GUILD}/stats?fromDate=${day(now - 8 * 24 * HOUR)}&toDate=${day(now)}`);
+  assert.equal(Math.round(weekAgo.players[0].ms / HOUR), 5);
+  assert.ok(weekAgo.until <= Date.now(), 'never past now');
+  for (const period of ['today', 'quarter', 'thisYear']) {
+    const data = await ok(`/guilds/${GUILD}/stats?period=${period}`);
+    assert.ok(data.since < data.until, period);
+  }
+  const today = await ok(`/guilds/${GUILD}/stats?period=today`);
+  assert.ok(Date.now() - today.since <= 24 * HOUR);
+  await refused(400, `/guilds/${GUILD}/stats?fromDate=2026-1-1`);
+  await refused(400, `/guilds/${GUILD}/stats?fromDate=2026-02-01&toDate=2026-01-01`);
+});
+
 test('filters by person, by game and by both', async () => {
   seedStats();
   const byUser = await ok(`/guilds/${GUILD}/stats?period=week&user=u1`);

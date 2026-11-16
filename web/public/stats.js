@@ -1,11 +1,15 @@
 import { achievementsView } from './achievements.js';
 import { health } from './health.js';
 import { ago, api, attempt, duration, el, formProblem, icon, notice, openDialog, recall, remember, request, state, toast } from './lib.js';
+import { rangeBar, rangeFromQuery, rangeQuery } from './rangebar.js';
 
+/** Ranges up to now, from midnight in the server's time zone where it's whole days */
 const PERIODS = [
-  ['week', 'Past week'],
-  ['month', 'Past month'],
-  ['year', 'Past year'],
+  ['today', 'Today'],
+  ['week', '7 days'],
+  ['month', '30 days'],
+  ['quarter', '90 days'],
+  ['thisYear', 'This year'],
   ['all', 'All time'],
 ];
 
@@ -91,19 +95,34 @@ const VIEWS = [
   ['health', 'Health', health],
 ];
 
+/** The view and its query in the page's address: #stats/health?range=7d */
+function fromAddress() {
+  const [path, query = ''] = location.hash.slice(1).split('?');
+  return { view: path.split('/')[1], params: new URLSearchParams(query) };
+}
+
 export function renderStats(main) {
   const body = el('div', { className: 'stack' });
   const tabs = el('div', { className: 'views' });
-  const open = (id) => {
+  const open = (id, params = new URLSearchParams()) => {
     remember('statsView', id);
     const [, , render] = VIEWS.find(([view]) => view === id);
     tabs.replaceChildren(...VIEWS.map(([view, label]) => el('button', { ...(view === id && { 'aria-current': 'page' }), onclick: () => open(view) }, label)));
     const view = el('div', { className: 'stack' });
     body.replaceChildren(view);
-    render(view);
+    const write = (query) => {
+      // Not once someone's moved on to another tab
+      if (!view.isConnected || !location.hash.startsWith('#stats')) return;
+      const text = query.toString();
+      history.replaceState(null, '', `#stats/${id}${text ? `?${text}` : ''}`);
+    };
+    write(params);
+    render(view, { params, write });
   };
   main.append(tabs, body);
-  open(VIEWS.some(([view]) => view === recall('statsView')) ? recall('statsView') : 'overview');
+  const asked = fromAddress();
+  if (VIEWS.some(([view]) => view === asked.view)) open(asked.view, asked.params);
+  else open(VIEWS.some(([view]) => view === recall('statsView')) ? recall('statsView') : 'overview');
 }
 
 function compare(main) {
@@ -199,28 +218,29 @@ function recap(main) {
   void show();
 }
 
-function overview(main) {
+function overview(main, address) {
   const guildId = state.guildId;
-  let period = recall('period') ?? 'month';
+  let range = rangeFromQuery(address.params, PERIODS) ?? { preset: PERIODS.some(([id]) => id === recall('period')) ? recall('period') : 'month' };
   let user = null;
   let game = null;
   let latest = 0;
+  let timeZone;
 
   const chips = el('div', { className: 'chips' });
   const content = el('div', { className: 'stack' }, notice('loading', 'Loading stats…'));
-  const picker = el(
-    'select',
-    {
-      ariaLabel: 'Time range',
-      onchange: (e) => {
-        period = e.target.value;
-        remember('period', period);
-        void show();
-      },
+  const bar = rangeBar({
+    presets: PERIODS,
+    value: range,
+    timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+    onChange: (picked) => {
+      range = picked;
+      if (picked.preset) remember('period', picked.preset);
+      address.write(new URLSearchParams(rangeQuery(range)));
+      void show();
     },
-    PERIODS.map(([id, label]) => el('option', { value: id, selected: id === period }, label)),
-  );
-  main.append(el('div', { className: 'toolbar' }, picker, chips), content);
+  });
+  main.append(el('div', { className: 'toolbar' }, bar.node, chips), content);
+  address.write(new URLSearchParams(rangeQuery(range)));
 
   const pickUser = (r) => {
     user = { id: r.id, name: r.label };
@@ -390,9 +410,12 @@ function overview(main) {
   async function show() {
     const ticket = ++latest;
     await attempt(async () => {
-      const query = new URLSearchParams({ period, ...(user && { user: user.id }), ...(game && { game }) });
+      // The bot calls a preset a period
+      const { range: period, ...dates } = rangeQuery(range);
+      const query = new URLSearchParams({ ...(period ? { period } : dates), ...(user && { user: user.id }), ...(game && { game }) });
       try {
         const data = await request(api(`/stats?${query}`));
+        if (data.timeZone !== timeZone) bar.timeZone((timeZone = data.timeZone));
         // Only the newest answer counts, if filters were clicked quickly
         if (ticket === latest && guildId === state.guildId && main.isConnected) render(data);
       } catch (err) {

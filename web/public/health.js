@@ -1,10 +1,12 @@
+import { timeChart } from './charts.js';
 import { api, attempt, el, icon, notice, recall, remember, request, state } from './lib.js';
-import { lineChart } from './linechart.js';
+import { rangeBar, rangeFromQuery, rangeQuery } from './rangebar.js';
 import { followWhenIdle } from './updates.js';
 
 /**
- * Stats → Health: how the bot and its containers have been doing over the last hour, day, week or month, and the
- * slowest things people waited on in this server. It fetches again as each minute is kept
+ * Stats → Health: how the bot, its containers and the machine they run on have been doing over the last hour, day,
+ * week or month, or any stretch of the last 30 days, what held them back, and the slowest things people waited on in
+ * this server. It fetches again as each minute is kept
  */
 
 const RANGES = [
@@ -13,6 +15,8 @@ const RANGES = [
   ['7d', '7 days'],
   ['30d', '30 days'],
 ];
+/** How far back the bot keeps its numbers */
+const KEPT_MS = 30 * 86_400_000;
 /** The week and month only change a point every 15 minutes, as that's how they're kept */
 const COARSE_MS = 15 * 60_000;
 
@@ -42,6 +46,7 @@ export function percent(share) {
   return p > 0 && p < 1 ? `${p.toFixed(1)}%` : `${Math.round(p)}%`;
 }
 const plural = (n, word) => `${n.toLocaleString()} ${word}${n === 1 ? '' : 's'}`;
+const listed = (items) => (items.length < 2 ? items.join('') : `${items.slice(0, -1).join(', ')} and ${items.at(-1)}`);
 const minutes = (m) => (m < 1 ? `${Math.round(m * 60)} s` : m < 120 ? `${Math.round(m)} min` : `${(m / 60).toFixed(1)} h`);
 
 /** Times as fine as the range's points */
@@ -166,6 +171,14 @@ function containersCard(r) {
             el('span', { className: 'health-note' }, `${bytes(c.memoryNow)}${c.memoryLimit ? ` of ${bytes(c.memoryLimit)}` : ''}, peak ${bytes(c.memoryPeak)}`),
           ),
           el('span', { className: 'health-note' }, `CPU ${cpu(c.cpuAverage)}, peak ${cpu(c.cpuPeak)}`),
+          c.stallWorst &&
+            el(
+              'span',
+              { className: 'health-note' },
+              `Waited for resources ${percent(Math.max(c.stallWorst.cpu ?? 0, c.stallWorst.memory ?? 0, c.stallWorst.io ?? 0))} of the time at worst`,
+            ),
+          c.throttledWorst > 0 && el('span', { className: 'health-note' }, `Held back by its CPU limit ${percent(c.throttledWorst)} of the time at worst`),
+          c.oomKills > 0 && el('span', { className: 'health-note bad-text' }, `${plural(c.oomKills, 'process')} killed for going over its memory limit`),
           el('span', { className: 'health-note' }, c.upNow === false ? 'Not answering' : c.downMinutes > 0 ? `Down ${minutes(c.downMinutes)}` : 'Always up'),
         );
       }),
@@ -173,29 +186,62 @@ function containersCard(r) {
   );
 }
 
-function charts(r, timeLabel) {
-  const common = { start: r.start, step: r.step, timeLabel };
-  const small = (key, title, timing, limit) => smallChart(common, key, title, [{ id: key, label: title, color: 'var(--series-1)', values: timing.series }], limit);
+/**
+ * The stretch before's values for each line, laid over this range's points by time, or null without it. `pick(r)`
+ * gives { id: values } from a report
+ */
+function beforeOf(r, pick) {
+  const p = r.previous;
+  if (!p) return null;
+  const theirs = pick(p);
+  const span = r.step * r.points;
+  return Object.fromEntries(
+    Object.entries(theirs).map(([id, values]) => [
+      id,
+      Array.from({ length: r.points }, (_, i) => {
+        const j = Math.round((r.start + i * r.step - span - p.start) / p.step);
+        return j >= 0 && j < values.length ? values[j] : null;
+      }),
+    ]),
+  );
+}
+
+function charts(r, common) {
+  const before = (pick) => beforeOf(r, pick);
+  const small = (key, title, part, limit) => smallChart({ ...common, previous: before((x) => ({ [key]: x[part].series })) }, key, title, [{ id: key, label: title, color: 'var(--series-1)', values: r[part].series }], limit);
   const containers = (key, title, field, format) =>
-    lineChart({ ...common, key, title, format, series: r.containers.map((c) => ({ id: c.name, label: CONTAINERS[c.name] ?? c.name, color: seriesColor(c.name), values: c[field] })) });
+    timeChart({
+      ...common,
+      key,
+      title,
+      format,
+      series: r.containers.map((c) => ({ id: c.name, label: CONTAINERS[c.name] ?? c.name, color: seriesColor(c.name), values: c[field] })),
+      previous: before((x) => Object.fromEntries(x.containers.map((c) => [c.name, c[field]]))),
+    });
   return [
     card(
       'Response times, 95th percentile',
       el(
         'div',
         { className: 'health-grid' },
-        small('commands', 'Commands answered', r.commands, r.limits.commandAnswer),
-        small('sounds', 'Sounds start', r.sounds, r.limits.soundStart),
-        small('speech', 'Speech made', r.speech, r.limits.speechMake),
-        small('music', 'Music starts', r.music, r.limits.musicStart),
+        small('commands', 'Commands answered', 'commands', r.limits.commandAnswer),
+        small('sounds', 'Sounds start', 'sounds', r.limits.soundStart),
+        small('speech', 'Speech made', 'speech', r.limits.speechMake),
+        small('music', 'Music starts', 'music', r.limits.musicStart),
       ),
     ),
     r.browser && browserCard(r, common),
     card('Memory', containers('memory', 'Memory by container', 'memory', bytes)),
     card('CPU', containers('cpu', 'CPU by container, 100% being one core', 'cpu', cpu)),
+    r.containers.some((c) => c.stall?.some((v) => v !== null)) &&
+      card(
+        'Waiting for resources',
+        containers('stall', 'Share of the time each container waited for CPU, memory or the disk', 'stall', percent),
+        el('p', { className: 'hint' }, 'Time something in the container wanted CPU, memory or the disk and had to wait for it, at whichever was worst. Near nothing is normal.'),
+      ),
     card(
       'Discord',
-      lineChart({
+      timeChart({
         ...common,
         key: 'discord',
         title: 'Discord ping',
@@ -208,15 +254,26 @@ function charts(r, timeLabel) {
     ),
     card(
       'Bot lag',
-      lineChart({ ...common, key: 'lag', title: 'Bot lag', format: seconds, series: [{ id: 'lag', label: 'Lag', color: 'var(--series-1)', values: r.bot.delay }], limit: { value: r.limits.loopDelay[0], label: `slow from ${seconds(r.limits.loopDelay[0])}` } }),
+      timeChart({
+        ...common,
+        key: 'lag',
+        title: 'Bot lag',
+        format: seconds,
+        series: [{ id: 'lag', label: 'Lag', color: 'var(--series-1)', values: r.bot.delay }],
+        previous: before((x) => ({ lag: x.bot.delay })),
+        limit: { value: r.limits.loopDelay[0], label: `slow from ${seconds(r.limits.loopDelay[0])}` },
+      }),
       el('p', { className: 'hint' }, 'How late the bot ran what it meant to do, at its worst. Above a few tenths of a second, sounds and buttons feel slow.'),
+      r.bot.gc &&
+        r.bot.gc.pauses > 0 &&
+        el('p', { className: 'hint' }, `Collecting unused memory paused it ${plural(r.bot.gc.pauses, 'time')}, 95% within ${seconds(r.bot.gc.p95)}, ${percent(r.bot.gc.worst)} of the time at worst.`),
     ),
   ];
 }
 
 /** A small chart of 95th percentiles under its own heading, with where it stops being fine */
 const smallChart = (common, key, title, series, limit) =>
-  el('div', { className: 'health-small' }, el('h3', {}, title), lineChart({ ...common, key, title, series, format: seconds, limit: { value: limit[0], label: `slow from ${seconds(limit[0])}` } }));
+  el('div', { className: 'health-small' }, el('h3', {}, title), timeChart({ ...common, key, title, series, format: seconds, height: 130, limit: { value: limit[0], label: `slow from ${seconds(limit[0])}` } }));
 
 /** Taps answered and the page opening, at home and away, as people's browsers timed them */
 function browserCard(r, common) {
@@ -225,6 +282,7 @@ function browserCard(r, common) {
     { id: 'home', label: 'At home', color: 'var(--series-1)', values: browser.home[part] },
     { id: 'away', label: 'Away', color: 'var(--series-2)', values: browser.away[part] },
   ];
+  common = { ...common, previous: null };
   return card(
     'Web UI as people see it, 95th percentile',
     el(
@@ -357,45 +415,232 @@ function slowCard(r) {
   );
 }
 
-export function health(main) {
+const PARTS = { commands: 'commands', sounds: 'sounds', speech: 'speech', music: 'music', stutter: 'audio', bot: 'the bot', web: 'the web UI', browser: 'the web UI in browsers' };
+
+/** One cause of things being held back, in words */
+function causeText(c) {
+  const who = CONTAINERS[c.container] ?? c.container;
+  switch (c.cause) {
+    case 'vm-cpu':
+      return c.by === 'busy'
+        ? `The machine was short of CPU: ${percent(c.value)} of it busy at the worst point.`
+        : `Things on the machine waited for CPU ${percent(c.value)} of the time at the worst point.`;
+    case 'host-cpu':
+      return `The host gave ${percent(c.value)} of the machine’s CPU time to other machines at the worst point.`;
+    case 'vm-memory':
+      return c.by === 'used'
+        ? `The machine was short of memory: ${percent(c.value)} in use at the worst point.`
+        : c.by === 'swapping'
+          ? `The machine was swapping ${Math.round(c.value).toLocaleString()} pages a second, which slows everything on it.`
+          : `Things on the machine waited for memory ${percent(c.value)} of the time at the worst point.`;
+    case 'vm-disk':
+      return `Things on the machine waited for the disk ${percent(c.value)} of the time at the worst point. Other apps on the same machine reading or writing a lot can do this.`;
+    case 'disk-space':
+      return `The disk holding the bot’s data is ${percent(c.value)} full.`;
+    case 'cpu-limit':
+      return `${who} was held back by its CPU limit ${percent(c.value)} of the time at the worst point.`;
+    case 'memory-limit':
+      return `${who} used ${percent(c.value)} of its memory limit.`;
+    case 'out-of-memory':
+      return `${who} had ${plural(c.value, 'process')} killed for going over its memory limit.`;
+    case 'garbage':
+      return `The bot spent ${percent(c.value)} of the time collecting unused memory, which pauses everything it does.`;
+    case 'code':
+      return `Nothing was short of resources, yet ${listed(c.parts.map((p) => PARTS[p] ?? p))} ${c.parts.length === 1 ? 'was' : 'were'} slow. That’s the bot’s own work or what it waited on, like YouTube or Discord: Slowest recently, below, shows which step took the time.`;
+    default:
+      return c.cause;
+  }
+}
+
+/** What held things back in the range, if anything */
+function verdictCard(r) {
+  const v = r.verdict;
+  if (!v) return null;
+  const body =
+    v.status === 'quiet'
+      ? [el('p', {}, 'Nothing measured in this range yet.')]
+      : v.causes.length
+        ? [el('ul', { className: 'health-causes' }, v.causes.map((c) => el('li', { className: c.status }, statusPill(c.status), el('span', {}, causeText(c)))))]
+        : [el('p', {}, 'Nothing held it back: the machine had room to spare, no container reached its limits, and nothing people waited on was slow.')];
+  return el(
+    'section',
+    { className: `card health-verdict ${v.status}` },
+    el('div', { className: 'card-head' }, el('h2', {}, 'What held it back?'), statusPill(v.status)),
+    el('div', { className: 'card-body' }, ...body),
+  );
+}
+
+/** The machine the containers run on: its CPU, memory, disk and how much things waited on it */
+function machineCard(r, common) {
+  const m = r.machine;
+  if (!m || !m.heard) return null;
+  const before = (pick) => beforeOf(r, (x) => (x.machine ? pick(x.machine) : {}));
+  const limitOf = (limit, label) => ({ value: limit[0], label });
+  const facts = [
+    m.cpus && plural(m.cpus, 'CPU core'),
+    m.memory.total && `${bytes(m.memory.total)} of memory${m.memory.usedNow !== null ? `, ${bytes(m.memory.usedNow)} in use now` : ''}`,
+    m.memory.swapNow !== null && `${bytes(m.memory.swapNow)} swapped out`,
+    m.disk.total && `Disk ${percent(m.disk.used)} full, ${bytes(m.disk.free)} free`,
+  ].filter(Boolean);
+  return card(
+    'The machine it runs on',
+    el('p', { className: 'health-note' }, facts.join(' · ')),
+    el(
+      'div',
+      { className: 'health-grid' },
+      el(
+        'div',
+        { className: 'health-small' },
+        el('h3', {}, 'CPU'),
+        timeChart({
+          ...common,
+          key: 'vm-cpu',
+          title: 'The machine’s CPU',
+          format: percent,
+          height: 130,
+          series: [
+            { id: 'busy', label: 'Busy', color: 'var(--series-1)', values: m.cpu.busy },
+            { id: 'iowait', label: 'Waiting on the disk', color: 'var(--series-2)', values: m.cpu.iowait },
+            { id: 'steal', label: 'Taken by the host', color: 'var(--series-3)', values: m.cpu.steal },
+          ],
+          previous: before((x) => ({ busy: x.cpu.busy })),
+          limit: limitOf(r.limits.vmCpu, `short from ${percent(r.limits.vmCpu[0])} busy`),
+        }),
+      ),
+      el(
+        'div',
+        { className: 'health-small' },
+        el('h3', {}, 'Memory in use'),
+        timeChart({
+          ...common,
+          key: 'vm-memory',
+          title: 'The machine’s memory in use',
+          format: bytes,
+          height: 130,
+          series: [{ id: 'used', label: 'In use', color: 'var(--series-1)', values: m.memory.used }],
+          previous: before((x) => ({ used: x.memory.used })),
+          limit: m.memory.total ? limitOf([r.limits.vmMemory[0] * m.memory.total], `short from ${bytes(r.limits.vmMemory[0] * m.memory.total)}`) : null,
+        }),
+      ),
+      el(
+        'div',
+        { className: 'health-small' },
+        el('h3', {}, 'Waiting for resources'),
+        timeChart({
+          ...common,
+          key: 'vm-stall',
+          title: 'Share of the time things on the machine waited',
+          format: percent,
+          height: 130,
+          series: [
+            { id: 'io', label: 'Disk', color: 'var(--series-2)', values: m.stall.io },
+            { id: 'cpu', label: 'CPU', color: 'var(--series-1)', values: m.stall.cpu },
+            { id: 'memory', label: 'Memory', color: 'var(--series-4)', values: m.stall.memory },
+          ],
+          previous: before((x) => ({ io: x.stall.io })),
+          limit: limitOf(r.limits.stallIo, `the disk is slow from ${percent(r.limits.stallIo[0])}`),
+        }),
+      ),
+      el(
+        'div',
+        { className: 'health-small' },
+        el('h3', {}, 'Swapping'),
+        timeChart({
+          ...common,
+          key: 'vm-swap',
+          title: 'Pages the machine swapped a second',
+          format: (n) => `${Math.round(n).toLocaleString()}/s`,
+          height: 130,
+          series: [{ id: 'swapping', label: 'Pages a second', color: 'var(--series-1)', values: m.memory.swapping }],
+          limit: limitOf(r.limits.swapping, `slow from ${r.limits.swapping[0]} a second`),
+        }),
+      ),
+    ),
+    el(
+      'p',
+      { className: 'hint' },
+      'The whole machine, every app on it included. Waiting is time something wanted CPU, memory or the disk and had to wait: a little is normal, a lot means the machine is short of it. Swapping is memory moved to disk and back, which makes everything slow.',
+    ),
+  );
+}
+
+/** How often each preset fetches again: the week and month only change a point every 15 minutes, as that's how they're kept */
+const refreshEvery = (range) => (range.preset === '7d' || range.preset === '30d' ? COARSE_MS : 0);
+
+/** The shortest stretch the bot shows */
+const SHORTEST_MS = 10 * 60_000;
+
+/** The stretch of the same length just before a report's range */
+function previousQuery(r) {
+  const span = r.step * r.points;
+  return new URLSearchParams({ from: String(r.start - span), to: String(r.start) });
+}
+
+/**
+ * `address`: the query after the view in the page's address, and `write(params)` to change it, so a reload or a link
+ * opens the same range
+ */
+export function health(main, address) {
   const guildId = state.guildId;
-  let range = RANGES.some(([id]) => id === recall('healthRange')) ? recall('healthRange') : '24h';
+  let range = rangeFromQuery(address.params, RANGES) ?? (RANGES.some(([id]) => id === recall('healthRange')) ? { preset: recall('healthRange') } : { preset: '24h' });
+  let compare = address.params.get('compare') === '1' || (!address.params.has('range') && recall('healthCompare') === '1');
   let latest = 0;
   let shownAt = 0;
   let version = null;
+  let timeZone;
   const content = el('div', { className: 'stack' }, notice('loading', 'Loading health…'));
-  const buttons = el(
-    'div',
-    { className: 'views', role: 'group', ariaLabel: 'Time range' },
-    RANGES.map(([id, label]) =>
-      el(
-        'button',
-        {
-          type: 'button',
-          ariaPressed: String(id === range),
-          onclick: (e) => {
-            range = id;
-            remember('healthRange', id);
-            for (const b of buttons.children) b.ariaPressed = String(b === e.currentTarget);
-            void show();
-          },
-        },
-        label,
-      ),
-    ),
-  );
-  main.append(el('div', { className: 'toolbar' }, buttons), content);
+  // The stretch before only changes as the range moves on, so it's asked for once per stretch
+  let earlier = { query: null, report: null };
+  const writeAddress = () => address.write(new URLSearchParams({ ...rangeQuery(range), ...(compare && { compare: '1' }) }));
+  const bar = rangeBar({
+    presets: RANGES,
+    value: range,
+    earliestMs: KEPT_MS,
+    compare,
+    timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+    onChange: (picked) => {
+      range = picked;
+      if (picked.preset) remember('healthRange', picked.preset);
+      writeAddress();
+      void show();
+    },
+    onCompare: (on) => {
+      compare = on;
+      remember('healthCompare', on ? '1' : '0');
+      writeAddress();
+      void show();
+    },
+  });
+  main.append(el('div', { className: 'toolbar' }, bar.node), content);
+  writeAddress();
 
   function render(r) {
-    const timeLabel = timeLabeller(r.step, r.timeZone);
+    const common = { start: r.start, step: r.step, timeLabel: timeLabeller(r.step, r.timeZone), timeZone: r.timeZone, onPick: zoom };
     content.replaceChildren(
-      tiles(r),
-      containersCard(r),
-      // An older bot sends no browser part, which would print as false
-      ...charts(r, timeLabel).filter(Boolean),
-      slowCard(r),
-      el('p', { className: 'hint' }, 'All but the slow list cover the whole bot, which every server it’s in shares. Fine, slow and bad are judged over the range picked.'),
+      ...[
+        compare && !r.previous && el('p', { className: 'hint' }, 'Health keeps the last 30 days, so there’s nothing before this to compare with.'),
+        verdictCard(r),
+        tiles(r),
+        containersCard(r),
+        machineCard(r, common),
+        // An older bot sends no browser or machine part, which would print as false
+        ...charts(r, common),
+        slowCard(r),
+        el(
+          'p',
+          { className: 'hint' },
+          'All but the slow list cover the whole bot, which every server it’s in shares. Fine, slow and bad are judged over the range picked. Drag across a chart with a mouse to look closer.',
+        ),
+      ].filter(Boolean),
     );
+  }
+
+  /** A stretch dragged across a chart, made at least the 10 minutes the bot shows, around its middle */
+  function zoom(from, to) {
+    const middle = (from + to) / 2;
+    const span = Math.max(to - from, SHORTEST_MS);
+    const end = Math.min(Date.now(), middle + span / 2);
+    void bar.zoom(Math.round(end - span), Math.round(end));
   }
 
   async function show() {
@@ -403,10 +648,20 @@ export function health(main) {
     content.classList.add('refreshing');
     await attempt(async () => {
       try {
-        const r = await request(api(`/health?range=${range}`));
+        const r = await request(api(`/health?${new URLSearchParams(rangeQuery(range))}`));
+        if (compare) {
+          const query = String(previousQuery(r));
+          if (earlier.query !== query) {
+            const report = await request(api(`/health?${query}`)).catch(() => null);
+            // Mostly older than Health keeps, it'd be a sliver at the start of the charts
+            earlier = { query, report: report && report.step * report.points >= (r.step * r.points) / 2 ? report : null };
+          }
+          r.previous = earlier.report;
+        }
         if (ticket !== latest || guildId !== state.guildId || !main.isConnected) return;
         version = r.version;
         shownAt = Date.now();
+        if (r.timeZone !== timeZone) bar.timeZone((timeZone = r.timeZone));
         render(r);
       } catch (err) {
         if (ticket === latest) content.replaceChildren(notice('error', err.message));
@@ -417,16 +672,16 @@ export function health(main) {
     });
   }
 
-  // Each minute kept: the hour and day show it, the week and month only once a point of theirs could have changed. Not
-  // while someone's reading a chart, which a redraw would take from them, but once they're done
-  const reading = () => !!content.querySelector('.line-plot:hover, .line-plot:focus-visible');
+  // Each minute kept: a preset up to now shows it, the week and month only once a point of theirs could have changed.
+  // Picked dates and zooms stay as they are. Not while someone's reading a chart, which a redraw would take from them
+  const reading = () => !!content.querySelector('.echart-box:hover, .echart-box:focus-visible, .echart-box:focus-within');
   followWhenIdle(
     'health',
     main,
     () => [content],
     (data) => {
-      if (!version || data.version === version) return;
-      if ((range === '7d' || range === '30d') && Date.now() - shownAt < COARSE_MS) return;
+      if (!version || data.version === version || !range.preset) return;
+      if (Date.now() - shownAt < refreshEvery(range)) return;
       void show();
     },
     reading,

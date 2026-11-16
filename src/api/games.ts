@@ -14,8 +14,8 @@ import { recapFor } from '../features/recap.ts';
 import { gameKey, gameName, gameSpellings, mergeGames, separateGame } from '../gameNames.ts';
 import { voiceTotals } from '../features/sessions.ts';
 import { idSetting, setting } from '../settings.ts';
-import { humansIn, pingWarning } from '../util.ts';
-import { type Ask, Refused, by, cantPost, memberIn, memberList, nameOf, plain, postingChannel, readJson, refuse, textChannels, voiceChannelFor } from './common.ts';
+import { humansIn, pingWarning, zonedParts, zonedTimeToUtc } from '../util.ts';
+import { type Ask, Refused, by, cantPost, datesWindow, memberIn, memberList, nameOf, plain, postingChannel, readJson, refuse, textChannels, voiceChannelFor } from './common.ts';
 import { voiceList } from './live.ts';
 
 // The management API for games, Steam accounts, picking and voting, stats, sales, free games and game pings
@@ -86,21 +86,52 @@ export async function handleHidden(guild: Guild, req: IncomingMessage, id: strin
 }
 
 /** Where someone ranks among a game's players */
-function placeOf(guild: Guild, user: string, game: string, since: number) {
-  const players = stats(guild.id, since, 'game', 'user_id', undefined, game).filter((r) => guild.members.cache.has(r.key));
+function placeOf(guild: Guild, user: string, game: string, since: number, until: number) {
+  const players = stats(guild.id, since, 'game', 'user_id', undefined, game, until).filter((r) => guild.members.cache.has(r.key));
   const idx = players.findIndex((r) => r.key === user);
-  return idx < 0 ? null : { rank: idx + 1, of: players.length, sessions: sessionCount(guild.id, user, game, since) };
+  return idx < 0 ? null : { rank: idx + 1, of: players.length, sessions: sessionCount(guild.id, user, game, since, until) };
+}
+
+/** Ranges the web UI offers besides /stats' periods, from the start of a day in the server's time zone */
+const WEB_PERIODS: Record<string, (now: number, timeZone: string) => number> = {
+  today: (now, tz) => {
+    const { year, month, day } = zonedParts(now, tz);
+    return zonedTimeToUtc(year, month, day, 0, 0, tz);
+  },
+  quarter: (now, tz) => {
+    const { year, month, day } = zonedParts(now, tz);
+    return zonedTimeToUtc(year, month, day - 89, 0, 0, tz);
+  },
+  thisYear: (now, tz) => zonedTimeToUtc(zonedParts(now, tz).year, 1, 1, 0, 0, tz),
+};
+
+/**
+ * Where a stats request starts and ends: whole days (`fromDate` and `toDate`), `from` and `to` in ms, or a `period`
+ * up to now
+ */
+export function statsWindow(url: URL, timeZone: string, now = Date.now()) {
+  const days = datesWindow(url, timeZone);
+  if (days) return { since: days.since, until: Math.min(days.until, now) };
+  const from = url.searchParams.get('from');
+  const to = url.searchParams.get('to');
+  if (from !== null || to !== null) {
+    const since = Number(from ?? 0);
+    const until = Math.min(Number(to ?? now), now);
+    if (!Number.isSafeInteger(since) || !Number.isFinite(until) || since < 0 || since >= until) throw new Refused(400, 'Pick a start before the end.');
+    return { since, until };
+  }
+  const period = url.searchParams.get('period') ?? 'month';
+  if (Object.hasOwn(WEB_PERIODS, period)) return { since: WEB_PERIODS[period](now, timeZone), until: now };
+  if (!Object.hasOwn(PERIODS, period)) throw new Refused(400, 'No such period.');
+  const { ms } = PERIODS[period as keyof typeof PERIODS];
+  return { since: Number.isFinite(ms) ? now - ms : 0, until: now };
 }
 
 /** The same numbers as /gamestats and /stats, for the web UI's charts */
 export function statsFor(guild: Guild, url: URL) {
-  const period = url.searchParams.get('period') ?? 'month';
-  if (!Object.hasOwn(PERIODS, period)) throw new Refused(400, 'No such period.');
   const user = url.searchParams.get('user') || undefined;
   const game = url.searchParams.get('game') || undefined;
-  const now = Date.now();
-  const { ms } = PERIODS[period as keyof typeof PERIODS];
-  const since = Number.isFinite(ms) ? now - ms : 0;
+  const { since, until: now } = statsWindow(url, setting(guild.id, 'timezone'));
   const isMember = (id: string) => guild.members.cache.has(id);
   const filter = user && game ? 'both' : user ? 'user' : game ? 'game' : 'none';
 
@@ -110,7 +141,7 @@ export function statsFor(guild: Guild, url: URL) {
   const games = totalsBy(plays, 'game');
   const players = totalsBy(plays, 'user_id').filter((r) => isMember(r.key));
   // Voice time isn't per game, so it only applies when no game is picked
-  const voice = game ? [] : voiceTotals(guild.id, since).filter((p) => isMember(p.userId) && (!user || p.userId === user));
+  const voice = game ? [] : voiceTotals(guild.id, since, now).filter((p) => isMember(p.userId) && (!user || p.userId === user));
   return {
     timeZone: setting(guild.id, 'timezone'),
     user: user ? { id: user, name: nameOf(guild, user) } : null,
@@ -123,7 +154,9 @@ export function statsFor(guild: Guild, url: URL) {
       people: players.length,
       voiceMs: voice.reduce((sum, p) => sum + p.secs * 1000, 0),
     },
-    place: user && game ? placeOf(guild, user, game, since) : null,
+    place: user && game ? placeOf(guild, user, game, since, now) : null,
+    since,
+    until: now,
     games: games.slice(0, MAX_RANKED).map((g) => ({ name: g.key, ms: g.ms, people: g.n, last: g.last })),
     players: players.slice(0, MAX_RANKED).map((p) => ({ id: p.key, name: nameOf(guild, p.key), ms: p.ms, games: p.n, last: p.last })),
     voice: voice.slice(0, MAX_RANKED).map((p) => ({ id: p.userId, name: nameOf(guild, p.userId), ms: p.secs * 1000, nights: p.nights })),

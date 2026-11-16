@@ -315,7 +315,11 @@ Game time from before this rule is an estimate: the bot kept what fell inside sa
 | `/gamestats user game` | One person and one game: their hours, number of sessions, and where they rank among the server's players. |
 | **Game stats** (Apps menu) | Right-click a member, or press and hold on a phone, then **Apps → Game stats**: their past month, as `/gamestats user` shows it, just for you. |
 
-Every form takes `period`: past week, past month (default), past year or all time.
+Every form takes `period`: past week, past month (default), past year or all time. The web UI's Stats → Overview also offers today, 90 days and this year, counted from midnight in the server's time zone, or any dates picked on a calendar.
+
+#### Music and speech history
+
+From November 2026 the bot also notes, for Stats to show later, each song heard from its start (its title, artist and link, where it came from, who added it or Autoplay, and how far it got, or that it was skipped) and each line said aloud (who asked, the voice, how many characters and whether it was said, read out from the speech channel or an announcement). The words of a line are never kept.
 
 Examples:
 ```
@@ -681,7 +685,7 @@ A page in [`web/`](web) that runs as a second container next to the bot, for you
 - **Game nights:** plan a night, see what's coming up and who still needs to add each other on Steam, answer **In**, **Maybe** or **Can't**, edit or cancel one, or stop a repeating one. Editing there can also change the voice channel. Times are in your own time zone with how long until, plus the server's time when that's different. Someone the page doesn't know picks who they're answering as once, and that's remembered on the device. Cancelling says how many people who are in will be told.
 - **Games:** the game library, with who has each game, who needs it, who wants it and any sale. Add games from a searchable list of what members own on Steam, or by name or store link. **Steam accounts** links, changes and unlinks anyone's Steam account, says who shares a Steam family, and refreshes libraries. Each game's **Manage** has its details (player limit and Steam link, kept with **Save**), **Never suggest this** to hide it from `/whatdoweplay` or let it back in, and who owns or wants it, which saves as you tick, with **Remove game** at the bottom. Ownership from a Steam library is locked. Sort by **Recently played** (the default) or **Most played**, which go by time in voice here as Stats counts it, or **A–Z**. Games nobody has played go last, and each played game says how long and when it was last played. The order is remembered on each device.
 - **Pick a game:** choose a voice channel, or tick people to plan before anyone's in voice (only people whose games the bot knows are listed, as anyone else would block every game), and see the games everyone owns and those one purchase away, using the same rules as `/whatdoweplay`. Each game shows time played here, Steam hours, its last two weeks on Steam and when it was last played, in total and per person, plus who'd play on a family copy. Opening one shows how many are playing it on Steam right now and its latest patch, and **Achievements** compares everyone's progress with goals nobody has yet. Sort them, with **Hot right now** for the last two weeks, search them, or filter to co-op, PvP or Steam Deck. **Pick for us** chooses one at random, and **Start a vote** posts the usual `/gamevote` card in a channel. Both go by the search and filters, so a vote offers only the games shown. Anyone in a joinable Steam lobby shows at the top with a link to join.
-- **Stats:** **Overview** has game and voice time, overall or for one person or game, with sessions, rank and when it was last played. **Compare** is `/compare` with every game two people both own and their achievements in any of them, between people with time in voice or a game played there, and **Monthly recap** is `/recap`. **Health** shows how the bot and its containers are doing: see [Health](#health).
+- **Stats:** a range bar picks what each view covers: presets, **Pick dates…** for any days on a calendar, and on Health **Compare with before**, which draws the stretch of the same length just before, faint and dashed. The range is kept in the page's address, so a link or a reload opens the same one. **Overview** has game and voice time, overall or for one person or game, with sessions, rank and when it was last played. **Compare** is `/compare` with every game two people both own and their achievements in any of them, between people with time in voice or a game played there, and **Monthly recap** is `/recap`. **Health** shows how the bot and its containers are doing: see [Health](#health).
 - **Discord's soundboard:** on Soundboard → Manage, see what fills the slots, play or save any sound, and swap sounds between Discord and the library.
 - **Merging games:** on Stats, Merge games puts different spellings of a game together, and Separate on a clicked game takes one back out.
 - **Activity:** a history of changes to sounds, games, pings, Steam accounts, music, settings and game nights, made here or in Discord, and who made them.
@@ -856,13 +860,13 @@ It applies the same rules as `/sound` and `/setup`, and every request needs an `
 | `GET /guilds/:id/me` | Who's signed in through Pangolin, and which member they said they are |
 | `PUT /guilds/:id/me` | Says which member the signed-in person is: `{ "userId": "..." }` |
 | `DELETE /guilds/:id/me` | Unlinks them |
-| `GET /guilds/:id/stats?period=<week\|month\|year\|all>&user=<id>&game=<name>` | Game and voice totals, with game time over the period, plus sessions, rank and when it was last played where a person or game is chosen |
+| `GET /guilds/:id/stats?period=<today\|week\|month\|quarter\|year\|thisYear\|all>&user=<id>&game=<name>` | Game and voice totals, with game time over the period, plus sessions, rank and when it was last played where a person or game is chosen. Instead of `period`, `fromDate` and `toDate` (`YYYY-MM-DD`, both included, in the server's time zone) or `from` and `to` (milliseconds) pick any range; `since` and `until` in the answer say what was counted |
 | `GET /guilds/:id/settings` | Lists settings, the `groups` they're shown in (as in `/setup show`), channels, roles and time zones |
 | `PUT /guilds/:id/settings/:key` | Changes a setting: `{ "value": ... }` |
 | `DELETE /guilds/:id/settings/:key` | Puts a setting back to its default |
-| `GET /guilds/:id/health?range=<1h\|24h\|7d\|30d>` | What the [Health](#health) view shows over the range (24 h if left out): each part judged `fine`, `slow`, `bad` or `quiet`, every container, the points of each chart (`start`, `step` and `points` say when), and this server's slow list |
+| `GET /guilds/:id/health?range=<1h\|24h\|7d\|30d>` | What the [Health](#health) view shows over the range (24 h if left out): each part judged `fine`, `slow`, `bad` or `quiet`, what held things back (`verdict`), the machine, every container, the points of each chart (`start`, `step` and `points` say when), and this server's slow list. Instead of `range`, `fromDate` and `toDate` (`YYYY-MM-DD`) or `from` and `to` (milliseconds) pick any stretch of the last 30 days, with a point every 1, 5 or 15 minutes, or every 1, 3 or 6 hours, whichever keeps it to 240 points |
 | `GET /metrics` | The [performance numbers](#performance-numbers), in Prometheus's text format |
-| `POST /perf/web` | The web UI's report of itself every 30 seconds: `{ "memoryBytes": ..., "memoryLimitBytes": ..., "cpuSeconds": ..., "requests": { "2xx": 40 }, "botUnreachable": 0 }` |
+| `POST /perf/web` | The web UI's report of itself every 30 seconds: `{ "memoryBytes": ..., "memoryLimitBytes": ..., "cpuSeconds": ..., "stallSeconds": { "cpu": ..., "memory": ..., "io": ... }, "cpuPeriods": ..., "throttledPeriods": ..., "oomKills": ..., "requests": { "2xx": 40 }, "botUnreachable": 0 }`. The voice, music and loop containers answer `GET /stats` with the same usage |
 | `POST /perf/browser` | A browser's timings, which the web UI passes on about once a minute per open tab: `{ "via": "home" or "away", "device": "phone" or "computer", "requests": [["action" or "load", seconds, bot's seconds]], "page": { "firstByte": ..., "shown": ... }, "responses": [seconds], "quickResponses": 3 }` |
 
 ### Performance numbers
@@ -871,8 +875,9 @@ The bot keeps track of how it and its containers are doing, so a slow moment can
 
 - **Discord:** whether the bot is connected, the gateway's heartbeat round trip and reconnects, and how long each command, button and menu takes to get its first answer to Discord. Discord gives up after 3 seconds, and answers that came too late are counted.
 - **Playing:** how long a sound, a line of speech or a song takes from being asked for to being heard, including joining voice. A line is timed step by step: waiting behind other lines, the voice container saying it (and loading the voice, if it wasn't in memory), levelling and effects, and starting. A song is timed through its download, and whether the music container had it already. Also how long joining voice takes, voice connections that drop, and audio mixed late, which people hear as a stutter.
-- **The bot itself:** how late its timers run (event loop delay), how busy it is, and its JavaScript memory.
-- **Every container:** memory as `docker stats` counts it, its limit, and CPU. The bot asks the voice, music and loop containers on `GET /stats` every 30 seconds, and the web UI reports itself to the bot. A container that doesn't answer for 90 seconds is marked down.
+- **The bot itself:** how late its timers run (event loop delay), how busy it is, its JavaScript memory, and its garbage collection pauses.
+- **Every container:** memory as `docker stats` counts it, its limit, CPU, the time something in it waited for CPU, memory or the disk (Linux's pressure stall information), how often its own CPU limit held it back (the share of its 100 ms CPU periods it was throttled in), and processes killed for going over its memory limit. The bot asks the voice, music and loop containers on `GET /stats` every 30 seconds, and the web UI reports itself to the bot. A container that doesn't answer for 90 seconds is marked down.
+- **The machine they run on:** every 15 seconds the bot reads `/proc`, which a container shares with the machine: how busy its CPUs are, time spent waiting on the disk, CPU time the hypervisor gave to other machines, memory in use, swap in use and pages swapped a second, the time anything on it waited for CPU, memory or the disk, and the free space on the disk holding the bot's data. It covers every app on the machine, not just these containers.
 - **People's browsers:** each open web UI tab times how long taps take to be answered (split into the bot's part, from the `Server-Timing` header the web UI adds, and the network's), how long the page takes to open (its largest content, or the load event in Safari), and how long the page takes to visibly react to a tap or key press (Chrome, Edge and Firefox). It sends them about once a minute while it's seen, and once more as it closes. The web UI adds whether it came through Pangolin (away) or not (home), and the tab says phone or computer. Nothing in them says who it was. Live updates and uploads aren't timed.
 - **The web UI and the API:** the web UI's answers by status, requests the bot didn't answer, and how long the management API takes to answer, by area. Requests that wait for a change on purpose (live updates) are counted but not timed.
 
@@ -891,12 +896,14 @@ scrape_configs:
 
 #### Health
 
-Stats → **Health** in the web UI shows these numbers to anyone who can open it, over the last hour, 24 hours, 7 days or 30 days. It keeps up as each minute is kept. Everything but the slow list covers the whole bot, which every server it's in shares.
+Stats → **Health** in the web UI shows these numbers to anyone who can open it, over the last hour, 24 hours, 7 days or 30 days, or any days of the last 30 picked on a calendar. Dragging across a chart with a mouse looks closer at that stretch, and **Back** returns to the range before. A preset keeps up as each minute is kept. Everything but the slow list covers the whole bot, which every server it's in shares.
 
+- **What held it back?:** whether the machine was short of CPU, memory or disk, a container reached its own CPU or memory limit, or garbage collection paused the bot. If none of those, but something people waited on was slow, it says so: that's the bot's own work or what it waited on, like YouTube or Discord, and Slowest recently shows which step.
 - **Summary:** Discord, commands and buttons, sounds, speech, music, stutter, the bot, the web UI, and the web UI as people see it in their browsers, at home and away and on phones and computers, each marked **Fine**, **Slow** or **Bad** over the range. Speech is judged by lines of 300 characters or fewer, as a paragraph takes seconds more to make.
-- **Containers:** each one's memory against its limit, CPU, and any time it didn't answer.
+- **Containers:** each one's memory against its limit, CPU, waiting for resources, time held back by its CPU limit, processes killed for memory, and any time it didn't answer.
+- **The machine it runs on:** its cores, memory, swap and disk, with charts of its CPU (busy, waiting on the disk and taken by the host), memory in use, time waiting for each resource, and swapping.
 - **Web UI as people see it:** taps answered and the page opening, at home and away.
-- **Charts:** the 95th percentile of commands answered, sounds starting, speech made and songs starting, each with a dashed line where it stops being fine, then memory and CPU by container, Discord's ping with time away shaded, and the bot's lag. Point at one, or use the arrow keys, to read every line at that time, and **Show as a table** lists them.
+- **Charts:** the 95th percentile of commands answered, sounds starting, speech made and songs starting, each with a dashed line where it stops being fine, then memory, CPU and waiting for resources by container, Discord's ping with time away shaded, and the bot's lag. Point at one, or use the arrow keys, to read every line at that time, and **Show as a table** lists them. The charts are drawn by [Apache ECharts](https://echarts.apache.org) (Apache 2.0), and the calendar is [Cally](https://wicky.nillia.ms/cally/) (MIT), both built into `web/public` by `scripts/build-vendor.sh` with their licences in `web/vendor-licences`.
 - **Slowest recently:** this server's slow ones, slowest or newest first. Each shows its steps, with time spent waiting behind others in grey and left out of the ranking.
 
 | | Fine below | Bad from |
@@ -912,8 +919,18 @@ Stats → **Health** in the web UI shows these numbers to anyone who can open it
 | Taps answered in people's browsers, 95% within | 500 ms | 1.5 s |
 | The page opening, 95% within | 3 s | 6 s |
 | The page reacting to a tap, 95% within | 200 ms | 500 ms |
+| The machine's CPU busy, at its worst point | 80% | 95% |
+| The machine's CPU taken by the host, at its worst point | 5% | 15% |
+| The machine's memory in use, at its worst point | 85% | 95% |
+| Pages swapped a second, at its worst point | 100 | 1,000 |
+| Time something waited for CPU, at its worst point | 10% | 25% |
+| Time something waited for memory, at its worst point | 2% | 10% |
+| Time something waited for the disk, at its worst point | 10% | 30% |
+| The data disk, full | 85% | 95% |
+| A container held back by its CPU limit, at its worst point | 5% | 20% |
+| The bot paused for garbage collection, at its worst point | 3% | 10% |
 
-Between the two is **Slow**. Discord is **Slow** after 2 minutes away in the range, and **Bad** while it's away. A container is **Bad** while it isn't answering, and **Slow** if it went down or its memory reached 90% at any point in the range. Commands are **Slow** if any failed or came too late, and speech if any line failed.
+Between the two is **Slow**. A worst point is the worst of the chart's points, each an average over its minute, 15 minutes, hour or 6 hours. Discord is **Slow** after 2 minutes away in the range, and **Bad** while it's away. A container is **Bad** while it isn't answering or if a process in it was killed for memory, and **Slow** if it went down, its memory reached 90% at any point in the range, or its CPU limit held it back. A process killed for memory is counted only while the container keeps running: when it's the container's main process, the container restarts and shows as down instead. Commands are **Slow** if any failed or came too late, and speech if any line failed.
 
 ## Setup
 

@@ -1052,6 +1052,8 @@ main {
   flex-wrap: wrap;
   align-items: center;
   gap: var(--space-2) var(--space-3);
+  /* A row that scrolls, like the range presets, stays within the page */
+  min-width: 0;
 }
 
 .toolbar input[type='search'] {
@@ -4663,64 +4665,50 @@ video.link-media {
   font-weight: 500;
 }
 
-.line-plot {
-  height: 140px;
-  border-bottom: 1px solid var(--control-line);
+.echart-box {
+  position: relative;
+  border-radius: var(--radius-sm);
   cursor: crosshair;
   touch-action: pan-y;
 }
 
-.line-plot:focus-visible {
+.echart-box:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
 
-.line-plot svg {
-  display: block;
-  overflow: visible;
-}
-
-.line-path {
-  fill: none;
-  stroke-width: 2;
-  stroke-linejoin: round;
-  stroke-linecap: round;
-}
-
-.line-grid {
-  stroke: var(--line);
-  stroke-width: 1;
-}
-
-.line-limit {
-  stroke: var(--muted);
-  stroke-width: 1;
-  stroke-dasharray: 4 4;
-}
-
-.line-band {
-  fill: var(--bad-bg);
-}
-
-.line-cross {
+/* The stretch being dragged across, to look at closer */
+.chart-pick {
   position: absolute;
   top: 0;
   bottom: 0;
-  width: 1px;
-  background: var(--muted);
+  border-inline: 1px solid var(--accent);
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
   pointer-events: none;
 }
 
-/* Over the plot's top, clear of the readout's line */
-.line-chart .axis-top {
-  margin-bottom: 2px;
+.chart-tooltip {
+  white-space: nowrap;
+  pointer-events: none;
 }
 
-.line-tip {
-  top: 18px;
+.chart-empty {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+  font-size: var(--text-sm);
+  pointer-events: none;
+}
+
+.echart-tip {
   display: grid;
   gap: 2px;
-  padding: 6px 10px;
+}
+
+.line-tip-before {
+  opacity: 0.75;
 }
 
 .line-tip-time {
@@ -4772,8 +4760,149 @@ video.link-media {
   opacity: 0.3;
 }
 
-.line-chart .axis-x span:nth-child(2) {
-  text-align: center;
+.line-chart .axis-x {
+  justify-content: center;
+}
+
+.range-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  max-width: 100%;
+}
+
+.range-presets {
+  flex-wrap: nowrap;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.range-presets button {
+  flex: none;
+  white-space: nowrap;
+}
+
+.range-compare[aria-pressed='true'] {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface));
+}
+
+.range-calendar {
+  display: block;
+  margin-top: var(--space-2);
+}
+
+.range-months {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--space-5);
+}
+
+.range-calendar::part(header) {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--space-2);
+}
+
+.range-calendar::part(button) {
+  display: inline-grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border: 1px solid var(--control-line);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: var(--text);
+}
+
+.range-calendar::part(button):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.range-calendar::part(button):disabled {
+  opacity: 0.4;
+}
+
+.range-calendar::part(heading) {
+  font-weight: 600;
+}
+
+calendar-month::part(heading) {
+  margin-bottom: var(--space-1);
+  font-weight: 500;
+}
+
+calendar-month::part(day) {
+  width: 40px;
+  height: 40px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--text);
+  font-size: var(--text-md);
+}
+
+calendar-month::part(day):hover {
+  background: var(--raised);
+}
+
+calendar-month::part(day):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+calendar-month::part(today) {
+  font-weight: 700;
+  text-decoration: underline;
+}
+
+calendar-month::part(range-inner) {
+  border-radius: 0;
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+calendar-month::part(range-start),
+calendar-month::part(range-end),
+calendar-month::part(selected) {
+  background: var(--accent-fill);
+  color: var(--accent-text);
+}
+
+calendar-month::part(disallowed) {
+  opacity: 0.35;
+}
+
+calendar-month::part(outside) {
+  color: var(--muted);
+}
+
+.health-verdict.slow {
+  border-color: var(--warn);
+}
+
+.health-verdict.bad {
+  border-color: var(--bad);
+}
+
+.health-causes {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.health-causes li {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
 }
 
 .line-chart th {
