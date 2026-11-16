@@ -5,7 +5,7 @@ import { config } from './config.ts';
 
 mkdirSync(config.dataDir, { recursive: true });
 
-const DB_FILE = path.join(config.dataDir, 'bot.db');
+export const DB_FILE = path.join(config.dataDir, 'bot.db');
 // 2: every per-server table has a guild_id. 3: guild_settings is key/value
 const SCHEMA_VERSION = 3;
 
