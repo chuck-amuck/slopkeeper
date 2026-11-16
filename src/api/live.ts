@@ -32,6 +32,8 @@ export const updates: Record<FeedName, (guild: Guild) => object | Promise<object
   activity: (guild) => activityList(guild),
   sounds: (guild) => soundsNow(guild),
   volumes: (guild) => volumesOf(guild),
+  // Only that there's more: the Health view asks for the range it shows
+  health: () => ({}),
 };
 
 /** How loud the bot plays each thing, for everyone in the server. Null for what isn't set up, so there's no slider for it */

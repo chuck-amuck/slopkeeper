@@ -681,7 +681,7 @@ A page in [`web/`](web) that runs as a second container next to the bot, for you
 - **Game nights:** plan a night, see what's coming up and who still needs to add each other on Steam, answer **In**, **Maybe** or **Can't**, edit or cancel one, or stop a repeating one. Editing there can also change the voice channel. Times are in your own time zone with how long until, plus the server's time when that's different. Someone the page doesn't know picks who they're answering as once, and that's remembered on the device. Cancelling says how many people who are in will be told.
 - **Games:** the game library, with who has each game, who needs it, who wants it and any sale. Add games from a searchable list of what members own on Steam, or by name or store link. **Steam accounts** links, changes and unlinks anyone's Steam account, says who shares a Steam family, and refreshes libraries. Each game's **Manage** has its details (player limit and Steam link, kept with **Save**), **Never suggest this** to hide it from `/whatdoweplay` or let it back in, and who owns or wants it, which saves as you tick, with **Remove game** at the bottom. Ownership from a Steam library is locked. Sort by **Recently played** (the default) or **Most played**, which go by time in voice here as Stats counts it, or **A–Z**. Games nobody has played go last, and each played game says how long and when it was last played. The order is remembered on each device.
 - **Pick a game:** choose a voice channel, or tick people to plan before anyone's in voice (only people whose games the bot knows are listed, as anyone else would block every game), and see the games everyone owns and those one purchase away, using the same rules as `/whatdoweplay`. Each game shows time played here, Steam hours, its last two weeks on Steam and when it was last played, in total and per person, plus who'd play on a family copy. Opening one shows how many are playing it on Steam right now and its latest patch, and **Achievements** compares everyone's progress with goals nobody has yet. Sort them, with **Hot right now** for the last two weeks, search them, or filter to co-op, PvP or Steam Deck. **Pick for us** chooses one at random, and **Start a vote** posts the usual `/gamevote` card in a channel. Both go by the search and filters, so a vote offers only the games shown. Anyone in a joinable Steam lobby shows at the top with a link to join.
-- **Stats:** **Overview** has game and voice time, overall or for one person or game, with sessions, rank and when it was last played. **Compare** is `/compare` with every game two people both own and their achievements in any of them, between people with time in voice or a game played there, and **Monthly recap** is `/recap`.
+- **Stats:** **Overview** has game and voice time, overall or for one person or game, with sessions, rank and when it was last played. **Compare** is `/compare` with every game two people both own and their achievements in any of them, between people with time in voice or a game played there, and **Monthly recap** is `/recap`. **Health** shows how the bot and its containers are doing: see [Health](#health).
 - **Discord's soundboard:** on Soundboard → Manage, see what fills the slots, play or save any sound, and swap sounds between Discord and the library.
 - **Merging games:** on Stats, Merge games puts different spellings of a game together, and Separate on a clicked game takes one back out.
 - **Activity:** a history of changes to sounds, games, pings, Steam accounts, music, settings and game nights, made here or in Discord, and who made them.
@@ -805,7 +805,7 @@ It applies the same rules as `/sound` and `/setup`, and every request needs an `
 | `POST /guilds/:id/stop` | Stops every sound and any spoken lines waiting, leaving the music playing. Returns `musicPlaying` |
 | `GET /guilds/:id/playing` | The sounds and speech playing, not the music: `version` and `playing` (`id`, `name`, `kind` sound or speech, `loop`, `started` once it's heard, `elapsedMs`). With `?after=<version>` it waits up to 25 s for a change |
 | `POST /guilds/:id/playing/:playingId/stop` | Stops one of them. 404 if it's already finished |
-| `GET /guilds/:id/updates?playing=&music=&voice=&nights=&activity=&sounds=&volumes=` | Waits up to 25 s until any part asked for has a version other than the one given (empty for none yet), then answers with only those that changed, each with its new `version`: `playing` as from `/playing`, `music` as from `/music`, `voice` as from `/voice`, `nights` as from `/game-nights`, `activity` as the newest page of `/activity`, `sounds` as from `/sounds` with the bin from `/deleted-sounds` as `bin`, and `volumes` as from `/volumes`. Ask for any of them. Answers `{}` if nothing changed. The page keeps up through this, one request per tab |
+| `GET /guilds/:id/updates?playing=&music=&voice=&nights=&activity=&sounds=&volumes=&health=` | Waits up to 25 s until any part asked for has a version other than the one given (empty for none yet), then answers with only those that changed, each with its new `version`: `playing` as from `/playing`, `music` as from `/music`, `voice` as from `/voice`, `nights` as from `/game-nights`, `activity` as the newest page of `/activity`, `sounds` as from `/sounds` with the bin from `/deleted-sounds` as `bin`, `volumes` as from `/volumes`, and `health` with only its `version`, which changes as each minute of [performance numbers](#performance-numbers) is kept. Ask for any of them. Answers `{}` if nothing changed. The page keeps up through this, one request per tab |
 | `GET /guilds/:id/say` | Whether text to speech is `on`, the `voices` (each with its `group`: Characters, Accents or Effects), the default `voice`, the `longest` line and the saved `phrases`. The speech volume is in `/volumes` |
 | `GET /guilds/:id/say/preview?voice=<id>&text=<text>` | The line in that voice as a WAV file, for the page to play to whoever asked; a blank `text` has the voice say its name. At most one every 2 seconds and 12 a minute per server |
 | `POST /guilds/:id/say` | Reads out `text` in `channelId`, with an optional `voice`. Answers once the line starts |
@@ -860,6 +860,7 @@ It applies the same rules as `/sound` and `/setup`, and every request needs an `
 | `GET /guilds/:id/settings` | Lists settings, the `groups` they're shown in (as in `/setup show`), channels, roles and time zones |
 | `PUT /guilds/:id/settings/:key` | Changes a setting: `{ "value": ... }` |
 | `DELETE /guilds/:id/settings/:key` | Puts a setting back to its default |
+| `GET /guilds/:id/health?range=<1h\|24h\|7d\|30d>` | What the [Health](#health) view shows over the range (24 h if left out): each part judged `fine`, `slow`, `bad` or `quiet`, every container, the points of each chart (`start`, `step` and `points` say when), and this server's slow list |
 | `GET /metrics` | The [performance numbers](#performance-numbers), in Prometheus's text format |
 | `POST /perf/web` | The web UI's report of itself every 30 seconds: `{ "memoryBytes": ..., "memoryLimitBytes": ..., "cpuSeconds": ..., "requests": { "2xx": 40 }, "botUnreachable": 0 }` |
 
@@ -873,9 +874,9 @@ The bot keeps track of how it and its containers are doing, so a slow moment can
 - **Every container:** memory as `docker stats` counts it, its limit, and CPU. The bot asks the voice, music and loop containers on `GET /stats` every 30 seconds, and the web UI reports itself to the bot. A container that doesn't answer for 90 seconds is marked down.
 - **The web UI and the API:** the web UI's answers by status, requests the bot didn't answer, and how long the management API takes to answer, by area. Requests that wait for a change on purpose (live updates) are counted but not timed.
 
-They're kept a minute at a time for 2 days, then 15 minutes at a time for 30 days, about 25 MB in all. The [daily backups](#hosting-the-bot) leave them out. Anything slow is kept for 30 days with how long each step took, up to the newest 500: a command that took 2 seconds or more to answer, a sound 2 seconds to start, a line 4, a song 8, or a page's data 2. Speech keeps its voice and length, never its words.
+They're kept a minute at a time for 2 days, then 15 minutes at a time for 30 days, about 25 MB in all. The [daily backups](#hosting-the-bot) leave them out. Anything slow is kept for 30 days with how long each step took, up to the newest 500: a command that took 2 seconds or more to answer, a sound 2 seconds to start, a line 4 (plus 3 for each 1,000 characters), a song 8, or a page's data 2. Time spent waiting behind other lines doesn't count toward that. Speech keeps its voice and length, never its words.
 
-`GET /metrics` answers in Prometheus's text format, for Prometheus and Grafana if you run them, though nothing needs them. Every name starts with `slopkeeper_`, in seconds and bytes. A Prometheus on the same container network can scrape it with the API token:
+`GET /metrics` answers in Prometheus's text format, for Prometheus and Grafana if you run them, though nothing needs them. Every name starts with `slopkeeper_`, in seconds and bytes. Speech making is timed by `length`: `short` (300 characters or fewer) or `long`; before that label it was one series. A Prometheus on the same container network can scrape it with the API token:
 
 ```yaml
 scrape_configs:
@@ -885,6 +886,28 @@ scrape_configs:
     static_configs:
       - targets: ["slopkeeper:8787"]
 ```
+
+#### Health
+
+Stats → **Health** in the web UI shows these numbers to anyone who can open it, over the last hour, 24 hours, 7 days or 30 days. It keeps up as each minute is kept. Everything but the slow list covers the whole bot, which every server it's in shares.
+
+- **Summary:** Discord, commands and buttons, sounds, speech, music, stutter, the bot and the web UI, each marked **Fine**, **Slow** or **Bad** over the range. Speech is judged by lines of 300 characters or fewer, as a paragraph takes seconds more to make.
+- **Containers:** each one's memory against its limit, CPU, and any time it didn't answer.
+- **Charts:** the 95th percentile of commands answered, sounds starting, speech made and songs starting, each with a dashed line where it stops being fine, then memory and CPU by container, Discord's ping with time away shaded, and the bot's lag. Point at one, or use the arrow keys, to read every line at that time, and **Show as a table** lists them.
+- **Slowest recently:** this server's slow ones, slowest or newest first. Each shows its steps, with time spent waiting behind others in grey and left out of the ranking.
+
+| | Fine below | Bad from |
+|---|---|---|
+| Commands answered, 95% within | 1.5 s | 3 s |
+| Sounds start, 95% within | 1 s | 3 s |
+| Speech made (300 characters or fewer), 95% within | 2.5 s | 5 s |
+| Music starts, 95% within | 8 s | 15 s |
+| Stutter: audio mixed late | 0.5% | 2% |
+| Bot lag, at its worst point | 100 ms | 500 ms |
+| A container's memory now, of its limit | 80% | 90% |
+| Web UI answers that failed or found the bot gone | 1% | 5% |
+
+Between the two is **Slow**. Discord is **Slow** after 2 minutes away in the range, and **Bad** while it's away. A container is **Bad** while it isn't answering, and **Slow** if it went down or its memory reached 90% at any point in the range. Commands are **Slow** if any failed or came too late, and speech if any line failed.
 
 ## Setup
 

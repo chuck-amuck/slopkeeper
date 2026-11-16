@@ -1,6 +1,7 @@
 import { getVoiceConnections } from '@discordjs/voice';
 import { Events, Status, type Client, type Interaction } from 'discord.js';
 import { monitorEventLoopDelay, performance } from 'node:perf_hooks';
+import { feeds } from '../changes.ts';
 import { config } from '../config.ts';
 import { db, transaction } from '../db.ts';
 import * as perf from '../perf.ts';
@@ -11,14 +12,15 @@ import type { Feature } from '../types.ts';
  * and loop containers for their memory and CPU every 30, hears from the web UI, and keeps it all a minute at a time
  */
 
-const SAMPLE_MS = 15_000;
-const POLL_MS = 30_000;
+/** How often the bot looks at itself, and asks the other containers how they are */
+export const SAMPLE_MS = 15_000;
+export const POLL_MS = 30_000;
 const POLL_TIMEOUT_MS = 5_000;
 /** The web UI reports every 30 seconds; missing three in a row counts as down */
 const WEB_STALE_MS = 95_000;
-const ROLLUP_MS = 15 * 60_000;
-const MINUTES_KEPT_MS = 2 * 86_400_000;
-const ROLLUPS_KEPT_MS = 30 * 86_400_000;
+export const ROLLUP_MS = 15 * 60_000;
+export const MINUTES_KEPT_MS = 2 * 86_400_000;
+export const ROLLUPS_KEPT_MS = 30 * 86_400_000;
 const SLOW_KEPT = 500;
 /** A command, button or menu that took this long to answer is kept for a look, as Discord gives up at 3 */
 const SLOW_ANSWER_S = 2;
@@ -36,6 +38,8 @@ export function store(all = false) {
     for (const m of minutes) insertMinute.run(m.at, 1, m.name, JSON.stringify(m.labels), m.count, m.sum, m.max, m.buckets && JSON.stringify(m.buckets));
     for (const s of slow) insertSlow.run(s.at, s.guildId, s.what, s.seconds, JSON.stringify(s.steps), JSON.stringify(s.detail));
   });
+  // A Health view on screen fetches again once there's another minute to show
+  if (minutes.length) feeds.health.changedEverywhere();
 }
 
 interface MinuteFromDb {

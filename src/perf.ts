@@ -23,7 +23,7 @@ const METRICS = {
   voice_disconnects_total: ['counter', 'Times a voice connection dropped'],
   audio_start_seconds: ['histogram', 'From asking to play to it being heard, joining voice included: sound, speech (once made) or music (once downloaded)'],
   speech_seconds: ['histogram', 'From a line being asked for to it being heard, queue and making included'],
-  speech_make_seconds: ['histogram', 'Making a line that wasn’t made a moment ago: the voice container, then levelling and effects'],
+  speech_make_seconds: ['histogram', 'Making a line that wasn’t made a moment ago: the voice container, then levelling and effects, by length: short (300 characters or fewer) or long'],
   speech_failures_total: ['counter', 'Lines that couldn’t be made or played'],
   voice_synth_seconds: ['histogram', 'The voice container’s own time to say a line, by voice'],
   voice_model_load_seconds: ['histogram', 'The voice container loading a voice model it didn’t have in memory: its first line since starting, or since being let go'],
@@ -228,6 +228,13 @@ export function serverTiming(header: string | null | undefined): Map<string, num
   return found;
 }
 
+/** A step spent waiting behind something else, which doesn't count against the bot */
+export const WAITING = 'waiting';
+
+/** How long something took leaving out its waiting, never under nothing */
+export const ownTime = (seconds: number, steps: readonly Step[]) =>
+  Math.max(0, seconds - steps.reduce((sum, [name, s, of]) => (name === WAITING && !of ? sum + s : sum), 0));
+
 /**
  * Times something people wait for, step by step: `step` closes the step that's been going since the last one. `end`
  * notes the whole time, and keeps the steps if it took `slowAfter` seconds or more
@@ -263,13 +270,16 @@ export class Trace {
     this.steps.push([name, seconds, of]);
   }
 
-  /** Notes the whole time, once. Returns it, in seconds */
+  /**
+   * Notes the whole time, once. Returns it, in seconds. Whether it was slow leaves out time spent waiting behind
+   * others, like a line queued behind two more, as that's the queue rather than the bot being slow
+   */
   end(): number {
     const seconds = (performance.now() - this.start) / 1000;
     if (this.ended) return seconds;
     this.ended = true;
     time(this.metric, seconds, this.labels);
-    if (seconds >= this.slowAfter) slow({ guildId: this.guildId, what: this.what, seconds, steps: this.steps, detail: this.detail });
+    if (ownTime(seconds, this.steps) >= this.slowAfter) slow({ guildId: this.guildId, what: this.what, seconds, steps: this.steps, detail: this.detail });
     return seconds;
   }
 }

@@ -1,4 +1,5 @@
 import { achievementsView } from './achievements.js';
+import { health } from './health.js';
 import { ago, api, attempt, duration, el, formProblem, icon, notice, openDialog, recall, remember, request, state, toast } from './lib.js';
 
 const PERIODS = [
@@ -87,6 +88,7 @@ const VIEWS = [
   ['overview', 'Overview', overview],
   ['compare', 'Compare', compare],
   ['recap', 'Monthly recap', recap],
+  ['health', 'Health', health],
 ];
 
 export function renderStats(main) {

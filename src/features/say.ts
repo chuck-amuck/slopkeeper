@@ -269,6 +269,8 @@ const LINK = /https?:\/\/\S+/g;
 const LONGEST_TYPED = 6000;
 // A preview only needs to show how the voice sounds, not say a whole paragraph
 const LONGEST_PREVIEW = 300;
+/** Lines up to this long are timed apart from longer ones, which take seconds more to make and would hide a slow voice container */
+const SHORT_LINE = 300;
 // The activity log shows how a long line starts
 const LOGGED_CHARS = 200;
 const UNAVAILABLE = 'The voice isn’t available right now. Try again in a moment.';
@@ -453,7 +455,7 @@ async function lineAudio(text: string, voice: Voice, speed: number, signal: Abor
     // finished and kept, as it's often said again straight after
     const from = performance.now();
     made = makeLine(text, voice, speed, trace).then((audio) => {
-      perf.time('speech_make_seconds', (performance.now() - from) / 1000);
+      perf.time('speech_make_seconds', (performance.now() - from) / 1000, { length: text.length > SHORT_LINE ? 'long' : 'short' });
       keepLine(key, audio);
       return audio;
     });
@@ -513,7 +515,7 @@ export class TooSoon extends Error {
 async function sayLine(queue: Queue, { channel, text, voice, started, trace }: Line) {
   const guildId = channel.guild.id;
   const cancel = (queue.cancel = new AbortController());
-  trace.step('waiting');
+  trace.step(perf.WAITING);
   folder ??= mkdtempSync(path.join(tmpdir(), 'slopkeeper-say-'));
   // Each line has its own file, as the mixer takes a file it's already playing to be a restart
   const file = path.join(folder, `${randomUUID()}.wav`);

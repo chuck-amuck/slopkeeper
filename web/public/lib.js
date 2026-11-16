@@ -72,6 +72,7 @@ const ICONS = {
   smile: '<circle cx="12" cy="12" r="8.5"/><path d="M8.5 14a4.5 4.5 0 0 0 7 0"/><g fill="currentColor" stroke="none"><circle cx="9" cy="10" r="1.2"/><circle cx="15" cy="10" r="1.2"/></g>',
   trash: '<path d="M5 7h14M10 7V4.5h4V7M7 7l1 12.5h8L17 7"/>',
   refresh: '<path d="M19 12a7 7 0 1 1-2-4.9"/><path d="M19.5 4.5v4h-4"/>',
+  alert: '<path d="M12 4 2.5 20h19L12 4z"/><path d="M12 10v4.5"/><path d="M12 17.2v.3"/>',
   infinity: '<path d="M12 12c-2-2.7-3.6-4-5.2-4a4 4 0 0 0 0 8c1.6 0 3.2-1.3 5.2-4zm0 0c2 2.7 3.6 4 5.2 4a4 4 0 0 0 0-8c-1.6 0-3.2 1.3-5.2 4z"/>',
 };
 

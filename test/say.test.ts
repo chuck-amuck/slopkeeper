@@ -131,7 +131,7 @@ test('a slow line keeps how long each step took, with its voice and length but n
   const text = perf.prometheus();
   assert.match(text, /^slopkeeper_speech_seconds_count 1$/m);
   assert.match(text, /^slopkeeper_voice_synth_seconds_sum\{voice="hal"\} 0.8125$/m);
-  assert.match(text, /^slopkeeper_speech_make_seconds_count 1$/m);
+  assert.match(text, /^slopkeeper_speech_make_seconds_count\{length="short"\} 1$/m);
   assert.match(text, /^slopkeeper_audio_start_seconds_count\{kind="speech"\} 1$/m);
   assert.doesNotMatch(text, /voice_model_load_seconds_count/, 'a model already loaded took no loading');
 });
