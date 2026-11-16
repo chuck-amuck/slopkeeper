@@ -89,7 +89,9 @@ export function createApi(client: Client<true>, token: string): Server {
     res.once('finish', () => answered(req, res.statusCode, (performance.now() - started) / 1000));
     const reply = (status: number, body: unknown) => {
       // A refused upload may not have been read to the end, so the connection can't be reused
-      res.writeHead(status, { 'content-type': 'application/json', ...(status >= 400 && { connection: 'close' }) }).end(JSON.stringify(body));
+      // With its length, so the web UI can tell an answer worth compressing
+      const text = JSON.stringify(body);
+      res.writeHead(status, { 'content-type': 'application/json', 'content-length': Buffer.byteLength(text), ...(status >= 400 && { connection: 'close' }) }).end(text);
     };
     if (!authorized(req, token)) return reply(401, { error: 'Unauthorized.' });
     const who = signedIn(req);

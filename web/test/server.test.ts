@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { readdirSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { createServer, request, type IncomingHttpHeaders } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { after, before, beforeEach, mock, test } from 'node:test';
@@ -16,6 +16,7 @@ interface Seen {
 }
 
 let seen: Seen[] = [];
+const BIG = JSON.stringify({ sounds: Array.from({ length: 400 }, (_, i) => ({ name: `sound ${i}`, volume: 1, plays: i })) });
 /** Settles once the web UI lets go of a request the bot is holding, like one waiting for what's playing to change */
 let held: Promise<void> | null = null;
 const bot = createServer((req, res) => {
@@ -28,8 +29,9 @@ const bot = createServer((req, res) => {
       return;
     }
     if (req.url === '/guilds/1/refused') return res.writeHead(400, { 'content-type': 'application/json' }).end('{"error":"No."}');
+    if (req.url === '/guilds/1/big') return res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' }).end(BIG);
     if (req.url === '/guilds/1/audio') return res.writeHead(200, { 'content-type': 'audio/wav', 'cache-control': 'no-store', 'x-private': 'leak' }).end('RIFF');
-    res.writeHead(200, { 'content-type': 'application/json' }).end('{"ok":true}');
+    res.writeHead(200, { 'content-type': 'application/json', 'content-length': 11 }).end('{"ok":true}');
   });
 });
 
@@ -110,9 +112,65 @@ test('the page carries its version, which every answer repeats so an open tab ca
   const version = page.match(/<meta name="slopkeeper-version" content="([\w-]+)"/)?.[1];
   assert.ok(version);
   // The scripts app.js loads straight away are fetched together; the emoji list waits for a picker
-  assert.match(page, /<link rel="modulepreload" href="\/lib\.js"/);
+  assert.match(page, /<link rel="modulepreload" href="\/lib\.js\?v=[\w-]+"/);
   assert.doesNotMatch(page, /emoji\.js/);
   for (const path of ['/app.js', '/api/guilds', '/nowhere']) assert.equal((await fetch(base + path)).headers.get('x-slopkeeper-version'), version, path);
+});
+
+test('scripts and the stylesheet have addresses with their version, which browsers keep for good', async () => {
+  const page = await (await fetch(`${base}/`)).text();
+  const app = page.match(/src="(\/app\.js\?v=[\w-]+)"/)?.[1];
+  const css = page.match(/href="(\/style\.css\?v=[\w-]+)"/)?.[1];
+  assert.ok(app && css);
+  for (const path of [app, css]) assert.equal((await fetch(base + path)).headers.get('cache-control'), 'public, max-age=31536000, immutable', path);
+  // The page itself, an old version and no version are asked about every time
+  for (const path of ['/', '/app.js', '/app.js?v=old', '/style.css?v=old', '/icon.svg']) assert.equal((await fetch(base + path)).headers.get('cache-control'), 'no-cache', path);
+  // Every script it loads is named with the same versions the page preloads, so the browser uses what it fetched
+  const script = await (await fetch(base + app)).text();
+  const lib = script.match(/'\.\/lib\.js\?v=([\w-]+)'/)?.[1];
+  assert.ok(lib);
+  assert.match(page, new RegExp(`href="/lib\\.js\\?v=${lib}"`));
+  assert.doesNotMatch(script, /['"]\.\/[\w-]+\.js['"]/, 'no script named without its version');
+  // Loaded only when needed, and versioned all the same
+  const picker = await (await fetch(`${base}/emojipicker.js`)).text();
+  assert.match(picker, /import\('\.\/emoji\.js\?v=[\w-]+'\)/);
+});
+
+test('scripts name each other one way, so each loads once, and those loaded on a click import nothing', () => {
+  const folder = new URL('../public/', import.meta.url);
+  const scripts = readdirSync(folder).filter((name) => name.endsWith('.js') && !name.startsWith('vendor-'));
+  const later = new Set<string>();
+  for (const name of scripts) {
+    const text = readFileSync(new URL(name, folder), 'utf8');
+    // Only './name.js' in quotes is versioned; any other way of naming a script would load a second copy of it
+    assert.doesNotMatch(text, /\bimport\s*\(\s*[^'"\s]/, `${name}: import() with a computed name`);
+    assert.doesNotMatch(text, /^(?:import|export)\b[^'"]*\bfrom\s*['"](?!\.\/)/m, `${name}: an import not starting ./`);
+    for (const [, loaded] of text.matchAll(/\bimport\s*\(\s*['"]\.\/([\w-]+\.js)['"]/g)) later.add(loaded);
+  }
+  assert.ok(later.size);
+  for (const name of later) assert.doesNotMatch(readFileSync(new URL(name, folder), 'utf8'), /['"]\.\/[\w-]+\.js['"]/, `${name} is loaded on a click, so it can't import another script`);
+});
+
+test('large JSON from the bot is compressed on its way through; small answers and audio aren’t', async () => {
+  const cookie = await login();
+  const big = await fetch(`${base}/api/guilds/1/big`, { headers: { cookie, 'accept-encoding': 'br, gzip' } });
+  assert.equal(big.headers.get('content-encoding'), 'br');
+  assert.match(big.headers.get('vary') ?? '', /accept-encoding/);
+  assert.equal(big.headers.get('content-length'), null);
+  assert.match(big.headers.get('server-timing') ?? '', /bot;dur=/);
+  assert.equal(await big.text(), BIG);
+  const gzip = await fetch(`${base}/api/guilds/1/big`, { headers: { cookie, 'accept-encoding': 'gzip' } });
+  assert.equal(gzip.headers.get('content-encoding'), 'gzip');
+  assert.equal(await gzip.text(), BIG);
+  const plain = await fetch(`${base}/api/guilds/1/big`, { headers: { cookie, 'accept-encoding': 'identity' } });
+  assert.equal(plain.headers.get('content-encoding'), null);
+  assert.equal(await plain.text(), BIG);
+  assert.match(plain.headers.get('vary') ?? '', /accept-encoding/, 'it could have been compressed');
+  for (const path of ['/api/guilds/1/ok', '/api/guilds/1/audio']) {
+    const res = await fetch(base + path, { headers: { cookie, 'accept-encoding': 'br, gzip' } });
+    assert.equal(res.headers.get('content-encoding'), null, path);
+    await res.arrayBuffer();
+  }
 });
 
 test('only serves its own assets', async () => {

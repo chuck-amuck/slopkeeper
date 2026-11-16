@@ -1,8 +1,8 @@
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import { readdirSync, readFileSync } from 'node:fs';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
-import { Readable, Transform } from 'node:stream';
-import { brotliCompressSync, constants, gzipSync } from 'node:zlib';
+import { pipeline, Readable, Transform } from 'node:stream';
+import { brotliCompressSync, constants, createBrotliCompress, createGzip, gzipSync } from 'node:zlib';
 import { answered, counts } from './stats.ts';
 
 const SESSION_DAYS = 30;
@@ -60,10 +60,46 @@ function staticImports(file: string, found = new Set<string>()): Set<string> {
   return found;
 }
 
-const PRELOADS = [...staticImports('app.js')].map((name) => `<link rel="modulepreload" href="/${name}" />`).join('\n    ');
+// Read before the addresses in the scripts carry versions
+const PRELOADED = [...staticImports('app.js')];
+
+// A script's other scripts, as it names them: './lib.js', in an import, an export or an import()
+const SCRIPT_NAME = /(['"])\.\/([\w-]+\.js)\1/g;
+const scriptsIn = (file: string) => [...sources.get(`/${file}`)!.toString().matchAll(SCRIPT_NAME)].map(([, , name]) => name).filter((name) => sources.has(`/${name}`));
+
+/**
+ * Each script's and the stylesheet's version, which its address carries so a browser can keep it for good. A script's
+ * covers every script it loads, however far down, since a change to one of those changes the addresses it names
+ */
+const versions = new Map<string, string>();
+const own = new Map(FILES.map(([path]) => [path, hash(sources.get(path)!)]));
+for (const [path, file, type] of FILES) {
+  if (type === 'css') versions.set(path, own.get(path)!);
+  if (type !== 'js') continue;
+  const all = new Set([file]);
+  for (const name of all) for (const next of scriptsIn(name)) all.add(next);
+  versions.set(path, hash(...[...all].sort().map((name) => Buffer.from(own.get(`/${name}`)!))));
+}
+const versioned = (path: string) => `${path}?v=${versions.get(path)}`;
+for (const [path, , type] of FILES) {
+  if (type !== 'js') continue;
+  sources.set(path, Buffer.from(sources.get(path)!.toString().replace(SCRIPT_NAME, (whole, quote, name) => (versions.has(`/${name}`) ? `${quote}.${versioned(`/${name}`)}${quote}` : whole))));
+}
+
+// Caught at start rather than quietly loading the page's own files unversioned
+for (const name of ['href="/style.css"', 'src="/app.js"']) if (!sources.get('/')!.toString().includes(name)) throw new Error(`index.html no longer has ${name}`);
+
+const PRELOADS = PRELOADED.map((name) => `<link rel="modulepreload" href="${versioned(`/${name}`)}" />`).join('\n    ');
 sources.set(
   '/',
-  Buffer.from(sources.get('/')!.toString().replace('</head>', `  <meta name="slopkeeper-version" content="${VERSION}" />\n    ${PRELOADS}\n  </head>`)),
+  Buffer.from(
+    sources
+      .get('/')!
+      .toString()
+      .replace('href="/style.css"', `href="${versioned('/style.css')}"`)
+      .replace('src="/app.js"', `src="${versioned('/app.js')}"`)
+      .replace('</head>', `  <meta name="slopkeeper-version" content="${VERSION}" />\n    ${PRELOADS}\n  </head>`),
+  ),
 );
 
 interface Asset {
@@ -88,17 +124,24 @@ function asset(body: Buffer, type: keyof typeof CONTENT_TYPES): Asset {
 }
 const ASSETS: Record<string, Asset> = Object.fromEntries(FILES.map(([path, , type]) => [path, asset(sources.get(path)!, type)]));
 
-/** The best encoding the browser takes that's smaller, or none */
-function encoding(req: IncomingMessage, { br, gzip }: Asset): 'br' | 'gzip' | undefined {
-  const accepted = new Set(
+// Smaller answers fit in a packet or two either way
+const MIN_COMPRESSED = 1024;
+
+/** The encodings the browser takes */
+const acceptedBy = (req: IncomingMessage) =>
+  new Set(
     (header(req, 'accept-encoding') ?? '')
       .split(',')
       .map((part) => part.trim().split(';'))
       .filter(([, q]) => !q || !/^q=0(\.0*)?$/.test(q.trim()))
       .map(([name]) => name.trim().toLowerCase()),
   );
-  if (br && accepted.has('br')) return 'br';
-  if (gzip && accepted.has('gzip')) return 'gzip';
+
+/** The best encoding the browser takes, of those on offer: brotli, then gzip. Browsers don't rank the two */
+function encoding(req: IncomingMessage, offered: { br?: unknown; gzip?: unknown } = { br: true, gzip: true }): 'br' | 'gzip' | undefined {
+  const accepted = acceptedBy(req);
+  if (offered.br && accepted.has('br')) return 'br';
+  if (offered.gzip && accepted.has('gzip')) return 'gzip';
 }
 
 const HEADERS = {
@@ -262,10 +305,25 @@ export function createWeb({ password, apiToken, botUrl, proxySecret }: WebOption
       const value = answer.headers.get(name);
       if (value) headers[name] = value;
     }
+    // JSON is compressed on its way through, as it can be large (the sound list, Stats). Audio is compressed already
+    const length = Number(headers['content-length'] ?? Infinity);
+    const squeezable = !!answer.body && /\bjson\b/.test(headers['content-type'] ?? '') && length > MIN_COMPRESSED;
+    const squeeze = squeezable ? encoding(req) : undefined;
+    // Whether it came compressed depended on what the browser said it takes
+    if (squeezable) headers.vary = 'accept-encoding';
+    if (squeeze) {
+      delete headers['content-length'];
+      headers['content-encoding'] = squeeze;
+    }
     res.writeHead(answer.status, headers);
+    if (!answer.body) return res.end();
     // A body cut off part way, by the page leaving or the bot stopping, ends the response rather than the process
-    if (answer.body) Readable.fromWeb(answer.body as never).once('error', () => res.destroy()).pipe(res);
-    else res.end();
+    const fromBot = Readable.fromWeb(answer.body as never).once('error', () => res.destroy());
+    if (!squeeze) return fromBot.pipe(res);
+    // Quick settings: at the best ones a large answer would take longer to squeeze than to send. Any part failing, or
+    // the page leaving, takes all three down
+    const squeezer = squeeze === 'br' ? createBrotliCompress({ params: { [constants.BROTLI_PARAM_QUALITY]: 4 } }) : createGzip({ level: 6 });
+    pipeline(fromBot, squeezer, res, () => {});
   }
 
   /**
@@ -303,11 +361,15 @@ export function createWeb({ password, apiToken, botUrl, proxySecret }: WebOption
 
     if ((req.method === 'GET' || req.method === 'HEAD') && Object.hasOwn(ASSETS, path)) {
       const found = ASSETS[path];
-      // Asked about every time, so a new version shows on the next load, but only sent again when it's changed
       const encoded = encoding(req, found);
       // Each encoding is its own body, so it gets its own tag
       const etag = encoded ? `${found.etag.slice(0, -1)}-${encoded}"` : found.etag;
-      const cache = { 'cache-control': 'no-cache', etag, vary: 'accept-encoding' };
+      // An address with this version never changes, so it's kept for good. Anything else, like the page itself or an old
+      // tab asking for the version before, is asked about every time and only sent again when it's changed. An old tab
+      // gets today's file, which is why scripts loaded later, on a click, import nothing (a test checks): one that did
+      // would bring today's lib.js in beside the tab's own. The tab offers Reload as soon as it sees the new version
+      const current = versions.has(path) && new URLSearchParams(req.url!.split('?')[1] ?? '').get('v') === versions.get(path);
+      const cache = { 'cache-control': current ? 'public, max-age=31536000, immutable' : 'no-cache', etag, vary: 'accept-encoding' };
       if (header(req, 'if-none-match')?.split(',').some((tag) => tag.trim().replace(/^W\//, '') === etag)) return res.writeHead(304, { ...HEADERS, ...cache }).end();
       const body = encoded ? found[encoded]! : found.plain;
       res.writeHead(200, { ...HEADERS, ...cache, 'content-type': found.type, 'content-length': body.length, ...(encoded && { 'content-encoding': encoded }) });
