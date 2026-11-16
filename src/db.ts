@@ -516,6 +516,11 @@ if (!db.prepare("SELECT 1 FROM pragma_table_info('deleted_sounds') WHERE name = 
   db.exec('ALTER TABLE deleted_sounds ADD COLUMN link TEXT');
 }
 
+// Another official store selling a game for less than Steam: its price in cents of Steam's currency, how far under Steam's normal price, and gg.deals' page
+for (const [column, type] of [['store', 'INTEGER'], ['store_off', 'INTEGER'], ['store_url', 'TEXT'], ['currency', 'TEXT']]) {
+  if (!db.prepare("SELECT 1 FROM pragma_table_info('sale_prices') WHERE name = ?").get(column)) db.exec(`ALTER TABLE sale_prices ADD COLUMN ${column} ${type}`);
+}
+
 // Favourites were a star on each sound before groups, and become a Favourites group at the top, most played first as they showed
 transaction(() => {
   const starred = db

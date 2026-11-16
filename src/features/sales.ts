@@ -21,22 +21,46 @@ const NAMED_PEOPLE = 5;
 const MAX_PINGS = 80;
 const LIST_CHARS = 4000; // embed descriptions stop at 4096
 const CHEAPSHARK = 'https://www.cheapshark.com/api/1.0/games';
+const GG_DEALS = 'https://api.gg.deals/v1/prices/by-steam-app-id/';
+const GG_DEALS_BATCH = 100;
 // It turns away requests that don't say who they're from
 const USER_AGENT = 'slopkeeper (https://github.com/chuck-amuck/slopkeeper)';
 
 // Stay well under what Steam's store API and CheapShark will take
-export const pauses = { steamMs: 1500, cheapSharkMs: 500 };
+export const pauses = { steamMs: 1500, cheapSharkMs: 500, ggDealsMs: 1000 };
 
 interface PriceOverview {
+  currency: string;
   discount_percent: number;
   initial_formatted: string;
   final_formatted: string;
   /** in cents */
+  initial: number;
   final: number;
 }
 
-/** One check's prices, by region and app. Undefined means Steam couldn't be asked, null that it isn't for sale */
-type Prices = Map<string, PriceOverview | null | undefined>;
+/** The cheapest official store, Steam included, from gg.deals. Key shops are left out: they can't say whether a deal is a Steam key or an account, or where it works */
+interface StorePrice {
+  /** in cents of `currency` */
+  now: number;
+  /** null when gg.deals has no history, or when this is the last check's price because gg.deals couldn't be asked */
+  lowest: number | null;
+  currency: string;
+  url: string;
+}
+
+/**
+ * One check's prices, by region and app, shared by every server. Undefined means Steam couldn't be asked, null that
+ * it isn't sold there. An app missing from `stores` wasn't asked about other stores. `before` is what Steam charged
+ * at the last check, read before this one writes anything
+ */
+interface Prices {
+  steam: Map<string, PriceOverview | null | undefined>;
+  stores: Map<string, StorePrice | null>;
+  before: Map<string, { discount: number; final: number } | undefined>;
+}
+
+const newPrices = (): Prices => ({ steam: new Map(), stores: new Map(), before: new Map() });
 
 async function fetchPrices(appids: number[], country: string) {
   const res = await fetch(`https://store.steampowered.com/api/appdetails?appids=${appids.join(',')}&cc=${country}&filters=price_overview`, { signal: requestTimeout() });
@@ -51,32 +75,114 @@ async function fetchPrices(appids: number[], country: string) {
   );
 }
 
-function rememberPrice(country: string, appid: number, price: PriceOverview | null) {
-  if (!price?.discount_percent) db.prepare('DELETE FROM sale_prices WHERE country = ? AND appid = ?').run(country, appid);
+const cents = (amount: string) => Math.round(Number(amount) * 100);
+
+async function fetchStorePrices(appids: number[], region: string) {
+  const query = new URLSearchParams({ ids: appids.join(','), region, key: config.ggDealsKey! });
+  const res = await fetch(`${GG_DEALS}?${query}`, { headers: { 'user-agent': USER_AGENT }, signal: requestTimeout() });
+  const body = (await res.json().catch(() => null)) as {
+    success?: boolean;
+    data?: Record<string, { url: string; prices: { currentRetail: string | null; historicalRetail: string | null; currency: string } } | null> & { message?: string };
+  } | null;
+  if (!res.ok || !body?.success || !body.data) {
+    const message = body?.data?.message ?? (body as { message?: string } | null)?.message;
+    throw new Error(`gg.deals: HTTP ${res.status}${message ? `, ${message}` : ''}`);
+  }
+  const data = body.data;
+  return new Map(
+    appids.map((appid): [number, StorePrice | null] => {
+      const game = data[String(appid)];
+      const now = game?.prices.currentRetail == null ? NaN : cents(game.prices.currentRetail);
+      if (!game || !Number.isFinite(now)) return [appid, null];
+      const lowest = game.prices.historicalRetail == null ? NaN : cents(game.prices.historicalRetail);
+      return [appid, { now, lowest: Number.isFinite(lowest) ? lowest : null, currency: game.prices.currency, url: game.url }];
+    }),
+  );
+}
+
+/** gg.deals turns away some regions, so they aren't asked again until the bot restarts */
+const storeRegionsRefused = new Set<string>();
+
+/** Another store selling it for less than Steam does now, in the same money, and how far under Steam's normal price */
+export function storeDeal(steam: PriceOverview | null, store: StorePrice | null | undefined) {
+  if (!steam || !store || store.currency !== steam.currency || store.now >= steam.final) return null;
+  const normal = steam.discount_percent ? steam.initial : steam.final;
+  const off = normal ? Math.round((1 - store.now / normal) * 100) : 0;
+  return off >= 1 ? { cents: store.now, off, url: store.url } : null;
+}
+
+const steamNormal = (price: PriceOverview) => (price.discount_percent ? price.initial_formatted : price.final_formatted);
+
+/** A row means it's on sale on Steam, or cheaper on another store than on Steam */
+function rememberPrice(country: string, appid: number, price: PriceOverview | null, store: StorePrice | null) {
+  const deal = storeDeal(price, store);
+  if (!price || (!price.discount_percent && !deal)) db.prepare('DELETE FROM sale_prices WHERE country = ? AND appid = ?').run(country, appid);
   else {
-    db.prepare('INSERT OR REPLACE INTO sale_prices (country, appid, discount, was, price, final) VALUES (?, ?, ?, ?, ?, ?)').run(
-      country,
-      appid,
-      price.discount_percent,
-      price.initial_formatted,
-      price.final_formatted,
-      price.final,
-    );
+    db.prepare(
+      'INSERT OR REPLACE INTO sale_prices (country, appid, discount, was, price, final, store, store_off, store_url, currency) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    ).run(country, appid, price.discount_percent, steamNormal(price), price.final_formatted, price.final, deal?.cents ?? null, deal?.off ?? null, deal?.url ?? null, price.currency);
   }
 }
 
-/** Several servers can watch the same game, so each region's prices are only fetched once a check */
-async function loadPrices(appids: number[], country: string, prices: Prices) {
-  const missing = appids.filter((appid) => !prices.has(`${country}:${appid}`));
+/** The other store's price the last check kept, standing in while gg.deals can't be asked, so its deal isn't mistaken for a new one */
+function lastStore(country: string, appid: number): StorePrice | null {
+  const row = db.prepare('SELECT store, store_url, currency FROM sale_prices WHERE country = ? AND appid = ?').get(country, appid) as
+    | { store: number | null; store_url: string | null; currency: string | null }
+    | undefined;
+  return row?.store != null && row.store_url && row.currency ? { now: row.store, lowest: null, currency: row.currency, url: row.store_url } : null;
+}
+
+/**
+ * gg.deals' cheapest price counts Steam's own, and can lag behind it. Steam's sale ending at the price gg.deals still
+ * has as the cheapest is that lag, not another store
+ */
+function staleSteam(before: { discount: number; final: number } | undefined, price: PriceOverview | null | undefined, store: StorePrice | null) {
+  return !!(before?.discount && store && price && !price.discount_percent && store.now === before.final);
+}
+
+/**
+ * Several servers can watch the same game, so each region's prices are only fetched once a check. Other stores are
+ * only asked about when a server in that region wants them and there's a gg.deals key
+ */
+async function loadPrices(appids: number[], country: string, prices: Prices, otherStores: boolean) {
+  const key = (appid: number) => `${country}:${appid}`;
+  const fetched = new Set<number>();
+  const missing = appids.filter((appid) => !prices.steam.has(key(appid)));
+  for (const appid of missing) {
+    const row = db.prepare('SELECT discount, final FROM sale_prices WHERE country = ? AND appid = ?').get(country, appid) as { discount: number; final: number } | undefined;
+    prices.before.set(key(appid), row && { ...row });
+  }
   for (let idx = 0; idx < missing.length; idx += PRICE_BATCH) {
     const chunk = missing.slice(idx, idx + PRICE_BATCH);
     const found = await fetchPrices(chunk, country).catch((err) => (console.error(err), null));
-    for (const appid of chunk) {
-      const price = found && (found.get(appid) ?? null);
-      prices.set(`${country}:${appid}`, found ? price : undefined);
-      if (found) rememberPrice(country, appid, price);
-    }
+    for (const appid of chunk) prices.steam.set(key(appid), found ? (found.get(appid) ?? null) : undefined);
+    if (found) for (const appid of chunk) fetched.add(appid);
     await sleep(pauses.steamMs);
+  }
+
+  const askStores = otherStores && !!config.ggDealsKey && !storeRegionsRefused.has(country);
+  const unasked = askStores ? appids.filter((appid) => prices.steam.get(key(appid)) && !prices.stores.has(key(appid))) : [];
+  for (let idx = 0; idx < unasked.length; idx += GG_DEALS_BATCH) {
+    const chunk = unasked.slice(idx, idx + GG_DEALS_BATCH);
+    const found = storeRegionsRefused.has(country)
+      ? null
+      : await fetchStorePrices(chunk, country).catch((err: Error) => {
+          console.error(err);
+          if (/unsupported region/i.test(err.message)) storeRegionsRefused.add(country);
+          return null;
+        });
+    for (const appid of chunk) {
+      const store = found ? (found.get(appid) ?? null) : lastStore(country, appid);
+      prices.stores.set(key(appid), staleSteam(prices.before.get(key(appid)), prices.steam.get(key(appid)), store) ? null : store);
+      fetched.add(appid);
+    }
+    if (found) await sleep(pauses.ggDealsMs);
+  }
+
+  // Written once both are known, so another server asking for other stores later in the check fills them in
+  for (const appid of fetched) {
+    const price = prices.steam.get(key(appid));
+    if (price !== undefined) rememberPrice(country, appid, price, prices.stores.get(key(appid)) ?? null);
   }
 }
 
@@ -93,14 +199,24 @@ async function lowestEver(appid: number) {
   return Math.round(Number(cheapestPriceEver?.price) * 100) || null;
 }
 
-/** Only known in US dollars, and a post doesn't need it, so anything else leaves it out */
-async function priceHistory(appid: number, final: number, country: string) {
+/** gg.deals knows every region's lowest price. Without it, CheapShark only knows US dollars, and a post doesn't need it, so anything else leaves it out */
+async function priceHistory(g: Sale, country: string, store: StorePrice | null | undefined) {
+  const now = g.store?.cents ?? g.final;
+  if (store?.lowest != null && store.currency === g.currency) return now <= store.lowest ? 'Lowest price yet.' : `Lowest ever ${money(store.lowest, store.currency)}.`;
   if (country !== 'us') return null;
-  const lowest = await lowestEver(appid).catch((err) => (console.error(err), null));
+  const lowest = await lowestEver(g.appid).catch((err) => (console.error(err), null));
   await sleep(pauses.cheapSharkMs);
   if (lowest === null) return null;
-  return final <= lowest ? 'Lowest price yet.' : `Lowest ever $${(lowest / 100).toFixed(2)}.`;
+  return now <= lowest ? 'Lowest price yet.' : `Lowest ever $${(lowest / 100).toFixed(2)}.`;
 }
+
+export const money = (amount: number, currency: string) => {
+  try {
+    return new Intl.NumberFormat('en-US', { style: 'currency', currency }).format(amount / 100);
+  } catch {
+    return `${(amount / 100).toFixed(2)} ${currency}`;
+  }
+};
 
 export interface Watched {
   appid: number;
@@ -184,10 +300,26 @@ export async function watched(guild: Guild): Promise<Watched[]> {
 }
 
 export interface Sale extends Watched {
+  /** Steam's, 0 when only another store has it for less */
   discount: number;
+  /** Steam's normal price */
   was: string;
+  /** Steam's price now */
   price: string;
   final: number;
+  currency: string;
+  /** Another store selling it for less than Steam: its price, how far under Steam's normal price, and gg.deals' page listing the stores */
+  store: { price: string; cents: number; off: number; url: string } | null;
+}
+
+/** How far under Steam's normal price the best deal is, which is what's compared with the smallest sale worth posting */
+export const dealSize = (g: Pick<Sale, 'discount' | 'store'>) => Math.max(g.discount, g.store?.off ?? 0);
+
+/** The deal in words: Steam's sale, or another store's price with Steam's beside it */
+export function dealText(g: Pick<Sale, 'discount' | 'was' | 'price' | 'store'>, link = (text: string, _url: string) => text) {
+  if (!g.store) return `${g.discount}% off, ${g.price}, was ${g.was}.`;
+  const steam = g.discount ? ` Steam has it at ${g.discount}% off, ${g.price}.` : '';
+  return `${g.store.price} ${link('on another store', g.store.url)}, ${g.store.off}% under Steam’s ${g.was}.${steam}`;
 }
 
 /** Why a game is worth mentioning, naming people however the reader sees them */
@@ -207,20 +339,30 @@ export const storeUrl = (appid: number) => `https://store.steampowered.com/app/$
 
 function saleLine(g: Sale, name: string, history: string | null = null) {
   const title = escapeMarkdown(short(name)).replace(/[[\]]/g, '');
-  const facts = [`${g.discount}% off, ${g.price}, was ${g.was}.`, history, saleReasons(g, (id) => `<@${id}>`)];
+  const facts = [dealText(g, (text, url) => `[${text}](${url})`), history, saleReasons(g, (id) => `<@${id}>`)];
   return `[**${title}**](${storeUrl(g.appid)}): ${facts.filter(Boolean).join(' ')}`;
 }
 
-/** Everything on sale at the last check, in this server's store region */
+/** Everything on sale at the last check, in this server's store region, with other stores' deals if the server wants them */
 export function salePrices(guildId: string) {
-  const rows = db.prepare('SELECT appid, discount, was, price, final FROM sale_prices WHERE country = ?').all(setting(guildId, 'steamCountry')) as {
+  const rows = db.prepare('SELECT appid, discount, was, price, final, currency, store, store_off, store_url FROM sale_prices WHERE country = ?').all(setting(guildId, 'steamCountry')) as {
     appid: number;
     discount: number;
     was: string;
     price: string;
     final: number;
+    currency: string | null;
+    store: number | null;
+    store_off: number | null;
+    store_url: string | null;
   }[];
-  return new Map(rows.map((r) => [r.appid, r]));
+  const otherStores = setting(guildId, 'saleOtherStores');
+  return new Map(
+    rows.flatMap(({ store, store_off, store_url, currency, ...r }) => {
+      const deal = otherStores && store !== null && store_off !== null && store_url && currency ? { price: money(store, currency), cents: store, off: store_off, url: store_url } : null;
+      return deal || r.discount ? [[r.appid, { ...r, currency: currency ?? '', store: deal }] as const] : [];
+    }),
+  );
 }
 
 /** Watched games on sale at the last check, most wanted first */
@@ -240,7 +382,7 @@ function rememberAlert(guildId: string, appid: number, discount: number) {
 
 export async function checkSales(client: Client<true>) {
   await refreshWishlists();
-  const prices: Prices = new Map();
+  const prices = newPrices();
   await eachGuild(client, 'Sale check', (guild) => checkGuild(client, guild, prices));
 }
 
@@ -250,20 +392,30 @@ async function checkGuild(client: Client<true>, guild: Guild, prices: Prices) {
   await refreshStale(groupMembers(guild), config.saleCheckHours * 3_600_000);
   const country = setting(guild.id, 'steamCountry');
   const lowestDiscount = setting(guild.id, 'saleMinDiscount');
+  const otherStores = setting(guild.id, 'saleOtherStores');
   const games = await watched(guild);
-  await loadPrices(games.map((g) => g.appid), country, prices);
+  await loadPrices(games.map((g) => g.appid), country, prices, otherStores);
 
   const due: Sale[] = [];
   for (const g of games.sort(byInterest)) {
-    const price = prices.get(`${country}:${g.appid}`);
+    const key = `${country}:${g.appid}`;
+    const price = prices.steam.get(key);
+    const store = otherStores ? (prices.stores.get(key) ?? null) : null;
     if (price === undefined) continue;
-    const discount = price?.discount_percent ?? 0;
+    const deal = storeDeal(price, store);
+    const sale = price && {
+      discount: price.discount_percent,
+      was: steamNormal(price),
+      price: price.final_formatted,
+      final: price.final,
+      currency: price.currency,
+      store: deal && { ...deal, price: money(deal.cents, price.currency) },
+    };
+    const size = sale ? dealSize(sale) : 0;
     const last = alerted(guild.id, g.appid);
     // Only new or much deeper sales, not every check while one is running. Remembering a smaller one means the next is news
-    if (discount <= last) rememberAlert(guild.id, g.appid, discount);
-    else if (price && discount >= lowestDiscount && (!last || discount >= last + DEEPER_BY)) {
-      due.push({ ...g, discount, was: price.initial_formatted, price: price.final_formatted, final: price.final });
-    }
+    if (size <= last) rememberAlert(guild.id, g.appid, size);
+    else if (sale && size >= lowestDiscount && (!last || size >= last + DEEPER_BY)) due.push({ ...g, ...sale });
   }
   if (!due.length) return;
 
@@ -271,7 +423,7 @@ async function checkGuild(client: Client<true>, guild: Guild, prices: Prices) {
   await ensureAppInfo(due.map((g) => g.appid)).catch(console.error);
   const info = appInfo();
   const lines: string[] = [];
-  for (const g of due.slice(0, POSTED_GAMES)) lines.push(saleLine(g, saleName(g, info), await priceHistory(g.appid, g.final, country)));
+  for (const g of due.slice(0, POSTED_GAMES)) lines.push(saleLine(g, saleName(g, info), await priceHistory(g, country, otherStores ? prices.stores.get(`${country}:${g.appid}`) : null)));
   if (due.length > POSTED_GAMES) lines.push(`and ${due.length - POSTED_GAMES} more: ${commandMention(guild.id, 'sales')}`);
 
   const pings = [...new Set(due.flatMap((g) => [...g.wanted, ...g.wishlisted, ...g.others]))].slice(0, MAX_PINGS);
@@ -288,7 +440,7 @@ async function checkGuild(client: Client<true>, guild: Guild, prices: Prices) {
     allowedMentions: { users: pings },
   });
   // Afterwards, so a post that fails is tried again on the next check
-  for (const g of due) rememberAlert(guild.id, g.appid, g.discount);
+  for (const g of due) rememberAlert(guild.id, g.appid, dealSize(g));
 }
 
 /** A page of what's on sale, everything or only what one person wants or wishlisted, with buttons to turn pages */

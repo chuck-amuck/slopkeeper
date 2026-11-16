@@ -18,6 +18,7 @@ const FIELDS = {
   steamCountry: { kind: 'country', hint: 'Two-letter country code for sale prices, like us or gb.' },
   saleMinDiscount: { kind: 'number', unit: '% off', hint: 'Smaller sales aren’t posted, but still show in /sales.' },
   saleSteamWishlists: { kind: 'boolean', hint: 'Watches games on members’ Steam wishlists, if their profile allows it.' },
+  saleOtherStores: { kind: 'boolean', hint: 'Also posts when an official store like Humble, Fanatical, GOG or Epic sells a game for less than Steam, by at least the discount above. Some, like GOG and Epic, sell their own copy rather than a Steam key. Prices come from gg.deals, and key resellers are left out. Needs a gg.deals API key on the bot.' },
   saleChannel: { kind: 'channel', none: 'Same as announce channel', hint: 'Post sales here instead.' },
   patchNotes: { kind: 'choice', options: [['off', 'Off'], ['each', 'Post each one'], ['digest', 'Weekly digest']], hint: 'For games played here in the last 30 days. Only finds posts the developer tagged as patch notes. The digest goes out on the weekly leaderboard’s day and hour.' },
   patchNotesChannel: { kind: 'channel', none: 'Same as announce channel', hint: 'Post patch notes here instead.' },
@@ -358,7 +359,7 @@ export function renderSettings(main) {
                 'div',
                 { className: 'free-game' },
                 el('a', { href: g.url, target: '_blank', rel: 'noreferrer' }, g.name),
-                el('span', { className: 'free-reason' }, `${g.discount}% off, ${g.price}, was ${g.was}`),
+                el('span', { className: 'free-reason' }, g.deal, g.store && ' ', g.store && el('a', { href: g.store.url, target: '_blank', rel: 'noreferrer' }, 'See the stores')),
                 g.why && el('span', { className: 'sale-why' }, g.why),
               ),
             )

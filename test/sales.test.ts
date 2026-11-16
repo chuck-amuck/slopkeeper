@@ -4,6 +4,7 @@ import { mock, test } from 'node:test';
 import { db } from '../src/db.ts';
 import { lookups } from '../src/features/gamefacts.ts';
 import { games } from '../src/features/games.ts';
+import { config } from '../src/config.ts';
 import { checkSales, onSale, pauses, sales, saleReasons, watched, type Sale } from '../src/features/sales.ts';
 import { setSetting } from '../src/settings.ts';
 
@@ -11,6 +12,8 @@ const STEAM_ID = (user: string) => `steam-${user}`;
 const DAY = 86_400_000;
 pauses.steamMs = 0;
 pauses.cheapSharkMs = 0;
+pauses.ggDealsMs = 0;
+config.ggDealsKey = 'test-key';
 lookups.gapMs = 0;
 mock.method(console, 'error', () => {});
 mock.method(console, 'log', () => {});
@@ -35,6 +38,12 @@ const world = {
   noPriceHistory: false,
   batches: [] as number[][],
   userAgents: [] as (string | null)[],
+  /** gg.deals: the cheapest official store now and ever, in dollars */
+  stores: new Map<number, { now: string; lowest?: string | null; currency?: string }>(),
+  storesDown: false,
+  storeBatches: [] as number[][],
+  storeRegions: [] as string[],
+  storeKeys: [] as (string | null)[],
 };
 
 const json = (body: unknown) => new Response(JSON.stringify(body));
@@ -52,7 +61,16 @@ mock.method(globalThis, 'fetch', async (input: string | URL, init?: RequestInit)
           const price = world.prices.get(appid);
           const final = price?.final ?? 1000;
           const data = price
-            ? { price_overview: { discount_percent: price.discount, initial_formatted: price.discount ? '$20.00' : '', final_formatted: `$${(final / 100).toFixed(2)}`, final } }
+            ? {
+                price_overview: {
+                  currency: 'USD',
+                  discount_percent: price.discount,
+                  initial: 2000,
+                  initial_formatted: price.discount ? '$20.00' : '',
+                  final_formatted: `$${(final / 100).toFixed(2)}`,
+                  final,
+                },
+              }
             : [];
           return [appid, { success: !world.unlisted.has(appid), data }];
         }),
@@ -82,6 +100,25 @@ mock.method(globalThis, 'fetch', async (input: string | URL, init?: RequestInit)
     if (world.noPriceHistory) return json({});
     return json({ cheapestPriceEver: { price: world.lowest.get(Number(url.searchParams.get('id'))) } });
   }
+  if (url.hostname === 'api.gg.deals') {
+    const region = url.searchParams.get('region')!;
+    world.storeRegions.push(region);
+    world.storeKeys.push(url.searchParams.get('key'));
+    if (region === 'jp') return new Response(JSON.stringify({ success: false, data: { message: 'Unsupported region.' } }), { status: 400 });
+    if (world.storesDown) return new Response('', { status: 503 });
+    const ids = url.searchParams.get('ids')!.split(',').map(Number);
+    world.storeBatches.push(ids);
+    return json({
+      success: true,
+      data: Object.fromEntries(
+        ids.map((id) => {
+          const store = world.stores.get(id);
+          const prices = store && { currentRetail: store.now, currentKeyshops: '0.01', historicalRetail: store.lowest === undefined ? store.now : store.lowest, historicalKeyshops: '0.01', currency: store.currency ?? 'USD' };
+          return [id, store ? { title: `Game ${id}`, url: `https://gg.deals/game/${id}/`, prices } : null];
+        }),
+      ),
+    });
+  }
   throw new Error(`Unexpected fetch: ${url}`);
 });
 
@@ -99,6 +136,11 @@ function fresh() {
   world.noPriceHistory = false;
   world.batches.length = 0;
   world.userAgents.length = 0;
+  world.stores.clear();
+  world.storesDown = false;
+  world.storeBatches.length = 0;
+  world.storeRegions.length = 0;
+  world.storeKeys.length = 0;
   // Steam links belong to people, not servers, so one test's would leak into the next
   db.exec('DELETE FROM steam_links; DELETE FROM steam_owned; DELETE FROM steam_wishlist;');
 }
@@ -866,4 +908,190 @@ test('/game list shows who wants what', async () => {
     reply: async (r: typeof reply) => (reply = r),
   } as never);
   assert.match(reply!.embeds[0].toJSON().description, /wanted: <@lister>/);
+});
+
+test('another store selling a game well under Steam’s price is posted, even with Steam not on sale', async () => {
+  const s = server(['a', 'b']);
+  markOwned(addGame(s.id, 'Hades', 70), 'a');
+  linkSteam('b');
+  world.prices.set(70, { discount: 0, final: 2000 });
+  world.stores.set(70, { now: '8.00', lowest: '6.00' });
+  await checkSales(s.client);
+  assert.equal(s.posts.length, 1);
+  assert.match(s.text(), /\[\*\*Hades\*\*\]\(https:\/\/store\.steampowered\.com\/app\/70\): \$8\.00 \[on another store\]\(https:\/\/gg\.deals\/game\/70\/\), 60% under Steam’s \$20\.00\. Lowest ever \$6\.00\./);
+  assert.doesNotMatch(s.text(), /Steam has it/);
+  assert.deepEqual(s.pinged(), ['b']);
+  assert.deepEqual(world.storeKeys, ['test-key']);
+  assert.deepEqual(world.userAgents, [], 'gg.deals knows the lowest price, so CheapShark isn’t asked');
+  const [sale] = await onSale(s.guild);
+  assert.deepEqual(sale.store, { price: '$8.00', cents: 800, off: 60, url: 'https://gg.deals/game/70/' });
+  await checkSales(s.client);
+  assert.equal(s.posts.length, 1, 'the same deal isn’t posted twice');
+});
+
+test('a store deal beside a Steam sale says what Steam has it for, and counts as the bigger of the two', async () => {
+  const s = server(['a']);
+  addGame(s.id, 'Both', 71);
+  world.prices.set(71, { discount: 50, final: 1000 });
+  world.stores.set(71, { now: '8.00', lowest: '8.00' });
+  await checkSales(s.client);
+  assert.match(s.text(), /\$8\.00 \[on another store\]\(https:\/\/gg\.deals\/game\/71\/\), 60% under Steam’s \$20\.00\. Steam has it at 50% off, \$10\.00\. Lowest price yet\./);
+  // Steam catching up to the same price is no deeper a deal
+  world.prices.set(71, { discount: 60, final: 800 });
+  await checkSales(s.client);
+  assert.equal(s.posts.length, 1);
+  world.prices.set(71, { discount: 75, final: 500 });
+  await checkSales(s.client);
+  assert.equal(s.posts.length, 2, '15 points deeper is news');
+  assert.match(s.text(), /75% off, \$5\.00, was \$20\.00\./, 'Steam is cheapest again, so the post is Steam’s sale');
+});
+
+test('a store that isn’t cheaper than Steam, or charges in other money, changes nothing', async () => {
+  const s = server(['a']);
+  addGame(s.id, 'Same Price', 72);
+  addGame(s.id, 'Other Money', 73);
+  world.prices.set(72, { discount: 40, final: 1200 });
+  world.prices.set(73, { discount: 0, final: 2000 });
+  world.stores.set(72, { now: '12.00' });
+  world.stores.set(73, { now: '1.00', currency: 'EUR' });
+  await checkSales(s.client);
+  assert.equal(s.posts.length, 1);
+  assert.match(s.text(), /Same Price\*\*\]\([^)]+\): 40% off, \$12\.00, was \$20\.00\./);
+  assert.doesNotMatch(s.text(), /Other Money/);
+  assert.deepEqual((await onSale(s.guild)).map((g) => g.appid), [72]);
+});
+
+test('a store deal under the smallest discount isn’t posted, but shows in /sales', async () => {
+  const s = server(['a']);
+  addGame(s.id, 'Small Deal', 74);
+  world.prices.set(74, { discount: 0, final: 2000 });
+  world.stores.set(74, { now: '18.00' });
+  await checkSales(s.client);
+  assert.equal(s.posts.length, 0);
+  const [sale] = await onSale(s.guild);
+  assert.equal(sale.store?.off, 10);
+  assert.equal(sale.discount, 0);
+});
+
+test('a server can leave other stores out, and they aren’t asked unless a server wants them', async () => {
+  const s = server(['a']);
+  setSetting(s.id, 'saleOtherStores', false);
+  addGame(s.id, 'Steam Only', 75);
+  world.prices.set(75, { discount: 0, final: 2000 });
+  world.stores.set(75, { now: '5.00' });
+  await checkSales(s.client);
+  assert.equal(s.posts.length, 0);
+  assert.deepEqual(world.storeRegions, []);
+  assert.deepEqual(await onSale(s.guild), []);
+});
+
+test('servers that differ share the store prices, and the one that wants them sees them', async () => {
+  fresh();
+  const members = { cache: new Map() };
+  const guilds = ['stores-off', 'stores-on'].map((id) => ({ id, name: id, members }));
+  for (const { id } of guilds) {
+    setSetting(id, 'announceChannel', `channel-${id}`);
+    addGame(id, 'Shared Deal', 76);
+  }
+  setSetting('stores-off', 'saleOtherStores', false);
+  world.prices.set(76, { discount: 0, final: 2000 });
+  world.stores.set(76, { now: '5.00' });
+  const sent: string[] = [];
+  const client = fakeClient(guilds, async (guildId) => void sent.push(guildId));
+  await checkSales(client);
+  assert.deepEqual(sent, ['stores-on']);
+  await checkSales(client);
+  assert.deepEqual(sent, ['stores-on']);
+  assert.equal(world.storeBatches.length, 2, 'one ask a check');
+  assert.equal((await onSale({ ...guilds[1], members } as never)).length, 1);
+  assert.equal((await onSale({ ...guilds[0], members } as never)).length, 0);
+});
+
+test('when the store prices can’t be had, nothing changes until they can', async () => {
+  const s = server(['a']);
+  addGame(s.id, 'Flaky', 77);
+  world.prices.set(77, { discount: 0, final: 2000 });
+  world.stores.set(77, { now: '5.00' });
+  await checkSales(s.client);
+  assert.equal(s.posts.length, 1);
+  world.storesDown = true;
+  await checkSales(s.client);
+  assert.equal((await onSale(s.guild)).length, 1, 'the last good deal stays listed');
+  world.storesDown = false;
+  await checkSales(s.client);
+  assert.equal(s.posts.length, 1, 'the deal isn’t mistaken for a new one');
+});
+
+test('Steam sales still post while gg.deals is down', async () => {
+  const s = server(['a']);
+  addGame(s.id, 'Steam Sale', 80);
+  world.prices.set(80, { discount: 50 });
+  world.storesDown = true;
+  await checkSales(s.client);
+  assert.equal(s.posts.length, 1);
+  assert.match(s.text(), /50% off, \$10\.00, was \$20\.00\./);
+});
+
+test('a Steam sale gg.deals hasn’t caught up with ending isn’t taken for another store', async () => {
+  const s = server(['a']);
+  addGame(s.id, 'Lagging', 81);
+  world.prices.set(81, { discount: 75, final: 500 });
+  world.stores.set(81, { now: '5.00' });
+  await checkSales(s.client);
+  assert.equal(s.posts.length, 1);
+  world.prices.set(81, { discount: 0, final: 2000 });
+  await checkSales(s.client);
+  assert.deepEqual(await onSale(s.guild), [], 'Steam’s old sale price isn’t a deal');
+  world.stores.set(81, { now: '4.00' });
+  await checkSales(s.client);
+  assert.equal((await onSale(s.guild))[0]?.store?.price, '$4.00', 'a different price is another store');
+});
+
+test('a game gg.deals has no history for gets no lowest price line, and a cent off isn’t a deal', async () => {
+  const s = server(['a']);
+  addGame(s.id, 'No Store History', 82);
+  addGame(s.id, 'A Cent Off', 83);
+  world.prices.set(82, { discount: 0, final: 2000 });
+  world.stores.set(82, { now: '5.00', lowest: null });
+  world.prices.set(83, { discount: 0, final: 5999 });
+  world.stores.set(83, { now: '59.89' });
+  await checkSales(s.client);
+  assert.match(s.text(), /No Store History/);
+  assert.doesNotMatch(s.text(), /Lowest|A Cent Off/);
+  assert.deepEqual((await onSale(s.guild)).map((g) => g.appid), [82]);
+});
+
+test('store prices use the server’s region, and a region gg.deals refuses isn’t asked again', async () => {
+  const s = server(['a']);
+  setSetting(s.id, 'steamCountry', 'jp');
+  addGame(s.id, 'Far Away', 78);
+  world.prices.set(78, { discount: 50 });
+  await checkSales(s.client);
+  await checkSales(s.client);
+  assert.deepEqual(world.storeRegions, ['jp']);
+  assert.equal(s.posts.length, 1, 'Steam’s sale still posts');
+});
+
+test('without a gg.deals key only Steam is checked', async (t) => {
+  config.ggDealsKey = null;
+  t.after(() => (config.ggDealsKey = 'test-key'));
+  const s = server(['a']);
+  addGame(s.id, 'No Key', 79);
+  world.prices.set(79, { discount: 0, final: 2000 });
+  world.stores.set(79, { now: '5.00' });
+  await checkSales(s.client);
+  assert.deepEqual(world.storeRegions, []);
+  assert.equal(s.posts.length, 0);
+});
+
+test('store prices are asked for 100 at a time, and only for games Steam sells', async () => {
+  const s = server(['a']);
+  for (let n = 0; n < 101; n++) {
+    addGame(s.id, `Store Batch ${n}`, 7000 + n);
+    world.prices.set(7000 + n, { discount: 0, final: 2000 });
+  }
+  addGame(s.id, 'Not On Steam', 7999);
+  await checkSales(s.client);
+  assert.deepEqual(world.storeBatches.map((b) => b.length), [100, 1]);
+  assert.ok(!world.storeBatches.flat().includes(7999));
 });

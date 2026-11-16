@@ -6,7 +6,7 @@ import { reviewGiveaways } from '../features/freegames.ts';
 import { achievementProgress } from '../features/achievements.ts';
 import { addGameRole, canHandOut, gameRoles, pingableGames, pingChoices, pingMenu, removeGameRole } from '../features/gameroles.ts';
 import { addGame, addMemberGame, allGames, familyPlayersOf, gameById, groupMembers, hiddenGames, hideGame, libraryKnown, memberGames, NOBODY_COUNTED, ownersOf, parseSteamAppId, removeGame, setGameDetails, setOwned, setWanted, steamOwnersOf, unhideGame, wantedBy, type GameRow } from '../features/games.ts';
-import { onSale, saleName, salePrices, saleReasons, storeUrl } from '../features/sales.ts';
+import { dealText, onSale, saleName, salePrices, saleReasons, storeUrl } from '../features/sales.ts';
 import { currentPlayers, familyOf, patchNotes, joinFamily, leaveFamily, linkSteam, lobbiesIn, profileUrl, refreshAll, steamLinks, unlinkSteam } from '../features/steam.ts';
 import { activityOf, checkpoint, comparison, PERIODS, peopleWithStats, pickFor, playedByKey, playsIn, sessionCount, stats, totalsBy } from '../features/gamestats.ts';
 import { postVote } from '../features/gamevote.ts';
@@ -141,6 +141,8 @@ export async function saleList(guild: Guild) {
       discount: g.discount,
       was: g.was,
       price: g.price,
+      store: g.store && { price: g.store.price, off: g.store.off, url: g.store.url },
+      deal: dealText(g),
       why: saleReasons(g, (id) => nameOf(guild, id)),
     })),
   };
@@ -188,7 +190,7 @@ export function gameList(guild: Guild) {
         family: [...family].map(person).sort(byName),
         needs: group.filter((id) => !owners.has(id) && !family.has(id)).map(person).sort(byName),
         wanted: wantedBy(g, guild).map(person).sort(byName),
-        sale: sale ? { discount: sale.discount, price: sale.price, was: sale.was } : null,
+        sale: sale ? { discount: sale.discount, price: sale.price, was: sale.was, store: sale.store && { price: sale.store.price, off: sale.store.off, url: sale.store.url } } : null,
         // Time in voice, as Stats counts it, for sorting by what's played
         played: played.get(gameKey(gameName(guild.id, g.name))) ?? null,
       };

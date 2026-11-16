@@ -3853,6 +3853,10 @@ header.tabs-below nav button {
   font-size: var(--text-sm);
 }
 
+a.game-sale:hover {
+  text-decoration: underline;
+}
+
 .game-sale s {
   margin-left: 6px;
   color: var(--muted);

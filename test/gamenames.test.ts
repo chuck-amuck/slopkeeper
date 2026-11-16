@@ -318,6 +318,8 @@ test('a hop-on ping is said in voice when that’s turned on, and the post is th
 test('a session recap lists a game once, under the name it goes by', async (t) => {
   for (const raw of ['Lethal Company', 'lethalcompany']) noteGame('recapped', raw);
   const { client, sent, join, leave } = server(t, 'recapped');
+  // The weekly post runs on the real date, and would come first if this ran just before it
+  setSetting('recapped', 'weeklyPostDay', (new Date().getUTCDay() + 3) % 7);
   sessions.setup!(client as never);
   join('sam', 'lethalcompany');
   join('alex', 'Lethal Company');

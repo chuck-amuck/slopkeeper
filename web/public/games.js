@@ -505,7 +505,15 @@ export function renderGames(main) {
           { className: 'game-title' },
           g.url ? el('a', { href: g.url, target: '_blank', rel: 'noreferrer' }, g.name) : el('span', {}, g.name),
           g.maxPlayers && el('span', { className: 'hint' }, `Up to ${g.maxPlayers}`),
-          g.sale && el('span', { className: 'game-sale' }, `${g.sale.discount}% off · ${g.sale.price}`, el('s', {}, g.sale.was)),
+          g.sale &&
+            (g.sale.store
+              ? el(
+                  'a',
+                  { className: 'game-sale', href: g.sale.store.url, target: '_blank', rel: 'noreferrer', title: 'The cheapest official store, on gg.deals' },
+                  `${g.sale.store.off}% under Steam · ${g.sale.store.price}`,
+                  el('s', {}, g.sale.was),
+                )
+              : el('span', { className: 'game-sale' }, `${g.sale.discount}% off · ${g.sale.price}`, el('s', {}, g.sale.was))),
         ),
         g.played && el('div', { className: 'hint' }, `${duration(g.played.ms)} here · last played ${ago(g.played.last)}`),
         fact('Has it', g.owners),

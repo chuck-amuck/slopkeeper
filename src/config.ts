@@ -16,6 +16,8 @@ export const config = {
   // Servers allowed to use the bot; unset allows any server that adds it
   allowedGuildIds: parseIds(process.env.ALLOWED_GUILD_IDS),
   steamApiKey: process.env.STEAM_API_KEY || null,
+  // A gg.deals API key, for other official stores' prices in sale alerts. Unset checks Steam only
+  ggDealsKey: process.env.GGDEALS_API_KEY || null,
   // One price check covers every server, so this isn't a per-server setting
   saleCheckHours: Number(process.env.SALE_CHECK_HOURS || 6),
   dataDir: process.env.DATA_DIR ?? './data',

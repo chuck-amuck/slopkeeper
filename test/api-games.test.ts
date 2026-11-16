@@ -43,8 +43,36 @@ test('lists what’s on sale with the reasons in plain names', async (t) => {
   t.after(() => db.exec('DELETE FROM games WHERE id = 9001; DELETE FROM sale_prices'));
   const { games } = await ok(`/guilds/${GUILD}/sales`);
   assert.deepEqual(games, [
-    { name: 'Discounted', url: 'https://store.steampowered.com/app/9001', discount: 50, was: '$20.00', price: '$10.00', why: 'Wanted by Ana' },
+    {
+      name: 'Discounted',
+      url: 'https://store.steampowered.com/app/9001',
+      discount: 50,
+      was: '$20.00',
+      price: '$10.00',
+      store: null,
+      deal: '50% off, $10.00, was $20.00.',
+      why: 'Wanted by Ana',
+    },
   ]);
+});
+
+test('lists another store’s deal with a link to the stores, unless the server leaves other stores out', async (t) => {
+  db.prepare(`INSERT INTO games (id, guild_id, name, steam_appid, added_by) VALUES (9002, ?, 'Cheaper Elsewhere', 9002, 'x')`).run(GUILD);
+  db.prepare(`INSERT INTO game_wants (game_id, user_id) VALUES (9002, 'u1')`).run();
+  db.prepare(
+    `INSERT INTO sale_prices (country, appid, discount, was, price, final, store, store_off, store_url, currency) VALUES ('us', 9002, 0, '$20.00', '$20.00', 2000, 900, 55, 'https://gg.deals/game/x/', 'USD')`,
+  ).run();
+  t.after(() => {
+    db.exec('DELETE FROM games WHERE id = 9002; DELETE FROM sale_prices');
+    setSetting(GUILD, 'saleOtherStores', true);
+  });
+  const { games } = await ok(`/guilds/${GUILD}/sales`);
+  assert.deepEqual(games[0].store, { price: '$9.00', off: 55, url: 'https://gg.deals/game/x/' });
+  assert.equal(games[0].deal, '$9.00 on another store, 55% under Steam’s $20.00.');
+  assert.deepEqual((await library()).games.find((g: { id: number }) => g.id === 9002).sale.store, games[0].store);
+  setSetting(GUILD, 'saleOtherStores', false);
+  assert.deepEqual((await ok(`/guilds/${GUILD}/sales`)).games, []);
+  assert.equal((await library()).games.find((g: { id: number }) => g.id === 9002).sale, null);
 });
 
 // One moment for each test's rows, so plays meant to overlap exactly don't land a millisecond apart
@@ -289,7 +317,7 @@ test('lists who has a game, who needs it, who wants it and any sale', async () =
   assert.deepEqual(valheim.owners, [{ id: 'u1', name: 'Ana', steam: false }, { id: 'u3', name: 'Cy', steam: true }]);
   assert.deepEqual(valheim.needs, [{ id: 'u2', name: 'Ben' }]);
   assert.deepEqual(valheim.wanted, [{ id: 'u2', name: 'Ben' }]);
-  assert.deepEqual(valheim.sale, { discount: 40, price: '$12.00', was: '$20.00' });
+  assert.deepEqual(valheim.sale, { discount: 40, price: '$12.00', was: '$20.00', store: null });
   assert.equal(other.sale, null, 'another region’s sale');
   assert.deepEqual(members.map((m: { name: string }) => m.name), ['Ana', 'Ben', 'Cy']);
 });
