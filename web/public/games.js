@@ -509,11 +509,17 @@ export function renderGames(main) {
             (g.sale.store
               ? el(
                   'a',
-                  { className: 'game-sale', href: g.sale.store.url, target: '_blank', rel: 'noreferrer', title: 'The cheapest official store, on gg.deals' },
+                  { className: 'game-sale', href: g.sale.store.url, target: '_blank', rel: 'noreferrer', title: `A Steam key from ${g.sale.store.shop}` },
                   `${g.sale.store.off}% under Steam · ${g.sale.store.price}`,
                   el('s', {}, g.sale.was),
                 )
               : el('span', { className: 'game-sale' }, `${g.sale.discount}% off · ${g.sale.price}`, el('s', {}, g.sale.was))),
+          g.sale?.keyshop &&
+            el(
+              'a',
+              { className: 'hint', href: g.sale.keyshop.url, target: '_blank', rel: 'noreferrer', title: 'The cheapest key reseller, on gg.deals. Check it’s a Steam key that works in your region before buying' },
+              `Key resellers from ${g.sale.keyshop.price}`,
+            ),
         ),
         g.played && el('div', { className: 'hint' }, `${duration(g.played.ms)} here · last played ${ago(g.played.last)}`),
         fact('Has it', g.owners),

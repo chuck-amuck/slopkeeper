@@ -257,7 +257,8 @@ export async function saleList(guild: Guild) {
       discount: g.discount,
       was: g.was,
       price: g.price,
-      store: g.store && { price: g.store.price, off: g.store.off, url: g.store.url },
+      store: g.store && { price: g.store.price, off: g.store.off, url: g.store.url, shop: g.store.shop },
+      keyshop: g.keyshop && { price: g.keyshop.price, url: g.keyshop.url },
       deal: dealText(g),
       why: saleReasons(g, (id) => nameOf(guild, id)),
     })),
@@ -306,7 +307,15 @@ export function gameList(guild: Guild) {
         family: [...family].map(person).sort(byName),
         needs: group.filter((id) => !owners.has(id) && !family.has(id)).map(person).sort(byName),
         wanted: wantedBy(g, guild).map(person).sort(byName),
-        sale: sale ? { discount: sale.discount, price: sale.price, was: sale.was, store: sale.store && { price: sale.store.price, off: sale.store.off, url: sale.store.url } } : null,
+        sale: sale
+          ? {
+              discount: sale.discount,
+              price: sale.price,
+              was: sale.was,
+              store: sale.store && { price: sale.store.price, off: sale.store.off, url: sale.store.url, shop: sale.store.shop },
+              keyshop: sale.keyshop && { price: sale.keyshop.price, url: sale.keyshop.url },
+            }
+          : null,
         // Time in voice, as Stats counts it, for sorting by what's played
         played: played.get(gameKey(gameName(guild.id, g.name))) ?? null,
       };

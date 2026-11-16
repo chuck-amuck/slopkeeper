@@ -215,7 +215,7 @@ Examples:
 
 ### Sale alerts
 
-Every `SALE_CHECK_HOURS` (default 6), the bot checks Steam prices, and [other stores'](#other-stores) with a gg.deals key, for what this server cares about:
+Every `SALE_CHECK_HOURS` (default 6), the bot checks Steam prices, and [other stores'](#other-stores) with an IsThereAnyDeal key, for what this server cares about:
 
 - **Played:** games played in voice here in the past 180 days, found by matching the name to a Steam title. Games not on Steam are skipped, and `/game add` with a Steam ID covers a game whose name doesn't match.
 - **Wanted:** games someone asked for with `/game want`.
@@ -227,7 +227,7 @@ It posts once per check in the announce channel, or the channel from `/setup sal
 > 💸 **3 games on sale**
 > **Deep Rock Galactic**: 60% off, $11.99, was $29.99. Lowest price yet. Played 14h · Needs it: @Sam, @Alex
 > **Hades**: 50% off, $12.49, was $24.99. Lowest ever $6.24. Wanted by @Jo
-> **Portal 2**: $1.99 on another store, 80% under Steam’s $9.99. Lowest ever $0.99. On @Alex’s Steam wishlist
+> **Portal 2**: $1.99 as a Steam key from Fanatical, 80% under Steam’s $9.99. Lowest ever $0.99. On @Alex’s Steam wishlist
 
 Under the post, **Everything on sale** and **Just mine** show whoever presses them the full list, or only what they want or wishlisted, without posting it for everyone.
 
@@ -235,11 +235,13 @@ A game is posted at 25% off or more by default, then again only if the same sale
 
 #### Other stores
 
-With a [gg.deals](https://gg.deals) API key (`GGDEALS_API_KEY`), the same check also asks gg.deals for the cheapest official store, such as Humble, Fanatical, GOG or Epic. When one sells a game for less than Steam does, the post gives that price, how far it is under Steam's normal price and, if Steam has a sale too, Steam's price. "On another store" links to the game's gg.deals page, which lists the stores. Some stores, like GOG and Epic, sell their own copy rather than a Steam key.
+With an [IsThereAnyDeal](https://isthereanydeal.com) API key (`ITAD_API_KEY`), the same check also asks IsThereAnyDeal what other official stores charge, such as Humble, Fanatical, Green Man Gaming or GamesPlanet. Only copies that are Steam keys count: GOG, Epic and other launchers' copies, and stores that don't say what they sell, are left out. When a store sells a Steam key for less than Steam does, the post gives that price and store, how far it is under Steam's normal price and, if Steam has a sale too, Steam's price. The store's name links to the deal.
 
-How far under Steam's normal price counts as the discount: the smallest sale worth posting and the 10 points deeper apply to it the same way. Key resellers are left out, because gg.deals can't say whether their deals are a Steam key or an account, or which regions they work in. A server can leave other stores out (`/setup sale-alerts other_stores:False`). Without a key, only Steam is checked.
+How far under Steam's normal price counts as the discount: the smallest sale worth posting and the 10 points deeper apply to it the same way. A server can leave other stores out (`/setup sale-alerts other_stores:False`). Without a key, only Steam is checked.
 
-The lowest price comes from gg.deals when other stores are being checked, in the server's own money. Without one it comes from [CheapShark](https://www.cheapshark.com), which is in US dollars, so it only appears for servers using the `us` region. gg.deals doesn't cover every region, and a server in one it doesn't cover gets Steam's prices only.
+With a [gg.deals](https://gg.deals) API key as well (`GGDEALS_API_KEY`), a game that's posted or listed also shows the cheapest key reseller, such as G2A or Kinguin, when it's under every official price: "Key resellers from $7.50 on gg.deals". gg.deals only gives that one price, without saying whether it's a Steam key or an account or which regions it works in, so it never posts a game by itself. Check the offer on gg.deals before buying.
+
+The lowest price ever is the lowest a Steam key has had on Steam or the stores above, from IsThereAnyDeal, in the server's own money. Without a key there's no lowest price. A region IsThereAnyDeal or gg.deals doesn't cover gets Steam's prices only.
 
 Only the people a sale matters to are pinged:
 
@@ -247,6 +249,21 @@ Only the people a sale matters to are pinged:
 - For played and library games, everyone in the group who doesn't have it. A library game that was added by `/game want` only pings the people who wanted it.
 - Not anyone who has played it in voice here, as they must have it somehow.
 - Not anyone whose Steam library is private, unless they asked for the game, as nobody can tell what they own.
+
+#### Bundles
+
+With an IsThereAnyDeal key, the bot also looks through the Humble Bundle, Fanatical and Green Man Gaming bundles running now, every `SALE_CHECK_HOURS`. A bundle is posted once, in the same channel as sales, when it has:
+
+- **A game this server cares about:** one it would post a sale for, as above. The post names the game, the cheapest tier that has it and why, and pings whoever wants it or has it on their Steam wishlist.
+- **A game like what you play:** one sharing at least 3 Steam tags with one of the 10 games played most here in the past 180 days, that someone with a linked Steam account doesn't already have. These don't ping anyone.
+
+> 📦 **Resident Evil: Biohazard Unleashed Bundle**
+> **Resident Evil 4** in the $18.00 tier: On @Jo’s Steam wishlist
+> **Resident Evil 7 Biohazard** in the $10.00 tier: Like Phasmophobia (Horror, Survival Horror, Psychological Horror)
+> Ends in 5 days
+> *Humble Bundle · from $10.00*
+
+DLC and soundtracks are left out, and a bundle with nothing for this server isn't posted, but is looked at again at the next check in case someone wants one of its games by then. At most 3 bundles are posted at a time. A server can turn bundles off (`/setup sale-alerts bundles:False`), or keep only the ones with a game it cares about (`bundles_like_we_play:False`).
 
 Games hidden with **Never suggest this** aren't watched for being played or wishlisted, only if someone asked for them. A game nobody needs isn't posted.
 
@@ -607,7 +624,9 @@ Each setting goes by the name `/setup show` and `/setup reset` use. A few are se
 | Games not on Steam | `free-game-filters` | `FREE_GAMES_UNLISTED` (`true` to show them) | hidden |
 | Smallest sale worth posting | `sale-alerts` | `SALE_MIN_DISCOUNT` | 25% off |
 | Steam wishlists in sale alerts | `sale-alerts` | `SALE_STEAM_WISHLISTS` (`false` to turn off) | on |
-| Other stores in sale alerts | `sale-alerts` | `SALE_OTHER_STORES` (`false` to turn off) | on, with a `GGDEALS_API_KEY` |
+| Other stores in sale alerts | `sale-alerts` | `SALE_OTHER_STORES` (`false` to turn off) | on, with an `ITAD_API_KEY` (key resellers with a `GGDEALS_API_KEY`) |
+| Bundle alerts | `sale-alerts` | `BUNDLE_ALERTS` (`false` to turn off) | on, with an `ITAD_API_KEY` |
+| Bundles like what you play | `sale-alerts` | `BUNDLES_LIKE_WE_PLAY` (`false` to turn off) | on |
 | Sale alerts channel | `sale-alerts` | | announce channel |
 | Games from Steam status | `steam-status` | `STEAM_STATUS` (`false` to turn off) | on |
 | Patch notes | `patch-notes` | `PATCH_NOTES` (`off`, `each` or `digest`) | off |
@@ -735,7 +754,8 @@ Set in `.env` (see `.env.example`).
 | `STEAM_API_KEY` | none | Needed for `/steam` and the picker's Steam data |
 | `ALLOWED_GUILD_IDS` | any server | Comma-separated server IDs allowed to use the bot; it leaves any other server |
 | `SALE_CHECK_HOURS` | 6 | How often Steam prices are checked, for every server at once |
-| `GGDEALS_API_KEY` | none | A [gg.deals](https://gg.deals) API key, from your gg.deals account settings, for [other stores' prices](#other-stores) in sale alerts. Your account's email address must be confirmed |
+| `ITAD_API_KEY` | none | An [IsThereAnyDeal](https://isthereanydeal.com) API key, for [other stores' Steam keys](#other-stores) and the lowest price ever in sale alerts, and for [bundles](#bundles). Sign in, register an app under your account's apps page, and copy its API key |
+| `GGDEALS_API_KEY` | none | A [gg.deals](https://gg.deals) API key, from your gg.deals account settings, for the cheapest [key reseller](#other-stores) beside a sale. Your account's email address must be confirmed |
 | `TZ` | UTC | The container's time zone, and every server's default time zone |
 | `API_TOKEN` | off | Turns on the [management API](#management-api) and is the token that unlocks it |
 | `API_PORT` | 8787 | Port for the management API |

@@ -88,6 +88,8 @@ export const LABELS: Record<SettingKey, string> = {
   saleMinDiscount: 'Smallest sale worth posting',
   saleSteamWishlists: 'Steam wishlists in sale alerts',
   saleOtherStores: 'Other stores in sale alerts',
+  bundleAlerts: 'Bundle alerts',
+  bundlesLikeWePlay: 'Bundles like what you play',
   steamStatus: 'Games from Steam status',
   patchNotes: 'Patch notes',
   patchNotesChannel: 'Patch notes channel',
@@ -168,6 +170,8 @@ export function show(key: SettingKey, value: unknown): string {
     case 'freeGamesMultiplayer':
     case 'saleSteamWishlists':
     case 'saleOtherStores':
+    case 'bundleAlerts':
+    case 'bundlesLikeWePlay':
     case 'steamStatus':
     case 'monthlyRecap':
     case 'sessionRecap':
@@ -263,7 +267,7 @@ export const GROUPS: [string, SettingKey[]][] = [
   ['Voice sessions', ['sessionRecap', 'recapMinMinutes', 'sessionGraceMin']],
   ['Leaderboard and recap', ['weeklyLeaderboard', 'weeklyPostDay', 'weeklyPostHour', 'monthlyRecap']],
   ['Games', ['steamCountry', 'steamStatus', 'gameNightReminderMin']],
-  ['Sale alerts', ['saleMinDiscount', 'saleSteamWishlists', 'saleOtherStores', 'saleChannel']],
+  ['Sale alerts', ['saleMinDiscount', 'saleSteamWishlists', 'saleOtherStores', 'bundleAlerts', 'bundlesLikeWePlay', 'saleChannel']],
   ['Patch notes', ['patchNotes', 'patchNotesChannel']],
   ['Free games', ['freeGames', 'freeGamesChannel', 'freeGamesMinRating', 'freeGamesTaste', 'freeGamesMultiplayer', 'freeGamesUnlisted']],
   ['Soundboard', ['soundVolume', 'evenVolume', 'joinSounds', 'joinSoundDelayMs', 'joinSoundCooldownMin', 'soundManagerRole']],
@@ -526,7 +530,9 @@ export const setup: Feature = {
               o.setName('min_discount').setDescription('Smallest discount to post, in percent').setMinValue(LIMITS.saleMinDiscount[0]).setMaxValue(LIMITS.saleMinDiscount[1]),
             )
             .addBooleanOption((o) => o.setName('steam_wishlists').setDescription('Include games on members’ public Steam wishlists'))
-            .addBooleanOption((o) => o.setName('other_stores').setDescription('Also post when another official store sells a game for less than Steam'))
+            .addBooleanOption((o) => o.setName('other_stores').setDescription('Also post when another official store sells a Steam key for less than Steam'))
+            .addBooleanOption((o) => o.setName('bundles').setDescription('Post Humble, Fanatical and Green Man Gaming bundles with a game this server wants'))
+            .addBooleanOption((o) => o.setName('bundles_like_we_play').setDescription('Also post bundles with a game like the ones this server plays most'))
             .addChannelOption((o) =>
               o
                 .setName('channel')
@@ -785,6 +791,8 @@ export const setup: Feature = {
             ['saleMinDiscount', i.options.getInteger('min_discount')],
             ['saleSteamWishlists', i.options.getBoolean('steam_wishlists')],
             ['saleOtherStores', i.options.getBoolean('other_stores')],
+            ['bundleAlerts', i.options.getBoolean('bundles')],
+            ['bundlesLikeWePlay', i.options.getBoolean('bundles_like_we_play')],
             ['saleChannel', channel?.id ?? null],
           ]);
         }

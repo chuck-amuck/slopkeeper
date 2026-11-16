@@ -35,8 +35,11 @@ export const DEFAULTS = {
   // Steam is always running a small sale on something, so an alert waits for one worth mentioning
   saleMinDiscount: num('SALE_MIN_DISCOUNT', 25),
   saleSteamWishlists: process.env.SALE_STEAM_WISHLISTS !== 'false',
-  // Only does anything with a GGDEALS_API_KEY
+  // Only does anything with an ITAD_API_KEY, or a GGDEALS_API_KEY for key resellers
   saleOtherStores: process.env.SALE_OTHER_STORES !== 'false',
+  // Both need an ITAD_API_KEY
+  bundleAlerts: process.env.BUNDLE_ALERTS !== 'false',
+  bundlesLikeWePlay: process.env.BUNDLES_LIKE_WE_PLAY !== 'false',
   steamStatus: process.env.STEAM_STATUS !== 'false',
   patchNotes: process.env.PATCH_NOTES || 'off',
   patchNotesChannel: null as string | null,
@@ -118,6 +121,8 @@ export const DEFAULT_ENV: Partial<Record<SettingKey, string>> = {
   saleMinDiscount: 'SALE_MIN_DISCOUNT',
   saleSteamWishlists: 'SALE_STEAM_WISHLISTS',
   saleOtherStores: 'SALE_OTHER_STORES',
+  bundleAlerts: 'BUNDLE_ALERTS',
+  bundlesLikeWePlay: 'BUNDLES_LIKE_WE_PLAY',
   steamStatus: 'STEAM_STATUS',
   patchNotes: 'PATCH_NOTES',
   gameNightReminderMin: 'GAMENIGHT_REMINDER_MIN',

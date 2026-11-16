@@ -558,10 +558,35 @@ if (!db.prepare("SELECT 1 FROM pragma_table_info('deleted_sounds') WHERE name = 
   db.exec('ALTER TABLE deleted_sounds ADD COLUMN link TEXT');
 }
 
-// Another official store selling a game for less than Steam: its price in cents of Steam's currency, how far under Steam's normal price, and gg.deals' page
-for (const [column, type] of [['store', 'INTEGER'], ['store_off', 'INTEGER'], ['store_url', 'TEXT'], ['currency', 'TEXT']]) {
+// Another official store selling a Steam copy for less than Steam: its price in cents of Steam's currency, how far
+// under Steam's normal price, its link and name. Then the cheapest key reseller, when it's cheaper still
+for (const [column, type] of [
+  ['store', 'INTEGER'],
+  ['store_off', 'INTEGER'],
+  ['store_url', 'TEXT'],
+  ['currency', 'TEXT'],
+  ['store_name', 'TEXT'],
+  ['keyshop', 'INTEGER'],
+  ['keyshop_url', 'TEXT'],
+]) {
   if (!db.prepare("SELECT 1 FROM pragma_table_info('sale_prices') WHERE name = ?").get(column)) db.exec(`ALTER TABLE sale_prices ADD COLUMN ${column} ${type}`);
 }
+
+db.exec(`
+  -- IsThereAnyDeal's id for each Steam app, null when it has none, which is asked again after a while
+  CREATE TABLE IF NOT EXISTS itad_apps (
+    appid INTEGER PRIMARY KEY,
+    itad_id TEXT,
+    checked_at INTEGER NOT NULL
+  );
+  -- Bundles each server has been told about
+  CREATE TABLE IF NOT EXISTS bundle_posts (
+    guild_id TEXT NOT NULL,
+    bundle_id INTEGER NOT NULL,
+    posted_at INTEGER NOT NULL,
+    PRIMARY KEY (guild_id, bundle_id)
+  );
+`);
 
 // Favourites were a star on each sound before groups, and become a Favourites group at the top, most played first as they showed
 transaction(() => {

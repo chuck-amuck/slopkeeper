@@ -61,7 +61,7 @@ async function current(): Promise<Giveaway[]> {
   return cache.giveaways;
 }
 
-const tasteTags = (facts: GameFacts) => facts.tags.filter((tag) => !GENERIC_TAGS.has(tag)).slice(0, GAME_TAGS);
+export const tasteTags = (facts: GameFacts) => facts.tags.filter((tag) => !GENERIC_TAGS.has(tag)).slice(0, GAME_TAGS);
 
 /** The tags of what a server plays most, or null if too few of its games are on Steam to tell */
 export async function taste(guildId: string) {
@@ -80,7 +80,7 @@ export async function taste(guildId: string) {
 
 export type Taste = Awaited<ReturnType<typeof taste>>;
 
-function everyoneOwns(guild: Guild, appid: number) {
+export function everyoneOwns(guild: Guild, appid: number) {
   const linked = (db.prepare('SELECT user_id, steam_id FROM steam_links').all() as { user_id: string; steam_id: string }[]).filter((l) => guild.members.cache.has(l.user_id));
   const owns = db.prepare('SELECT 1 FROM steam_owned WHERE steam_id = ? AND appid = ?');
   return linked.length > 0 && linked.every((l) => owns.get(l.steam_id, appid));
