@@ -11,7 +11,7 @@ import { currentPlayers, familyOf, patchNotes, joinFamily, leaveFamily, linkStea
 import { activityIn, checkpoint, comparison, PERIODS, peopleWithStats, pickFor, playedByKey, playsIn, sessionCount, stats, totalsBy } from '../features/gamestats.ts';
 import { postVote } from '../features/gamevote.ts';
 import { recapFor } from '../features/recap.ts';
-import { gameKey, gameName, gameSpellings, mergeGames, separateGame } from '../gameNames.ts';
+import { countAsGame, gameKey, gameName, gameSpellings, markNotAGame, mergeGames, notGames, separateGame } from '../gameNames.ts';
 import { countIn, nightTimes, peopleIn, recordsFrom, sessionTime, soundTimes, spread, stepsOf, voiceFrom, voiceStints, whenOn } from '../features/overview.ts';
 import { checkpointVoice, voiceTotals } from '../features/sessions.ts';
 import { idSetting, setting } from '../settings.ts';
@@ -267,7 +267,11 @@ export async function saleList(guild: Guild) {
 
 export function gameNameList(guild: Guild) {
   const spellings = gameSpellings(guild.id);
-  return { games: stats(guild.id, 0, 'none', 'game').map((g) => ({ name: g.key, ms: g.ms, spellings: (spellings.get(g.key) ?? []).filter((raw) => raw !== g.key) })) };
+  return {
+    games: stats(guild.id, 0, 'none', 'game').map((g) => ({ name: g.key, ms: g.ms, spellings: (spellings.get(g.key) ?? []).filter((raw) => raw !== g.key) })),
+    // Marked as not a game, so left out of everything above
+    notGames: notGames(guild.id),
+  };
 }
 
 export async function changeGameNames(guild: Guild, req: IncomingMessage, action: string) {
@@ -279,7 +283,17 @@ export async function changeGameNames(guild: Guild, req: IncomingMessage, action
     logActivity(guild.id, by(), `Merged ${(names as string[]).map((n) => `**${n}**`).join(', ')} into **${into}**`);
     return {};
   }
-  if (typeof body.name !== 'string') throw new Refused(400, 'Pick a spelling to separate.');
+  if (typeof body.name !== 'string') throw new Refused(400, action === 'separate' ? 'Pick a spelling to separate.' : 'Pick a game.');
+  if (action === 'not-a-game') {
+    refuse(guild, markNotAGame(guild.id, body.name));
+    logActivity(guild.id, by(), `Marked **${body.name}** as not a game`);
+    return {};
+  }
+  if (action === 'a-game') {
+    refuse(guild, countAsGame(guild.id, body.name));
+    logActivity(guild.id, by(), `Counted **${body.name}** as a game again`);
+    return {};
+  }
   refuse(guild, separateGame(guild.id, body.name));
   logActivity(guild.id, by(), `Separated **${body.name}**`);
   return {};
@@ -614,7 +628,7 @@ export async function gameRoutes({ client, guild, req, res, url, section, rest }
   }
   if (section === 'sales' && !rest.length && req.method === 'GET') return saleList(guild);
   if (section === 'game-names' && !rest.length && req.method === 'GET') return gameNameList(guild);
-  if (section === 'game-names' && rest.length === 1 && (rest[0] === 'merge' || rest[0] === 'separate') && req.method === 'POST') return changeGameNames(guild, req, rest[0]);
+  if (section === 'game-names' && rest.length === 1 && ['merge', 'separate', 'not-a-game', 'a-game'].includes(rest[0]) && req.method === 'POST') return changeGameNames(guild, req, rest[0]);
   if (section === 'lobbies' && !rest.length && req.method === 'GET') return lobbyList(guild);
   throw new Refused(404, 'Not found.');
 }

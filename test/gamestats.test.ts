@@ -340,6 +340,37 @@ test('a game showing on Discord and Steam counts once', (t) => {
   assert.deepEqual(plays(), [['sam', 'Valheim', 'v1', 5]]);
 });
 
+test('a program’s name with Steam showing a game by those letters becomes that game, and its play carries on', (t) => {
+  const { member, moveTo, play, plays } = voiceServer(t, 'steam-learn');
+  const sam = member('sam');
+  moveTo(sam, 'v1');
+  play(sam, 'swzerocompany');
+  t.mock.timers.tick(5 * MINUTE);
+  setSteamGames(new Map([['sam', { appid: 1, name: 'STAR WARS Zero Company™', lobby: null }]]));
+  play(sam, 'swzerocompany');
+  t.mock.timers.tick(5 * MINUTE);
+  setSteamGames(new Map());
+  assert.equal(gameName('steam-learn', 'swzerocompany'), 'STAR WARS Zero Company');
+  assert.deepEqual(plays(), [['sam', 'swzerocompany', 'v1', 10]]);
+  // A program that isn't spelled in what Steam shows stays what it is
+  play(sam, 'retroarch');
+  setSteamGames(new Map([['sam', { appid: 2, name: 'Hades II', lobby: null }]]));
+  play(sam, 'retroarch');
+  setSteamGames(new Map());
+  assert.equal(gameName('steam-learn', 'retroarch'), 'retroarch');
+});
+
+test('a program’s name isn’t learned from Steam with Steam status off', (t) => {
+  setSetting('steam-learn-off', 'steamStatus', false);
+  const { member, moveTo, play } = voiceServer(t, 'steam-learn-off');
+  const sam = member('sam');
+  moveTo(sam, 'v1');
+  setSteamGames(new Map([['sam', { appid: 1, name: 'STAR WARS Zero Company', lobby: null }]]));
+  play(sam, 'swzerocompany');
+  setSteamGames(new Map());
+  assert.equal(gameName('steam-learn-off', 'swzerocompany'), 'swzerocompany');
+});
+
 test('a game on Steam doesn’t count with Steam status off', (t) => {
   setSetting('steam-off', 'steamStatus', false);
   const { member, moveTo, plays } = voiceServer(t, 'steam-off');

@@ -12,9 +12,9 @@ import {
   type User,
 } from 'discord.js';
 import { db, MIN_PLAY } from '../db.ts';
-import { gameKey, gameName, noteGame } from '../gameNames.ts';
-import { isAllowed } from '../settings.ts';
-import { onSteamChange } from '../steamStatus.ts';
+import { gameKey, gameName, learnFromSteam, noteGame } from '../gameNames.ts';
+import { isAllowed, setting } from '../settings.ts';
+import { onSteamChange, steamGame } from '../steamStatus.ts';
 import type { Feature } from '../types.ts';
 import { eachGuild, formatDuration, playingGames, servedGuilds } from '../util.ts';
 import { candidatesFor, sharedGames } from './games.ts';
@@ -48,14 +48,27 @@ function sync(member: GuildMember, now: number) {
   const channelId = countedChannel(member);
   // By the name each goes by, so two spellings of one game showing at once are one play
   const playing = new Map<string, string>();
+  const mine = open.get(key) ?? new Map<string, { id: number; channelId: string }>();
   if (channelId) {
-    for (const raw of playingGames(member)) {
+    const shown = playingGames(member);
+    // A program's name with Steam saying what's running is that game. Only with one thing showing, to be sure which,
+    // and only where Steam status is used. A play already open carries on under the new name
+    const steam = shown.length === 1 && setting(member.guild.id, 'steamStatus') ? steamGame(member.id) : undefined;
+    const was = steam && gameName(member.guild.id, shown[0]);
+    if (steam && was && learnFromSteam(member.guild.id, shown[0], steam.name)) {
+      const play = mine.get(was);
+      const renamed = gameName(member.guild.id, shown[0]);
+      if (play && !mine.has(renamed)) {
+        mine.delete(was);
+        mine.set(renamed, play);
+      }
+    }
+    for (const raw of shown) {
       noteGame(member.guild.id, raw);
       const name = gameName(member.guild.id, raw);
       if (!playing.has(name)) playing.set(name, raw);
     }
   }
-  const mine = open.get(key) ?? new Map<string, { id: number; channelId: string }>();
   for (const [game, play] of mine) {
     if (playing.has(game) && play.channelId === channelId) continue;
     close(play.id, now);

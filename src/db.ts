@@ -302,10 +302,23 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS game_aliases_by_key ON game_aliases (guild_id, key);
 
-  -- game_plays under the name each game goes by, so stored plays never need rewriting
-  CREATE VIEW IF NOT EXISTS named_plays AS
+  -- Games someone said aren't a game: each spelling it had then, and its name, so a spelling merged in later goes too
+  CREATE TABLE IF NOT EXISTS not_games (
+    guild_id TEXT NOT NULL,
+    raw TEXT NOT NULL,
+    name TEXT NOT NULL,
+    hidden_at INTEGER NOT NULL,
+    PRIMARY KEY (guild_id, raw)
+  );
+  CREATE INDEX IF NOT EXISTS not_games_name ON not_games (guild_id, name);
+
+  -- game_plays under the name each game goes by, so stored plays never need rewriting, leaving out what isn't a game.
+  -- A view keeps nothing, so it's made again each start, as its definition changes
+  DROP VIEW IF EXISTS named_plays;
+  CREATE VIEW named_plays AS
     SELECT p.id, p.guild_id, p.user_id, COALESCE(a.name, p.game) AS game, p.game AS raw, p.channel_id, p.started_at, p.ended_at
-    FROM game_plays p LEFT JOIN game_aliases a ON a.guild_id = p.guild_id AND a.raw = p.game;
+    FROM game_plays p LEFT JOIN game_aliases a ON a.guild_id = p.guild_id AND a.raw = p.game
+    WHERE NOT EXISTS (SELECT 1 FROM not_games n WHERE n.guild_id = p.guild_id AND (n.raw = p.game OR n.name = COALESCE(a.name, p.game)));
 
   CREATE TABLE IF NOT EXISTS sound_favourites (
     guild_id TEXT NOT NULL,

@@ -1,6 +1,6 @@
 import { EmbedBuilder, Events, MessageFlags, SlashCommandBuilder, type Client, type GuildMember, type VoiceBasedChannel } from 'discord.js';
 import { db, getKv, setKv, transaction } from '../db.ts';
-import { gameName } from '../gameNames.ts';
+import { gameName, isNotAGame } from '../gameNames.ts';
 import { isAllowed, setting } from '../settings.ts';
 import { onSteamChange } from '../steamStatus.ts';
 import type { Feature } from '../types.ts';
@@ -169,7 +169,9 @@ async function finish(client: Client<true>, channelId: string) {
     .setDescription(ranked.map(([userId, ms]) => `<@${userId}> · ${formatDuration(ms)}`).join('\n'))
     .setColor(0x5865f2)
     .setTimestamp(endedAt);
-  if (s.games.size) embed.addFields({ name: 'Played', value: [...new Set([...s.games].map((game) => gameName(s.guildId, game)))].join(', ') });
+  // Without what someone marked as not a game
+  const played = [...new Set([...s.games].filter((game) => !isNotAGame(s.guildId, game)).map((game) => gameName(s.guildId, game)))];
+  if (played.length) embed.addFields({ name: 'Played', value: played.join(', ') });
 
   await (await announceChannel(client, s.guildId))?.send({ embeds: [embed] });
 }

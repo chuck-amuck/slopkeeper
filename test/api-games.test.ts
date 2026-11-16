@@ -308,6 +308,22 @@ test('games can be merged and separated, and it shows in the stats and activity'
   assert.ok(actions.includes('Separated Halo 6'), actions.join(', '));
 });
 
+test('a game can be marked as not a game, which leaves it out, and counted again', async () => {
+  addPlay('u1', 'Overlay Tool', 3, 1);
+  noteGame(GUILD, 'Overlay Tool');
+  assert.ok((await ok(`/guilds/${GUILD}/game-names`)).games.some((g: any) => g.name === 'Overlay Tool'));
+  await ok(`/guilds/${GUILD}/game-names/not-a-game`, { method: 'POST', json: { name: 'Overlay Tool' } });
+  const list = await ok(`/guilds/${GUILD}/game-names`);
+  assert.ok(!list.games.some((g: any) => g.name === 'Overlay Tool'));
+  assert.deepEqual(list.notGames, ['Overlay Tool']);
+  assert.ok(!(await ok(`/guilds/${GUILD}/stats?period=week`)).games.some((g: any) => g.name === 'Overlay Tool'));
+  await ok(`/guilds/${GUILD}/game-names/a-game`, { method: 'POST', json: { name: 'Overlay Tool' } });
+  assert.deepEqual((await ok(`/guilds/${GUILD}/game-names`)).notGames, []);
+  const actions = (await ok(`/guilds/${GUILD}/activity`)).entries.map((e: { action: string }) => e.action);
+  assert.ok(actions.includes('Marked Overlay Tool as not a game'), actions.join(', '));
+  assert.ok(actions.includes('Counted Overlay Tool as a game again'), actions.join(', '));
+});
+
 test('bad game name changes are refused', async () => {
   for (const [path, json, why] of [
     ['merge', { names: 'Halo', into: 'Halo' }, /Pick the games/],
@@ -316,6 +332,9 @@ test('bad game name changes are refused', async () => {
     ['merge', { names: ['A', 'B'], into: 'A' }, /no game called A/],
     ['separate', {}, /Pick a spelling/],
     ['separate', { name: 'Nothing' }, /no game called/],
+    ['not-a-game', {}, /Pick a game/],
+    ['not-a-game', { name: 'Nothing' }, /no game called/],
+    ['a-game', { name: 'Nothing' }, /isn’t marked as not a game/],
   ] as [string, unknown, RegExp][]) {
     const res = await call(`/guilds/${GUILD}/game-names/${path}`, { method: 'POST', json });
     assert.equal(res.status, 400, JSON.stringify(json));

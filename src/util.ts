@@ -1,5 +1,6 @@
 import { ActivityType, PermissionFlagsBits, type Client, type Guild, type GuildBasedChannel, type GuildMember, type Role, type SendableChannels, type VoiceBasedChannel } from 'discord.js';
 import { idSetting, isAllowed, setting, type IdSettingKey } from './settings.ts';
+import { cleanGameName, isProgramNotGame } from './gameText.ts';
 import { steamGame } from './steamStatus.ts';
 
 /** For outside services, so a stalled one can't hold a command or a scheduled job for minutes */
@@ -16,10 +17,14 @@ export function humansIn(channel: VoiceBasedChannel): GuildMember[] {
 }
 
 export function playingGames(member: GuildMember): string[] {
-  const games = (member.presence?.activities ?? []).filter((a) => a.type === ActivityType.Playing).map((a) => a.name);
+  // Cleaned of escape codes, and without programs that aren't games, like launchers
+  const games = (member.presence?.activities ?? [])
+    .filter((a) => a.type === ActivityType.Playing)
+    .map((a) => cleanGameName(a.name))
+    .filter((name) => name && !isProgramNotGame(name));
   // Only when Discord shows nothing, so a game can't count twice under two names
   const steam = games.length ? undefined : steamGame(member.id);
-  return steam && setting(member.guild.id, 'steamStatus') ? [steam.name] : games;
+  return steam && setting(member.guild.id, 'steamStatus') ? [cleanGameName(steam.name)] : games;
 }
 
 export function formatDuration(ms: number): string {
