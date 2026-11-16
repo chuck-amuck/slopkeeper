@@ -89,13 +89,32 @@ client.on(Events.InteractionCreate, async (i) => {
 // A stray failed promise is logged rather than taking every feature down with it
 process.on('unhandledRejection', (err) => console.error('Unhandled rejection:', err));
 
+/** Runs one feature's step, so one that fails doesn't stop the rest, or the database closing */
+function each(what: string, step: (feature: (typeof features)[number]) => void) {
+  for (const feature of features) {
+    try {
+      step(feature);
+    } catch (err) {
+      console.error(`${what} failed:`, err);
+    }
+  }
+}
+
+let stopping = false;
 for (const signal of ['SIGINT', 'SIGTERM']) {
   process.on(signal, async () => {
-    for (const feature of features) feature.saveForRestart?.();
-    for (const feature of features) feature.shutdown?.();
-    // Leaving voice is queued on the gateway connection, so it needs a moment before that closes
-    await sleep(250);
-    await client.destroy();
+    // A second signal is someone insisting: it exits now, rather than saving again after shutdown emptied what's playing
+    if (stopping) process.exit(1);
+    stopping = true;
+    each('Saving for the restart', (feature) => feature.saveForRestart?.());
+    each('Shutting down', (feature) => feature.shutdown?.());
+    try {
+      // Leaving voice is queued on the gateway connection, so it needs a moment before that closes
+      await sleep(250);
+      await client.destroy();
+    } catch (err) {
+      console.error('Closing the Discord connection failed:', err);
+    }
     db.close();
     process.exit(0);
   });
