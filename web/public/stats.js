@@ -1,7 +1,7 @@
 import { achievementsView } from './achievements.js';
 import { health } from './health.js';
 import { HOURS, timeChart, weekChart, WEEKDAYS_LONG } from './charts.js';
-import { ago, api, attempt, duration, el, formProblem, icon, notice, openDialog, recall, remember, request, state, toast } from './lib.js';
+import { ago, api, attempt, duration, el, formProblem, icon, notice, openDialog, recall, remember, request, state, toast, undoToast } from './lib.js';
 import { rangeBar, rangeFromQuery, rangeQuery } from './rangebar.js';
 
 /** Ranges up to now, from midnight in the server's time zone where it's whole days */
@@ -385,6 +385,50 @@ function overview(main, address) {
       await show();
     });
 
+  /** Leaves a game out of everything, with Undo counting it again */
+  const notAGame = (name) =>
+    attempt(async () => {
+      await request(api('/game-names/not-a-game'), { method: 'POST', json: { name } });
+      if (game === name) game = null;
+      undoToast(`${name} isn’t counted as a game.`, () => aGame(name));
+      await show();
+    });
+
+  const aGame = (name) =>
+    attempt(async () => {
+      await request(api('/game-names/a-game'), { method: 'POST', json: { name } });
+      toast(`${name} counts as a game again.`);
+      await show();
+    });
+
+  /** What's been marked as not a game, each with a way back */
+  function showNotGames() {
+    const list = el('div', { className: 'merge-list' }, el('p', {}, 'Loading…'));
+    const paint = (names) =>
+      list.replaceChildren(
+        ...(names.length
+          ? names.map((name) =>
+              el(
+                'div',
+                { className: 'merge-row' },
+                el('span', { className: 'rank-name' }, name),
+                el('button', { type: 'button', onclick: () => void aGame(name).then(() => load()), ariaLabel: `Count ${name} as a game` }, 'It’s a game'),
+              ),
+            )
+          : [el('p', {}, 'Nothing is marked as not a game.')]),
+      );
+    const load = () =>
+      request(api('/game-names')).then(
+        (data) => paint(data.notGames),
+        (err) => list.replaceChildren(el('p', {}, err.message)),
+      );
+    openDialog(main, {
+      title: 'Not games',
+      body: [el('p', {}, 'Programs that showed as playing but aren’t games, like launchers. They’re left out of Stats, game nights, game roles and session recaps, and their time is kept in case one is a game after all.'), list],
+    });
+    void load();
+  }
+
   const separate = (raw) =>
     attempt(async () => {
       await request(api('/game-names/separate'), { method: 'POST', json: { name: raw } });
@@ -536,11 +580,20 @@ function overview(main, address) {
             ),
           ]
         : []),
+      ...(game
+        ? [
+            card(
+              'Not a game?',
+              el('p', { className: 'hint' }, `If ${game} is a launcher or another program rather than a game, it can be left out of Stats, game nights, game roles and session recaps.`),
+              el('button', { onclick: () => notAGame(game) }, 'Not a game'),
+            ),
+          ]
+        : []),
       ...(!game && data.games.length
         ? [
             titled(
               'Top games',
-              el('button', { onclick: mergeGames }, 'Merge games'),
+              el('div', { className: 'card-actions' }, el('button', { onclick: mergeGames }, 'Merge games'), el('button', { onclick: showNotGames }, 'Not games')),
               ranked(
                 data.games.map((g) => ({ label: g.name, ms: g.ms, note: notes(user ? lastPlayed(g.last) : count(g.people, 'player'), movedNote(g.ms, g.previousMs)) })),
                 pickGame,
