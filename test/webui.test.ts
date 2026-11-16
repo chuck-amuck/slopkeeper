@@ -197,11 +197,23 @@ test('every page of the web UI opens cleanly, on a computer and a phone', { skip
           // On a phone, Chrome zooms out to fit a page that's too wide, so the screen's width is the measure
           wide: Math.max(document.documentElement.scrollWidth, document.body.scrollWidth),
           width: document.documentElement.clientWidth,
-          // The innermost elements past the screen's edge, to say what's too wide
-          past: [...document.querySelectorAll('body *')]
-            .filter((n) => n.getClientRects().length && n.getBoundingClientRect().right > ${screen.width} + 1 && ![...n.children].some((c) => c.getBoundingClientRect().right > ${screen.width} + 1))
-            .slice(0, 3)
-            .map((n) => n.tagName.toLowerCase() + (n.className && typeof n.className === 'string' ? '.' + n.className.trim().split(/\s+/).join('.') : '') + ' "' + (n.textContent || '').trim().slice(0, 40) + '" ends at ' + Math.round(n.getBoundingClientRect().right)),
+          // What reaches past the screen's edge, innermost first, and text that runs out of its box, to say what's too wide
+          past: (() => {
+            const edge = ${screen.width} + 1;
+            const name = (n) => n.tagName.toLowerCase() + (typeof n.className === 'string' && n.className.trim() ? '.' + n.className.trim().split(/\\s+/).join('.') : '');
+            // A fixed bar stretches with a page that's too wide, so it's never the cause
+            const fixed = (n) => { for (; n; n = n.parentElement) if (getComputedStyle(n).position === 'fixed') return true; return false; };
+            const boxes = [...document.querySelectorAll('body *')].filter((n) => n.getClientRects().length && n.getBoundingClientRect().right > edge && !fixed(n));
+            const texts = [];
+            const walk = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+            for (let t = walk.nextNode(); t; t = walk.nextNode()) {
+              const range = document.createRange();
+              range.selectNodeContents(t);
+              const right = Math.max(0, ...[...range.getClientRects()].map((r) => r.right));
+              if (right > edge && t.parentElement && !fixed(t.parentElement)) texts.push('text "' + t.textContent.trim().slice(0, 40) + '" in ' + name(t.parentElement) + ' ends at ' + Math.round(right));
+            }
+            return [...boxes.reverse().slice(0, 4).map((n) => name(n) + ' "' + (n.textContent || '').trim().slice(0, 30) + '" ends at ' + Math.round(n.getBoundingClientRect().right)), ...texts.slice(0, 4)];
+          })(),
         };
       })()`);
       const where = `${label} (${screen.name})`;
