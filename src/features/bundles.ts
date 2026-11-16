@@ -6,7 +6,7 @@ import { setting } from '../settings.ts';
 import type { Feature } from '../types.ts';
 import { announceChannel, eachGuild } from '../util.ts';
 import { factsFor } from './gamefacts.ts';
-import { everyoneOwns, taste, tasteTags, type Taste } from './freegames.ts';
+import { everyoneOwns, MULTIPLAYER_TAGS, taste, tasteTags, type Taste } from './freegames.ts';
 import { short } from './gamestats.ts';
 import { itad, money, pauses, saleReasons, storeUrl, watched, type Watched } from './sales.ts';
 
@@ -17,7 +17,9 @@ const SITES = new Set([1, 8, 47, 73]);
 const PAGE = 50;
 const MAX_PAGES = 10;
 /** A bundle game has to share this many Steam tags with one game a server plays a lot to count as like it */
-const SHARED_TAGS = 3;
+const SHARED_TAGS = 4;
+/** Steam's names for much the same thing, which would otherwise count as several tags in common */
+const SAME_TAG = new Map(['Rogue-like', 'Rogue-lite', 'Roguelite', 'Action Roguelike', 'Action Roguelite', 'Traditional Roguelike'].map((tag) => [tag, 'Roguelike']));
 const LISTED_GAMES = 10;
 /** Most bundle posts per server per check, so turning it on doesn't flood the channel */
 const MAX_POSTS = 3;
@@ -82,11 +84,15 @@ export async function currentBundles(country: string): Promise<Bundle[]> {
 }
 
 /** The played game a bundle game is most like, if they share enough tags */
+const sameTags = (tags: string[]) => [...new Set(tags.map((tag) => SAME_TAG.get(tag) ?? tag))];
+
 export function likeWhatWePlay(tags: string[], theirs: Taste) {
   if (!theirs) return null;
   let best: { name: string; shared: string[] } | null = null;
+  const own = sameTags(tags);
   for (const game of theirs.games) {
-    const shared = tags.filter((tag) => game.tags.includes(tag));
+    const played = sameTags(game.tags);
+    const shared = own.filter((tag) => played.includes(tag));
     if (shared.length >= SHARED_TAGS && shared.length > (best?.shared.length ?? 0)) best = { name: game.name, shared };
   }
   return best && `Like ${best.name} (${best.shared.slice(0, SHARED_TAGS).join(', ')})`;
@@ -102,8 +108,21 @@ interface Match {
   reason: string;
 }
 
-/** The games in a bundle worth telling this server about: ones it wants first, then ones like what it plays */
-export async function matches(guild: Guild, bundle: Bundle, interested: Map<number, Watched>, theirs: Taste): Promise<Match[]> {
+const multiplayer = (tags: string[]) => tags.some((tag) => MULTIPLAYER_TAGS.has(tag));
+
+/** Whether most of what a server plays most is multiplayer, so a game like it should be too */
+export async function playsTogether(theirs: Taste) {
+  if (!theirs) return false;
+  let together = 0;
+  for (const { name } of theirs.games) if (multiplayer((await factsFor(name).catch(() => null))?.tags ?? [])) together++;
+  return together * 2 > theirs.games.length;
+}
+
+/**
+ * The games in a bundle worth telling this server about: ones it wants first, then ones like what it plays, which
+ * have to be multiplayer too when most of what it plays is
+ */
+export async function matches(guild: Guild, bundle: Bundle, interested: Map<number, Watched>, theirs: Taste, together = false): Promise<Match[]> {
   const hidden = new Set((db.prepare('SELECT appid FROM hidden_apps WHERE guild_id = ?').all(guild.id) as { appid: number }[]).map((r) => r.appid));
   const found: Match[] = [];
   const seen = new Set<string>();
@@ -118,7 +137,7 @@ export async function matches(guild: Guild, bundle: Bundle, interested: Map<numb
         found.push({ title, appid: facts.appid, tier, wanted, reason: saleReasons(wanted, (id) => `<@${id}>`) });
         continue;
       }
-      if (!theirs || hidden.has(facts.appid) || everyoneOwns(guild, facts.appid)) continue;
+      if (!theirs || hidden.has(facts.appid) || (together && !multiplayer(facts.tags)) || everyoneOwns(guild, facts.appid)) continue;
       const like = likeWhatWePlay(tasteTags(facts), theirs);
       if (like) found.push({ title, appid: facts.appid, tier, wanted: null, reason: like });
     }
@@ -172,11 +191,12 @@ export async function checkBundles(client: Client<true>) {
     if (!out) return;
     const interested = new Map((await watched(guild)).map((g) => [g.appid, g]));
     const theirs = setting(guild.id, 'bundlesLikeWePlay') ? await taste(guild.id) : null;
+    const together = await playsTogether(theirs);
     let sent = 0;
     for (const bundle of fresh) {
       if (sent === MAX_POSTS) return;
       // Left unmarked when nothing matches, so someone wanting one of its games later still hears about it
-      const found = await matches(guild, bundle, interested, theirs);
+      const found = await matches(guild, bundle, interested, theirs, together);
       if (!found.length) continue;
       await out.send(bundlePost(bundle, found));
       markPosted.run(guild.id, bundle.id, Date.now());

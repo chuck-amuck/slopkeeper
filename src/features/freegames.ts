@@ -19,7 +19,7 @@ const TASTE_TAGS = 15;
 const TASTE_MIN_GAMES = 3;
 const GAME_TAGS = 8;
 const SHARED_TAGS = 2;
-const MULTIPLAYER_TAGS = new Set(['Multiplayer', 'Online Co-Op', 'Co-op', 'Local Co-Op', 'Local Multiplayer', 'PvP', 'Online PvP', 'Massively Multiplayer', 'MMORPG']);
+export const MULTIPLAYER_TAGS = new Set(['Multiplayer', 'Online Co-Op', 'Co-op', 'Local Co-Op', 'Local Multiplayer', 'PvP', 'Online PvP', 'Massively Multiplayer', 'MMORPG']);
 /** On so many games that sharing them says nothing about taste */
 const GENERIC_TAGS = new Set([...MULTIPLAYER_TAGS, 'Singleplayer', 'Indie', 'Early Access', 'Casual', 'Free to Play', 'Action', 'Adventure', 'Great Soundtrack', 'Atmospheric', 'Funny', '2D', '3D', 'Family Friendly', 'Controller']);
 

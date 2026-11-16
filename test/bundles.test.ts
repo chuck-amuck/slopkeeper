@@ -134,8 +134,8 @@ test('a game like what the server plays is posted without pinging, unless the se
     ['Farm Game', 9202, ['Farming Sim', 'Life Sim', 'Pixel Graphics', 'Relaxing']],
     ['Shooter Game', 9203, ['FPS', 'Shooter', 'Military', 'Tactical']],
   ]);
-  world.apps.set('Close Match', { id: 9204, tags: ['Dark Fantasy', 'RPG', 'Difficult', 'Story Rich'] });
-  world.apps.set('Loose Match', { id: 9205, tags: ['RPG', 'Relaxing', 'FPS', 'Puzzle'] });
+  world.apps.set('Close Match', { id: 9204, tags: ['Dark Fantasy', 'RPG', 'Difficult', 'Open World', 'Story Rich'] });
+  world.apps.set('Loose Match', { id: 9205, tags: ['Dark Fantasy', 'RPG', 'Difficult', 'Relaxing', 'FPS'] });
   world.bundles = [bundle(6, 'Taste Bundle', [[8, ['Loose Match', 'Close Match']]])];
   setSetting(s.id, 'bundlesLikeWePlay', false);
   await checkBundles(s.client);
@@ -143,8 +143,8 @@ test('a game like what the server plays is posted without pinging, unless the se
   setSetting(s.id, 'bundlesLikeWePlay', true);
   await checkBundles(s.client);
   assert.equal(s.posts.length, 1);
-  assert.match(s.last().description, /^\[\*\*Close Match\*\*\]\([^)]+\) for \$8\.00: Like Souls Game \(Dark Fantasy, RPG, Difficult\)\n/);
-  assert.doesNotMatch(s.last().description, /Loose Match/, 'one tag in common with each game isn’t enough');
+  assert.match(s.last().description, /^\[\*\*Close Match\*\*\]\([^)]+\) for \$8\.00: Like Souls Game \(Dark Fantasy, RPG, Difficult, Open World\)\n/);
+  assert.doesNotMatch(s.last().description, /Loose Match/, '3 tags in common isn’t enough');
   assert.equal(s.posts[0].content, undefined);
   assert.deepEqual(s.posts[0].allowedMentions.users, []);
 });
@@ -156,8 +156,8 @@ test('a game everyone already owns, or one the server hid, isn’t like what it 
     ['Farm Game 2', 9302, ['Farming Sim', 'Life Sim']],
     ['Shooter Game 2', 9303, ['FPS', 'Shooter']],
   ]);
-  world.apps.set('Owned Match', { id: 9304, tags: ['Souls-like', 'Dark Fantasy', 'RPG'] });
-  world.apps.set('Hidden Match', { id: 9305, tags: ['Souls-like', 'Dark Fantasy', 'RPG'] });
+  world.apps.set('Owned Match', { id: 9304, tags: ['Souls-like', 'Dark Fantasy', 'RPG', 'Open World'] });
+  world.apps.set('Hidden Match', { id: 9305, tags: ['Souls-like', 'Dark Fantasy', 'RPG', 'Open World'] });
   db.prepare("INSERT INTO steam_links (user_id, steam_id, private, refreshed_at) VALUES ('a', 'steam-a', 0, ?)").run(Date.now());
   db.prepare("INSERT INTO steam_owned (steam_id, appid, playtime) VALUES ('steam-a', 9304, 0)").run();
   db.prepare("INSERT INTO hidden_apps (guild_id, appid, name, hidden_by) VALUES (?, 9305, 'Hidden Match', 'a')").run(s.id);
@@ -165,6 +165,24 @@ test('a game everyone already owns, or one the server hid, isn’t like what it 
   await checkBundles(s.client);
   assert.equal(s.posts.length, 0);
   db.exec("DELETE FROM steam_links WHERE user_id = 'a'; DELETE FROM steam_owned WHERE steam_id = 'steam-a'");
+});
+
+test('a server that mostly plays together only hears about multiplayer games, and rogue-like tags count once', async () => {
+  const s = server(['a']);
+  plays(s.id, [
+    ['Co-op Crawler', 9601, ['Rogue-like', 'Pixel Graphics', 'Dungeon Crawler', 'Top-Down', 'Online Co-Op']],
+    ['Co-op Sports', 9602, ['Online Co-Op', 'Sports']],
+    ['Co-op Comedy', 9603, ['Co-op', 'Comedy']],
+  ]);
+  world.apps.set('Solo Close', { id: 9604, tags: ['Roguelike', 'Pixel Graphics', 'Dungeon Crawler', 'Top-Down'] });
+  world.apps.set('Team Close', { id: 9605, tags: ['Rogue-lite', 'Pixel Graphics', 'Dungeon Crawler', 'Top-Down', 'Co-op'] });
+  world.apps.set('Variant Heavy', { id: 9606, tags: ['Rogue-lite', 'Action Roguelike', 'Rogue-like', 'Pixel Graphics', 'Online Co-Op'] });
+  world.bundles = [bundle(10, 'Together Bundle', [[6, ['Solo Close', 'Team Close', 'Variant Heavy']]])];
+  await checkBundles(s.client);
+  assert.equal(s.posts.length, 1);
+  const lines = s.last().description.split('\n').filter((line) => line.startsWith('['));
+  assert.equal(lines.length, 1);
+  assert.match(lines[0], /Team Close\*\*\]\([^)]+\) for \$6\.00: Like Co-op Crawler \(Roguelike, Pixel Graphics, Dungeon Crawler, Top-Down\)/);
 });
 
 test('every page of bundles is read, and a few posts go out at a time', async () => {

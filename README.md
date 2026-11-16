@@ -255,11 +255,11 @@ Only the people a sale matters to are pinged:
 With an IsThereAnyDeal key, the bot also looks through the Humble Bundle, Fanatical and Green Man Gaming bundles running now, every `SALE_CHECK_HOURS`. A bundle is posted once, in the same channel as sales, when it has:
 
 - **A game this server cares about:** one it would post a sale for, as above. The post names the game, the cheapest tier that has it and why, and pings whoever wants it or has it on their Steam wishlist.
-- **A game like what you play:** one sharing at least 3 Steam tags with one of the 10 games played most here in the past 180 days, that someone with a linked Steam account doesn't already have. These don't ping anyone.
+- **A game like what you play:** one sharing at least 4 Steam tags with one of the 10 games played most here in the past 180 days, that someone with a linked Steam account doesn't already have. Tags that mean much the same, like Rogue-like, Rogue-lite and Action Roguelike, count once. When most of those 10 games are multiplayer or co-op, the bundle game has to be too. These don't ping anyone.
 
 > 📦 **Resident Evil: Biohazard Unleashed Bundle**
 > **Resident Evil 4** in the $18.00 tier: On @Jo’s Steam wishlist
-> **Resident Evil 7 Biohazard** in the $10.00 tier: Like Phasmophobia (Horror, Survival Horror, Psychological Horror)
+> **Resident Evil 7 Biohazard** in the $10.00 tier: Like Phasmophobia (Horror, Survival Horror, Psychological Horror, First-Person)
 > Ends in 5 days
 > *Humble Bundle · from $10.00*
 
