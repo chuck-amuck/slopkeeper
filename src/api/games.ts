@@ -8,11 +8,12 @@ import { addGameRole, canHandOut, gameRoles, pingableGames, pingChoices, pingMen
 import { addGame, addMemberGame, allGames, familyPlayersOf, gameById, groupMembers, hiddenGames, hideGame, libraryKnown, memberGames, NOBODY_COUNTED, ownersOf, parseSteamAppId, removeGame, setGameDetails, setOwned, setWanted, steamOwnersOf, unhideGame, wantedBy, type GameRow } from '../features/games.ts';
 import { dealText, onSale, saleName, salePrices, saleReasons, storeUrl } from '../features/sales.ts';
 import { currentPlayers, familyOf, patchNotes, joinFamily, leaveFamily, linkSteam, lobbiesIn, profileUrl, refreshAll, steamLinks, unlinkSteam } from '../features/steam.ts';
-import { activityOf, checkpoint, comparison, PERIODS, peopleWithStats, pickFor, playedByKey, playsIn, sessionCount, stats, totalsBy } from '../features/gamestats.ts';
+import { activityIn, checkpoint, comparison, PERIODS, peopleWithStats, pickFor, playedByKey, playsIn, sessionCount, stats, totalsBy } from '../features/gamestats.ts';
 import { postVote } from '../features/gamevote.ts';
 import { recapFor } from '../features/recap.ts';
 import { gameKey, gameName, gameSpellings, mergeGames, separateGame } from '../gameNames.ts';
-import { voiceTotals } from '../features/sessions.ts';
+import { countIn, nightTimes, peopleIn, recordsFrom, sessionTime, soundTimes, spread, stepsOf, voiceFrom, voiceStints, whenOn } from '../features/overview.ts';
+import { checkpointVoice, voiceTotals } from '../features/sessions.ts';
 import { idSetting, setting } from '../settings.ts';
 import { humansIn, pingWarning, zonedParts, zonedTimeToUtc } from '../util.ts';
 import { type Ask, Refused, by, cantPost, datesWindow, memberIn, memberList, nameOf, plain, postingChannel, readJson, refuse, textChannels, voiceChannelFor } from './common.ts';
@@ -105,9 +106,19 @@ const WEB_PERIODS: Record<string, (now: number, timeZone: string) => number> = {
   thisYear: (now, tz) => zonedTimeToUtc(zonedParts(now, tz).year, 1, 1, 0, 0, tz),
 };
 
+/** Where the stretch before starts for a period that starts on the calendar: yesterday's or last year's start */
+const CALENDAR_BEFORE: Record<string, (since: number, timeZone: string) => number> = {
+  today: (since, tz) => {
+    const { year, month, day } = zonedParts(since, tz);
+    return zonedTimeToUtc(year, month, day - 1, 0, 0, tz);
+  },
+  thisYear: (since, tz) => zonedTimeToUtc(zonedParts(since, tz).year - 1, 1, 1, 0, 0, tz),
+};
+
 /**
  * Where a stats request starts and ends: whole days (`fromDate` and `toDate`), `from` and `to` in ms, or a `period`
- * up to now
+ * up to now. `before` is where the stretch to compare with starts: today is compared with yesterday up to the same
+ * time, this year with last year up to the same day, and anything else with the same length just before
  */
 export function statsWindow(url: URL, timeZone: string, now = Date.now()) {
   const days = datesWindow(url, timeZone);
@@ -121,46 +132,118 @@ export function statsWindow(url: URL, timeZone: string, now = Date.now()) {
     return { since, until };
   }
   const period = url.searchParams.get('period') ?? 'month';
-  if (Object.hasOwn(WEB_PERIODS, period)) return { since: WEB_PERIODS[period](now, timeZone), until: now };
+  if (Object.hasOwn(WEB_PERIODS, period)) {
+    const since = WEB_PERIODS[period](now, timeZone);
+    return { since, until: now, ...(Object.hasOwn(CALENDAR_BEFORE, period) && { before: CALENDAR_BEFORE[period](since, timeZone) }) };
+  }
   if (!Object.hasOwn(PERIODS, period)) throw new Refused(400, 'No such period.');
   const { ms } = PERIODS[period as keyof typeof PERIODS];
   return { since: Number.isFinite(ms) ? now - ms : 0, until: now };
 }
 
 /** The same numbers as /gamestats and /stats, for the web UI's charts */
-export function statsFor(guild: Guild, url: URL) {
-  const user = url.searchParams.get('user') || undefined;
-  const game = url.searchParams.get('game') || undefined;
-  const { since, until: now } = statsWindow(url, setting(guild.id, 'timezone'));
-  const isMember = (id: string) => guild.members.cache.has(id);
-  const filter = user && game ? 'both' : user ? 'user' : game ? 'game' : 'none';
+/** Trending shows for periods between a week and a quarter, and a change of less than this isn't one */
+const TRENDING_DAYS = [7, 92];
+const TRENDING_LEAST_MS = 15 * 60_000;
+const DAY_MS = 86_400_000;
 
-  checkpoint();
-  // One read of the plays serves every total and the chart
-  const plays = playsIn(guild.id, since, now, user, game);
+/** Game, voice, sound and game night totals for a period, as the Overview's tiles show them */
+function totalsIn(guild: Guild, since: number, until: number, user?: string, game?: string) {
+  const isMember = (id: string) => guild.members.cache.has(id);
+  const plays = playsIn(guild.id, since, until, user, game);
   const games = totalsBy(plays, 'game');
   const players = totalsBy(plays, 'user_id').filter((r) => isMember(r.key));
-  // Voice time isn't per game, so it only applies when no game is picked
-  const voice = game ? [] : voiceTotals(guild.id, since, now).filter((p) => isMember(p.userId) && (!user || p.userId === user));
+  // Voice time and sounds aren't per game, so they only apply when no game is picked
+  const voice = game ? [] : voiceTotals(guild.id, since, until).filter((p) => isMember(p.userId) && (!user || p.userId === user));
+  const sounds = game ? null : soundTimes(guild.id, since, until, user);
+  const nights = nightTimes(guild.id, since, until, user, game);
   return {
-    timeZone: setting(guild.id, 'timezone'),
-    user: user ? { id: user, name: nameOf(guild, user) } : null,
-    game: game ?? null,
-    spellings: game ? (gameSpellings(guild.id).get(gameName(guild.id, game)) ?? []).filter((raw) => raw !== gameName(guild.id, game)) : [],
+    plays,
+    games,
+    players,
+    voice,
+    sounds,
+    nights,
     totals: {
       gameMs: games.reduce((sum, g) => sum + g.ms, 0),
       playerMs: players.reduce((sum, p) => sum + p.ms, 0),
       games: games.length,
       people: players.length,
       voiceMs: voice.reduce((sum, p) => sum + p.secs * 1000, 0),
+      sounds: sounds?.length ?? null,
+      nights: nights.length,
     },
+  };
+}
+
+/** The games whose time rose or fell most against the stretch before, three each way */
+function trendingOf(now: { key: string; ms: number }[], before: { key: string; ms: number }[]) {
+  const was = new Map(before.map((g) => [g.key, g.ms]));
+  const is = new Map(now.map((g) => [g.key, g.ms]));
+  const changes = [...new Set([...is.keys(), ...was.keys()])]
+    .map((name) => ({ name, ms: is.get(name) ?? 0, previousMs: was.get(name) ?? 0 }))
+    .map((g) => ({ ...g, change: g.ms - g.previousMs }))
+    .filter((g) => Math.abs(g.change) >= TRENDING_LEAST_MS);
+  return {
+    up: changes.filter((g) => g.change > 0).sort((a, b) => b.change - a.change).slice(0, 3),
+    down: changes.filter((g) => g.change < 0).sort((a, b) => a.change - b.change).slice(0, 3),
+  };
+}
+
+export function statsFor(guild: Guild, url: URL) {
+  const user = url.searchParams.get('user') || undefined;
+  const game = url.searchParams.get('game') || undefined;
+  const timeZone = setting(guild.id, 'timezone');
+  const { since, until: now, before: startBefore } = statsWindow(url, timeZone);
+  const isMember = (id: string) => guild.members.cache.has(id);
+
+  checkpoint();
+  checkpointVoice();
+  // One read of each kind of record serves every total and chart
+  const here = totalsIn(guild, since, now, user, game);
+  const from = recordsFrom(guild.id);
+  // Charts start at the first record, so weeks before the bot was noting anything don't show as empty or thin the
+  // averages of when people are on
+  const first = from === null ? since || now : Math.max(since, Math.min(from, now));
+  const steps = stepsOf(first, now, timeZone);
+  const stints = game ? [] : voiceStints(guild.id, first, now, user).filter((s) => isMember(s.userId));
+
+  // The stretch just before, as long as this one, once there are records from its start
+  const start = startBefore ?? since - (now - since);
+  const end = Math.min(since, start + (now - since));
+  const before = since > 0 && from !== null && from <= start ? totalsIn(guild, start, end, user, game) : null;
+  const earlier = (rows: { key: string; ms: number }[]) => new Map(rows.map((r) => [r.key, r.ms]));
+  const gamesBefore = before && earlier(before.games);
+  const playersBefore = before && earlier(before.players);
+  const voiceBefore = before && new Map(before.voice.map((p) => [p.userId, p.secs * 1000]));
+  const days = (now - since) / DAY_MS;
+
+  return {
+    timeZone,
+    user: user ? { id: user, name: nameOf(guild, user) } : null,
+    game: game ?? null,
+    spellings: game ? (gameSpellings(guild.id).get(gameName(guild.id, game)) ?? []).filter((raw) => raw !== gameName(guild.id, game)) : [],
+    totals: here.totals,
     place: user && game ? placeOf(guild, user, game, since, now) : null,
     since,
     until: now,
-    games: games.slice(0, MAX_RANKED).map((g) => ({ name: g.key, ms: g.ms, people: g.n, last: g.last })),
-    players: players.slice(0, MAX_RANKED).map((p) => ({ id: p.key, name: nameOf(guild, p.key), ms: p.ms, games: p.n, last: p.last })),
-    voice: voice.slice(0, MAX_RANKED).map((p) => ({ id: p.userId, name: nameOf(guild, p.userId), ms: p.secs * 1000, nights: p.nights })),
-    activity: activityOf(plays, since, now, setting(guild.id, 'timezone')),
+    recordsFrom: from,
+    // Before this, when people are on counts only people playing a game Discord shows
+    voiceFrom: voiceFrom(guild.id),
+    previous: before && { since: start, until: end, totals: before.totals },
+    games: here.games.slice(0, MAX_RANKED).map((g) => ({ name: g.key, ms: g.ms, people: g.n, last: g.last, previousMs: gamesBefore?.get(g.key) ?? (before ? 0 : null) })),
+    players: here.players.slice(0, MAX_RANKED).map((p) => ({ id: p.key, name: nameOf(guild, p.key), ms: p.ms, games: p.n, last: p.last, previousMs: playersBefore?.get(p.key) ?? (before ? 0 : null) })),
+    voice: here.voice.slice(0, MAX_RANKED).map((p) => ({ id: p.userId, name: nameOf(guild, p.userId), ms: p.secs * 1000, nights: p.nights, previousMs: voiceBefore?.get(p.userId) ?? (before ? 0 : null) })),
+    activity: activityIn(here.plays, steps, game ? [] : here.games.slice(0, 5).map((g) => g.key)),
+    // A small line under each tile, in the same steps as the activity chart
+    series: {
+      people: peopleIn(here.plays.filter((p) => isMember(p.userId)), steps),
+      voiceMs: spread(game ? [] : sessionTime(guild.id, first, now, user).filter((s) => isMember(s.userId)), steps).map(Math.round),
+      sounds: here.sounds && countIn(here.sounds, steps),
+    },
+    // When people are on, once a period has a week of them
+    when: now - first >= 7 * DAY_MS ? whenOn([...here.plays.filter((p) => isMember(p.userId)), ...stints], first, now, timeZone) : null,
+    trending: before && !game && days >= TRENDING_DAYS[0] - 0.5 && days <= TRENDING_DAYS[1] ? trendingOf(here.games, before.games) : null,
   };
 }
 

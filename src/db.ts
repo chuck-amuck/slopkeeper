@@ -454,6 +454,19 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS speech_lines_by_guild ON speech_lines (guild_id, at);
 
+  -- Each time someone was in a voice channel (not the AFK one), for when people are on. left_at moves up while
+  -- they're still there, so a crash loses at most a few minutes
+  CREATE TABLE IF NOT EXISTS voice_stints (
+    id INTEGER PRIMARY KEY,
+    guild_id TEXT NOT NULL,
+    user_id TEXT NOT NULL,
+    channel_id TEXT NOT NULL,
+    joined_at INTEGER NOT NULL,
+    left_at INTEGER NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS voice_stints_by_guild ON voice_stints (guild_id, left_at);
+  CREATE INDEX IF NOT EXISTS voice_stints_by_start ON voice_stints (guild_id, joined_at);
+
   PRAGMA user_version = ${SCHEMA_VERSION};
 `);
 

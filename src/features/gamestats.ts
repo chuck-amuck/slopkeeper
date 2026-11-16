@@ -16,8 +16,9 @@ import { gameKey, gameName, noteGame } from '../gameNames.ts';
 import { isAllowed } from '../settings.ts';
 import { onSteamChange } from '../steamStatus.ts';
 import type { Feature } from '../types.ts';
-import { eachGuild, formatDuration, playingGames, servedGuilds, zonedParts, zonedTimeToUtc } from '../util.ts';
+import { eachGuild, formatDuration, playingGames, servedGuilds } from '../util.ts';
 import { candidatesFor, sharedGames } from './games.ts';
+import { spread, stepsOf, type Steps } from './overview.ts';
 import { ownedSteamGames } from './steam.ts';
 
 const DAY = 86_400_000;
@@ -104,7 +105,7 @@ interface Span {
 }
 
 /** Each game's plays in a period, in time order, with overlaps joined up so people playing together only count once */
-function gameSpans(plays: (Span & { game: string })[]) {
+export function gameSpans(plays: (Span & { game: string })[]) {
   const games = new Map<string, Span[]>();
   for (const { game, start, end } of plays) {
     const spans = games.get(game) ?? [];
@@ -158,36 +159,31 @@ export function totalsBy(plays: Play[], groupBy: 'game' | 'user_id') {
 }
 
 /**
- * Game time per day, week or month in the server's time zone, whichever suits the length of the period, counted
+ * Game time per hour, day, week or month in the server's time zone, whichever suits the length of the period, counted
  * as in `stats`. Every step is listed, so a quiet one shows up as a gap.
  */
 export function activity(guildId: string, since: number, until: number, timeZone: string, user?: string, game?: string) {
-  return activityOf(playsIn(guildId, since, until, user, game), since, until, timeZone);
+  const rows = playsIn(guildId, since, until, user, game);
+  const first = since || rows.reduce((earliest, p) => Math.min(earliest, p.start), Infinity);
+  return activityIn(rows, rows.length ? stepsOf(first, until, timeZone) : { step: 'day', starts: [], ends: [] });
 }
 
-/** `activity` for plays already fetched */
-export function activityOf(rows: Play[], since: number, until: number, timeZone: string) {
-  if (!rows.length) return { step: 'day', buckets: [] };
-  const plays = [...gameSpans(rows).values()].flat();
-
-  const first = since || plays.reduce((earliest, p) => Math.min(earliest, p.start), Infinity);
-  const days = (until - first) / DAY;
-  const step = days <= 45 ? 'day' : days <= 400 ? 'week' : 'month';
-  const { year, month, day } = zonedParts(first, timeZone);
-  const boundary = (i: number) => {
-    if (step === 'month') return zonedTimeToUtc(year, month + i, 1, 0, 0, timeZone);
-    return zonedTimeToUtc(year, month, day + i * (step === 'week' ? 7 : 1), 0, 0, timeZone);
+/**
+ * Game time in steps already picked: the total in each, each of the `top` games' own, and the rest's together (null
+ * when there's none). People playing one game together count once
+ */
+export function activityIn(rows: Play[], steps: Steps, top: string[] = []) {
+  const perGame = new Map([...gameSpans(rows)].map(([name, spans]) => [name, spread(spans, steps)]));
+  const total = steps.starts.map((_, i) => [...perGame.values()].reduce((sum, values) => sum + values[i], 0));
+  const games = top.map((name) => ({ name, values: perGame.get(name) ?? steps.starts.map(() => 0) }));
+  const rest = total.map((ms, i) => Math.max(0, ms - games.reduce((sum, g) => sum + g.values[i], 0)));
+  return {
+    step: steps.step,
+    buckets: steps.starts.map((start, i) => ({ start, ms: total[i] })),
+    until: steps.ends.at(-1) ?? null,
+    games,
+    other: rest.some((ms) => ms > 0) ? rest : null,
   };
-
-  const buckets: { start: number; ms: number }[] = [];
-  for (let i = 0; boundary(i) < until; i++) {
-    const start = boundary(i);
-    const end = boundary(i + 1);
-    let ms = 0;
-    for (const p of plays) ms += Math.max(0, Math.min(p.end, end) - Math.max(p.start, start));
-    buckets.push({ start, ms });
-  }
-  return { step, buckets };
 }
 
 /** Time two people spent in the same game in the same voice channel, most first */

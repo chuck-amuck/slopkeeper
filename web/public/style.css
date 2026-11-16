@@ -30,6 +30,8 @@
   --series-4: #eda100;
   --series-5: #e87ba4;
   --series-6: #6250d6;
+  /* Everything outside the top few, in grey so it doesn't read as one more series */
+  --series-other: #9aa0a8;
   /* Spacing, type and shape, so repeated values change in one place */
   --space-1: 4px;
   --space-2: 8px;
@@ -75,6 +77,7 @@
     --series-4: #c98500;
     --series-5: #d55181;
     --series-6: #9085e9;
+    --series-other: #6d727b;
   }
 }
 
@@ -3112,55 +3115,9 @@ button.music-upload:hover:not(:disabled) {
   min-width: 0;
 }
 
-.axis-top,
 .axis-x {
   color: var(--muted);
   font-size: var(--text-xs);
-}
-
-.plot {
-  position: relative;
-}
-
-.columns {
-  display: flex;
-  align-items: stretch;
-  gap: 2px;
-  height: 160px;
-  border-top: 1px solid var(--line);
-  border-bottom: 1px solid var(--line);
-}
-
-.column {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  align-items: flex-end;
-  justify-content: center;
-}
-
-.column:hover {
-  background: var(--raised);
-}
-
-.column-bar {
-  width: 100%;
-  max-width: 24px;
-  border-radius: 4px 4px 0 0;
-  background: var(--accent);
-}
-
-.tip {
-  position: absolute;
-  top: 4px;
-  z-index: 2;
-  padding: 4px 8px;
-  border-radius: var(--radius-sm);
-  background: var(--text);
-  color: var(--bg);
-  font-size: var(--text-xs);
-  white-space: nowrap;
-  pointer-events: none;
 }
 
 .axis-x {
@@ -5035,4 +4992,85 @@ button.health-slow-row:hover {
     grid-column: 1 / -1;
     grid-row: 2;
   }
+}
+
+/* Stats: the range bar stays under the header while scrolling, as Settings' find does */
+.range-toolbar {
+  position: sticky;
+  top: var(--header-visible, 0px);
+  z-index: 4;
+  margin: -8px -16px 0;
+  padding: 8px 16px;
+  background: var(--bg);
+}
+
+.stat {
+  display: grid;
+  align-content: start;
+}
+
+/* Text colours, not good or bad ones: more game time isn't better or worse */
+.stat-change {
+  margin-top: 2px;
+  color: var(--text);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.spark {
+  width: 100%;
+  height: 24px;
+  margin-top: 6px;
+  overflow: visible;
+}
+
+.spark polyline {
+  fill: none;
+  stroke: var(--series-1);
+  stroke-width: 1.5;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+}
+
+.stats-note {
+  margin: 0;
+}
+
+.trend-cols {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: var(--space-3) var(--space-5, 24px);
+}
+
+.trend-cols h3 {
+  margin: 0 0 4px;
+  font-size: var(--text-sm);
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.rank.trend {
+  grid-template-columns: minmax(0, 1fr) auto minmax(64px, auto);
+  gap: var(--space-2);
+}
+
+.week-scale {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: var(--text-xs);
+}
+
+.week-ramp {
+  width: 96px;
+  height: 8px;
+  border-radius: 4px;
+  background: linear-gradient(to right, var(--raised), var(--series-1));
+}
+
+.table-scroll {
+  max-width: 100%;
+  overflow-x: auto;
 }

@@ -2,7 +2,7 @@ import { fakeClient } from './helpers.ts';
 import assert from 'node:assert/strict';
 import { mock, test } from 'node:test';
 import { db, getKv } from '../src/db.ts';
-import { carryOn, join, leave, maybePostWeekly, resync, sessions } from '../src/features/sessions.ts';
+import { carryOn, checkpointVoice, endGuildStints, join, leave, maybePostWeekly, resync, sessions } from '../src/features/sessions.ts';
 import { setSetting } from '../src/settings.ts';
 import { zonedParts } from '../src/util.ts';
 
@@ -204,4 +204,30 @@ test('sessions kept for a restart that came too late are recorded as they were w
   assert.deepEqual(seconds('late').map((r) => [r.user, r.secs]), [['a', 3600]]);
   sessions.shutdown!();
   assert.equal(seconds('late').length, 1, 'not carried on as well');
+});
+
+test('each time someone is in voice is noted for when people are on, moving up while they stay and ending with the bot', () => {
+  const stints = (guildId: string) => (db.prepare('SELECT user_id AS user, joined_at AS joined, left_at AS left FROM voice_stints WHERE guild_id = ? ORDER BY id').all(guildId) as { user: string; joined: number; left: number }[]).map((r) => ({ ...r }));
+  const started = Date.now() - 3_600_000;
+  join(voice('stints', 'v7'), person('a'), started);
+  join(voice('stints', 'v7'), person('b'), started + 60_000);
+  // Joining again while there, as a resync does, is the same stint
+  join(voice('stints', 'v7'), person('a'), started + 120_000);
+  leave(fakeClient([], async () => undefined), 'v7', 'b', started + 600_000);
+  checkpointVoice(started + 900_000);
+  assert.deepEqual(stints('stints'), [
+    { user: 'a', joined: started, left: started + 900_000 },
+    { user: 'b', joined: started + 60_000, left: started + 600_000 },
+  ]);
+  sessions.shutdown!();
+  assert.ok(Date.now() - stints('stints')[0].left < 5000, 'still there when the bot stopped');
+  // The AFK channel isn't time in voice
+  join({ id: 'afk', guild: { id: 'stints', afkChannelId: 'afk' } } as never, person('c'), started);
+  assert.equal(stints('stints').length, 2);
+  // Removed from the server: the bot won't hear anyone leave, so their time stops there
+  join(voice('stints', 'v7'), person('d'), started);
+  endGuildStints('stints', started + 960_000);
+  checkpointVoice(started + 1_200_000);
+  assert.equal(stints('stints')[2].left, started + 960_000);
+  sessions.shutdown!();
 });

@@ -94,18 +94,26 @@ export interface ZonedParts {
 
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
+/** One formatter per time zone: making one is far slower than using it, and stats call this for every hour */
+const zoneFormats = new Map<string, Intl.DateTimeFormat>();
+
 /** Wall-clock date and time of an instant in a time zone */
 export function zonedParts(ms: number, timeZone: string): ZonedParts {
-  const parts = new Intl.DateTimeFormat('en-US', {
-    timeZone,
-    hourCycle: 'h23',
-    year: 'numeric',
-    month: 'numeric',
-    day: 'numeric',
-    hour: 'numeric',
-    minute: 'numeric',
-    weekday: 'short',
-  }).formatToParts(ms);
+  let format = zoneFormats.get(timeZone);
+  if (!format) {
+    format = new Intl.DateTimeFormat('en-US', {
+      timeZone,
+      hourCycle: 'h23',
+      year: 'numeric',
+      month: 'numeric',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: 'numeric',
+      weekday: 'short',
+    });
+    zoneFormats.set(timeZone, format);
+  }
+  const parts = format.formatToParts(ms);
   const get = (type: string) => parts.find((p) => p.type === type)!.value;
   return {
     year: Number(get('year')),

@@ -1,5 +1,6 @@
 import { achievementsView } from './achievements.js';
 import { health } from './health.js';
+import { HOURS, timeChart, weekChart, WEEKDAYS_LONG } from './charts.js';
 import { ago, api, attempt, duration, el, formProblem, icon, notice, openDialog, recall, remember, request, state, toast } from './lib.js';
 import { rangeBar, rangeFromQuery, rangeQuery } from './rangebar.js';
 
@@ -13,56 +14,88 @@ const PERIODS = [
   ['all', 'All time'],
 ];
 
+/** What a step of a chart says: an hour, a day, a week or a month */
 function stepLabel(ms, step, timeZone) {
   if (step === 'month') return new Date(ms).toLocaleDateString(undefined, { timeZone, month: 'short', year: 'numeric' });
-  const day = new Date(ms).toLocaleDateString(undefined, { timeZone, month: 'short', day: 'numeric' });
+  if (step === 'hour') return new Date(ms).toLocaleString(undefined, { timeZone, weekday: 'short', hour: 'numeric', minute: '2-digit' });
+  const day = new Date(ms).toLocaleDateString(undefined, { timeZone, ...(step === 'day' && { weekday: 'short' }), month: 'short', day: 'numeric' });
   return step === 'week' ? `Week of ${day}` : day;
 }
 
 const tile = (label, value) => el('div', { className: 'stat' }, el('div', { className: 'stat-value' }, value), el('div', { className: 'stat-label' }, label));
 
-/** One colour, so there's no legend: the card's title says what's plotted */
-function columnChart({ step, buckets }, timeZone) {
-  const peak = Math.max(...buckets.map((b) => b.ms));
-  const tip = el('div', { className: 'tip', hidden: true });
-  const plot = el(
-    'div',
-    { className: 'columns', onpointerleave: () => (tip.hidden = true) },
-    buckets.map((b) =>
-      el(
-        'div',
-        {
-          className: 'column',
-          onpointerenter: (e) => {
-            const box = plot.getBoundingClientRect();
-            const slot = e.currentTarget.getBoundingClientRect();
-            tip.textContent = `${stepLabel(b.start, step, timeZone)}: ${duration(b.ms)}`;
-            tip.hidden = false;
-            tip.style.left = `${Math.min(Math.max(0, slot.left - box.left - tip.offsetWidth / 2), box.width - tip.offsetWidth)}px`;
-          },
-        },
-        b.ms > 0 && el('div', { className: 'column-bar', style: `height: ${Math.max(1, (b.ms / peak) * 100)}%` }),
-      ),
-    ),
-  );
-  return el(
-    'div',
-    { className: 'chart' },
-    el('div', { className: 'axis-top' }, duration(peak)),
-    el('div', { className: 'plot' }, tip, plot),
-    el('div', { className: 'axis-x' }, el('span', {}, stepLabel(buckets[0].start, step, timeZone)), el('span', {}, stepLabel(buckets.at(-1).start, step, timeZone))),
-    el(
-      'details',
-      {},
-      el('summary', {}, 'Show as a table'),
-      el(
-        'table',
-        {},
-        el('tbody', {}, buckets.map((b) => el('tr', {}, el('td', {}, stepLabel(b.start, step, timeZone)), el('td', {}, duration(b.ms))))),
-      ),
-    ),
-  );
+/**
+ * How a number moved from the stretch before: "▲ 3h 10m", "▼ 2", "New" or "Same", written by `write`. Null without a
+ * stretch before, or with nothing in either
+ */
+function change(now, before, write) {
+  if (before === null || before === undefined || now === null || now === undefined) return null;
+  if (!before && !now) return null;
+  if (!before) return { text: 'New', title: 'None in the stretch before' };
+  const diff = now - before;
+  if (Math.abs(diff) < 1 || (write === duration && Math.abs(diff) < 60_000)) return { text: 'Same', title: 'The same as the stretch before' };
+  const share = Math.round((diff / before) * 100);
+  return { text: `${diff > 0 ? '▲' : '▼'} ${write(Math.abs(diff))}`, title: `${diff > 0 ? '+' : ''}${share}% on the stretch before` };
 }
+
+/** A small line of how a number went over the range, under its tile. Nothing when there's no shape to show */
+function sparkline(values) {
+  if (!values || values.length < 2 || !values.some((v) => v > 0)) return null;
+  const most = Math.max(...values);
+  const ns = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(ns, 'svg');
+  svg.setAttribute('viewBox', '0 0 100 24');
+  svg.setAttribute('preserveAspectRatio', 'none');
+  svg.setAttribute('class', 'spark');
+  svg.setAttribute('aria-hidden', 'true');
+  const line = document.createElementNS(ns, 'polyline');
+  line.setAttribute('points', values.map((v, i) => `${((i / (values.length - 1)) * 100).toFixed(2)},${(23 - (v / most) * 21).toFixed(2)}`).join(' '));
+  svg.append(line);
+  return svg;
+}
+
+/** A headline number with how it moved from the stretch before, and its shape over the range */
+const trendTile = (label, value, moved, shape) =>
+  el(
+    'div',
+    { className: 'stat' },
+    el('div', { className: 'stat-value' }, value),
+    el('div', { className: 'stat-label' }, label),
+    moved && el('div', { className: 'stat-change', title: moved.title }, moved.text),
+    sparkline(shape),
+  );
+
+/** "▲ 2h" for a ranked row's note, or nothing */
+const movedNote = (now, before) => change(now, before, duration)?.text ?? null;
+
+/**
+ * Each game in the activity chart keeps its colour as the range changes, as long as it's in the top five, so a game
+ * doesn't swap colours with another when one drops out
+ */
+const gameColours = new Map();
+function coloursFor(guildId, names) {
+  const kept = gameColours.get(guildId) ?? gameColours.set(guildId, new Map()).get(guildId);
+  const taken = new Set();
+  const out = new Map();
+  for (const name of names) {
+    const slot = kept.get(name);
+    if (!slot || taken.has(slot)) continue;
+    out.set(name, slot);
+    taken.add(slot);
+  }
+  for (const name of names) {
+    if (out.has(name)) continue;
+    let slot = 1;
+    while (taken.has(slot)) slot++;
+    out.set(name, slot);
+    taken.add(slot);
+    kept.set(name, slot);
+  }
+  return out;
+}
+
+/** The people, written for a tooltip: "1.4 people on average", or for one person the share of the time */
+const peopleText = (value, one) => (one ? `on ${Math.round(value * 100)}% of the time` : `${value.toLocaleString(undefined, { maximumFractionDigits: 1 })} ${value === 1 ? 'person' : 'people'} on average`);
 
 /** Ranked rows; each is a button when it can filter the page */
 function ranked(rows, onPick) {
@@ -239,7 +272,7 @@ function overview(main, address) {
       void show();
     },
   });
-  main.append(el('div', { className: 'toolbar' }, bar.node, chips), content);
+  main.append(el('div', { className: 'toolbar range-toolbar' }, bar.node, chips), content);
   address.write(new URLSearchParams(rangeQuery(range)));
 
   const pickUser = (r) => {
@@ -363,27 +396,134 @@ function overview(main, address) {
     return el('button', { className: 'chip with-icon', title: `Stop filtering by ${label}`, onclick: clear }, label, icon('x'));
   }
 
+  /** What the stretch before is called: "yesterday by now", "the 7 days before" */
+  function beforeText(data) {
+    const names = { today: 'yesterday by now', week: 'the 7 days before', month: 'the 30 days before', quarter: 'the 90 days before', thisYear: 'last year by this date' };
+    if (range.preset && names[range.preset]) return names[range.preset];
+    const days = Math.round((data.until - data.since) / 86_400_000);
+    return days >= 2 ? `the ${days} days before` : 'the same length of time before';
+  }
+
+  function tiles(data) {
+    const { totals } = data;
+    const was = data.previous?.totals;
+    const moved = (key, write) => change(totals[key], was?.[key], write);
+    const day = (ms) => new Date(ms).toLocaleDateString(undefined, { timeZone: data.timeZone, month: 'long', day: 'numeric', year: 'numeric' });
+    const note = data.previous
+      ? `▲ and ▼ compare with ${beforeText(data)}.`
+      : data.since && data.recordsFrom
+        ? `Records start ${day(data.recordsFrom)}, so there’s no stretch as long as this one before it to compare with.`
+        : null;
+    return [
+      el(
+        'div',
+        { className: 'stats' },
+        trendTile('Game time', duration(totals.gameMs), moved('gameMs', duration), data.activity.buckets.map((b) => b.ms)),
+        !game && trendTile('Games played', String(totals.games), moved('games', String)),
+        !user && trendTile('People playing', String(totals.people), moved('people', String), data.series.people),
+        !game && trendTile('Time in voice', duration(totals.voiceMs), moved('voiceMs', duration), data.series.voiceMs),
+        game && !user && trendTile('Player time', duration(totals.playerMs), moved('playerMs', duration)),
+        totals.sounds !== null && trendTile('Sounds played', String(totals.sounds), moved('sounds', String), data.series.sounds),
+        (totals.nights > 0 || was?.nights > 0) && trendTile('Game nights', String(totals.nights), moved('nights', String)),
+        data.place && tile('Sessions', String(data.place.sessions)),
+        data.place && tile('Rank', `${data.place.rank} of ${data.place.of}`),
+      ),
+      note && el('p', { className: 'hint stats-note' }, note),
+    ];
+  }
+
+  function activityCard(data) {
+    const { activity } = data;
+    if (!activity.buckets.length) return null;
+    const colours = coloursFor(guildId, activity.games.map((g) => g.name));
+    const series = activity.games.length
+      ? [
+          ...activity.games.map((g) => ({ id: `game:${g.name}`, label: g.name, color: `var(--series-${colours.get(g.name)})`, values: g.values })),
+          ...(activity.other ? [{ id: 'other', label: 'Other games', color: 'var(--series-other)', values: activity.other }] : []),
+        ]
+      : [{ id: 'all', label: 'Game time', color: 'var(--series-1)', values: activity.buckets.map((b) => b.ms) }];
+    return card(
+      'Game time over time',
+      timeChart({
+        key: 'overview-activity',
+        title: 'Game time over time',
+        times: activity.buckets.map((b) => b.start),
+        until: activity.until,
+        timeLabel: (ms) => stepLabel(ms, activity.step, data.timeZone),
+        timeZone: data.timeZone,
+        series,
+        format: duration,
+        stacked: true,
+        height: 200,
+        onPick: (from, to) => bar.zoom(from, to),
+      }),
+    );
+  }
+
+  function whenCard(data) {
+    if (!data.when) return null;
+    const one = !!user;
+    const who = game ? `people playing ${game}` : 'people in voice';
+    const counted = data.voiceFrom ?? Infinity;
+    const partial = !game && counted > (data.since || data.recordsFrom || 0);
+    const day = (ms) => new Date(ms).toLocaleDateString(undefined, { timeZone: data.timeZone, month: 'long', day: 'numeric' });
+    return card(
+      'When people are on',
+      weekChart({
+        title: 'When people are on',
+        grid: data.when,
+        format: (v) => (one ? `${Math.round(v * 100)}%` : v.toLocaleString(undefined, { maximumFractionDigits: 1 })),
+        describe: (v, weekday, hour) => `${WEEKDAYS_LONG[weekday]}s, ${HOURS[hour]}: ${v === '-' ? 'not in this range' : peopleText(v, one)}`,
+      }),
+      el(
+        'p',
+        { className: 'hint' },
+        one
+          ? `How much of each hour ${user.name} was on, in the server’s time zone (${data.timeZone}).`
+          : `How many ${who} there were at once, on average, at each hour in the server’s time zone (${data.timeZone}).`,
+        partial ? ` ${Number.isFinite(counted) ? `Before ${day(counted)}` : 'For now'} it counts only people playing a game Discord shows, as that’s all the bot noted.` : '',
+      ),
+    );
+  }
+
+  function trendingCard(data) {
+    const t = data.trending;
+    if (!t || (!t.up.length && !t.down.length)) return null;
+    const row = (g) =>
+      el(
+        'button',
+        { className: 'rank trend', onclick: () => pickGame({ label: g.name }), title: `Show just ${g.name}` },
+        el('span', { className: 'rank-name' }, g.name),
+        el('span', { className: 'rank-value' }, `${g.change > 0 ? '▲' : '▼'} ${duration(Math.abs(g.change))}`),
+        el('span', { className: 'rank-note' }, g.previousMs ? `${duration(g.previousMs)} → ${g.ms ? duration(g.ms) : 'none'}` : `new, ${duration(g.ms)}`),
+      );
+    return card(
+      'Trending',
+      el(
+        'div',
+        { className: 'trend-cols' },
+        t.up.length > 0 && el('div', { className: 'ranked' }, el('h3', {}, 'Played more'), t.up.map(row)),
+        t.down.length > 0 && el('div', { className: 'ranked' }, el('h3', {}, 'Played less'), t.down.map(row)),
+      ),
+      el('p', { className: 'hint' }, `Against ${beforeText(data)}.`),
+    );
+  }
+
   function render(data) {
     chips.replaceChildren(
       ...(user ? [chip(user.name, () => ((user = null), void show()))] : []),
       ...(game ? [chip(game, () => ((game = null), void show()))] : []),
     );
-    const { totals, activity, timeZone } = data;
-    if (!totals.gameMs && !totals.voiceMs) return content.replaceChildren(notice('empty', 'Nothing recorded for this period yet.'));
+    const { totals } = data;
+    if (!totals.gameMs && !totals.voiceMs && !totals.sounds && !totals.nights) return content.replaceChildren(notice('empty', 'Nothing recorded for this period yet.'));
+    const notes = (...parts) => parts.filter(Boolean).join(' · ');
 
+    // A card with nothing to show is left out, rather than printed as "null"
     content.replaceChildren(
-      el(
-        'div',
-        { className: 'stats' },
-        tile('Game time', duration(totals.gameMs)),
-        !game && tile('Games played', String(totals.games)),
-        !user && tile('People playing', String(totals.people)),
-        !game && tile('Time in voice', duration(totals.voiceMs)),
-        game && !user && tile('Player time', duration(totals.playerMs)),
-        data.place && tile('Sessions', String(data.place.sessions)),
-        data.place && tile('Rank', `${data.place.rank} of ${data.place.of}`),
-      ),
-      ...(activity.buckets.length ? [card('Game time over time', columnChart(activity, timeZone))] : []),
+      ...[
+      ...tiles(data),
+      activityCard(data),
+      whenCard(data),
       ...(data.spellings.length
         ? [
             card(
@@ -397,13 +537,24 @@ function overview(main, address) {
           ]
         : []),
       ...(!game && data.games.length
-        ? [titled('Top games', el('button', { onclick: mergeGames }, 'Merge games'), ranked(data.games.map((g) => ({ label: g.name, ms: g.ms, note: user ? lastPlayed(g.last) : count(g.people, 'player') })), pickGame))]
+        ? [
+            titled(
+              'Top games',
+              el('button', { onclick: mergeGames }, 'Merge games'),
+              ranked(
+                data.games.map((g) => ({ label: g.name, ms: g.ms, note: notes(user ? lastPlayed(g.last) : count(g.people, 'player'), movedNote(g.ms, g.previousMs)) })),
+                pickGame,
+              ),
+            ),
+          ]
         : []),
+      trendingCard(data),
       ...(!user && data.players.length
-        ? [card(game ? 'Who played' : 'Most game time', ranked(data.players.map((p) => ({ id: p.id, label: p.name, ms: p.ms, note: game ? lastPlayed(p.last) : count(p.games, 'game') })), pickUser))]
+        ? [card(game ? 'Who played' : 'Most game time', ranked(data.players.map((p) => ({ id: p.id, label: p.name, ms: p.ms, note: notes(game ? lastPlayed(p.last) : count(p.games, 'game'), movedNote(p.ms, p.previousMs)) })), pickUser))]
         : []),
-      ...(data.voice.length ? [card('Time in voice', ranked(data.voice.map((p) => ({ id: p.id, label: p.name, ms: p.ms, note: count(p.nights, 'night') })), user ? null : pickUser))] : []),
-      el('p', { className: 'hint' }, 'Games played in a voice channel. A game’s time is how long anyone was playing it, so its players can add up to more. From Discord’s “Playing” status, so it only counts people who share it.'),
+      ...(data.voice.length ? [card('Time in voice', ranked(data.voice.map((p) => ({ id: p.id, label: p.name, ms: p.ms, note: notes(count(p.nights, 'night'), movedNote(p.ms, p.previousMs)) })), user ? null : pickUser))] : []),
+      el('p', { className: 'hint' }, 'Games played in a voice channel. A game’s time is how long anyone was playing it, so its players can add up to more. From Discord’s “Playing” status, so it only counts people who share it. Drag across the chart with a mouse to look closer.'),
+      ].filter(Boolean),
     );
   }
 

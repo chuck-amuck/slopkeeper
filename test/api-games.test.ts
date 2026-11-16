@@ -191,10 +191,78 @@ test('game time over time adds up to the total, by day for a short period', asyn
   assert.ok(Math.abs(total - data.totals.gameMs) < 2000, `${total} vs ${data.totals.gameMs}`);
 });
 
+test('the overview compares with the stretch before, splits time by game and shows when people are on', async () => {
+  seedStats();
+  // The week before: 2 hours of Halo, a sound and a game night
+  addPlay('u1', 'Halo', 24 * 9, 2);
+  const sound = db.prepare("INSERT INTO sound_plays (guild_id, user_id, name, played_at) VALUES (?, ?, 'horn', ?)");
+  sound.run(GUILD, 'u1', now - 24 * 9 * HOUR);
+  sound.run(GUILD, 'u1', now - HOUR);
+  sound.run(GUILD, 'u2', now - 2 * HOUR);
+  const night = db.prepare("INSERT INTO game_nights (guild_id, channel_id, game, starts_at, created_by, cancelled) VALUES (?, '1', 'Halo', ?, 'u1', ?)");
+  night.run(GUILD, now - 24 * HOUR, 0);
+  night.run(GUILD, now - 48 * HOUR, 1);
+  const data = await ok(`/guilds/${GUILD}/stats?period=week`);
+  assert.deepEqual([data.totals.sounds, data.totals.nights], [2, 1], 'a cancelled night doesn’t count');
+  assert.equal(data.previous.until, data.since);
+  assert.equal(Math.round(data.previous.totals.gameMs / HOUR), 2);
+  assert.equal(data.previous.totals.sounds, 1);
+  assert.deepEqual(data.games.map((g: any) => [g.name, Math.round(g.previousMs / HOUR)]), [['Doom', 0], ['Halo', 2]]);
+  assert.deepEqual(data.trending, {
+    up: [
+      { name: 'Doom', ms: 4 * HOUR, previousMs: 0, change: 4 * HOUR },
+      { name: 'Halo', ms: 3 * HOUR, previousMs: 2 * HOUR, change: HOUR },
+    ],
+    down: [],
+  });
+  // Each game's time in each day adds up to its total, and with only two games there's no "other"
+  const sum = (values: number[]) => values.reduce((a, b) => a + b, 0);
+  assert.deepEqual(data.activity.games.map((g: any) => [g.name, Math.round(sum(g.values) / HOUR)]), [['Doom', 4], ['Halo', 3]]);
+  assert.equal(data.activity.other, null);
+  assert.equal(data.activity.until, data.activity.buckets.at(-1).start + 24 * HOUR);
+  assert.equal(sum(data.series.sounds), 2);
+  assert.equal(Math.max(...data.series.people), 2, 'Ana and Ben; the person who left isn’t counted');
+  assert.equal(Math.round(sum(data.series.voiceMs) / 1000), 3600 + 1800);
+  // A week of weekdays and hours, with someone on at some point
+  assert.equal(data.when.length, 7);
+  assert.ok(data.when.every((day: unknown[]) => day.length === 24));
+  assert.ok(data.when.flat().some((people: number | null) => people !== null && people > 0));
+  // One person: their own sounds and nights they're in for
+  const ben = await ok(`/guilds/${GUILD}/stats?period=week&user=u2`);
+  assert.deepEqual([ben.totals.sounds, ben.totals.nights], [1, 0]);
+  // One game: no sounds, and its nights
+  const halo = await ok(`/guilds/${GUILD}/stats?period=week&game=halo`);
+  assert.deepEqual([halo.totals.sounds, halo.totals.nights, halo.trending, halo.activity.games], [null, 1, null, []]);
+});
+
+test('there’s nothing to compare with before the records start, or for all time, and today is compared with yesterday', async () => {
+  seedStats();
+  const month = await ok(`/guilds/${GUILD}/stats?period=month`);
+  assert.equal(month.previous, null, 'the records go back 20 days, not 60');
+  assert.ok(month.recordsFrom <= now - 24 * 20 * HOUR);
+  // The month's charts start at the first record, not 10 empty days before it
+  assert.ok(month.activity.buckets[0].start > month.since);
+  assert.ok(month.activity.buckets[0].start <= month.recordsFrom && month.recordsFrom - month.activity.buckets[0].start < 24 * HOUR);
+  const all = await ok(`/guilds/${GUILD}/stats?period=all`);
+  assert.equal(all.previous, null);
+  assert.ok(all.activity.buckets[0].start <= all.recordsFrom, 'all time starts at the first record');
+  const today = await ok(`/guilds/${GUILD}/stats?period=today`);
+  assert.equal(today.previous.until - today.previous.since, today.until - today.since);
+  // Yesterday from midnight up to this time, not the end of yesterday
+  const sinceYesterday = today.since - today.previous.since;
+  assert.ok(sinceYesterday >= 23 * HOUR && sinceYesterday <= 25 * HOUR);
+  assert.equal(today.activity.step, 'hour');
+  assert.equal(today.when, null, 'less than a week says nothing about the week');
+});
+
 test('stats are empty for a quiet server', async () => {
   const data = await ok(`/guilds/${GUILD}/stats`);
-  assert.deepEqual(data.activity, { step: 'day', buckets: [] });
-  assert.equal(data.totals.gameMs, 0);
+  // Every day of the month is there, each with nothing in it
+  assert.equal(data.activity.step, 'day');
+  assert.ok(data.activity.buckets.length >= 30 && data.activity.buckets.every((b: { ms: number }) => b.ms === 0));
+  assert.deepEqual(data.activity.games, []);
+  assert.deepEqual([data.totals.gameMs, data.totals.sounds, data.totals.nights], [0, 0, 0]);
+  assert.deepEqual([data.previous, data.trending, data.recordsFrom], [null, null, null], 'nothing on record, so nothing before to compare with');
 });
 
 test('longer periods are grouped by week, then by month from the 1st', () => {

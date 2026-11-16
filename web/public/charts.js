@@ -50,17 +50,41 @@ function tickFormat(span, timeZone) {
 
 /**
  * `series`: [{ id, label, color (a CSS colour or token), values: [number | null] }], one value per point from
- * `start`, `step` ms apart. `previous`: the same lines over the stretch before, by id, drawn faint and dashed to
- * compare. `format(value)` writes a value. `limit` ({ value, label }) draws a dashed line where it stops being fine.
+ * `start`, `step` ms apart, or at each of `times` for steps of different lengths, like months, with `until` where the
+ * last one ends. `previous`: the same lines over the stretch before, by id, drawn faint and dashed to compare.
+ * `format(value)` writes a value. `limit` ({ value, label }) draws a dashed line where it stops being fine.
  * `bands`: a share 0–1 per point to shade, like time away from Discord, named by `bandLabel`. `onPick(from, to)`
- * is called with the stretch someone drags across
+ * is called with the stretch someone drags across. `stacked`: columns stacked on each other, with the total first in
+ * the tooltip, for parts of a whole like each game's share of the time
  */
-export function timeChart({ key, title, start, step, timeLabel, timeZone, series, format, limit = null, bands = null, bandLabel = '', floor = 0, previous = null, onPick = null, height = HEIGHT }) {
+export function timeChart({
+  key,
+  title,
+  start,
+  step,
+  times = null,
+  until = null,
+  timeLabel,
+  timeZone,
+  series,
+  format,
+  limit = null,
+  bands = null,
+  bandLabel = '',
+  floor = 0,
+  previous = null,
+  onPick = null,
+  stacked = false,
+  height = HEIGHT,
+}) {
   sweep();
   const off = hidden.get(key) ?? hidden.set(key, new Set()).get(key);
   const points = series[0]?.values.length ?? 0;
-  const end = start + Math.max(0, points - 1) * step;
-  const at = (i) => start + i * step;
+  const at = (i) => (times ? times[i] : start + i * step);
+  start = at(0);
+  const end = at(Math.max(0, points - 1));
+  /** Where the last point's stretch ends */
+  const last = times ? (until ?? end) : end + step;
   const shown = () => series.filter((s) => !off.has(s.id));
 
   const plot = el('div', { className: 'echart', style: `height: ${height}px` });
@@ -78,7 +102,7 @@ export function timeChart({ key, title, start, step, timeLabel, timeZone, series
 
   /** What the tooltip shows for point `i`: built as elements, as the page's security policy doesn't allow inline styles */
   function tipFor(i) {
-    const rows = shown().map((s) =>
+    const rows = (stacked ? shown().toReversed() : shown()).map((s) =>
       el(
         'div',
         { className: 'line-tip-row' },
@@ -89,7 +113,9 @@ export function timeChart({ key, title, start, step, timeLabel, timeZone, series
       ),
     );
     const band = bands?.[i] ? el('div', { className: 'line-tip-row' }, el('span', { className: 'line-key band' }), el('span', {}, `${bandLabel} ${Math.round(bands[i] * 100)}% of the time`)) : null;
-    return el('div', { className: 'echart-tip' }, el('div', { className: 'line-tip-time' }, timeLabel(at(i))), ...rows, band);
+    // The total counts parts hidden in the legend too, so it agrees with the tiles and the table
+    const total = stacked && el('div', { className: 'line-tip-row' }, el('strong', {}, format(series.reduce((sum, s) => sum + (s.values[i] ?? 0), 0))), el('span', {}, 'in all'));
+    return el('div', { className: 'echart-tip' }, el('div', { className: 'line-tip-time' }, timeLabel(at(i))), total, ...rows, band);
   }
 
   function option() {
@@ -114,8 +140,9 @@ export function timeChart({ key, title, start, step, timeLabel, timeZone, series
       grid: { left: 4, right: 12, top: 12, bottom: 4, containLabel: true },
       xAxis: {
         type: 'time',
-        min: start,
-        max: end,
+        // Columns stand on their point, so the axis runs half a step either side
+        min: stacked ? start - (last - start) / points / 2 : start,
+        max: stacked ? last - (last - start) / points / 2 : end,
         axisLine: { lineStyle: { color: line } },
         axisTick: { show: false },
         splitLine: { show: false },
@@ -142,31 +169,45 @@ export function timeChart({ key, title, start, step, timeLabel, timeZone, series
         textStyle: { color: colour('var(--bg)'), fontSize: 12 },
         extraCssText: 'box-shadow: none; border-radius: 6px;',
         transitionDuration: 0,
-        axisPointer: { type: 'line', lineStyle: { color: ink, width: 1 } },
+        axisPointer: stacked ? { type: 'shadow', shadowStyle: { color: colour('var(--line)'), opacity: 0.5 } } : { type: 'line', lineStyle: { color: ink, width: 1 } },
         formatter: (params) => tipFor(params[0]?.dataIndex ?? 0),
       },
       series: [
-        ...lines.map((s, n) => ({
-          id: s.id,
-          type: 'line',
-          data: data(s.values),
-          showSymbol: true,
-          symbolSize: 5,
-          connectNulls: false,
-          lineStyle: { width: 2, color: colour(s.color) },
-          itemStyle: { color: colour(s.color) },
-          emphasis: { disabled: true },
-          ...(n === 0 && {
-            markLine: limit && {
-              silent: true,
-              symbol: 'none',
-              label: { show: false },
-              lineStyle: { color: ink, type: [4, 4], width: 1 },
-              data: [{ yAxis: limit.value }],
-            },
-            markArea: marks.length ? { silent: true, data: marks } : undefined,
-          }),
-        })),
+        ...lines.map((s, n) =>
+          stacked
+            ? {
+                id: s.id,
+                type: 'bar',
+                stack: 'all',
+                data: s.values.map((v, i) => [at(i), v]),
+                barMaxWidth: 28,
+                barCategoryGap: '30%',
+                // A sliver of the page between parts, so neighbouring colours don't run together
+                itemStyle: { color: colour(s.color), borderColor: colour('var(--surface)'), borderWidth: 1 },
+                emphasis: { disabled: true },
+              }
+            : {
+                id: s.id,
+                type: 'line',
+                data: data(s.values),
+                showSymbol: true,
+                symbolSize: 5,
+                connectNulls: false,
+                lineStyle: { width: 2, color: colour(s.color) },
+                itemStyle: { color: colour(s.color) },
+                emphasis: { disabled: true },
+                ...(n === 0 && {
+                  markLine: limit && {
+                    silent: true,
+                    symbol: 'none',
+                    label: { show: false },
+                    lineStyle: { color: ink, type: [4, 4], width: 1 },
+                    data: [{ yAxis: limit.value }],
+                  },
+                  markArea: marks.length ? { silent: true, data: marks } : undefined,
+                }),
+              },
+        ),
         ...(previous
           ? lines
               .filter((s) => previous[s.id])
@@ -256,7 +297,12 @@ export function timeChart({ key, title, start, step, timeLabel, timeZone, series
       const [a, b] = [from, x].sort((p, q) => p - q).map((px) => chart.convertFromPixel({ xAxisIndex: 0 }, px));
       from = null;
       pick.hidden = true;
-      if (wide && e.type === 'pointerup' && Number.isFinite(a) && Number.isFinite(b)) onPick(Math.max(start, Math.round(a)), Math.min(end + step, Math.round(b)));
+      if (!wide || e.type !== 'pointerup' || !Number.isFinite(a) || !Number.isFinite(b)) return;
+      if (!stacked) return onPick(Math.max(start, Math.round(a)), Math.min(last, Math.round(b)));
+      // Columns stand in the middle of their step, so a drag picks the whole steps of the columns it crossed
+      const nearest = (t) => Array.from({ length: points }, (_, i) => i).reduce((best, i) => (Math.abs(at(i) - t) < Math.abs(at(best) - t) ? i : best), 0);
+      const [first, final] = [nearest(a), nearest(b)];
+      onPick(at(first), final + 1 < points ? at(final + 1) : last);
     };
     box.addEventListener('pointerup', finish);
     box.addEventListener('pointercancel', finish);
@@ -307,3 +353,127 @@ export function timeChart({ key, title, start, step, timeLabel, timeZone, series
   const notes = [limit && `Dashed: ${limit.label}`, previous && 'Faint: the stretch before'].filter(Boolean).join(' · ');
   return el('div', { className: 'chart line-chart' }, legend, box, notes && el('div', { className: 'axis-x' }, el('span', {}, notes)), table);
 }
+
+/** Weekday names from Monday, and hour names, in the reader's own language */
+const WEEKDAYS = Array.from({ length: 7 }, (_, i) => new Date(Date.UTC(2026, 0, 5 + i)).toLocaleDateString(undefined, { weekday: 'short', timeZone: 'UTC' }));
+const WEEKDAYS_LONG = Array.from({ length: 7 }, (_, i) => new Date(Date.UTC(2026, 0, 5 + i)).toLocaleDateString(undefined, { weekday: 'long', timeZone: 'UTC' }));
+const HOURS = Array.from({ length: 24 }, (_, h) => new Date(Date.UTC(2026, 0, 5, h)).toLocaleTimeString(undefined, { hour: 'numeric', timeZone: 'UTC' }));
+
+/**
+ * A week as a grid of weekdays (Monday first, top to bottom) by hours, each shaded by its value in one colour: pale
+ * for little, strong for a lot. `grid`: 7 rows of 24 values, null for an hour the period didn't include.
+ * `describe(value, weekday, hour)` says what a cell means, for its tooltip and the table
+ */
+export function weekChart({ title, grid, describe, format, height = 220 }) {
+  sweep();
+  const values = grid.flat().filter((v) => v !== null);
+  const most = Math.max(0, ...values);
+  const plot = el('div', { className: 'echart', style: `height: ${height}px` });
+  const box = el('div', { className: 'echart-box', tabIndex: 0, role: 'img', ariaLabel: `${title}. Use the arrow keys to read each hour` }, plot, !most && el('div', { className: 'chart-empty' }, 'Nobody on in this range'));
+  let chart = null;
+  let focus = null;
+
+  function option() {
+    const ink = colour('var(--muted)');
+    return {
+      animation: false,
+      aria: { enabled: false },
+      textStyle: { fontFamily: getComputedStyle(document.body).fontFamily, color: ink },
+      grid: { left: 4, right: 4, top: 4, bottom: 4, containLabel: true },
+      xAxis: { type: 'category', data: HOURS, splitArea: { show: false }, axisLine: { show: false }, axisTick: { show: false }, axisLabel: { color: ink, interval: (i) => i % (plot.clientWidth < 520 ? 6 : 3) === 0 } },
+      yAxis: { type: 'category', data: WEEKDAYS, inverse: true, axisLine: { show: false }, axisTick: { show: false }, axisLabel: { color: ink } },
+      visualMap: { show: false, min: 0, max: most || 1, inRange: { color: [colour('var(--raised)'), colour('var(--series-1)')] } },
+      tooltip: {
+        confine: true,
+        className: 'chart-tooltip',
+        backgroundColor: colour('var(--text)'),
+        borderWidth: 0,
+        padding: [6, 10],
+        textStyle: { color: colour('var(--bg)'), fontSize: 12 },
+        extraCssText: 'box-shadow: none; border-radius: 6px;',
+        transitionDuration: 0,
+        formatter: ({ value: [hour, day, v] }) => el('div', { className: 'echart-tip' }, describe(v, day, hour)),
+      },
+      series: [
+        {
+          type: 'heatmap',
+          data: grid.flatMap((row, day) => row.map((v, hour) => [hour, day, v ?? '-'])),
+          // The page's own colour between cells, so each hour stands apart
+          itemStyle: { borderColor: colour('var(--surface)'), borderWidth: 2, borderRadius: 3 },
+          emphasis: { itemStyle: { borderColor: colour('var(--text)'), borderWidth: 1 } },
+        },
+      ],
+    };
+  }
+
+  const entry = {
+    node: box,
+    chart: null,
+    observer: null,
+    shown: false,
+    draw() {
+      chart?.setOption(option(), { notMerge: true });
+    },
+  };
+  entry.observer = new ResizeObserver(() => {
+    if (!box.isConnected || !plot.clientWidth) return;
+    entry.shown = true;
+    if (chart) return chart.resize();
+    void load().then(({ init }) => {
+      if (chart || !box.isConnected) return;
+      chart = entry.chart = init(plot, null, { renderer: 'svg' });
+      entry.draw();
+    });
+  });
+  entry.observer.observe(plot);
+  live.add(entry);
+
+  // The arrow keys move across the hours and up and down the days
+  box.addEventListener('keydown', (e) => {
+    const moves = { ArrowLeft: [0, -1], ArrowRight: [0, 1], ArrowUp: [-1, 0], ArrowDown: [1, 0] };
+    if (e.key === 'Escape') {
+      focus = null;
+      return chart?.dispatchAction({ type: 'hideTip' });
+    }
+    if (!(e.key in moves)) return;
+    e.preventDefault();
+    const [day, hour] = focus ?? [0, -1];
+    const [dd, dh] = moves[e.key];
+    focus = [Math.max(0, Math.min(6, day + dd)), Math.max(0, Math.min(23, hour + dh))];
+    chart?.dispatchAction({ type: 'showTip', seriesIndex: 0, dataIndex: focus[0] * 24 + focus[1] });
+  });
+  box.addEventListener('blur', () => {
+    focus = null;
+    chart?.dispatchAction({ type: 'hideTip' });
+  });
+
+  // Pale to strong, with what each end means
+  const scale = el(
+    'div',
+    { className: 'week-scale', ariaHidden: 'true' },
+    el('span', {}, format(0)),
+    el('span', { className: 'week-ramp' }),
+    el('span', {}, format(most)),
+  );
+
+  // Hours down the side and days across, which fits a phone better than the chart's way round
+  const table = el('details', {}, el('summary', {}, 'Show as a table'));
+  table.addEventListener('toggle', () => {
+    if (!table.open || table.querySelector('table')) return;
+    table.append(
+      el(
+        'div',
+        { className: 'table-scroll' },
+        el(
+          'table',
+          {},
+          el('thead', {}, el('tr', {}, el('th', {}, 'Hour'), WEEKDAYS.map((d) => el('th', {}, d)))),
+          el('tbody', {}, HOURS.map((h, hour) => el('tr', {}, el('td', {}, h), grid.map((row) => el('td', {}, row[hour] === null ? '–' : format(row[hour])))))),
+        ),
+      ),
+    );
+  });
+  return el('div', { className: 'chart week-chart' }, box, scale, table);
+}
+
+export { WEEKDAYS_LONG, HOURS };

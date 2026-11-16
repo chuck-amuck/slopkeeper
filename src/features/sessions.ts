@@ -20,6 +20,44 @@ interface LiveSession {
 }
 
 const live = new Map<string, LiveSession>();
+
+/** `${channelId}:${userId}` → the voice_stints row of someone in a counted channel now, and its server */
+const stints = new Map<string, { id: number; guildId: string }>();
+const openStint = db.prepare('INSERT INTO voice_stints (guild_id, user_id, channel_id, joined_at, left_at) VALUES (?, ?, ?, ?, ?)');
+const moveStint = db.prepare('UPDATE voice_stints SET left_at = ? WHERE id = ?');
+
+function stintStarts(guildId: string, channelId: string, userId: string, now: number) {
+  const key = `${channelId}:${userId}`;
+  if (!stints.has(key)) stints.set(key, { id: Number(openStint.run(guildId, userId, channelId, now, now).lastInsertRowid), guildId });
+}
+
+function stintEnds(channelId: string, userId: string, now: number) {
+  const key = `${channelId}:${userId}`;
+  const stint = stints.get(key);
+  if (!stint) return;
+  moveStint.run(now, stint.id);
+  stints.delete(key);
+}
+
+/** Ends everyone's stint in a server, as when the bot is removed from it and won't hear them leave */
+export function endGuildStints(guildId: string, now = Date.now()) {
+  for (const [key, stint] of stints) {
+    if (stint.guildId !== guildId) continue;
+    moveStint.run(now, stint.id);
+    stints.delete(key);
+  }
+}
+
+/** Brings everyone's time in voice up to now, so stats include it and a crash loses little */
+export function checkpointVoice(now = Date.now()) {
+  for (const { id } of stints.values()) moveStint.run(now, id);
+}
+
+/** Ends every stint, as when the bot stops: a restart starts them again for whoever's still there */
+function endStints(now: number) {
+  checkpointVoice(now);
+  stints.clear();
+}
 const DAY = 86_400_000;
 /** Where sessions are kept over a restart */
 const SAVED_KEY = 'voiceSessions';
@@ -27,6 +65,7 @@ const SAVED_KEY = 'voiceSessions';
 const RESUME_WITHIN_MS = 10 * 60_000;
 /** Set once the sessions are kept for the restart, so shutting down doesn't also record them as over */
 let savedForRestart = false;
+const timers: NodeJS.Timeout[] = [];
 
 interface SavedSession {
   channelId: string;
@@ -96,10 +135,12 @@ export function join(channel: VoiceBasedChannel, member: GuildMember, now: numbe
     s.emptySince = undefined;
   }
   if (!s.present.has(member.id)) s.present.set(member.id, now);
+  stintStarts(channel.guild.id, channel.id, member.id, now);
   for (const game of playingGames(member)) s.games.add(game);
 }
 
 export function leave(client: Client<true>, channelId: string, userId: string, now: number) {
+  stintEnds(channelId, userId, now);
   const s = live.get(channelId);
   const joinedAt = s?.present.get(userId);
   if (!s || joinedAt === undefined) return;
@@ -279,6 +320,8 @@ export const sessions: Feature = {
       if (newState.channel) join(newState.channel, member, now);
     });
 
+    client.on(Events.GuildDelete, (guild) => endGuildStints(guild.id));
+
     client.on(Events.PresenceUpdate, (_old, presence) => {
       const member = presence.member;
       const s = member?.voice.channelId ? live.get(member.voice.channelId) : undefined;
@@ -286,6 +329,7 @@ export const sessions: Feature = {
     });
 
     setInterval(() => void maybePostWeekly(client).catch(console.error), 10 * 60_000);
+    timers.push(setInterval(() => checkpointVoice(), 60_000).unref());
   },
   saveForRestart() {
     const kept: SavedSession[] = [...live].map(([channelId, s]) => ({
@@ -298,10 +342,13 @@ export const sessions: Feature = {
       emptySince: s.emptySince,
     }));
     setKv(SAVED_KEY, JSON.stringify({ at: Date.now(), sessions: kept }));
+    endStints(Date.now());
     savedForRestart = true;
   },
   shutdown() {
     const now = Date.now();
+    for (const timer of timers.splice(0)) clearInterval(timer);
+    endStints(now);
     for (const [channelId, s] of live) {
       clearTimeout(s.endTimer);
       // Without a restart to carry on in, there's no time left to post a recap, but the stats shouldn't go down with the bot

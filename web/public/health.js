@@ -611,7 +611,7 @@ export function health(main, address) {
       void show();
     },
   });
-  main.append(el('div', { className: 'toolbar' }, bar.node), content);
+  main.append(el('div', { className: 'toolbar range-toolbar' }, bar.node), content);
   writeAddress();
 
   function render(r) {
