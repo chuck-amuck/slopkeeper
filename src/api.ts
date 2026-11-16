@@ -2,7 +2,7 @@ import { type Client } from 'discord.js';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { seeWebUser } from './activity.ts';
 import { config } from './config.ts';
-import { webReport } from './features/health.ts';
+import { browserReport, webReport } from './features/health.ts';
 import * as perf from './perf.ts';
 import { isAllowed } from './settings.ts';
 import type { Feature } from './types.ts';
@@ -46,6 +46,12 @@ async function handle(client: Client<true>, req: IncomingMessage, res: ServerRes
   if (root === 'perf' && guildId === 'web' && segments.length === 2) {
     if (req.method !== 'POST') throw new Refused(405, 'Not here.');
     if (!webReport(await readJson(req))) throw new Refused(400, 'That isn’t a report.');
+    return { ok: true };
+  }
+  // People's browsers' timings, which the web UI passes on
+  if (root === 'perf' && guildId === 'browser' && segments.length === 2) {
+    if (req.method !== 'POST') throw new Refused(405, 'Not here.');
+    if (!browserReport(await readJson(req))) throw new Refused(400, 'That isn’t a report.');
     return { ok: true };
   }
   if (root !== 'guilds') throw new Refused(404, 'Not found.');

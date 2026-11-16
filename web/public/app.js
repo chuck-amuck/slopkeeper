@@ -14,6 +14,7 @@ import { playInPicker } from './voice.js';
 import { renderSettings } from './settings.js';
 import { renderSoundboard, VIEW_KEY } from './soundboard.js';
 import { renderStats } from './stats.js';
+import { startSpeed, stopSpeed } from './speed.js';
 
 const app = document.getElementById('app');
 // id, label, page, icon, and the shorter label a phone's bottom bar uses
@@ -56,6 +57,7 @@ function showLogin() {
   // Requests made side by side can each find the session expired, and a second form would wipe what's being typed
   if (app.querySelector(':scope > .login')) return;
   document.title = 'Log in · Slopkeeper';
+  stopSpeed();
   player.stop();
   noMusicPlayer();
   closePopOut();
@@ -105,6 +107,7 @@ async function start() {
   if (early) state.me = early.me;
   else await loadMe();
   renderFrame();
+  startSpeed();
 }
 
 async function loadMe() {

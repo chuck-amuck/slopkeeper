@@ -11,6 +11,8 @@ const MAX_FAILURES = 5;
 const LOCK_MS = 60_000;
 // A little over the largest sound, which is the largest thing the page sends
 const MAX_BODY = 5 * 1024 * 1024 + 1024;
+/** A browser's minute of timings is a few kilobytes */
+const MAX_TIMINGS = 64 * 1024;
 // A music file uploaded for the queue is far larger, so it’s passed on as it arrives rather than held here
 const STREAMED = /^\/api\/guilds\/\d+\/music\/file$/;
 const MAX_STREAMED = 60 * 1024 * 1024 + 1024;
@@ -147,12 +149,12 @@ function loggedIn(req: IncomingMessage, password: string): boolean {
   return same(Buffer.from(signature), Buffer.from(sign(password, Number(expires))));
 }
 
-async function readBody(req: IncomingMessage): Promise<Buffer | null> {
+async function readBody(req: IncomingMessage, most = MAX_BODY): Promise<Buffer | null> {
   const chunks: Buffer[] = [];
   let size = 0;
   for await (const chunk of req as AsyncIterable<Buffer>) {
     size += chunk.length;
-    if (size > MAX_BODY) return null;
+    if (size > most) return null;
     chunks.push(chunk);
   }
   return Buffer.concat(chunks);
@@ -234,6 +236,7 @@ export function createWeb({ password, apiToken, botUrl, proxySecret }: WebOption
     const gone = new AbortController();
     res.once('close', () => gone.abort());
     let answer: Response;
+    const asked = performance.now();
     try {
       answer = await fetch(botUrl + req.url!.slice('/api'.length), {
         method: req.method,
@@ -253,7 +256,8 @@ export function createWeb({ password, apiToken, botUrl, proxySecret }: WebOption
       counts.botUnreachable += 1;
       return json(res, 502, { error: 'The bot isn’t answering. It may be restarting.' });
     }
-    const headers: Record<string, string> = { ...HEADERS };
+    // The bot's part of the wait, so the page can tell it from the network's
+    const headers: Record<string, string> = { ...HEADERS, 'server-timing': `bot;dur=${(performance.now() - asked).toFixed(1)}` };
     for (const name of ['content-type', 'content-length', 'cache-control']) {
       const value = answer.headers.get(name);
       if (value) headers[name] = value;
@@ -262,6 +266,36 @@ export function createWeb({ password, apiToken, botUrl, proxySecret }: WebOption
     // A body cut off part way, by the page leaving or the bot stopping, ends the response rather than the process
     if (answer.body) Readable.fromWeb(answer.body as never).once('error', () => res.destroy()).pipe(res);
     else res.end();
+  }
+
+  /**
+   * A browser's timings, passed on to the bot with whether it came through Pangolin (away) or not (home). Only the
+   * fields the bot reads go, and nothing about who sent it
+   */
+  async function browserTimings(req: IncomingMessage, res: ServerResponse) {
+    if (req.method !== 'POST') return json(res, 405, { error: 'Not here.' });
+    const body = await readBody(req, MAX_TIMINGS);
+    if (!body) return json(res, 413, { error: 'Too much.' }, { connection: 'close' });
+    let given: Record<string, unknown>;
+    try {
+      given = JSON.parse(body.toString()) as Record<string, unknown>;
+    } catch {
+      return json(res, 400, { error: 'Bad request.' });
+    }
+    if (!given || typeof given !== 'object') return json(res, 400, { error: 'Bad request.' });
+    const report = { via: identity(req) ? 'away' : 'home', device: given.device, requests: given.requests, page: given.page, responses: given.responses, quickResponses: given.quickResponses };
+    try {
+      const answer = await fetch(`${botUrl}/perf/browser`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${apiToken}`, 'content-type': 'application/json' },
+        body: JSON.stringify(report),
+        signal: AbortSignal.timeout(BOT_TIMEOUT_MS),
+      });
+      return json(res, answer.ok ? 200 : 400, answer.ok ? {} : { error: 'That isn’t a report.' });
+    } catch {
+      counts.botUnreachable += 1;
+      return json(res, 502, { error: 'The bot isn’t answering. It may be restarting.' });
+    }
   }
 
   async function route(req: IncomingMessage, res: ServerResponse) {
@@ -283,7 +317,8 @@ export function createWeb({ password, apiToken, botUrl, proxySecret }: WebOption
     // Only what the page uses: the bot's other routes are for the web UI itself, like its report every 30 seconds, and scrapers
     const isApi = path === '/api/guilds' || path.startsWith('/api/guilds/');
     const isAuth = path === '/auth/login' || path === '/auth/logout';
-    if (!isApi && !isAuth) return json(res, 404, { error: 'Not found.' });
+    const isTimings = path === '/api/perf';
+    if (!isApi && !isAuth && !isTimings) return json(res, 404, { error: 'Not found.' });
 
     // Other sites can't set this header without the browser asking first, and nothing here says yes
     if (req.method !== 'GET' && req.headers['x-slopkeeper'] !== '1') return json(res, 403, { error: 'Forbidden.' });
@@ -295,6 +330,7 @@ export function createWeb({ password, apiToken, botUrl, proxySecret }: WebOption
     }
 
     if (!loggedIn(req, password)) return json(res, 401, { error: 'Log in first.' });
+    if (isTimings) return browserTimings(req, res);
     return proxy(req, res);
   }
 

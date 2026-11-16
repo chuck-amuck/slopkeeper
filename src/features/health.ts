@@ -125,6 +125,56 @@ export function webReport(body: unknown): boolean {
   return true;
 }
 
+/** The most of each kind of timing one browser report may hold: a minute of a busy tab is well under it */
+const BROWSER_MOST = 500;
+/** Anything longer is a tab that was asleep, not a slow answer */
+const BROWSER_LONGEST_S = 120;
+/** All browsers together may send this many reports a minute, many times what friends' open tabs would, so one stuck in a loop can't bury the rest */
+const BROWSER_REPORTS_PER_MINUTE = 120;
+let browserMinute = 0;
+let browserReports = 0;
+/** Taps the browser didn't time, as it times only those over 16 ms, are noted as this */
+const QUICK_RESPONSE_S = 0.016;
+
+const isTime = (n: unknown): n is number => typeof n === 'number' && Number.isFinite(n) && n >= 0 && n <= BROWSER_LONGEST_S;
+const oneOf = <T extends string>(value: unknown, allowed: readonly T[]): T | null => (allowed.includes(value as T) ? (value as T) : null);
+
+/**
+ * A browser's timings since its last report, which the web UI passes on with where it came from. Nothing in it says
+ * who it was. Returns whether it was a report
+ */
+export function browserReport(body: unknown): boolean {
+  const b = body as Record<string, unknown> | null;
+  const via = oneOf(b?.via, ['home', 'away'] as const);
+  const device = oneOf(b?.device, ['phone', 'computer'] as const);
+  if (!b || !via || !device) return false;
+  const minute = Math.floor(Date.now() / 60_000);
+  if (minute !== browserMinute) [browserMinute, browserReports] = [minute, 0];
+  // Taken as a report, just not kept
+  if (++browserReports > BROWSER_REPORTS_PER_MINUTE) return true;
+  const where = { via, device };
+  const requests = Array.isArray(b.requests) ? b.requests.slice(0, BROWSER_MOST) : [];
+  for (const r of requests) {
+    if (!Array.isArray(r)) continue;
+    const [kind, seconds, network] = r as unknown[];
+    const k = oneOf(kind, ['action', 'load'] as const);
+    // Every answer through the web UI says the bot's part, so the network's is known; without it, something's off
+    if (!k || !isTime(seconds) || !isTime(network) || network > seconds) continue;
+    perf.time('browser_request_seconds', seconds, { ...where, kind: k });
+    perf.time('browser_network_seconds', network, { ...where, kind: k });
+  }
+  const page = b.page as Record<string, unknown> | null | undefined;
+  if (page && typeof page === 'object') {
+    if (isTime(page.firstByte)) perf.time('browser_page_seconds', page.firstByte, { ...where, step: 'first_byte' });
+    if (isTime(page.shown)) perf.time('browser_page_seconds', page.shown, { ...where, step: 'shown' });
+  }
+  const responses = Array.isArray(b.responses) ? b.responses.slice(0, BROWSER_MOST) : [];
+  for (const seconds of responses) if (isTime(seconds)) perf.time('browser_response_seconds', seconds, where);
+  const quick = typeof b.quickResponses === 'number' && Number.isInteger(b.quickResponses) ? Math.min(BROWSER_MOST, Math.max(0, b.quickResponses)) : 0;
+  for (let n = 0; n < quick; n++) perf.time('browser_response_seconds', QUICK_RESPONSE_S, where);
+  return true;
+}
+
 /** The containers the bot asks, where they're set up */
 const polled = () =>
   [

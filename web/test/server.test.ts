@@ -286,6 +286,37 @@ test('only the bot’s server routes are passed on, not its report or metrics', 
   assert.equal(seen.length, before, 'the bot never heard of them');
 });
 
+test('says how long the bot took, so the page can tell it from the network', async () => {
+  const res = await fetch(`${base}/api/guilds/1/x`, { headers: { cookie: await login() } });
+  assert.match(res.headers.get('server-timing') ?? '', /^bot;dur=\d+\.\d$/);
+});
+
+test('a browser’s timings need a login and the header, and stay small', async () => {
+  const cookie = await login();
+  const before = seen.length;
+  assert.equal((await fetch(`${base}/api/perf`, { method: 'POST', headers: write, body: '{}' })).status, 401);
+  assert.equal((await fetch(`${base}/api/perf`, { method: 'POST', headers: { cookie, 'content-type': 'application/json' }, body: '{}' })).status, 403);
+  assert.equal((await fetch(`${base}/api/perf`, { headers: { cookie } })).status, 405);
+  assert.equal((await fetch(`${base}/api/perf`, { method: 'POST', headers: { cookie, ...write }, body: 'not json' })).status, 400);
+  assert.equal((await fetch(`${base}/api/perf`, { method: 'POST', headers: { cookie, ...write }, body: JSON.stringify({ requests: 'x'.repeat(70_000) }) })).status, 413);
+  assert.equal(seen.length, before, 'none of them reached the bot');
+});
+
+test('passes a browser’s timings on with where it was, and nothing about who', async () => {
+  const report = { device: 'phone', requests: [['action', 0.4, 0.1]], page: { firstByte: 0.2, shown: 1.1 }, responses: [0.05], quickResponses: 3, email: 'friend@example.com', extra: 'x' };
+  const home = await fetch(`${base}/api/perf`, { method: 'POST', headers: { cookie: await login(), ...write }, body: JSON.stringify(report) });
+  assert.equal(home.status, 200);
+  const sent = seen.at(-1)!;
+  assert.deepEqual([sent.method, sent.url, sent.headers.authorization], ['POST', '/perf/browser', `Bearer ${TOKEN}`]);
+  assert.deepEqual(JSON.parse(sent.body.toString()), { via: 'home', device: 'phone', requests: [['action', 0.4, 0.1]], page: { firstByte: 0.2, shown: 1.1 }, responses: [0.05], quickResponses: 3 });
+  await withSecret(async (url, cookie) => {
+    await fetch(`${url}/api/perf`, { method: 'POST', headers: { cookie: await cookie(), ...write, ...sso('friend@example.com', 'Friend') }, body: JSON.stringify({ ...report, via: 'home' }) });
+    const away = seen.at(-1)!;
+    assert.equal(JSON.parse(away.body.toString()).via, 'away', 'through Pangolin, whatever the page says');
+    assert.equal(away.headers['x-slopkeeper-email'], undefined);
+  });
+});
+
 test('locks login for a minute after five wrong passwords', async () => {
   for (let i = 0; i < 5; i++) assert.equal((await attemptLogin('wrong')).status, 401);
   assert.equal((await attemptLogin(PASSWORD)).status, 429);

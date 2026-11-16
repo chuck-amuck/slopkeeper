@@ -33,6 +33,10 @@ export const LIMITS = {
   memory: [0.8, 0.9],
   /** Share of web UI answers that were server errors or found the bot gone, as during a redeploy */
   webErrors: [0.01, 0.05],
+  /** In people's browsers, 95th percentiles: a tap answered, the page opening, and the page reacting to a tap */
+  browserTap: [0.5, 1.5],
+  pageShown: [3, 6],
+  browserResponse: [0.2, 0.5],
   /** Minutes away from Discord in the range: never bad, as it's back */
   discordDown: [2, Infinity],
 } as const satisfies Record<string, readonly [number, number]>;
@@ -281,6 +285,36 @@ export function healthNumbers(range: Range, now = Date.now()) {
     status: requestsAll ? judge(requests.errors / requestsAll, LIMITS.webErrors) : ('quiet' as Status),
   };
 
+  // The web UI as people see it, in their browsers. Taps are actions: loads include whole pages of data
+  const tapCells = of('browser_request_seconds', (l) => l.kind === 'action');
+  const taps = timing(tapCells);
+  const shown = timing(of('browser_page_seconds', (l) => l.step === 'shown'));
+  const responses = timing(of('browser_response_seconds'));
+  const tapsAll = total(tapCells);
+  const networkAll = total(of('browser_network_seconds', (l) => l.kind === 'action'));
+  const where = (via: string) => ({
+    taps: timing(of('browser_request_seconds', (l) => l.kind === 'action' && l.via === via)),
+    shown: timing(of('browser_page_seconds', (l) => l.step === 'shown' && l.via === via)),
+  });
+  const home = where('home');
+  const away = where('away');
+  const onDevice = (device: string) => timing(of('browser_request_seconds', (l) => l.kind === 'action' && l.device === device));
+  const browser = {
+    taps: { count: taps.count, p50: taps.p50, p95: taps.p95 },
+    shown: { count: shown.count, p50: shown.p50, p95: shown.p95 },
+    responses: { count: responses.count, p95: responses.p95 },
+    /** Of the time taps took, the share that wasn't the bot */
+    networkShare: tapsAll && networkAll && tapsAll.sum > 0 ? rounded(Math.min(1, networkAll.sum / tapsAll.sum), 3) : null,
+    home: { taps: home.taps.p95, shown: home.shown.p95, tapSeries: home.taps.series, shownSeries: home.shown.series },
+    away: { taps: away.taps.p95, shown: away.shown.p95, tapSeries: away.taps.series, shownSeries: away.shown.series },
+    phone: onDevice('phone').p95,
+    computer: onDevice('computer').p95,
+    status:
+      taps.count || shown.count || responses.count
+        ? worse(judge(taps.p95, LIMITS.browserTap), judge(shown.p95, LIMITS.pageShown), judge(responses.p95, LIMITS.browserResponse), 'fine')
+        : ('quiet' as Status),
+  };
+
   const seen = new Set(CONTAINERS.filter((c) => perf.gaugeValue('container_up', { container: c }) !== undefined));
   for (const { labels } of found.get('container_up')?.values() ?? []) if (labels.container) seen.add(labels.container);
   const containers = [...seen]
@@ -313,7 +347,7 @@ export function healthNumbers(range: Range, now = Date.now()) {
       };
     });
 
-  return { range, start, step, points, limits: LIMITS, discord, commands, sounds, speech, music, stutter, bot, web, containers };
+  return { range, start, step, points, limits: LIMITS, discord, commands, sounds, speech, music, stutter, bot, web, browser, containers };
 }
 
 export type HealthNumbers = ReturnType<typeof healthNumbers>;

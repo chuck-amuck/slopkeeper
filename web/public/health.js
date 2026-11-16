@@ -72,7 +72,9 @@ function tile(title, status, value, ...notes) {
 }
 
 function tiles(r) {
-  const { discord, commands, sounds, speech, music, stutter, bot, web } = r;
+  const { discord, commands, sounds, speech, music, stutter, bot, web, browser } = r;
+  // From a bot older than this page, until both are redeployed
+  const both = (label, a, b, aLabel, bLabel) => (a !== null || b !== null ? `${label}: ${[a !== null && `${aLabel} ${seconds(a)}`, b !== null && `${bLabel} ${seconds(b)}`].filter(Boolean).join(', ')}` : null);
   return el(
     'div',
     { className: 'health-tiles' },
@@ -126,6 +128,18 @@ function tiles(r) {
       web.apiP95 !== null && `Bot answers 95% within ${seconds(web.apiP95)}`,
       web.unreachable > 0 && `Couldn’t reach the bot ${plural(web.unreachable, 'time')}`,
     ),
+    browser &&
+      tile(
+      'Web UI as people see it',
+      browser.status,
+      browser.taps.count ? seconds(browser.taps.p95) : browser.status === 'quiet' ? 'None' : '–',
+      browser.taps.count > 0 && `Taps answered: 95% of ${plural(browser.taps.count, 'tap')}, typically ${seconds(browser.taps.p50)}`,
+      both('Taps', browser.home.taps, browser.away.taps, 'at home', 'away'),
+      both('Taps', browser.phone, browser.computer, 'phones', 'computers'),
+      browser.networkShare !== null && `${percent(browser.networkShare)} of their wait was the network, not the bot`,
+      browser.shown.count > 0 && `Opens within ${seconds(browser.shown.p95)} for 95%`,
+      browser.responses.count > 0 && `Reacts to taps within ${seconds(browser.responses.p95)} for 95%`,
+    ),
   );
 }
 
@@ -161,9 +175,7 @@ function containersCard(r) {
 
 function charts(r, timeLabel) {
   const common = { start: r.start, step: r.step, timeLabel };
-  const slowFrom = (limit) => ({ value: limit[0], label: `slow from ${seconds(limit[0])}` });
-  const small = (key, title, timing, limit) =>
-    el('div', { className: 'health-small' }, el('h3', {}, title), lineChart({ ...common, key, title, series: [{ id: key, label: title, color: 'var(--series-1)', values: timing.series }], format: seconds, limit: slowFrom(limit) }));
+  const small = (key, title, timing, limit) => smallChart(common, key, title, [{ id: key, label: title, color: 'var(--series-1)', values: timing.series }], limit);
   const containers = (key, title, field, format) =>
     lineChart({ ...common, key, title, format, series: r.containers.map((c) => ({ id: c.name, label: CONTAINERS[c.name] ?? c.name, color: seriesColor(c.name), values: c[field] })) });
   return [
@@ -178,6 +190,7 @@ function charts(r, timeLabel) {
         small('music', 'Music starts', r.music, r.limits.musicStart),
       ),
     ),
+    r.browser && browserCard(r, common),
     card('Memory', containers('memory', 'Memory by container', 'memory', bytes)),
     card('CPU', containers('cpu', 'CPU by container, 100% being one core', 'cpu', cpu)),
     card(
@@ -199,6 +212,29 @@ function charts(r, timeLabel) {
       el('p', { className: 'hint' }, 'How late the bot ran what it meant to do, at its worst. Above a few tenths of a second, sounds and buttons feel slow.'),
     ),
   ];
+}
+
+/** A small chart of 95th percentiles under its own heading, with where it stops being fine */
+const smallChart = (common, key, title, series, limit) =>
+  el('div', { className: 'health-small' }, el('h3', {}, title), lineChart({ ...common, key, title, series, format: seconds, limit: { value: limit[0], label: `slow from ${seconds(limit[0])}` } }));
+
+/** Taps answered and the page opening, at home and away, as people's browsers timed them */
+function browserCard(r, common) {
+  const { browser, limits } = r;
+  const lines = (part) => [
+    { id: 'home', label: 'At home', color: 'var(--series-1)', values: browser.home[part] },
+    { id: 'away', label: 'Away', color: 'var(--series-2)', values: browser.away[part] },
+  ];
+  return card(
+    'Web UI as people see it, 95th percentile',
+    el(
+      'div',
+      { className: 'health-grid' },
+      smallChart(common, 'taps', 'Taps answered', lines('tapSeries'), limits.browserTap),
+      smallChart(common, 'shown', 'Page opens', lines('shownSeries'), limits.pageShown),
+    ),
+    el('p', { className: 'hint' }, 'Timed in each person’s browser, from a tap to the bot’s answer arriving, and from opening the page to it being shown. Away is through the internet. It never says whose browser it was.'),
+  );
 }
 
 const STEP_NAMES = { waiting: 'waiting behind others' };
@@ -355,7 +391,8 @@ export function health(main) {
     content.replaceChildren(
       tiles(r),
       containersCard(r),
-      ...charts(r, timeLabel),
+      // An older bot sends no browser part, which would print as false
+      ...charts(r, timeLabel).filter(Boolean),
       slowCard(r),
       el('p', { className: 'hint' }, 'All but the slow list cover the whole bot, which every server it’s in shares. Fine, slow and bad are judged over the range picked.'),
     );

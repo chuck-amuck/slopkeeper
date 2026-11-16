@@ -863,6 +863,7 @@ It applies the same rules as `/sound` and `/setup`, and every request needs an `
 | `GET /guilds/:id/health?range=<1h\|24h\|7d\|30d>` | What the [Health](#health) view shows over the range (24 h if left out): each part judged `fine`, `slow`, `bad` or `quiet`, every container, the points of each chart (`start`, `step` and `points` say when), and this server's slow list |
 | `GET /metrics` | The [performance numbers](#performance-numbers), in Prometheus's text format |
 | `POST /perf/web` | The web UI's report of itself every 30 seconds: `{ "memoryBytes": ..., "memoryLimitBytes": ..., "cpuSeconds": ..., "requests": { "2xx": 40 }, "botUnreachable": 0 }` |
+| `POST /perf/browser` | A browser's timings, which the web UI passes on about once a minute per open tab: `{ "via": "home" or "away", "device": "phone" or "computer", "requests": [["action" or "load", seconds, bot's seconds]], "page": { "firstByte": ..., "shown": ... }, "responses": [seconds], "quickResponses": 3 }` |
 
 ### Performance numbers
 
@@ -872,6 +873,7 @@ The bot keeps track of how it and its containers are doing, so a slow moment can
 - **Playing:** how long a sound, a line of speech or a song takes from being asked for to being heard, including joining voice. A line is timed step by step: waiting behind other lines, the voice container saying it (and loading the voice, if it wasn't in memory), levelling and effects, and starting. A song is timed through its download, and whether the music container had it already. Also how long joining voice takes, voice connections that drop, and audio mixed late, which people hear as a stutter.
 - **The bot itself:** how late its timers run (event loop delay), how busy it is, and its JavaScript memory.
 - **Every container:** memory as `docker stats` counts it, its limit, and CPU. The bot asks the voice, music and loop containers on `GET /stats` every 30 seconds, and the web UI reports itself to the bot. A container that doesn't answer for 90 seconds is marked down.
+- **People's browsers:** each open web UI tab times how long taps take to be answered (split into the bot's part, from the `Server-Timing` header the web UI adds, and the network's), how long the page takes to open (its largest content, or the load event in Safari), and how long the page takes to visibly react to a tap or key press (Chrome, Edge and Firefox). It sends them about once a minute while it's seen, and once more as it closes. The web UI adds whether it came through Pangolin (away) or not (home), and the tab says phone or computer. Nothing in them says who it was. Live updates and uploads aren't timed.
 - **The web UI and the API:** the web UI's answers by status, requests the bot didn't answer, and how long the management API takes to answer, by area. Requests that wait for a change on purpose (live updates) are counted but not timed.
 
 They're kept a minute at a time for 2 days, then 15 minutes at a time for 30 days, about 25 MB in all. The [daily backups](#hosting-the-bot) leave them out. Anything slow is kept for 30 days with how long each step took, up to the newest 500: a command that took 2 seconds or more to answer, a sound 2 seconds to start, a line 4 (plus 3 for each 1,000 characters), a song 8, or a page's data 2. Time spent waiting behind other lines doesn't count toward that. Speech keeps its voice and length, never its words.
@@ -891,8 +893,9 @@ scrape_configs:
 
 Stats → **Health** in the web UI shows these numbers to anyone who can open it, over the last hour, 24 hours, 7 days or 30 days. It keeps up as each minute is kept. Everything but the slow list covers the whole bot, which every server it's in shares.
 
-- **Summary:** Discord, commands and buttons, sounds, speech, music, stutter, the bot and the web UI, each marked **Fine**, **Slow** or **Bad** over the range. Speech is judged by lines of 300 characters or fewer, as a paragraph takes seconds more to make.
+- **Summary:** Discord, commands and buttons, sounds, speech, music, stutter, the bot, the web UI, and the web UI as people see it in their browsers, at home and away and on phones and computers, each marked **Fine**, **Slow** or **Bad** over the range. Speech is judged by lines of 300 characters or fewer, as a paragraph takes seconds more to make.
 - **Containers:** each one's memory against its limit, CPU, and any time it didn't answer.
+- **Web UI as people see it:** taps answered and the page opening, at home and away.
 - **Charts:** the 95th percentile of commands answered, sounds starting, speech made and songs starting, each with a dashed line where it stops being fine, then memory and CPU by container, Discord's ping with time away shaded, and the bot's lag. Point at one, or use the arrow keys, to read every line at that time, and **Show as a table** lists them.
 - **Slowest recently:** this server's slow ones, slowest or newest first. Each shows its steps, with time spent waiting behind others in grey and left out of the ranking.
 
@@ -906,6 +909,9 @@ Stats → **Health** in the web UI shows these numbers to anyone who can open it
 | Bot lag, at its worst point | 100 ms | 500 ms |
 | A container's memory now, of its limit | 80% | 90% |
 | Web UI answers that failed or found the bot gone | 1% | 5% |
+| Taps answered in people's browsers, 95% within | 500 ms | 1.5 s |
+| The page opening, 95% within | 3 s | 6 s |
+| The page reacting to a tap, 95% within | 200 ms | 500 ms |
 
 Between the two is **Slow**. Discord is **Slow** after 2 minutes away in the range, and **Bad** while it's away. A container is **Bad** while it isn't answering, and **Slow** if it went down or its memory reached 90% at any point in the range. Commands are **Slow** if any failed or came too late, and speech if any line failed.
 

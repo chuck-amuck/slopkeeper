@@ -4,7 +4,7 @@ import { beforeEach, test } from 'node:test';
 import { healthOf } from '../src/api/health.ts';
 import { feeds } from '../src/changes.ts';
 import { db } from '../src/db.ts';
-import { store } from '../src/features/health.ts';
+import { browserReport, store } from '../src/features/health.ts';
 import { healthReport, quantile } from '../src/features/healthReport.ts';
 import * as perf from '../src/perf.ts';
 import { GUILD, ok, refused } from './apiFixture.ts';
@@ -187,4 +187,51 @@ test('keeping a minute tells pages showing Health', async () => {
   assert.notEqual(feeds.health.version(GUILD), before);
   const update = await ok(`/guilds/${GUILD}/updates?health=${encodeURIComponent(before)}`);
   assert.deepEqual(update.health, { version: feeds.health.version(GUILD) });
+});
+
+test('a browser’s report is kept by where it came from, with anything odd left out', (t) => {
+  // Reports are counted a minute at a time, so the minute can't turn part way
+  t.mock.timers.enable({ apis: ['Date'], now: NOW });
+  perf.keep(true);
+  assert.equal(browserReport({ device: 'phone', requests: [] }), false, 'without where it came from');
+  assert.equal(browserReport({ via: 'home', device: 'tablet' }), false);
+  assert.equal(
+    browserReport({
+      via: 'away',
+      device: 'phone',
+      requests: [['action', 0.4, 0.1], ['action', 0.5, 0.2], ['action', 0.6, null], ['action', 0.3, 0.4], ['load', 0.2, 0.15], ['delete', 1, 0], ['action', -1, 0], ['action', 500, 0], 'x'],
+      page: { firstByte: 0.3, shown: 1.2 },
+      responses: [0.05, 'slow', 300],
+      quickResponses: 2,
+    }),
+    true,
+  );
+  const line = (start: string) => perf.prometheus().split('\n').find((l) => l.startsWith(start));
+  assert.equal(line('slopkeeper_browser_request_seconds_count{via="away",device="phone",kind="action"}')?.split(' ')[1], '2', 'only the two that make sense, with the network’s part known and no more than the whole');
+  assert.equal(line('slopkeeper_browser_request_seconds_count{via="away",device="phone",kind="load"}')?.split(' ')[1], '1');
+  assert.equal(line('slopkeeper_browser_network_seconds_sum{via="away",device="phone",kind="action"}')?.split(' ')[1], '0.3');
+  assert.equal(line('slopkeeper_browser_page_seconds_count{via="away",device="phone",step="shown"}')?.split(' ')[1], '1');
+  assert.equal(line('slopkeeper_browser_response_seconds_count{via="away",device="phone"}')?.split(' ')[1], '3', 'one timed, two quick');
+  assert.equal(browserReport({ via: 'home', device: 'computer', quickResponses: 1e9 }), true);
+  assert.equal(line('slopkeeper_browser_response_seconds_count{via="home",device="computer"}')?.split(' ')[1], '500', 'no more than a report may hold');
+  for (let n = 0; n < 200; n++) browserReport({ via: 'home', device: 'phone', quickResponses: 1 });
+  assert.equal(line('slopkeeper_browser_response_seconds_count{via="home",device="phone"}')?.split(' ')[1], String(120 - 2), 'no more than 120 reports a minute are kept, two of them sent above');
+});
+
+test('the web UI as people see it is judged by taps, opening and reacting', () => {
+  const where = (via: string, device: string, extra = {}) => ({ via, device, ...extra });
+  minute(at(2), 'browser_request_seconds', where('home', 'computer', { kind: 'action' }), 10, 1, 0.2, bucketed(0.25, 10));
+  minute(at(2), 'browser_request_seconds', where('away', 'phone', { kind: 'action' }), 10, 8, 0.9, bucketed(1, 10));
+  minute(at(2), 'browser_network_seconds', where('away', 'phone', { kind: 'action' }), 10, 6, 0.8, bucketed(1, 10));
+  minute(at(2), 'browser_page_seconds', where('away', 'phone', { step: 'shown' }), 1, 2, 2, bucketed(2.5, 1));
+  const { browser } = healthReport(GUILD, '1h', NOW);
+  assert.equal(browser.taps.count, 20);
+  assert.ok(browser.home.taps! < 0.25 && browser.away.taps! > 0.5);
+  assert.equal(browser.phone, browser.away.taps);
+  assert.equal(browser.networkShare, 0.667, 'the network’s 6 of the 9 seconds');
+  assert.equal(browser.shown.p95, 2);
+  assert.equal(browser.status, 'slow', 'away taps took over half a second');
+  assert.equal(browser.away.tapSeries.at(-2), browser.away.taps);
+  db.exec('DELETE FROM perf_minutes');
+  assert.equal(healthReport(GUILD, '1h', NOW).browser.status, 'quiet');
 });

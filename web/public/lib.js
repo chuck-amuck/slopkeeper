@@ -1,3 +1,5 @@
+import { botTime, noteRequest } from './speed.js';
+
 const toasts = document.getElementById('toasts');
 
 /** The pop-out window while it's open: { win, toasts } */
@@ -268,6 +270,9 @@ function checkVersion(res) {
 
 export async function request(url, { json, body, method = 'GET', signal } = {}) {
   let res;
+  // Timed for how fast the web UI feels: not the live updates, which wait on purpose, or uploads, which take as long as the file
+  const timed = url.startsWith('/api/guilds/') && !url.includes('/updates?') && body === undefined;
+  const asked = performance.now();
   try {
     res = await fetch(url, {
       method,
@@ -278,6 +283,7 @@ export async function request(url, { json, body, method = 'GET', signal } = {}) 
   } catch {
     throw new RequestError('Couldn’t reach the web UI. Check your connection.');
   }
+  const answered = performance.now();
   checkVersion(res);
   if (res.status === 401 && url.startsWith('/api/')) {
     session.onExpired();
@@ -285,6 +291,11 @@ export async function request(url, { json, body, method = 'GET', signal } = {}) 
   }
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new RequestError(data.error ?? `Request failed (${res.status}).`, res.status);
+  if (timed) {
+    // The network's part ends as the answer starts arriving: the rest of a long answer is still on its way from the bot
+    const bot = botTime(res);
+    noteRequest(method === 'GET' ? 'load' : 'action', (performance.now() - asked) / 1000, bot === null ? null : (answered - asked) / 1000 - bot);
+  }
   return data;
 }
 
