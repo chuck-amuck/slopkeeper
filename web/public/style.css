@@ -1857,7 +1857,9 @@ dialog input {
   width: 6.5em;
   color: var(--muted);
   font-size: var(--text-sm);
-  white-space: nowrap;
+  /* The longer ones, like "min before (0 = off)", take two lines rather than run past the box, or a phone's edge */
+  line-height: 1.2;
+  overflow-wrap: anywhere;
 }
 
 .field .status {
