@@ -16,8 +16,13 @@ same static ffmpeg as the image and CI. Without ffmpeg the audio tests skip sile
   `--test-name-pattern="<name>"` for one test).
 - Web: `cd web && node --test 'test/*.test.ts'` works with the host's node; typecheck with `npx tsc -p .` in the
   container.
-- Music container: `node --test 'music/*.test.mjs'`. `voice/` has only syntax checks, which CI runs too:
+- Music container: `node --test 'music/*.test.mjs'`. `voice/` has syntax checks, which CI runs too:
   `python3 -m py_compile voice/*.py` and `sh -n voice/start.sh`.
+- Voice image: `docker build -q -t sk-voice-test voice && sh voice/smoke.sh sk-voice-test /tmp/voice-models` makes it
+  say a line with the default and Spanish models (about 140 MB, kept in that folder). CI runs it before pushing.
+- Its Python packages are pinned with hashes in `voice/requirements.txt`, from `voice/requirements.in`. To update them:
+  `docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp -v "$PWD/voice":/v -w /v python:3.12-slim-bookworm sh -c 'pip install -q --user uv && /tmp/.local/bin/uv pip compile requirements.in --upgrade --universal --generate-hashes --python-version 3.12 --no-header --no-annotate -o requirements.txt'`,
+  then run the smoke test and listen to every voice before shipping it.
 - Front end: `for f in web/public/*.js; do node --check "$f"; done`.
 - Charts and the calendar are ECharts and Cally, built into `web/public/vendor-*.js` by `scripts/build-vendor.sh` (the
   command is at its top). Don't edit those files; change a version there and build again.
