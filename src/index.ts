@@ -8,6 +8,7 @@ import { idSetting, isAllowed } from './settings.ts';
 import { features, startOrder } from './features/all.ts';
 import { timeInteraction } from './features/health.ts';
 import { servedGuilds } from './util.ts';
+import { stopTimers } from './schedule.ts';
 
 const commands = new Map(features.flatMap((f) => f.commands ?? []).map((c) => [c.data.name, c]));
 const menus = new Map(features.flatMap((f) => f.menus ?? []).map((c) => [c.data.name, c]));
@@ -106,6 +107,8 @@ for (const signal of ['SIGINT', 'SIGTERM']) {
     // A second signal is someone insisting: it exits now, rather than saving again after shutdown emptied what's playing
     if (stopping) process.exit(1);
     stopping = true;
+    // Nothing new starts while it's exiting
+    stopTimers();
     each('Saving for the restart', (feature) => feature.saveForRestart?.());
     each('Shutting down', (feature) => feature.shutdown?.());
     try {

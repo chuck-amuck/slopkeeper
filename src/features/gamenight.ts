@@ -27,6 +27,7 @@ import { rolesForGames } from './gameroles.ts';
 import { plural } from './gamestats.ts';
 import { announceAloud } from './say.ts';
 import { commandMention } from '../commandIds.ts';
+import { every } from '../schedule.ts';
 
 const HOUR = 3_600_000;
 // How long after its start a night stays on the web UI's list
@@ -760,7 +761,7 @@ export const gameNights: Feature = {
     return i.editReply([`✏️ Changed the ${result.changed.join(', ')}.`, result.eventNote].filter(Boolean).join(' '));
   },
   setup(client) {
-    setInterval(() => void tick(client).catch(console.error), 60_000);
+    every('Game nights', 60_000, () => tick(client));
   },
 };
 

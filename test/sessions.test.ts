@@ -4,7 +4,10 @@ import { mock, test } from 'node:test';
 import { db, getKv } from '../src/db.ts';
 import { carryOn, checkpointVoice, endGuildStints, join, leave, maybePostWeekly, resync, sessions } from '../src/features/sessions.ts';
 import { setSetting } from '../src/settings.ts';
-import { zonedParts } from '../src/util.ts';
+import { zonedParts, zonedTimeToUtc } from '../src/util.ts';
+
+// Before the post hour of today, so inside the week the post covers
+const DAY = 86_400_000;
 
 test('a weekly post that fails is tried again, and doesn’t hold up other servers', async () => {
   mock.method(console, 'error', () => {});
@@ -16,7 +19,7 @@ test('a weekly post that fails is tried again, and doesn’t hold up other serve
     setSetting(id, 'weeklyPostHour', 0);
     const { lastInsertRowid } = db
       .prepare(`INSERT INTO sessions (guild_id, channel_id, started_at, ended_at) VALUES (?, 'voice', ?, ?)`)
-      .run(id, Date.now() - 7_200_000, Date.now() - 3_600_000);
+      .run(id, Date.now() - 2 * DAY - 7_200_000, Date.now() - 2 * DAY - 3_600_000);
     db.prepare(`INSERT INTO session_members (session_id, user_id, seconds) VALUES (?, 'u', 3600)`).run(lastInsertRowid);
   }
 
@@ -36,6 +39,28 @@ test('a weekly post that fails is tried again, and doesn’t hold up other serve
   assert.deepEqual(sent, ['b', 'a'], 'each server gets one post');
 });
 
+test('a weekly post goes out late, covering the week up to its hour', async () => {
+  // Due at midnight today, so it's always less than a day late
+  const yesterday = zonedParts(Date.now(), 'America/Chicago');
+  setSetting('missed', 'announceChannel', 'channel-missed');
+  setSetting('missed', 'timezone', 'America/Chicago');
+  setSetting('missed', 'weeklyPostDay', yesterday.weekday);
+  setSetting('missed', 'weeklyPostHour', 0);
+  const due = zonedTimeToUtc(yesterday.year, yesterday.month, yesterday.day, 0, 0, 'America/Chicago');
+  for (const [user, start] of [['in-the-week', due - DAY], ['after-it', due + 3_600_000]] as const) {
+    const { lastInsertRowid } = db.prepare(`INSERT INTO sessions (guild_id, channel_id, started_at, ended_at) VALUES ('missed', 'voice', ?, ?)`).run(start, start + 3_600_000);
+    db.prepare(`INSERT INTO session_members (session_id, user_id, seconds) VALUES (?, ?, 3600)`).run(lastInsertRowid, user);
+  }
+  const sent: { embeds: { toJSON(): { description?: string } }[] }[] = [];
+  const client = fakeClient([{ id: 'missed', name: 'Missed' }], async (_guildId, message) => void sent.push(message as never));
+  await maybePostWeekly(client);
+  await maybePostWeekly(client);
+  assert.equal(sent.length, 1);
+  const { description } = sent[0].embeds[0].toJSON();
+  assert.match(description!, /<@in-the-week>/);
+  assert.doesNotMatch(description!, /<@after-it>/);
+});
+
 test('a server that turned the weekly leaderboard off gets no post', async () => {
   const now = zonedParts(Date.now(), 'America/Chicago');
   setSetting('quiet', 'announceChannel', 'channel-quiet');
@@ -45,7 +70,7 @@ test('a server that turned the weekly leaderboard off gets no post', async () =>
   setSetting('quiet', 'weeklyLeaderboard', false);
   const { lastInsertRowid } = db
     .prepare(`INSERT INTO sessions (guild_id, channel_id, started_at, ended_at) VALUES ('quiet', 'voice', ?, ?)`)
-    .run(Date.now() - 7_200_000, Date.now() - 3_600_000);
+    .run(Date.now() - 2 * DAY - 7_200_000, Date.now() - 2 * DAY - 3_600_000);
   db.prepare(`INSERT INTO session_members (session_id, user_id, seconds) VALUES (?, 'u', 3600)`).run(lastInsertRowid);
 
   const sent: string[] = [];

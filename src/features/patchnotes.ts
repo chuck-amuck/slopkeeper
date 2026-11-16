@@ -1,9 +1,10 @@
 import { EmbedBuilder, type Client, type Guild, type SendableChannels } from 'discord.js';
-import { db, getKv, setKv } from '../db.ts';
+import { db } from '../db.ts';
+import { due, every, once, WEEKLY } from '../schedule.ts';
 import { gameKey } from '../gameNames.ts';
 import { setting } from '../settings.ts';
 import type { Feature } from '../types.ts';
-import { announceChannel, eachGuild, paginate, zonedParts } from '../util.ts';
+import { announceChannel, eachGuild, paginate } from '../util.ts';
 import { checkpoint, stats } from './gamestats.ts';
 import { allGames } from './games.ts';
 import { patchNotes as readPatchNotes } from './steam.ts';
@@ -52,18 +53,21 @@ async function discover(guildId: string) {
 
 const noteEmbed = (post: PatchPost) => new EmbedBuilder().setTitle(`🩹 ${post.game}: ${post.title}`.slice(0, 256)).setURL(post.url).setDescription(post.text || null).setColor(0x1b2838).setTimestamp(post.date);
 
-async function postDigest(guild: Guild, out: SendableChannels, posts: PatchPost[], done: (post: PatchPost) => void) {
-  const now = zonedParts(Date.now(), setting(guild.id, 'timezone'));
-  if (now.weekday !== setting(guild.id, 'weeklyPostDay') || now.hour < setting(guild.id, 'weeklyPostHour')) return;
-  const today = `${now.year}-${now.month}-${now.day}`;
-  const key = `patch_digest:${guild.id}`;
-  if (getKv(key) === today) return;
-  const lines = posts.map((p) => `**${p.game}**: [${p.title.replace(/[[\]]/g, '')}](${p.url})`);
-  for (const page of paginate(lines, DIGEST_PAGE_CHARS)) await out.send({ embeds: [new EmbedBuilder().setTitle('🩹 Patch notes this week').setDescription(page.join('\n')).setColor(0x1b2838)] });
-  // Afterwards, so a post that fails is tried again on the next check
-  posts.forEach(done);
-  setKv(key, today);
+async function postDigest(client: Client<true>, guild: Guild, posts: PatchPost[], done: (post: PatchPost) => void) {
+  // With the weekly leaderboard, or once the bot is back if it was down then
+  const when = due(guild.id, 'week', setting(guild.id, 'weeklyPostHour'), { weekday: setting(guild.id, 'weeklyPostDay') });
+  await once(`patch_digest:${guild.id}`, when, async () => {
+    // A week with nothing new is done too, so notes found later in it wait for the next one
+    if (!posts.length) return;
+    const out = await notesChannel(client, guild.id);
+    if (!out) return false;
+    const lines = posts.map((p) => `**${p.game}**: [${p.title.replace(/[[\]]/g, '')}](${p.url})`);
+    for (const page of paginate(lines, DIGEST_PAGE_CHARS)) await out.send({ embeds: [new EmbedBuilder().setTitle('🩹 Patch notes this week').setDescription(page.join('\n')).setColor(0x1b2838)] });
+    posts.forEach(done);
+  }, WEEKLY);
 }
+
+const notesChannel = async (client: Client<true>, guildId: string) => (await announceChannel(client, guildId, 'patchNotesChannel')) ?? (await announceChannel(client, guildId));
 
 export async function maybePostPatches(client: Client<true>) {
   await eachGuild(client, 'Patch notes', async (guild) => {
@@ -71,11 +75,11 @@ export async function maybePostPatches(client: Client<true>) {
     if (mode === 'off') return;
     await discover(guild.id);
     const posts = db.prepare('SELECT gid, game, title, url, date, text FROM patch_posts WHERE guild_id = ? AND posted = 0 ORDER BY date').all(guild.id) as unknown as PatchPost[];
-    if (!posts.length) return;
-    const out = (await announceChannel(client, guild.id, 'patchNotesChannel')) ?? (await announceChannel(client, guild.id));
-    if (!out) return;
     const done = (post: PatchPost) => db.prepare('UPDATE patch_posts SET posted = 1 WHERE guild_id = ? AND gid = ?').run(guild.id, post.gid);
-    if (mode === 'digest') return postDigest(guild, out, posts, done);
+    if (mode === 'digest') return postDigest(client, guild, posts, done);
+    if (!posts.length) return;
+    const out = await notesChannel(client, guild.id);
+    if (!out) return;
     for (const post of posts) {
       await out.send({ embeds: [noteEmbed(post)] });
       done(post);
@@ -86,6 +90,6 @@ export async function maybePostPatches(client: Client<true>) {
 export const patchNotes: Feature = {
   title: 'Patch notes',
   setup(client) {
-    setInterval(() => void maybePostPatches(client).catch(console.error), CHECK_EVERY_MS);
+    every('Patch notes', CHECK_EVERY_MS, () => maybePostPatches(client));
   },
 };

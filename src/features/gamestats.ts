@@ -20,6 +20,7 @@ import { eachGuild, formatDuration, playingGames, servedGuilds } from '../util.t
 import { candidatesFor, sharedGames } from './games.ts';
 import { spread, stepsOf, type Steps } from './overview.ts';
 import { ownedSteamGames } from './steam.ts';
+import { every } from '../schedule.ts';
 
 const DAY = 86_400_000;
 
@@ -471,7 +472,7 @@ export const gameStats: Feature = {
       for (const { id } of mine.values()) close(id, Date.now());
       open.delete(`${member.guild.id}:${member.id}`);
     });
-    setInterval(checkpoint, 5 * 60_000);
+    every('Saving plays', 5 * 60_000, checkpoint);
   },
   shutdown() {
     const now = Date.now();

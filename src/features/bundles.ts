@@ -1,7 +1,8 @@
 import { EmbedBuilder, escapeMarkdown, type Client, type Guild } from 'discord.js';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { config } from '../config.ts';
-import { db, getKv, setKv } from '../db.ts';
+import { db, getKv } from '../db.ts';
+import { due, every, once } from '../schedule.ts';
 import { setting } from '../settings.ts';
 import type { Feature } from '../types.ts';
 import { announceChannel, eachGuild } from '../util.ts';
@@ -194,44 +195,44 @@ async function postBundles(client: Client<true>) {
   db.prepare('DELETE FROM bundle_posts WHERE posted_at < ?').run(Date.now() - FORGET_POSTS_MS);
   await eachGuild(client, 'Daily bundle post', async (guild) => {
     const day = postDay(guild.id);
-    const key = `bundle_post:${guild.id}`;
     // The day's sale post goes first, so bundles never arrive on their own while it's being retried
-    if (!day || getKv(key) === day || getKv(`sale_post:${guild.id}`) !== day || !setting(guild.id, 'bundleAlerts')) return;
-    const out = (await announceChannel(client, guild.id, 'saleChannel')) ?? (await announceChannel(client, guild.id));
-    if (!out) return;
-    const country = setting(guild.id, 'steamCountry');
-    if (!byRegion.has(country)) byRegion.set(country, currentBundles(country));
-    const fresh = (await byRegion.get(country)!).filter((b) => !posted.get(guild.id, b.id));
-    if (!fresh.length) return setKv(key, day);
-    const interested = new Map((await watched(guild)).map((g) => [g.appid, g]));
-    const theirs = setting(guild.id, 'bundlesLikeWePlay') ? await taste(guild.id) : null;
-    const together = await playsTogether(theirs);
-    const cards: (ReturnType<typeof bundleCard> & { id: number })[] = [];
-    let chars = 0;
-    for (const bundle of fresh) {
-      if (cards.length === MAX_CARDS) break;
-      // Left unmarked when nothing matches, so someone wanting one of its games later still hears about it
-      const found = await matches(guild, bundle, interested, theirs, together);
-      if (!found.length) continue;
-      const card = bundleCard(bundle, found);
-      // What doesn't fit waits for tomorrow's post
-      if (chars + card.chars > MAX_CARD_CHARS) continue;
-      chars += card.chars;
-      cards.push({ ...card, id: bundle.id });
-    }
-    if (cards.length) {
-      const pings = [...new Set(cards.flatMap((c) => c.pings))].slice(0, MAX_PINGS);
-      await out.send({ content: pings.map((id) => `<@${id}>`).join(' ') || undefined, embeds: cards.map((c) => c.embed), allowedMentions: { users: pings } });
-      for (const c of cards) markPosted.run(guild.id, c.id, Date.now());
-    }
-    // Afterwards, so a post that fails is tried again at the next tick
-    setKv(key, day);
+    if (!day || getKv(`sale_post:${guild.id}`) !== day.period || !setting(guild.id, 'bundleAlerts')) return;
+    // Marked afterwards, so a post that fails is tried again at the next tick
+    await once(`bundle_post:${guild.id}`, day, async () => {
+      const out = (await announceChannel(client, guild.id, 'saleChannel')) ?? (await announceChannel(client, guild.id));
+      if (!out) return false;
+      const country = setting(guild.id, 'steamCountry');
+      if (!byRegion.has(country)) byRegion.set(country, currentBundles(country));
+      const fresh = (await byRegion.get(country)!).filter((b) => !posted.get(guild.id, b.id));
+      if (!fresh.length) return;
+      const interested = new Map((await watched(guild)).map((g) => [g.appid, g]));
+      const theirs = setting(guild.id, 'bundlesLikeWePlay') ? await taste(guild.id) : null;
+      const together = await playsTogether(theirs);
+      const cards: (ReturnType<typeof bundleCard> & { id: number })[] = [];
+      let chars = 0;
+      for (const bundle of fresh) {
+        if (cards.length === MAX_CARDS) break;
+        // Left unmarked when nothing matches, so someone wanting one of its games later still hears about it
+        const found = await matches(guild, bundle, interested, theirs, together);
+        if (!found.length) continue;
+        const card = bundleCard(bundle, found);
+        // What doesn't fit waits for tomorrow's post
+        if (chars + card.chars > MAX_CARD_CHARS) continue;
+        chars += card.chars;
+        cards.push({ ...card, id: bundle.id });
+      }
+      if (cards.length) {
+        const pings = [...new Set(cards.flatMap((c) => c.pings))].slice(0, MAX_PINGS);
+        await out.send({ content: pings.map((id) => `<@${id}>`).join(' ') || undefined, embeds: cards.map((c) => c.embed), allowedMentions: { users: pings } });
+        for (const c of cards) markPosted.run(guild.id, c.id, Date.now());
+      }
+    });
   });
 }
 
 export const bundles: Feature = {
   setup(client) {
     // A minute after the sales' tick
-    setTimeout(() => setInterval(() => void postDailyBundles(client).catch(console.error), 10 * 60_000), 60_000);
+    every('Daily bundle post', 10 * 60_000, () => postDailyBundles(client), { first: 11 * 60_000 });
   },
 };

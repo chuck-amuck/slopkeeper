@@ -16,6 +16,7 @@ import { db } from '../db.ts';
 import type { Feature } from '../types.ts';
 import { humansIn } from '../util.ts';
 import { candidatesFor, NOBODY_COUNTED, type Candidate } from './games.ts';
+import { every } from '../schedule.ts';
 
 /** Two rows of buttons; the rest of Discord's five rows would just be more to read */
 const MAX_OPTIONS = 10;
@@ -205,6 +206,7 @@ export const gameVotes: Feature = {
     return i.update(everyone ? finish(vote) : view(vote, room));
   },
   setup(client) {
-    setInterval(() => void tick(client).catch(console.error), 5_000);
+    // Closing a vote shouldn't wait long on a stuck run
+    every('Game votes', 5_000, () => tick(client), { stuck: 60_000 });
   },
 };

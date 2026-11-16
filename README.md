@@ -147,7 +147,7 @@ Steam doesn't tell the bot who's in a Steam family, so you say. A family holds u
 
 ### Patch notes
 
-`/setup patch-notes` posts patch notes for games with a Steam ID that were played in the server in the last 30 days. **Each one** posts them as they're found, and **weekly digest** posts them together on the weekly leaderboard's day and hour, even if the leaderboard post is off. They go to the announce channel, or the channel you pick, and never ping anyone. It's off by default.
+`/setup patch-notes` posts patch notes for games with a Steam ID that were played in the server in the last 30 days. **Each one** posts them as they're found, and **weekly digest** posts them together on the weekly leaderboard's day and hour, even if the leaderboard post is off, or when the bot is back up to a day later. Notes found after a week's digest wait for the next one. They go to the announce channel, or the channel you pick, and never ping anyone. It's off by default.
 
 It starts from the latest notes, so turning it on doesn't post a backlog. Steam only marks a post as patch notes if the developer tags it, so some games will be missed.
 
@@ -313,7 +313,7 @@ A session of at least 15 minutes is recorded, even with one person in it, so tim
 | --- | --- |
 | `/stats [period]` | Voice leaderboard for the past week (default), past month or all time. Shows the top 10 by time in voice, how many nights each person showed up, and the most-played games by game time, as `/gamestats` does. |
 
-Every Sunday at 8 PM, in the server's time zone, the bot posts the past week's leaderboard to the announce channel. Change the day and hour with `/setup leaderboard`, or turn the post off with `/setup leaderboard enabled:false`. `/stats` still works when it's off.
+Every Sunday at 8 PM, in the server's time zone, the bot posts the past week's leaderboard to the announce channel. If it was down then, it posts when it's back, up to a day late, still covering the week up to 8 PM that Sunday. Moving the day never posts two within six days. Change the day and hour with `/setup leaderboard`, or turn the post off with `/setup leaderboard enabled:false`. `/stats` still works when it's off.
 
 ### Game stats
 

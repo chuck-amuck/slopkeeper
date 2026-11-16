@@ -14,6 +14,7 @@ import { autoplayChanged } from './music.ts';
 import { affectsLoopRoom, checkLoopRoom, noteLoopRoom, refreshLoopRoom, startLoopRoom, stopLoopRoom } from './loopRoom.ts';
 import { playJoinSound, setJoinSound } from './joinSounds.ts';
 import { INPUT, NEXT, PREV, SETTINGS, SOUND_GONE, STOP, UPLOAD, answerUpload, askAboutUpload, canChangeSounds, editPanel, isSetting, managersOnly, onSetting, pageCount, panel, refreshPanels, settingsMenu, soundSettings, storeUpload, submitUpload, trackPanel } from './soundPanel.ts';
+import { every } from '../schedule.ts';
 
 /** The /sound subcommands that don't change any sound. Anything else needs the sound managers role, if there is one */
 const OPEN_TO_ALL = new Set(['play', 'stop', 'join', 'panel']);
@@ -279,15 +280,7 @@ export const soundboard: Feature = {
   ],
   async setup(client) {
     startLoopRoom(client);
-    const sweep = () => {
-      try {
-        clearBin();
-      } catch (err) {
-        console.error('Clearing the sound bin failed:', err);
-      }
-    };
-    sweep();
-    setInterval(sweep, DAY);
+    every('Clearing the sound bin', DAY, clearBin, { now: true });
     for (const guild of servedGuilds(client)) {
       await discordBoard.reconcile(guild).catch((err) => console.error(`Soundboard reconcile failed in ${guild.name}:`, err.message));
       dropMissingEmoji(guild);

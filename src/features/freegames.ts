@@ -5,6 +5,7 @@ import type { Feature } from '../types.ts';
 import { announceChannel, eachGuild, requestTimeout } from '../util.ts';
 import { factsFor, type GameFacts } from './gamefacts.ts';
 import { stats } from './gamestats.ts';
+import { every } from '../schedule.ts';
 
 // GamerPower tracks free-to-keep games; this asks for full games only, not DLC, betas or loot
 const FEED = 'https://www.gamerpower.com/api/filter?platform=steam.epic-games-store.gog&type=game';
@@ -182,8 +183,6 @@ export const freeGames: Feature = {
     },
   ],
   setup(client) {
-    const run = () => void check(client).catch(console.error);
-    run();
-    setInterval(run, CHECK_EVERY);
+    every('Free game check', CHECK_EVERY, () => check(client), { now: true });
   },
 };

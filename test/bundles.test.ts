@@ -75,7 +75,7 @@ function server(members: string[]) {
 }
 
 function todayFor(id: string) {
-  return postDay(id)!;
+  return postDay(id)!.period;
 }
 
 function wanted(guildId: string, name: string, appid: number, user: string) {
@@ -245,7 +245,7 @@ test('nothing is posted before the server’s hour or the day’s sale post, and
   setKv(`sale_post:${s.id}`, '');
   await checkBundles(s.client);
   assert.equal(s.posts.length, 0, 'not before the day’s sale post');
-  setKv(`sale_post:${s.id}`, postDay(s.id)!);
+  setKv(`sale_post:${s.id}`, postDay(s.id)!.period);
   await checkBundles(s.client);
   assert.equal(s.posts.length, 1);
 });

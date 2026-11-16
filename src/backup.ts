@@ -4,6 +4,7 @@ import { Worker } from 'node:worker_threads';
 import { config } from './config.ts';
 import { DB_FILE } from './db.ts';
 import type { Feature } from './types.ts';
+import { every } from './schedule.ts';
 
 const KEEP = 7;
 const CHECK_EVERY = 6 * 3_600_000;
@@ -50,8 +51,6 @@ async function copyOnce(date: Date) {
 
 export const backups: Feature = {
   setup() {
-    const run = () => void backUp().catch((err) => console.error('Database backup failed:', err));
-    run();
-    setInterval(run, CHECK_EVERY).unref();
+    every('Database backup', CHECK_EVERY, backUp, { now: true });
   },
 };

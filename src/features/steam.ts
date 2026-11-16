@@ -19,6 +19,7 @@ import { setSteamGames, type SteamGame } from '../steamStatus.ts';
 import type { Feature } from '../types.ts';
 import { humansIn, listNames, requestTimeout, servedGuilds } from '../util.ts';
 import { commandMention } from '../commandIds.ts';
+import { every } from '../schedule.ts';
 
 // Steam category ids: 1 Multi-player, 36 Online PvP, 38 Online Co-op
 const MULTIPLAYER_CATEGORIES = new Set([1, 36, 38]);
@@ -680,9 +681,7 @@ export const steam: Feature = {
   ],
   setup(client) {
     if (!config.steamApiKey) return;
-    const run = () => void refreshAll().catch(console.error);
-    run();
-    setInterval(run, REFRESH_EVERY_MS);
-    setInterval(() => void checkSteamStatus(client), STATUS_EVERY_MS);
+    every('Steam refresh', REFRESH_EVERY_MS, refreshAll, { now: true });
+    every('Steam status', STATUS_EVERY_MS, () => checkSteamStatus(client));
   },
 };

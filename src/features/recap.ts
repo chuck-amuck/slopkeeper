@@ -1,6 +1,7 @@
 import { EmbedBuilder, MessageFlags, SlashCommandBuilder, type Client, type Guild } from 'discord.js';
 import { db, getKv, setKv } from '../db.ts';
 import { setting } from '../settings.ts';
+import { due, every, once } from '../schedule.ts';
 import type { Feature } from '../types.ts';
 import { announceChannel, eachGuild, formatDuration, zonedParts, zonedTimeToUtc } from '../util.ts';
 import { checkpoint, plural, rank, short, stats } from './gamestats.ts';
@@ -105,22 +106,20 @@ export async function maybePostMonthly(client: Client<true>) {
   await eachGuild(client, 'Monthly recap', async (guild) => {
     if (!setting(guild.id, 'monthlyRecap')) return;
     const timeZone = setting(guild.id, 'timezone');
-    const now = zonedParts(Date.now(), timeZone);
-    const month = `${now.year}-${now.month}`;
     const key = `monthly_post:${guild.id}`;
-    const last = getKv(key);
-    if (last === month) return;
+    const when = due(guild.id, 'month', setting(guild.id, 'weeklyPostHour'));
     // A server's first month isn't complete, so it starts with the next one
-    if (last === undefined) return setKv(key, month);
-    if (now.day === 1 && now.hour < setting(guild.id, 'weeklyPostHour')) return;
-    const out = await announceChannel(client, guild.id);
-    if (!out) return;
-    checkpoint();
-    const { start, end } = monthBounds(now.year, now.month - 1, timeZone);
-    const embed = buildRecap(guild, start, end);
-    if (embed) await out.send({ embeds: [embed] });
-    // Afterwards, so a post that fails is tried again on the next check
-    setKv(key, month);
+    if (when && getKv(key) === undefined) return setKv(key, when.period);
+    await once(key, when, async (at) => {
+      const out = await announceChannel(client, guild.id);
+      if (!out) return false;
+      checkpoint();
+      // The month before the one it's due in, whenever it goes out
+      const month = zonedParts(at, timeZone);
+      const { start, end } = monthBounds(month.year, month.month - 1, timeZone);
+      const embed = buildRecap(guild, start, end);
+      if (embed) await out.send({ embeds: [embed] });
+    });
   });
 }
 
@@ -147,6 +146,6 @@ export const recap: Feature = {
     },
   ],
   setup(client) {
-    setInterval(() => void maybePostMonthly(client).catch(console.error), 10 * 60_000);
+    every('Monthly recap', 10 * 60_000, () => maybePostMonthly(client));
   },
 };

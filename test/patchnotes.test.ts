@@ -2,9 +2,10 @@ import './helpers.ts';
 import assert from 'node:assert/strict';
 import { beforeEach, test, type TestContext } from 'node:test';
 import { config } from '../src/config.ts';
-import { db, getKv } from '../src/db.ts';
+import { db, getKv, setKv } from '../src/db.ts';
 import { achievementProgress, achievements } from '../src/features/achievements.ts';
 import { maybePostPatches, playedApps } from '../src/features/patchnotes.ts';
+import { due } from '../src/schedule.ts';
 import { setSetting } from '../src/settings.ts';
 import { fakeClient } from './helpers.ts';
 
@@ -178,6 +179,8 @@ test('a digest waits for its day, then posts everything together once', async (t
   const { client, sent } = server('digest');
   setSetting('digest', 'patchNotes', 'digest');
   digestDay('digest', 25);
+  // Last week's went out, and this week's hour hasn't come
+  setKv('patch_digest:digest', due('digest', 'week', 25, { weekday: new Date(now).getUTCDay() })!.period);
   pendingNote('digest', 'a', 'Valheim');
   pendingNote('digest', 'b', 'Hades');
   await maybePostPatches(client);
@@ -197,6 +200,18 @@ test('a digest waits for its day, then posts everything together once', async (t
   assert.equal(sent.length, 1, 'one a day');
   const left = db.prepare(`SELECT gid FROM patch_posts WHERE guild_id = 'digest' AND posted = 0`).all() as { gid: string }[];
   assert.deepEqual(left.map((p) => p.gid), ['c'], 'what went out isn’t in next week’s');
+});
+
+test('a digest week with nothing new is done, so a note found later waits for the next week', async (t) => {
+  fakeNews(t);
+  const { client, sent } = server('quiet-week');
+  setSetting('quiet-week', 'patchNotes', 'digest');
+  digestDay('quiet-week', 0);
+  await maybePostPatches(client);
+  assert.ok(getKv('patch_digest:quiet-week'), 'the week is marked');
+  pendingNote('quiet-week', 'later', 'Valheim');
+  await maybePostPatches(client);
+  assert.equal(sent.length, 0);
 });
 
 // Achievements. Steam, with { apps: { appid: schema }, players: { steam id: achievements or an error status } }

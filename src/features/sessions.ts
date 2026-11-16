@@ -2,9 +2,10 @@ import { EmbedBuilder, Events, MessageFlags, SlashCommandBuilder, type Client, t
 import { db, getKv, setKv, transaction } from '../db.ts';
 import { gameName, isNotAGame } from '../gameNames.ts';
 import { isAllowed, setting } from '../settings.ts';
+import { due, every, once, WEEKLY, type Repeating } from '../schedule.ts';
 import { onSteamChange } from '../steamStatus.ts';
 import type { Feature } from '../types.ts';
-import { announceChannel, eachGuild, formatDuration, humansIn, playingGames, servedGuilds, zonedDate, zonedParts } from '../util.ts';
+import { announceChannel, eachGuild, formatDuration, humansIn, playingGames, servedGuilds, zonedDate } from '../util.ts';
 import { checkpoint, short, stats } from './gamestats.ts';
 
 interface LiveSession {
@@ -65,7 +66,7 @@ const SAVED_KEY = 'voiceSessions';
 const RESUME_WITHIN_MS = 10 * 60_000;
 /** Set once the sessions are kept for the restart, so shutting down doesn't also record them as over */
 let savedForRestart = false;
-const timers: NodeJS.Timeout[] = [];
+const timers: Repeating[] = [];
 
 interface SavedSession {
   channelId: string;
@@ -241,12 +242,12 @@ export function voiceTotals(guildId: string, sinceMs: number, untilMs = Number.M
   return [...byUser.values()].sort((a, b) => b.secs - a.secs).map((p) => ({ userId: p.userId, secs: p.secs, nights: p.dates.size }));
 }
 
-function leaderboard(guildId: string, sinceMs: number, title: string): EmbedBuilder | null {
-  const people = voiceTotals(guildId, sinceMs).slice(0, 10);
+function leaderboard(guildId: string, sinceMs: number, title: string, untilMs = Date.now()): EmbedBuilder | null {
+  const people = voiceTotals(guildId, sinceMs, untilMs).slice(0, 10);
   if (!people.length) return null;
 
   checkpoint();
-  const games = stats(guildId, sinceMs, 'none', 'game').slice(0, 5);
+  const games = stats(guildId, sinceMs, 'none', 'game', undefined, undefined, untilMs).slice(0, 5);
 
   const medals = ['🥇', '🥈', '🥉'];
   const embed = new EmbedBuilder()
@@ -266,18 +267,14 @@ function leaderboard(guildId: string, sinceMs: number, title: string): EmbedBuil
 export async function maybePostWeekly(client: Client<true>) {
   await eachGuild(client, 'Weekly leaderboard', async (guild) => {
     if (!setting(guild.id, 'weeklyLeaderboard')) return;
-    // Each server's own day, hour and time zone
-    const now = zonedParts(Date.now(), setting(guild.id, 'timezone'));
-    if (now.weekday !== setting(guild.id, 'weeklyPostDay') || now.hour < setting(guild.id, 'weeklyPostHour')) return;
-    const today = `${now.year}-${now.month}-${now.day}`;
-    const key = `weekly_post:${guild.id}`;
-    if (getKv(key) === today) return;
-    const out = await announceChannel(client, guild.id);
-    if (!out) return;
-    const embed = leaderboard(guild.id, Date.now() - 7 * DAY, '🏆 This week in voice');
-    if (embed) await out.send({ embeds: [embed] });
-    // Afterwards, so a post that fails is tried again on the next check
-    setKv(key, today);
+    // Each server's own day, hour and time zone. One that's late, as the bot was down, still covers the week to then
+    const when = due(guild.id, 'week', setting(guild.id, 'weeklyPostHour'), { weekday: setting(guild.id, 'weeklyPostDay') });
+    await once(`weekly_post:${guild.id}`, when, async (at) => {
+      const out = await announceChannel(client, guild.id);
+      if (!out) return false;
+      const embed = leaderboard(guild.id, at - 7 * DAY, '🏆 This week in voice', at);
+      if (embed) await out.send({ embeds: [embed] });
+    }, WEEKLY);
   });
 }
 
@@ -330,8 +327,8 @@ export const sessions: Feature = {
       if (member && s) for (const game of playingGames(member)) s.games.add(game);
     });
 
-    setInterval(() => void maybePostWeekly(client).catch(console.error), 10 * 60_000);
-    timers.push(setInterval(() => checkpointVoice(), 60_000).unref());
+    every('Weekly leaderboard', 10 * 60_000, () => maybePostWeekly(client));
+    timers.push(every('Saving time in voice', 60_000, checkpointVoice));
   },
   saveForRestart() {
     const kept: SavedSession[] = [...live].map(([channelId, s]) => ({
@@ -349,7 +346,7 @@ export const sessions: Feature = {
   },
   shutdown() {
     const now = Date.now();
-    for (const timer of timers.splice(0)) clearInterval(timer);
+    for (const timer of timers.splice(0)) timer.stop();
     endStints(now);
     for (const [channelId, s] of live) {
       clearTimeout(s.endTimer);

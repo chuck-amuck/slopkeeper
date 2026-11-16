@@ -1,10 +1,11 @@
 import { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, escapeMarkdown, MessageFlags, SlashCommandBuilder, type Client, type Guild } from 'discord.js';
 import { setTimeout as sleep } from 'node:timers/promises';
+import { due, every, once } from '../schedule.ts';
 import { config } from '../config.ts';
-import { db, getKv, setKv } from '../db.ts';
+import { db } from '../db.ts';
 import { setting } from '../settings.ts';
 import type { Feature } from '../types.ts';
-import { announceChannel, eachGuild, formatDuration, paginate, requestTimeout, zonedParts } from '../util.ts';
+import { announceChannel, eachGuild, formatDuration, paginate, requestTimeout } from '../util.ts';
 import { factsFor } from './gamefacts.ts';
 import { allGames, groupMembers, ownersOfApp } from './games.ts';
 import { checkpoint, plural, short, stats } from './gamestats.ts';
@@ -511,10 +512,7 @@ export function checkSales(client: Client<true>, post = false) {
 }
 
 /** The server's date once its post hour has come today, or null before then */
-export function postDay(guildId: string, now = Date.now()) {
-  const at = zonedParts(now, setting(guildId, 'timezone'));
-  return at.hour < setting(guildId, 'salePostHour') ? null : `${at.year}-${at.month}-${at.day}`;
-}
+export const postDay = (guildId: string, now = Date.now()) => due(guildId, 'day', setting(guildId, 'salePostHour'), { now });
 
 /** When each server last tried its day's post, and how many tries found Steam's prices incomplete */
 const tries = new Map<string, { at: number; partial: number; day: string }>();
@@ -525,25 +523,23 @@ export function postDailySales(client: Client<true>) {
     let prices: Prices | null = null;
     await eachGuild(client, 'Daily sale post', async (guild) => {
       const day = postDay(guild.id);
-      const key = `sale_post:${guild.id}`;
-      if (!day || getKv(key) === day) return;
-      const last = tries.get(guild.id);
-      const tried = last?.day === day ? last : { at: 0, partial: 0, day };
-      if (Date.now() - tried.at < RETRY_MS) return;
-      // Nowhere to post is nothing to do today, without asking anyone for prices
-      if (!(await announceChannel(client, guild.id, 'saleChannel')) && !(await announceChannel(client, guild.id))) return setKv(key, day);
-      tried.at = Date.now();
-      tries.set(guild.id, tried);
-      if (!prices) {
-        await refreshWishlists();
-        prices = newPrices();
-      }
-      // Left unmarked when the post fails or Steam can't be asked, so a later tick tries again
-      const done = await checkGuild(client, guild, prices, true, ++tried.partial >= PARTIAL_TRIES);
-      if (done) {
-        setKv(key, day);
-        tries.delete(guild.id);
-      }
+      await once(`sale_post:${guild.id}`, day, async () => {
+        const last = tries.get(guild.id);
+        const tried = last?.day === day!.period ? last : { at: 0, partial: 0, day: day!.period };
+        if (Date.now() - tried.at < RETRY_MS) return false;
+        // Nowhere to post is nothing to do today, without asking anyone for prices
+        if (!(await announceChannel(client, guild.id, 'saleChannel')) && !(await announceChannel(client, guild.id))) return true;
+        tried.at = Date.now();
+        tries.set(guild.id, tried);
+        if (!prices) {
+          await refreshWishlists();
+          prices = newPrices();
+        }
+        // Left unmarked when the post fails or Steam can't be asked, so a later tick tries again
+        const done = await checkGuild(client, guild, prices, true, ++tried.partial >= PARTIAL_TRIES);
+        if (done) tries.delete(guild.id);
+        return done;
+      });
     });
   });
 }
@@ -672,9 +668,7 @@ export const sales: Feature = {
   },
   setup(client) {
     // Through the day, prices are kept current for /sales and the web UI; posting waits for each server's hour
-    const check = () => void checkSales(client, false).catch(console.error);
-    setTimeout(check, 60_000);
-    setInterval(check, config.saleCheckHours * 3_600_000);
-    setInterval(() => void postDailySales(client).catch(console.error), 10 * 60_000);
+    every('Sale check', config.saleCheckHours * 3_600_000, () => checkSales(client, false), { first: 60_000 });
+    every('Daily sale post', 10 * 60_000, () => postDailySales(client));
   },
 };
