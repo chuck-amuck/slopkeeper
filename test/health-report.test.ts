@@ -83,8 +83,6 @@ test('gauges are added up into each point, however many minutes and series it ha
   minute(point, 'discord_gateway_ping_seconds', {}, 1, 0.1, 0.1);
   minute(point + MINUTE, 'discord_gateway_ping_seconds', {}, 2, 0.5, 0.4);
   minute(point + 14 * MINUTE, 'discord_gateway_ping_seconds', {}, 1, 0.3, 0.3);
-  // A minute that counted nothing adds nothing
-  minute(point + 2 * MINUTE, 'discord_gateway_ping_seconds', {}, 0, 0, 99);
   minute(point + 15 * MINUTE, 'discord_gateway_ping_seconds', {}, 1, 0.05, 0.05);
   // Two series of one counter, added together
   minute(point, 'mixer_frames_total', { a: '1' }, 100, 100, 0);

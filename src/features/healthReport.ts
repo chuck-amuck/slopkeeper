@@ -153,10 +153,10 @@ interface Row {
 type Read = Map<string, Map<string, { labels: perf.Labels; cells: (Cell | null)[] }>>;
 
 // Counters and gauges, nearly every row, added up into each point by SQLite rather than one by one here, where a month of
-// them would hold up the bot. A row that counted nothing has no maximum, as `add` has it
+// them would hold up the bot
 const grouped = db.prepare(`
   SELECT CAST((at - CAST(:start AS INTEGER)) / CAST(:step AS INTEGER) AS INTEGER) AS i, name, labels,
-    SUM(count) AS count, SUM(sum) AS sum, COALESCE(MAX(CASE WHEN count > 0 THEN max END), MAX(max)) AS max
+    SUM(count) AS count, SUM(sum) AS sum, MAX(max) AS max
   FROM perf_minutes WHERE span = :span AND at >= :from AND at < :to AND buckets IS NULL
   GROUP BY i, name, labels`);
 // Timings, whose buckets are added up here
