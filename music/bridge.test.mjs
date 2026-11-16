@@ -194,9 +194,19 @@ test('GET /stats says what the container uses, and a download says how long yt-d
   fs.writeFileSync(path.join(cgroup, 'memory.max'), 'max\n');
   fs.writeFileSync(path.join(cgroup, 'memory.stat'), 'inactive_file 100000000\n');
   fs.writeFileSync(path.join(cgroup, 'cpu.stat'), 'usage_usec 1500000\n');
+  fs.writeFileSync(path.join(cgroup, 'cpu.pressure'), 'some avg10=0.00 avg60=0.00 avg300=0.00 total=250000\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=0\n');
   const { base } = await bridge({ cgroupDir: cgroup });
   assert.equal((await fetch(`${base}/stats`)).status, 401);
-  assert.deepEqual(await (await ask(base, '/stats')).json(), { memoryBytes: 200000000, memoryLimitBytes: null, cpuSeconds: 1.5, ready: true });
+  assert.deepEqual(await (await ask(base, '/stats')).json(), {
+    memoryBytes: 200000000,
+    memoryLimitBytes: null,
+    cpuSeconds: 1.5,
+    stallSeconds: { cpu: 0.25, memory: null, io: null },
+    cpuPeriods: 0,
+    throttledPeriods: 0,
+    oomKills: null,
+    ready: true,
+  });
   const first = await fetchSong(base, song(7));
   assert.match(first.headers.get('server-timing'), /^ytdlp;dur=\d+\.\d$/);
   assert.equal((await first.json()).kept, undefined);

@@ -284,7 +284,15 @@ interface Line {
   started: (problem: string | null) => void;
   /** From being asked for to being heard */
   trace: perf.Trace;
+  /** Who asked, for Stats: null for an announcement */
+  who: string | null;
+  kind: LineKind;
 }
+
+/** How a line came to be said: someone saying it, a message read out, or an announcement */
+type LineKind = 'say' | 'message' | 'announcement';
+
+const insertLine = db.prepare('INSERT INTO speech_lines (guild_id, at, user_id, voice, characters, kind) VALUES (?, ?, ?, ?, ?, ?)');
 
 interface Queue {
   lines: Line[];
@@ -512,7 +520,7 @@ export class TooSoon extends Error {
   }
 }
 
-async function sayLine(queue: Queue, { channel, text, voice, started, trace }: Line) {
+async function sayLine(queue: Queue, { channel, text, voice, started, trace, who, kind }: Line) {
   const guildId = channel.guild.id;
   const cancel = (queue.cancel = new AbortController());
   trace.step(perf.WAITING);
@@ -533,6 +541,14 @@ async function sayLine(queue: Queue, { channel, text, voice, started, trace }: L
         .then((problem) => {
           started(problem);
           if (problem) finished();
+          else {
+            // Only for Stats: a line that's playing carries on if it can't be written down
+            try {
+              insertLine.run(guildId, Date.now(), who, voice.id, text.length, kind);
+            } catch (err) {
+              console.error('Couldn’t note a line for Stats:', err);
+            }
+          }
         })
         .catch(failed);
     });
@@ -586,7 +602,7 @@ export async function say(channel: VoiceBasedChannel, typed: string, voiceId: st
   if (problem) return problem;
   lastLine.set(`${guild.id}:${who}`, Date.now());
 
-  const failed = await queueLine(channel, text, voice);
+  const failed = await queueLine(channel, text, voice, who, 'say');
   if (!failed) logActivity(guild.id, who, `Said “${text.length > LOGGED_CHARS ? `${text.slice(0, LOGGED_CHARS).trimEnd()}…` : text}” in <#${channel.id}>`);
   return failed;
 }
@@ -598,7 +614,7 @@ export function sayOut(channel: VoiceBasedChannel, line: string): Promise<string
   const voice = serverVoice(guild.id);
   if (!config.voiceUrl || !setting(guild.id, 'tts') || !hasWords(text)) return Promise.resolve('Nothing to say.');
   if (queueFor(guild.id).lines.length >= MOST_WAITING) return Promise.resolve('Too many lines waiting.');
-  return queueLine(channel, text, voice);
+  return queueLine(channel, text, voice, null, 'announcement');
 }
 
 /** Says an announcement to the people in a channel, unless that means leaving people in another */
@@ -644,13 +660,13 @@ export function savePhrase(guild: Guild, typed: string): string | null {
 
 export const removePhrase = (guildId: string, id: number) => db.prepare('DELETE FROM saved_phrases WHERE guild_id = ? AND id = ?').run(guildId, id).changes > 0;
 
-function queueLine(channel: VoiceBasedChannel, text: string, voice: Voice) {
+function queueLine(channel: VoiceBasedChannel, text: string, voice: Voice, who: string | null, kind: LineKind) {
   const queue = queueFor(channel.guild.id);
   const { promise, resolve } = Promise.withResolvers<string | null>();
   // The voice and how long it is, never the words
   const trace = new perf.Trace('speech_seconds', 'Speech', channel.guild.id, SLOW_SPEECH_S + (text.length / 1000) * SLOW_SPEECH_PER_1000_CHARS_S);
   Object.assign(trace.detail, { voice: voice.id, characters: text.length, waitingAhead: queue.lines.length + (queue.running ? 1 : 0) });
-  queue.lines.push({ channel, text, voice, started: resolve, trace });
+  queue.lines.push({ channel, text, voice, started: resolve, trace, who, kind });
   void run(queue);
   return promise;
 }
@@ -686,7 +702,7 @@ export async function readMessage(message: Message) {
   const last = lastReader.get(guild.id);
   const sameSpeaker = last?.id === author.id && Date.now() - last.at < SAME_SPEAKER_MS;
   lastReader.set(guild.id, { id: author.id, at: Date.now() });
-  const problem = await queueLine(channel, sameSpeaker ? text : `${speechFor(guild, member?.displayName ?? author.displayName)} says, ${text}`, voice);
+  const problem = await queueLine(channel, sameSpeaker ? text : `${speechFor(guild, member?.displayName ?? author.displayName)} says, ${text}`, voice, author.id, 'message');
   if (problem && problem !== STOPPED) console.error(`Couldn’t read a message out in server ${guild.id}: ${problem}`);
 }
 

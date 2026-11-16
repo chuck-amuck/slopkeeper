@@ -137,6 +137,8 @@ interface Session {
   autoplayFrom: AutoplaySeed | null;
   /** The YouTube video each Spotify song was matched to, by its URI */
   matched: Map<string, string>;
+  /** The song's row in music_plays, for Stats, once it's been heard from the top */
+  history?: { queueId: number; id: number };
 }
 
 /** What Autoplay goes on from: the last song in the queue someone added, or failing that, the latest played */
@@ -599,10 +601,25 @@ async function playCurrent(s: Session, fromMs = 0): Promise<string | null> {
     return null;
   }
   const channel = channelOf(s);
-  trace.detail.source = found.source;
+  const source = found.source;
+  trace.detail.source = source;
   const heard = () => {
     trace.step('starting');
     trace.end();
+    // From the top only: a seek, a resume or carrying on after a restart is the same play
+    if (s.history?.queueId === row.id) return;
+    try {
+      if (fromMs === 0) {
+        const { lastInsertRowid } = insertPlay.run(s.guild.id, Date.now(), row.uri, row.title, row.artist, source, row.duration_ms, row.added_by);
+        s.history = { queueId: row.id, id: Number(lastInsertRowid) };
+      } else {
+        // After a restart the play was started by the bot before it, so carry on with its row
+        const play = openPlay.get(s.guild.id, row.uri, Date.now() - fromMs - RESUME_SLACK_MS) as { id: number } | undefined;
+        if (play) s.history = { queueId: row.id, id: play.id };
+      }
+    } catch (err) {
+      console.error('Couldn’t note a song for Stats:', err);
+    }
   };
   const stop = channel ? await playLong(channel, found.file, (byItself) => onSongEnd(s, turn, byItself), fromMs, heard) : 'That voice channel is gone.';
   if (s.turn !== turn) {
@@ -630,10 +647,28 @@ async function playCurrent(s: Session, fromMs = 0): Promise<string | null> {
   return null;
 }
 
+const insertPlay = db.prepare('INSERT INTO music_plays (guild_id, at, uri, title, artist, source, duration_ms, added_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
+const openPlay = db.prepare('SELECT id FROM music_plays WHERE guild_id = ? AND uri = ? AND played_ms IS NULL AND at >= ? ORDER BY at DESC LIMIT 1');
+const finishPlay = db.prepare('UPDATE music_plays SET played_ms = ?, skipped = ? WHERE id = ?');
+/** A song resumed after a restart started no further back than where it is, plus the time paused and restarting */
+const RESUME_SLACK_MS = 30 * 60_000;
+
+/** Notes in music_plays how far the current song got, if it was heard from the top. That play is then over */
+function playedTo(s: Session, ms: number, skipped: boolean) {
+  if (s.history?.queueId !== s.current.id) return;
+  try {
+    finishPlay.run(Math.round(Math.min(ms, s.current.duration_ms)), skipped ? 1 : 0, s.history.id);
+  } catch (err) {
+    console.error('Couldn’t note how far a song got for Stats:', err);
+  }
+  s.history = undefined;
+}
+
 /** A song from a file is over: it ended, so the next one plays, or it was cut off, so the music pauses */
 function onSongEnd(s: Session, turn: number, byItself: boolean) {
   if (s.turn !== turn || sessions.get(s.guild.id) !== s) return;
   s.stopAudio = undefined;
+  if (byItself && s.phase === 'playing') playedTo(s, s.current.duration_ms, false);
   if (byItself && s.phase === 'playing') void moveOn(s).catch((err) => console.error(`Moving on to the next song in ${s.guild.name} failed:`, err));
   else if (s.phase !== 'paused') pauseHere(s, null);
 }
@@ -682,6 +717,7 @@ export async function skipMusic(guildId: string, who: string): Promise<string | 
   const s = sessions.get(guildId);
   if (!s) return 'Nothing is playing.';
   logActivity(guildId, who, `Skipped **${s.current.title}**`);
+  playedTo(s, positionOf(s), true);
   await moveOn(s);
   return null;
 }

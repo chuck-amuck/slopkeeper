@@ -1,9 +1,10 @@
 import { getVoiceConnections } from '@discordjs/voice';
 import { Events, Status, type Client, type Interaction } from 'discord.js';
-import { monitorEventLoopDelay, performance } from 'node:perf_hooks';
+import { monitorEventLoopDelay, performance, PerformanceObserver } from 'node:perf_hooks';
 import { feeds } from '../changes.ts';
 import { config } from '../config.ts';
 import { db, transaction } from '../db.ts';
+import { machineChange, readMachine, type MachineReading } from '../machine.ts';
 import * as perf from '../perf.ts';
 import type { Feature } from '../types.ts';
 
@@ -82,29 +83,81 @@ export function rollUp(now = Date.now()) {
   });
 }
 
-/** Each container's CPU time when last heard from, to work out how much it's used since */
-const cpuSeen = new Map<string, { seconds: number; at: number }>();
+/** Each container's running totals when last heard from, to work out what happened since */
+const lastSeen = new Map<string, { usage: perf.ContainerUsage; at: number }>();
+
+const RESOURCES = ['cpu', 'memory', 'io'] as const;
 
 /** Notes what a container said it's using */
-export function containerSeen(container: string, usage: perf.ContainerUsage) {
+export function containerSeen(container: string, usage: perf.ContainerUsage, at = performance.now()) {
   const labels = { container };
   perf.gauge('container_up', 1, labels);
   perf.gauge('container_memory_bytes', usage.memoryBytes, labels);
   if (usage.memoryLimitBytes) perf.gauge('container_memory_limit_bytes', usage.memoryLimitBytes, labels);
-  const at = performance.now();
-  const before = cpuSeen.get(container);
-  cpuSeen.set(container, { seconds: usage.cpuSeconds, at });
-  // A restarted container counts from nothing again
-  if (before && usage.cpuSeconds >= before.seconds && at - before.at > 1000) perf.gauge('container_cpu_cores', (usage.cpuSeconds - before.seconds) / ((at - before.at) / 1000), labels);
+  const before = lastSeen.get(container);
+  lastSeen.set(container, { usage, at });
+  if (!before || at - before.at <= 1000) return;
+  const seconds = (at - before.at) / 1000;
+  // Each total only counts up while the container runs, so one that went down means it restarted and counts from nothing again
+  const grew = (a: number | null | undefined, b: number | null | undefined) => (typeof a === 'number' && typeof b === 'number' && b >= a ? b - a : null);
+  const cpu = grew(before.usage.cpuSeconds, usage.cpuSeconds);
+  if (cpu !== null) perf.gauge('container_cpu_cores', cpu / seconds, labels);
+  for (const resource of RESOURCES) {
+    const stalled = grew(before.usage.stallSeconds?.[resource], usage.stallSeconds?.[resource]);
+    if (stalled !== null) perf.gauge('container_stall_ratio', Math.min(1, stalled / seconds), { container, resource });
+  }
+  const periods = grew(before.usage.cpuPeriods, usage.cpuPeriods);
+  const throttled = grew(before.usage.throttledPeriods, usage.throttledPeriods);
+  if (periods !== null && throttled !== null) perf.gauge('container_throttled_ratio', periods > 0 ? Math.min(1, throttled / periods) : 0, labels);
+  const killed = grew(before.usage.oomKills, usage.oomKills);
+  if (killed) perf.count('container_oom_kills_total', labels, killed);
+}
+
+let machineBefore: MachineReading | null = null;
+
+/** The machine the containers run on, every 15 seconds with the bot */
+export function sampleMachine(reading = readMachine(config.dataDir)) {
+  const before = machineBefore;
+  machineBefore = reading;
+  if (reading.cpu) perf.gauge('vm_cpus', reading.cpu.cores);
+  if (reading.memory) {
+    perf.gauge('vm_memory_total_bytes', reading.memory.total);
+    perf.gauge('vm_memory_used_bytes', reading.memory.total - reading.memory.available);
+    perf.gauge('vm_swap_used_bytes', reading.memory.swapTotal - reading.memory.swapFree);
+  }
+  if (reading.disk) {
+    perf.gauge('vm_disk_free_bytes', reading.disk.free);
+    perf.gauge('vm_disk_total_bytes', reading.disk.total);
+  }
+  if (!before) return;
+  const change = machineChange(before, reading);
+  if (change.cpuBusy !== null) perf.gauge('vm_cpu_busy_ratio', change.cpuBusy);
+  if (change.cpuIowait !== null) perf.gauge('vm_cpu_iowait_ratio', change.cpuIowait);
+  if (change.cpuSteal !== null) perf.gauge('vm_cpu_steal_ratio', change.cpuSteal);
+  if (change.swapPagesPerSecond !== null) perf.gauge('vm_swap_pages_per_second', change.swapPagesPerSecond);
+  for (const resource of RESOURCES) {
+    const stalled = change.stall[resource];
+    if (stalled !== null) perf.gauge('vm_stall_ratio', stalled, { resource });
+  }
 }
 
 const isCount = (n: unknown): n is number => typeof n === 'number' && Number.isFinite(n) && n >= 0;
+const countOrNull = (n: unknown) => (isCount(n) ? n : null);
 
-/** A container's GET /stats answer, or the web UI's report, if it says what it should */
+/** A container's GET /stats answer, or the web UI's report, if it says what it should. Stall times and the like are newer, so may be missing */
 function usageIn(body: unknown): perf.ContainerUsage | null {
   const b = body as Record<string, unknown> | null;
   if (!b || !isCount(b.memoryBytes) || !isCount(b.cpuSeconds)) return null;
-  return { memoryBytes: b.memoryBytes, cpuSeconds: b.cpuSeconds, memoryLimitBytes: isCount(b.memoryLimitBytes) && b.memoryLimitBytes > 0 ? b.memoryLimitBytes : null };
+  const stall = b.stallSeconds && typeof b.stallSeconds === 'object' ? (b.stallSeconds as Record<string, unknown>) : {};
+  return {
+    memoryBytes: b.memoryBytes,
+    cpuSeconds: b.cpuSeconds,
+    memoryLimitBytes: isCount(b.memoryLimitBytes) && b.memoryLimitBytes > 0 ? b.memoryLimitBytes : null,
+    stallSeconds: { cpu: countOrNull(stall.cpu), memory: countOrNull(stall.memory), io: countOrNull(stall.io) },
+    cpuPeriods: countOrNull(b.cpuPeriods),
+    throttledPeriods: countOrNull(b.throttledPeriods),
+    oomKills: countOrNull(b.oomKills),
+  };
 }
 
 let webSeenAt = 0;
@@ -217,7 +270,13 @@ export function sample(client: Client) {
   perf.gauge('event_loop_utilization', since.utilization);
   perf.gauge('heap_used_bytes', process.memoryUsage().heapUsed);
   containerSeen('bot', perf.containerUsage());
+  sampleMachine();
 }
+
+/** Every garbage collection pause, which stops the bot while it runs */
+const gcPauses = new PerformanceObserver((list) => {
+  for (const entry of list.getEntries()) perf.time('gc_pause_seconds', entry.duration / 1000);
+});
 
 const ANSWERS = ['reply', 'deferReply', 'deferUpdate', 'update', 'showModal', 'respond'] as const;
 
@@ -275,6 +334,7 @@ export const health: Feature = {
     perf.keep(true);
     webWaitingSince = Date.now();
     loopDelay.enable();
+    gcPauses.observe({ entryTypes: ['gc'] });
     client.on(Events.ShardReconnecting, () => perf.count('discord_gateway_reconnects_total'));
     const every = (ms: number, fn: () => unknown) => timers.push(setInterval(() => void Promise.resolve().then(fn).catch((err) => console.error('Health check failed:', err)), ms).unref());
     every(SAMPLE_MS, () => {
@@ -289,6 +349,7 @@ export const health: Feature = {
   shutdown() {
     for (const timer of timers.splice(0)) clearInterval(timer);
     loopDelay.disable();
+    gcPauses.disconnect();
     try {
       store(true);
     } catch (err) {

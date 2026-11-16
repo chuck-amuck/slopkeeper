@@ -8,7 +8,7 @@ import { FROM_WEB, fromWebUser, webUser } from '../activity.ts';
 import * as discordBoard from '../discordSounds.ts';
 import { checkSetting } from '../features/setup.ts';
 import { idSetting, setting } from '../settings.ts';
-import { canSee, humansIn } from '../util.ts';
+import { canSee, humansIn, zonedTimeToUtc } from '../util.ts';
 
 // What every part of the management API shares: refusals, reading requests, who is asking, and lookups that refuse what isn’t there
 
@@ -36,6 +36,24 @@ export class Refused extends Error {
     super(message);
     this.status = status;
   }
+}
+
+const DATE = /^(\d{4})-(\d{2})-(\d{2})$/;
+
+/**
+ * Whole days picked on a calendar, `fromDate` to `toDate` (YYYY-MM-DD, both included) in the server's time zone, as
+ * the moments they start and end. Null without them
+ */
+export function datesWindow(url: URL, timeZone: string): { since: number; until: number } | null {
+  const from = url.searchParams.get('fromDate');
+  const to = url.searchParams.get('toDate');
+  if (from === null && to === null) return null;
+  const [a, b] = [from ?? to!, to ?? from!].map((text) => DATE.exec(text));
+  if (!a || !b) throw new Refused(400, 'Pick dates as YYYY-MM-DD.');
+  const since = zonedTimeToUtc(Number(a[1]), Number(a[2]), Number(a[3]), 0, 0, timeZone);
+  const until = zonedTimeToUtc(Number(b[1]), Number(b[2]), Number(b[3]) + 1, 0, 0, timeZone);
+  if (!Number.isFinite(since) || !Number.isFinite(until) || since >= until) throw new Refused(400, 'Pick a start before the end.');
+  return { since, until };
 }
 
 /** The bot's messages are written for Discord; the web UI shows plain text */

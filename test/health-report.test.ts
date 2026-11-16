@@ -4,8 +4,9 @@ import { beforeEach, test } from 'node:test';
 import { healthOf } from '../src/api/health.ts';
 import { feeds } from '../src/changes.ts';
 import { db } from '../src/db.ts';
-import { browserReport, store } from '../src/features/health.ts';
-import { healthReport, quantile } from '../src/features/healthReport.ts';
+import { browserReport, containerSeen, sampleMachine, store } from '../src/features/health.ts';
+import { customWindow, healthReport, quantile, verdictOf } from '../src/features/healthReport.ts';
+import type { MachineReading } from '../src/machine.ts';
 import * as perf from '../src/perf.ts';
 import { GUILD, ok, refused } from './apiFixture.ts';
 
@@ -234,4 +235,104 @@ test('the web UI as people see it is judged by taps, opening and reacting', () =
   assert.equal(browser.away.tapSeries.at(-2), browser.away.taps);
   db.exec('DELETE FROM perf_minutes');
   assert.equal(healthReport(GUILD, '1h', NOW).browser.status, 'quiet');
+});
+
+/** A reading of the machine `seconds` in, with running totals as given */
+const reading = (seconds: number, { busy = 0, idle = 0, io = 0, available = 8e9 } = {}): MachineReading => ({
+  at: seconds * 1000,
+  cpu: { total: busy + idle, idle, iowait: 0, steal: 0, cores: 4 },
+  memory: { total: 10e9, available, swapTotal: 2e9, swapFree: 2e9 },
+  swapPages: 0,
+  stall: { cpu: 0, memory: 0, io },
+  disk: { free: 30e9, total: 100e9 },
+});
+
+test('the machine’s numbers are kept, and the disk keeping things waiting is the verdict', () => {
+  perf.keep(true);
+  sampleMachine(reading(0));
+  // Fifteen seconds later: half the CPU busy, and something waiting on the disk 6 of the 15 seconds
+  sampleMachine(reading(15, { busy: 750, idle: 750, io: 6e6, available: 7e9 }));
+  store(true);
+  const { machine, verdict } = healthReport(GUILD, '1h', NOW + 2 * MINUTE);
+  assert.equal(machine.cpus, 4);
+  assert.equal(machine.cpu.busyWorst, 0.5);
+  assert.equal(machine.stall.worst.io, 0.4);
+  assert.equal(machine.memory.usedWorst, 0.25, 'the minute’s average of its two samples');
+  assert.equal(machine.memory.total, 10e9);
+  assert.deepEqual(
+    verdict.causes.map((c) => [c.cause, c.status]),
+    [['vm-disk', 'bad']],
+  );
+  assert.equal(verdict.status, 'bad');
+});
+
+test('a container’s stall times are shares of the time between reports, its CPU limit of the periods, and a restart counts from nothing', () => {
+  perf.keep(true);
+  const usage = (cpu: number, io: number, periods: number, throttled: number, oom = 0) => ({ memoryBytes: 1, memoryLimitBytes: 10, cpuSeconds: cpu, stallSeconds: { cpu: 0, memory: 0, io }, cpuPeriods: periods, throttledPeriods: throttled, oomKills: oom });
+  containerSeen('music', usage(1, 1, 100, 0), 0);
+  // 300 periods in 30 seconds means it wanted the CPU the whole time; its limit held it back in 30 of them
+  containerSeen('music', usage(16, 4, 400, 30, 1), 30_000);
+  assert.equal(perf.gaugeValue('container_cpu_cores', { container: 'music' }), 0.5);
+  assert.equal(perf.gaugeValue('container_stall_ratio', { container: 'music', resource: 'io' }), 0.1);
+  assert.equal(perf.gaugeValue('container_throttled_ratio', { container: 'music' }), 0.1);
+  assert.match(perf.prometheus(), /container_oom_kills_total\{container="music"\} 1/);
+  containerSeen('music', usage(0.5, 0.1, 0, 0), 60_000);
+  assert.equal(perf.gaugeValue('container_cpu_cores', { container: 'music' }), 0.5, 'a restart leaves the last share as it was');
+});
+
+test('slow things with nothing short of resources point at the code; a limit or memory kill is named with its container', () => {
+  const machine = healthReport(GUILD, '1h', NOW).machine;
+  const fine = { status: 'fine' as const };
+  const quiet = { memoryShareWorst: null, throttledWorst: null, oomKills: 0, status: 'fine' as const };
+  const slowCommands = verdictOf({ machine, containers: [{ name: 'bot', ...quiet }], gc: { worst: 0 }, slowed: { commands: { status: 'slow' }, sounds: fine } });
+  assert.deepEqual(slowCommands.causes, [{ cause: 'code', status: 'slow', value: null, parts: ['commands'] }]);
+  const limited = verdictOf({
+    machine,
+    containers: [
+      { name: 'voice', ...quiet, throttledWorst: 0.3 },
+      { name: 'music', ...quiet, oomKills: 2 },
+    ],
+    gc: { worst: 0 },
+    slowed: { commands: { status: 'slow' } },
+  });
+  assert.deepEqual(
+    limited.causes.map((c) => [c.cause, c.container, c.status]),
+    [
+      ['cpu-limit', 'voice', 'bad'],
+      ['out-of-memory', 'music', 'bad'],
+    ],
+    'with a cause found, slow commands are put down to it',
+  );
+  assert.equal(verdictOf({ machine, containers: [], gc: { worst: null }, slowed: {} }).status, 'quiet');
+  // How full the disk is is known only now, so it's judged only for a stretch up to now
+  const full = { ...machine, disk: { free: 4e9, total: 100e9, used: 0.96 } };
+  assert.deepEqual(verdictOf({ machine: { ...full, current: true }, containers: [], gc: { worst: null }, slowed: {} }).causes.map((c) => c.cause), ['disk-space']);
+  assert.deepEqual(verdictOf({ machine: { ...full, current: false }, containers: [], gc: { worst: null }, slowed: {} }).causes, []);
+});
+
+test('a custom range picks the finest step that keeps it to 240 points, within what’s kept', () => {
+  const HOUR = 60 * MINUTE;
+  const day = customWindow(NOW - 24 * HOUR, NOW, NOW);
+  assert.ok(typeof day !== 'string');
+  assert.equal(day.step, 15 * MINUTE);
+  const hour = customWindow(NOW - HOUR, NOW, NOW);
+  assert.ok(typeof hour !== 'string');
+  assert.equal(hour.step, MINUTE);
+  const old = customWindow(NOW - 5 * 24 * HOUR, NOW - 5 * 24 * HOUR + HOUR, NOW);
+  assert.ok(typeof old !== 'string');
+  assert.equal(old.step, 15 * MINUTE, 'minutes are only kept for two days');
+  const month = customWindow(0, NOW, NOW);
+  assert.ok(typeof month !== 'string');
+  assert.ok(month.start >= NOW - 30 * 24 * HOUR - 6 * HOUR && month.points <= 240, 'cut to the 30 days kept');
+  assert.equal(customWindow(NOW, NOW - HOUR, NOW), 'Pick a start before the end.');
+  assert.equal(customWindow(NOW - 5 * MINUTE, NOW, NOW), 'Pick at least 10 minutes.');
+  assert.equal(customWindow(0, 1000, NOW), 'Health keeps the last 30 days.');
+});
+
+test('the Health route takes a custom range', async () => {
+  const hour = await ok(`/guilds/${GUILD}/health?from=${Date.now() - 3_600_000}&to=${Date.now()}`);
+  assert.equal(hour.range, 'custom');
+  assert.equal(hour.step, 60_000);
+  assert.ok(hour.verdict && hour.machine);
+  await refused(400, `/guilds/${GUILD}/health?from=${Date.now()}&to=${Date.now() - 3_600_000}`);
 });

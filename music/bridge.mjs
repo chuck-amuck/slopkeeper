@@ -15,10 +15,28 @@ export function containerUsage(root = '/sys/fs/cgroup') {
     const file = (name) => fs.readFileSync(`${root}/${name}`, 'utf8');
     const stat = (text, key) => Number(new RegExp(`^${key} (\\d+)$`, 'm').exec(text)?.[1] ?? 0);
     const max = file('memory.max').trim();
+    const cpuStat = file('cpu.stat');
+    const optional = (fn) => {
+      try {
+        return fn();
+      } catch {
+        return null;
+      }
+    };
+    // Seconds some task waited for each resource, as running totals
+    const stalled = (name) =>
+      optional(() => {
+        const total = /^some .*\btotal=(\d+)/m.exec(file(name))?.[1];
+        return total === undefined ? null : Number(total) / 1e6;
+      });
     return {
       memoryBytes: Math.max(0, Number(file('memory.current')) - stat(file('memory.stat'), 'inactive_file')),
       memoryLimitBytes: max === 'max' ? null : Number(max),
-      cpuSeconds: stat(file('cpu.stat'), 'usage_usec') / 1e6,
+      cpuSeconds: stat(cpuStat, 'usage_usec') / 1e6,
+      stallSeconds: { cpu: stalled('cpu.pressure'), memory: stalled('memory.pressure'), io: stalled('io.pressure') },
+      cpuPeriods: stat(cpuStat, 'nr_periods'),
+      throttledPeriods: stat(cpuStat, 'nr_throttled'),
+      oomKills: optional(() => stat(file('memory.events'), 'oom_kill')),
     };
   } catch {
     const { user, system } = process.cpuUsage();

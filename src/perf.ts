@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { performance } from 'node:perf_hooks';
+import { stallTotal } from './machine.ts';
 
 /**
  * How the bot and its containers are doing: counts, values sampled now and then, and timings. Everything here is in
@@ -40,6 +41,21 @@ const METRICS = {
   container_memory_bytes: ['gauge', 'Memory each container uses, as Docker counts it (page cache it can drop left out)'],
   container_memory_limit_bytes: ['gauge', 'Memory each container may use, where it has a limit'],
   container_cpu_cores: ['gauge', 'CPU each container used lately, in cores'],
+  container_stall_ratio: ['gauge', 'Share of the time some task in each container waited for a resource (cpu, memory or io) it was short of'],
+  container_throttled_ratio: ['gauge', 'Share of each container’s CPU periods in which its own CPU limit held it back'],
+  container_oom_kills_total: ['counter', 'Processes killed in each container for going over its memory limit'],
+  vm_cpus: ['gauge', 'CPU cores the machine the containers run on has'],
+  vm_cpu_busy_ratio: ['gauge', 'Share of all the machine’s CPU time that was busy'],
+  vm_cpu_iowait_ratio: ['gauge', 'Share of the machine’s CPU time spent idle waiting on the disk'],
+  vm_cpu_steal_ratio: ['gauge', 'Share of the machine’s CPU time the hypervisor gave to something else'],
+  vm_memory_total_bytes: ['gauge', 'The machine’s memory'],
+  vm_memory_used_bytes: ['gauge', 'The machine’s memory that isn’t available: in use and not cache it could drop'],
+  vm_swap_used_bytes: ['gauge', 'Swap in use on the machine'],
+  vm_swap_pages_per_second: ['gauge', 'Pages the machine swapped in and out, which slows everything when it’s short of memory'],
+  vm_stall_ratio: ['gauge', 'Share of the time some task on the machine waited for a resource (cpu, memory or io) it was short of'],
+  vm_disk_free_bytes: ['gauge', 'Free space on the disk holding the bot’s data'],
+  vm_disk_total_bytes: ['gauge', 'Size of the disk holding the bot’s data'],
+  gc_pause_seconds: ['histogram', 'The bot’s JavaScript garbage collection pauses'],
   voice_models_loaded: ['gauge', 'Voice models the voice container holds in memory'],
   web_requests_total: ['counter', 'Requests the web UI answered, by status class'],
   web_bot_unreachable_total: ['counter', 'Web UI requests the bot didn’t answer'],
@@ -326,6 +342,15 @@ export interface ContainerUsage {
   memoryBytes: number;
   memoryLimitBytes: number | null;
   cpuSeconds: number;
+  /**
+   * Running totals: seconds some task waited for each resource, the CPU limit's periods (100 ms each, counted while
+   * something wants the CPU) and those it held the container back in, and processes killed for memory. Null where
+   * unknown. Periods, not throttled seconds: the kernel adds those up per core, so they can pass the time that went by
+   */
+  stallSeconds?: { cpu: number | null; memory: number | null; io: number | null };
+  cpuPeriods?: number | null;
+  throttledPeriods?: number | null;
+  oomKills?: number | null;
 }
 
 const CGROUP = '/sys/fs/cgroup';
@@ -337,8 +362,28 @@ export function containerUsage(root = CGROUP): ContainerUsage {
     const stat = (text: string, key: string) => Number(new RegExp(`^${key} (\\d+)$`, 'm').exec(text)?.[1] ?? 0);
     const current = Number(file('memory.current'));
     const max = file('memory.max').trim();
-    const usec = stat(file('cpu.stat'), 'usage_usec');
-    return { memoryBytes: Math.max(0, current - stat(file('memory.stat'), 'inactive_file')), memoryLimitBytes: max === 'max' ? null : Number(max), cpuSeconds: usec / 1e6 };
+    const cpuStat = file('cpu.stat');
+    const optional = <T>(fn: () => T): T | null => {
+      try {
+        return fn();
+      } catch {
+        return null;
+      }
+    };
+    const stalled = (name: string) =>
+      optional(() => {
+        const total = stallTotal(file(name));
+        return total === null ? null : total / 1e6;
+      });
+    return {
+      memoryBytes: Math.max(0, current - stat(file('memory.stat'), 'inactive_file')),
+      memoryLimitBytes: max === 'max' ? null : Number(max),
+      cpuSeconds: stat(cpuStat, 'usage_usec') / 1e6,
+      stallSeconds: { cpu: stalled('cpu.pressure'), memory: stalled('memory.pressure'), io: stalled('io.pressure') },
+      cpuPeriods: stat(cpuStat, 'nr_periods'),
+      throttledPeriods: stat(cpuStat, 'nr_throttled'),
+      oomKills: optional(() => stat(file('memory.events'), 'oom_kill')),
+    };
   } catch {
     const { user, system } = process.cpuUsage();
     return { memoryBytes: process.memoryUsage.rss(), memoryLimitBytes: null, cpuSeconds: (user + system) / 1e6 };

@@ -431,6 +431,30 @@ test('a song ending plays the next, and the music stops after the last', async (
   assert.equal(musicState(id).phase, 'stopped');
 });
 
+test('each song heard from the top is noted for Stats, with how far it got and whether it was skipped', async () => {
+  const { id, guild, channel } = server();
+  addTracks(id, [song(1), song(2), song(3)], 'u1');
+  await startMusic(guild, channel);
+  lastPlayed().heard();
+  lastPlayed().end();
+  await sleep(5);
+  lastPlayed().heard();
+  // Heard again, as after a seek: still the one play
+  lastPlayed().heard();
+  await skipMusic(id, 'u3');
+  await sleep(5);
+  const rows = db.prepare('SELECT title, source, added_by, duration_ms, played_ms, skipped FROM music_plays WHERE guild_id = ? ORDER BY id').all(id) as any[];
+  assert.deepEqual(
+    rows.map((r) => [r.title, r.added_by, r.played_ms === r.duration_ms, r.skipped]),
+    [
+      ['Song 1', 'u1', true, 0],
+      ['Song 2', 'u1', false, 1],
+    ],
+    'song 3 isn’t noted until it’s heard',
+  );
+  assert.ok(rows[1].played_ms < rows[1].duration_ms);
+});
+
 test('skipping plays the next song, or stops after the last', async () => {
   const { id, guild, channel } = server();
   addTracks(id, [song(1), song(2)], 'u1');
@@ -857,6 +881,27 @@ test('a restart carries the music on from the same second, in the same channel',
   assert.ok(logged.mock.calls.some((c) => /carried on Song 1 in #General from 1:23/.test(String(c.arguments[0]))));
   stopMusic(id, 'u1');
   assert.deepEqual(savedPlace(), [], 'stopping forgets it');
+});
+
+test('a song carried on after a restart is still the one play for Stats, and ends it', async (t) => {
+  const tick = clock(t);
+  t.mock.method(console, 'log', () => {});
+  const { id, guild, channel, join } = server();
+  join();
+  addTracks(id, [song(1), song(2)], 'u1');
+  await startMusic(guild, channel);
+  lastPlayed().heard();
+  tick(83_000);
+  await restart(guild);
+  lastPlayed().heard();
+  lastPlayed().end();
+  await sleep(5);
+  const rows = db.prepare('SELECT title, duration_ms, played_ms FROM music_plays WHERE guild_id = ? ORDER BY id').all(id) as any[];
+  assert.deepEqual(
+    rows.map((r) => [r.title, r.played_ms === r.duration_ms]),
+    [['Song 1', true]],
+  );
+  stopMusic(id, 'u1');
 });
 
 test('paused music stays paused through a restart, and carries on from where it paused', async (t) => {

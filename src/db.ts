@@ -425,6 +425,35 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS perf_slow_by_time ON perf_slow (at);
 
+  -- Songs as they started, for Stats: what, from where, who added it (or 'autoplay'), and how far it got. played_ms
+  -- stays NULL while it plays, and when the music stopped or paused for good part way
+  CREATE TABLE IF NOT EXISTS music_plays (
+    id INTEGER PRIMARY KEY,
+    guild_id TEXT NOT NULL,
+    at INTEGER NOT NULL,
+    uri TEXT NOT NULL,
+    title TEXT NOT NULL,
+    artist TEXT NOT NULL,
+    source TEXT,
+    duration_ms INTEGER NOT NULL,
+    added_by TEXT NOT NULL,
+    played_ms INTEGER,
+    skipped INTEGER NOT NULL DEFAULT 0
+  );
+  CREATE INDEX IF NOT EXISTS music_plays_by_guild ON music_plays (guild_id, at);
+
+  -- Lines said aloud, for Stats: who asked (NULL for announcements), the voice, how long and how it came, never the words
+  CREATE TABLE IF NOT EXISTS speech_lines (
+    guild_id TEXT NOT NULL,
+    at INTEGER NOT NULL,
+    user_id TEXT,
+    voice TEXT NOT NULL,
+    characters INTEGER NOT NULL,
+    -- say (the command or the web UI), message (read out from the speech channel) or announcement
+    kind TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS speech_lines_by_guild ON speech_lines (guild_id, at);
+
   PRAGMA user_version = ${SCHEMA_VERSION};
 `);
 

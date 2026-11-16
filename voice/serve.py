@@ -165,12 +165,35 @@ def _container_usage():
                 return int(value)
         return 0
 
+    def optional(fn):
+        try:
+            return fn()
+        except (OSError, ValueError):
+            return None
+
+    def stalled(name):
+        # Seconds some task waited for the resource, as a running total
+        def total():
+            for line in read(name).splitlines():
+                if line.startswith("some "):
+                    for part in line.split():
+                        if part.startswith("total="):
+                            return int(part[6:]) / 1e6
+            return None
+
+        return optional(total)
+
     try:
         limit = read("memory.max").strip()
+        cpu_stat = read("cpu.stat")
         return {
             "memoryBytes": max(0, int(read("memory.current")) - stat(read("memory.stat"), "inactive_file")),
             "memoryLimitBytes": None if limit == "max" else int(limit),
-            "cpuSeconds": stat(read("cpu.stat"), "usage_usec") / 1e6,
+            "cpuSeconds": stat(cpu_stat, "usage_usec") / 1e6,
+            "stallSeconds": {"cpu": stalled("cpu.pressure"), "memory": stalled("memory.pressure"), "io": stalled("io.pressure")},
+            "cpuPeriods": stat(cpu_stat, "nr_periods"),
+            "throttledPeriods": stat(cpu_stat, "nr_throttled"),
+            "oomKills": optional(lambda: stat(read("memory.events"), "oom_kill")),
         }
     except (OSError, ValueError):
         # The most it has used, which is the nearest this has

@@ -149,8 +149,22 @@ test('a container’s usage comes from its cgroup, as docker stats counts it, or
   writeFileSync(path.join(dir, 'memory.current'), '300000000\n');
   writeFileSync(path.join(dir, 'memory.max'), '536870912\n');
   writeFileSync(path.join(dir, 'memory.stat'), 'anon 1\nactive_file 5\ninactive_file 100000000\n');
-  writeFileSync(path.join(dir, 'cpu.stat'), 'usage_usec 2500000\nuser_usec 2000000\n');
-  assert.deepEqual(perf.containerUsage(dir), { memoryBytes: 200000000, memoryLimitBytes: 536870912, cpuSeconds: 2.5 });
+  writeFileSync(path.join(dir, 'cpu.stat'), 'usage_usec 2500000\nuser_usec 2000000\nnr_periods 40\nnr_throttled 3\nthrottled_usec 400000\n');
+  // Stall times only where the kernel keeps them
+  assert.deepEqual(perf.containerUsage(dir), {
+    memoryBytes: 200000000,
+    memoryLimitBytes: 536870912,
+    cpuSeconds: 2.5,
+    stallSeconds: { cpu: null, memory: null, io: null },
+    cpuPeriods: 40,
+    throttledPeriods: 3,
+    oomKills: null,
+  });
+  writeFileSync(path.join(dir, 'io.pressure'), 'some avg10=1.00 avg60=0.00 avg300=0.00 total=3500000\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=1000000\n');
+  writeFileSync(path.join(dir, 'memory.events'), 'low 0\nhigh 0\nmax 2\noom 1\noom_kill 1\n');
+  const later = perf.containerUsage(dir);
+  assert.equal(later.stallSeconds?.io, 3.5);
+  assert.equal(later.oomKills, 1);
   writeFileSync(path.join(dir, 'memory.max'), 'max\n');
   assert.equal(perf.containerUsage(dir).memoryLimitBytes, null);
   const outside = perf.containerUsage(path.join(dir, 'none'));

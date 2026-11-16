@@ -1,5 +1,6 @@
 import './helpers.ts';
 import assert from 'node:assert/strict';
+import { db } from '../src/db.ts';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdtempSync, readdirSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -102,6 +103,16 @@ test('reads out a line in the server’s voice, or the one asked for, and logs w
   const lines = recentActivity(voice.guild.id, 5).map((r) => `${r.actor}: ${r.action}`).toReversed();
   assert.deepEqual(lines, ['ana: Said “hello there” in <#voice>', 'ben: Said “and again” in <#voice>']);
   assert.deepEqual(leftovers(), []);
+  // For Stats: who, the voice and how long, never the words
+  const kept = db.prepare('SELECT * FROM speech_lines WHERE guild_id = ? ORDER BY at').all(voice.guild.id) as any[];
+  assert.deepEqual(
+    kept.map(({ user_id, voice, characters, kind }) => ({ user_id, voice, characters, kind })),
+    [
+      { user_id: 'ana', voice: 'tiktok', characters: 11, kind: 'say' },
+      { user_id: 'ben', voice: 'robot', characters: 9, kind: 'say' },
+    ],
+  );
+  assert.deepEqual(Object.keys(kept[0]).sort(), ['at', 'characters', 'guild_id', 'kind', 'user_id', 'voice']);
 });
 
 test('a slow line keeps how long each step took, with its voice and length but never its words', { skip: !hasFfmpeg }, async (t) => {
