@@ -2,10 +2,10 @@ import { fakeClient } from './helpers.ts';
 import assert from 'node:assert/strict';
 import { mock, test } from 'node:test';
 import { config } from '../src/config.ts';
-import { db } from '../src/db.ts';
-import { checkBundles } from '../src/features/bundles.ts';
+import { db, setKv } from '../src/db.ts';
+import { postDailyBundles as checkBundles } from '../src/features/bundles.ts';
 import { lookups } from '../src/features/gamefacts.ts';
-import { pauses } from '../src/features/sales.ts';
+import { pauses, postDay } from '../src/features/sales.ts';
 import { setSetting } from '../src/settings.ts';
 
 config.itadKey = 'itad-key';
@@ -64,10 +64,18 @@ function server(members: string[]) {
   world.bundles = [];
   world.asked = [];
   setSetting(id, 'announceChannel', `channel-${id}`);
+  // Posting at midnight means any time of day is after it
+  setSetting(id, 'salePostHour', 0);
+  // Bundles wait for the day's sale post, which these tests don't make
+  setKv(`sale_post:${id}`, todayFor(id));
   const guild = { id, name: id, members: { cache: new Map(members.map((m) => [m, { id: m }])) } };
   const posts: { content?: string; embeds: { toJSON(): { title: string; url: string; description: string; footer: { text: string } } }[]; allowedMentions: { users: string[] } }[] = [];
   const client = fakeClient([guild], async (_, message) => void posts.push(message as never));
-  return { id, client, posts, last: () => posts.at(-1)!.embeds[0].toJSON() };
+  return { id, client, posts, last: () => posts.at(-1)!.embeds[0].toJSON(), nextDay: () => setKv(`bundle_post:${id}`, '') };
+}
+
+function todayFor(id: string) {
+  return postDay(id)!;
 }
 
 function wanted(guildId: string, name: string, appid: number, user: string) {
@@ -112,6 +120,9 @@ test('a bundle with a game someone wants is posted once, naming the tier and pin
   assert.equal(world.asked[0].get('country'), 'US');
   assert.equal(world.asked[0].get('key'), 'itad-key');
   await checkBundles(s.client);
+  assert.equal(s.posts.length, 1, 'not again the same day');
+  s.nextDay();
+  await checkBundles(s.client);
   assert.equal(s.posts.length, 1, 'not posted again');
 });
 
@@ -122,6 +133,7 @@ test('a bundle nobody wanted anything from is posted once someone does', async (
   await checkBundles(s.client);
   assert.equal(s.posts.length, 0);
   wanted(s.id, 'Later Game', 9103, 'a');
+  s.nextDay();
   await checkBundles(s.client);
   assert.equal(s.posts.length, 1);
   assert.match(s.last().description, /Later Game\*\*\]\([^)]+\) for \$10\.00: Wanted by <@a>/);
@@ -141,6 +153,7 @@ test('a game like what the server plays is posted without pinging, unless the se
   await checkBundles(s.client);
   assert.equal(s.posts.length, 0);
   setSetting(s.id, 'bundlesLikeWePlay', true);
+  s.nextDay();
   await checkBundles(s.client);
   assert.equal(s.posts.length, 1);
   assert.match(s.last().description, /^\[\*\*Close Match\*\*\]\([^)]+\) for \$8\.00: Like Souls Game \(Dark Fantasy, RPG, Difficult, Open World\)\n/);
@@ -185,15 +198,56 @@ test('a server that mostly plays together only hears about multiplayer games, an
   assert.match(lines[0], /Team Close\*\*\]\([^)]+\) for \$6\.00: Like Co-op Crawler \(Roguelike, Pixel Graphics, Dungeon Crawler, Top-Down\)/);
 });
 
-test('every page of bundles is read, and a few posts go out at a time', async () => {
-  const s = server(['a']);
+test('every page of bundles is read, and a day’s bundles share one post, the rest waiting for the next', async () => {
+  const s = server(['a', 'b']);
   wanted(s.id, 'Everywhere', 9401, 'a');
-  world.bundles = Array.from({ length: 51 }, (_, n) => bundle(100 + n, `Bundle ${n}`, [[1, ['Everywhere']]]));
+  wanted(s.id, 'Elsewhere', 9402, 'b');
+  world.bundles = [bundle(99, 'Other Bundle', [[1, ['Elsewhere']]]), ...Array.from({ length: 51 }, (_, n) => bundle(100 + n, `Bundle ${n}`, [[1, ['Everywhere']]]))];
   await checkBundles(s.client);
   assert.deepEqual(world.asked.map((q) => q.get('offset')), ['0', '50']);
-  assert.equal(s.posts.length, 3);
+  assert.equal(s.posts.length, 1);
+  assert.equal(s.posts[0].embeds.length, 10, 'a message holds 10 embeds');
+  assert.deepEqual(s.posts[0].allowedMentions.users, ['b', 'a'], 'everyone is pinged once');
   await checkBundles(s.client);
-  assert.equal(s.posts.length, 6, 'the rest follow at later checks');
+  assert.equal(s.posts.length, 1, 'one bundle post a day');
+  s.nextDay();
+  await checkBundles(s.client);
+  assert.equal(s.posts.length, 2);
+  assert.equal(s.last().title, '📦 Bundle 9');
+});
+
+test('a day’s bundle post stays inside Discord’s 6000 characters', async () => {
+  const s = server(['a']);
+  const names = Array.from({ length: 10 }, (_, n) => `${'Long Name '.repeat(8)}${n}`);
+  names.forEach((name, n) => wanted(s.id, name, 9700 + n, 'a'));
+  world.bundles = Array.from({ length: 6 }, (_, n) => bundle(200 + n, `Big ${n}`, [[1, names]]));
+  await checkBundles(s.client);
+  const total = s.posts[0].embeds.reduce((sum, e) => {
+    const { title, description, footer } = e.toJSON();
+    return sum + title.length + description.length + footer.text.length;
+  }, 0);
+  assert.ok(total <= 6000, `${total} characters`);
+  assert.ok(s.posts[0].embeds.length < 6);
+});
+
+test('nothing is posted before the server’s hour or the day’s sale post, and then it goes out', async (t) => {
+  const noon = new Date();
+  noon.setUTCHours(12, 0, 0, 0);
+  t.mock.timers.enable({ apis: ['Date'], now: noon.getTime() });
+  const s = server(['a']);
+  wanted(s.id, 'Early Game', 9801, 'a');
+  world.bundles = [bundle(11, 'Early Bundle', [[1, ['Early Game']]])];
+  setSetting(s.id, 'timezone', 'UTC');
+  setSetting(s.id, 'salePostHour', 18);
+  await checkBundles(s.client);
+  assert.equal(s.posts.length, 0);
+  t.mock.timers.setTime(noon.getTime() + 6.5 * 3_600_000);
+  setKv(`sale_post:${s.id}`, '');
+  await checkBundles(s.client);
+  assert.equal(s.posts.length, 0, 'not before the day’s sale post');
+  setKv(`sale_post:${s.id}`, postDay(s.id)!);
+  await checkBundles(s.client);
+  assert.equal(s.posts.length, 1);
 });
 
 test('nothing is asked with bundle alerts off or without an IsThereAnyDeal key', async (t) => {

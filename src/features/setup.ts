@@ -34,6 +34,7 @@ const LONGEST_GREETING = 100;
 export const LIMITS = {
   weeklyPostDay: [0, 6],
   weeklyPostHour: [0, 23],
+  salePostHour: [0, 23],
   hopOnMinPeople: [2, 25],
   hopOnCooldownMin: [0, 1440],
   recapMinMinutes: [1, 600],
@@ -86,6 +87,7 @@ export const LABELS: Record<SettingKey, string> = {
   freeGamesMultiplayer: 'Only multiplayer games',
   freeGamesUnlisted: 'Games not on Steam',
   saleMinDiscount: 'Smallest sale worth posting',
+  salePostHour: 'Sale post time',
   saleSteamWishlists: 'Steam wishlists in sale alerts',
   saleOtherStores: 'Other stores in sale alerts',
   bundleAlerts: 'Bundle alerts',
@@ -150,6 +152,7 @@ export function show(key: SettingKey, value: unknown): string {
     case 'weeklyPostDay':
       return DAYS[value as number];
     case 'weeklyPostHour':
+    case 'salePostHour':
       return `${String(value).padStart(2, '0')}:00`;
     case 'hopOnMinPeople':
       return `${value} people`;
@@ -267,7 +270,7 @@ export const GROUPS: [string, SettingKey[]][] = [
   ['Voice sessions', ['sessionRecap', 'recapMinMinutes', 'sessionGraceMin']],
   ['Leaderboard and recap', ['weeklyLeaderboard', 'weeklyPostDay', 'weeklyPostHour', 'monthlyRecap']],
   ['Games', ['steamCountry', 'steamStatus', 'gameNightReminderMin']],
-  ['Sale alerts', ['saleMinDiscount', 'saleSteamWishlists', 'saleOtherStores', 'bundleAlerts', 'bundlesLikeWePlay', 'saleChannel']],
+  ['Sale alerts', ['saleMinDiscount', 'salePostHour', 'saleSteamWishlists', 'saleOtherStores', 'bundleAlerts', 'bundlesLikeWePlay', 'saleChannel']],
   ['Patch notes', ['patchNotes', 'patchNotesChannel']],
   ['Free games', ['freeGames', 'freeGamesChannel', 'freeGamesMinRating', 'freeGamesTaste', 'freeGamesMultiplayer', 'freeGamesUnlisted']],
   ['Soundboard', ['soundVolume', 'evenVolume', 'joinSounds', 'joinSoundDelayMs', 'joinSoundCooldownMin', 'soundManagerRole']],
@@ -529,6 +532,9 @@ export const setup: Feature = {
             .addIntegerOption((o) =>
               o.setName('min_discount').setDescription('Smallest discount to post, in percent').setMinValue(LIMITS.saleMinDiscount[0]).setMaxValue(LIMITS.saleMinDiscount[1]),
             )
+            .addIntegerOption((o) =>
+              o.setName('post_hour').setDescription('Hour to post the day’s sales and bundles, 0–23, in the server’s time zone').setMinValue(LIMITS.salePostHour[0]).setMaxValue(LIMITS.salePostHour[1]),
+            )
             .addBooleanOption((o) => o.setName('steam_wishlists').setDescription('Include games on members’ public Steam wishlists'))
             .addBooleanOption((o) => o.setName('other_stores').setDescription('Also post when another official store sells a Steam key for less than Steam'))
             .addBooleanOption((o) => o.setName('bundles').setDescription('Post Humble, Fanatical and Green Man Gaming bundles with a game this server wants'))
@@ -789,6 +795,7 @@ export const setup: Feature = {
           if (problem) return i.reply({ content: problem, flags: MessageFlags.Ephemeral });
           return apply(i, [
             ['saleMinDiscount', i.options.getInteger('min_discount')],
+            ['salePostHour', i.options.getInteger('post_hour')],
             ['saleSteamWishlists', i.options.getBoolean('steam_wishlists')],
             ['saleOtherStores', i.options.getBoolean('other_stores')],
             ['bundleAlerts', i.options.getBoolean('bundles')],

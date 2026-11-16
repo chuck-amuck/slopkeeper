@@ -222,7 +222,7 @@ Every `SALE_CHECK_HOURS` (default 6), the bot checks Steam prices, and [other st
 - **Steam wishlists:** games on a linked member's Steam wishlist, if their profile lets the bot see it. A server can turn these off.
 - **Library:** games added with a Steam ID.
 
-It posts once per check in the announce channel, or the channel from `/setup sale-alerts`, however many games are on sale. Up to 10 games are listed, most wanted first, and the rest are in `/sales`:
+Prices are checked through the day, so `/sales` and the web UI stay current, but it posts once a day: at 18:00 in the server's time zone by default (`/setup sale-alerts post_hour:`), with everything that's new since the last post, in the announce channel or the channel from `/setup sale-alerts`. That post checks prices again first. If the bot is down at that hour, it posts when it's back that day. A sale that starts and ends between two posts isn't posted, but shows in `/sales` while it's on. Up to 10 games are listed, most wanted first, and the rest are in `/sales`:
 
 > 💸 **3 games on sale**
 > **Deep Rock Galactic**: 60% off, $11.99, was $29.99. Lowest price yet. Played 14h · Needs it: @Sam, @Alex
@@ -252,7 +252,7 @@ Only the people a sale matters to are pinged:
 
 #### Bundles
 
-With an IsThereAnyDeal key, the bot also looks through the Humble Bundle, Fanatical and Green Man Gaming bundles running now, every `SALE_CHECK_HOURS`. A bundle is posted once, in the same channel as sales, when it has:
+With an IsThereAnyDeal key, the bot also looks through the Humble Bundle, Fanatical and Green Man Gaming bundles running now, once a day at the same hour as sales. The day's new bundles share one post of their own, in the same channel as sales. A bundle is in it once, when it has:
 
 - **A game this server cares about:** one it would post a sale for, as above. The post names the game, the cheapest tier that has it and why, and pings whoever wants it or has it on their Steam wishlist.
 - **A game like what you play:** one sharing at least 4 Steam tags with one of the 10 games played most here in the past 180 days, that someone with a linked Steam account doesn't already have. Tags that mean much the same, like Rogue-like, Rogue-lite and Action Roguelike, count once. When most of those 10 games are multiplayer or co-op, the bundle game has to be too. These don't ping anyone.
@@ -263,7 +263,7 @@ With an IsThereAnyDeal key, the bot also looks through the Humble Bundle, Fanati
 > Ends in 5 days
 > *Humble Bundle · from $10.00*
 
-DLC and soundtracks are left out, and a bundle with nothing for this server isn't posted, but is looked at again at the next check in case someone wants one of its games by then. At most 3 bundles are posted at a time. A server can turn bundles off (`/setup sale-alerts bundles:False`), or keep only the ones with a game it cares about (`bundles_like_we_play:False`).
+DLC and soundtracks are left out, and a bundle with nothing for this server isn't posted, but is looked at again the next day in case someone wants one of its games by then. A post holds up to 10 bundles, as many as fit in Discord's 6,000 characters, and the rest wait for the next day. A server can turn bundles off (`/setup sale-alerts bundles:False`), or keep only the ones with a game it cares about (`bundles_like_we_play:False`).
 
 Games hidden with **Never suggest this** aren't watched for being played or wishlisted, only if someone asked for them. A game nobody needs isn't posted.
 
@@ -623,6 +623,7 @@ Each setting goes by the name `/setup show` and `/setup reset` use. A few are se
 | Only multiplayer games | `free-game-filters` | `FREE_GAMES_MULTIPLAYER` (`true` to turn on) | off |
 | Games not on Steam | `free-game-filters` | `FREE_GAMES_UNLISTED` (`true` to show them) | hidden |
 | Smallest sale worth posting | `sale-alerts` | `SALE_MIN_DISCOUNT` | 25% off |
+| Sale post time | `sale-alerts` | `SALE_POST_HOUR` | 18:00 |
 | Steam wishlists in sale alerts | `sale-alerts` | `SALE_STEAM_WISHLISTS` (`false` to turn off) | on |
 | Other stores in sale alerts | `sale-alerts` | `SALE_OTHER_STORES` (`false` to turn off) | on, with an `ITAD_API_KEY` (key resellers with a `GGDEALS_API_KEY`) |
 | Bundle alerts | `sale-alerts` | `BUNDLE_ALERTS` (`false` to turn off) | on, with an `ITAD_API_KEY` |
@@ -753,7 +754,7 @@ Set in `.env` (see `.env.example`).
 | `DISCORD_TOKEN` | required | Bot token |
 | `STEAM_API_KEY` | none | Needed for `/steam` and the picker's Steam data |
 | `ALLOWED_GUILD_IDS` | any server | Comma-separated server IDs allowed to use the bot; it leaves any other server |
-| `SALE_CHECK_HOURS` | 6 | How often Steam prices are checked, for every server at once |
+| `SALE_CHECK_HOURS` | 6 | How often Steam prices are checked, for every server at once. Posts go out once a day, at each server's sale post time |
 | `ITAD_API_KEY` | none | An [IsThereAnyDeal](https://isthereanydeal.com) API key, for [other stores' Steam keys](#other-stores) and the lowest price ever in sale alerts, and for [bundles](#bundles). Sign in, register an app under your account's apps page, and copy its API key |
 | `GGDEALS_API_KEY` | none | A [gg.deals](https://gg.deals) API key, from your gg.deals account settings, for the cheapest [key reseller](#other-stores) beside a sale. Your account's email address must be confirmed |
 | `TZ` | UTC | The container's time zone, and every server's default time zone |

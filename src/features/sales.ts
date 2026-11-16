@@ -1,10 +1,10 @@
 import { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, escapeMarkdown, MessageFlags, SlashCommandBuilder, type Client, type Guild } from 'discord.js';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { config } from '../config.ts';
-import { db } from '../db.ts';
+import { db, getKv, setKv } from '../db.ts';
 import { setting } from '../settings.ts';
 import type { Feature } from '../types.ts';
-import { announceChannel, eachGuild, formatDuration, paginate, requestTimeout } from '../util.ts';
+import { announceChannel, eachGuild, formatDuration, paginate, requestTimeout, zonedParts } from '../util.ts';
 import { factsFor } from './gamefacts.ts';
 import { allGames, groupMembers, ownersOfApp } from './games.ts';
 import { checkpoint, plural, short, stats } from './gamestats.ts';
@@ -484,15 +484,77 @@ function rememberAlert(guildId: string, appid: number, discount: number) {
   else db.prepare('DELETE FROM sale_alerts WHERE guild_id = ? AND appid = ?').run(guildId, appid);
 }
 
-export async function checkSales(client: Client<true>) {
-  await refreshWishlists();
-  const prices = newPrices();
-  await eachGuild(client, 'Sale check', (guild) => checkGuild(client, guild, prices));
+// A tick that tries a server's post and fails waits this long before trying again
+const RETRY_MS = 60 * 60_000;
+// Tries at a day's post that some of Steam's prices are missing from, before posting without them
+const PARTIAL_TRIES = 3;
+
+/** One check or post at a time, so a slow one isn't overlapped by the next and nothing is posted twice */
+let busy = false;
+async function alone(job: () => Promise<void>) {
+  if (busy) return;
+  busy = true;
+  try {
+    await job();
+  } finally {
+    busy = false;
+  }
 }
 
-async function checkGuild(client: Client<true>, guild: Guild, prices: Prices) {
+/** Checks prices for every server, keeping /sales and the web UI current, and posting what's new only if `post` */
+export function checkSales(client: Client<true>, post = false) {
+  return alone(async () => {
+    await refreshWishlists();
+    const prices = newPrices();
+    await eachGuild(client, 'Sale check', async (guild) => void (await checkGuild(client, guild, prices, post)));
+  });
+}
+
+/** The server's date once its post hour has come today, or null before then */
+export function postDay(guildId: string, now = Date.now()) {
+  const at = zonedParts(now, setting(guildId, 'timezone'));
+  return at.hour < setting(guildId, 'salePostHour') ? null : `${at.year}-${at.month}-${at.day}`;
+}
+
+/** When each server last tried its day's post, and how many tries found Steam's prices incomplete */
+const tries = new Map<string, { at: number; partial: number; day: string }>();
+
+/** Each server's one sale post of the day, with fresh prices, once its hour has come */
+export function postDailySales(client: Client<true>) {
+  return alone(async () => {
+    let prices: Prices | null = null;
+    await eachGuild(client, 'Daily sale post', async (guild) => {
+      const day = postDay(guild.id);
+      const key = `sale_post:${guild.id}`;
+      if (!day || getKv(key) === day) return;
+      const last = tries.get(guild.id);
+      const tried = last?.day === day ? last : { at: 0, partial: 0, day };
+      if (Date.now() - tried.at < RETRY_MS) return;
+      // Nowhere to post is nothing to do today, without asking anyone for prices
+      if (!(await announceChannel(client, guild.id, 'saleChannel')) && !(await announceChannel(client, guild.id))) return setKv(key, day);
+      tried.at = Date.now();
+      tries.set(guild.id, tried);
+      if (!prices) {
+        await refreshWishlists();
+        prices = newPrices();
+      }
+      // Left unmarked when the post fails or Steam can't be asked, so a later tick tries again
+      const done = await checkGuild(client, guild, prices, true, ++tried.partial >= PARTIAL_TRIES);
+      if (done) {
+        setKv(key, day);
+        tries.delete(guild.id);
+      }
+    });
+  });
+}
+
+/**
+ * Whether the check is done: it posted, or found nothing to post. False when there's nowhere to post or Steam didn't
+ * answer for some games, unless `partial` says to post without them
+ */
+async function checkGuild(client: Client<true>, guild: Guild, prices: Prices, post: boolean, partial = true) {
   const out = (await announceChannel(client, guild.id, 'saleChannel')) ?? (await announceChannel(client, guild.id));
-  if (!out) return;
+  if (!out) return false;
   await refreshStale(groupMembers(guild), config.saleCheckHours * 3_600_000);
   const country = setting(guild.id, 'steamCountry');
   const lowestDiscount = setting(guild.id, 'saleMinDiscount');
@@ -501,11 +563,15 @@ async function checkGuild(client: Client<true>, guild: Guild, prices: Prices) {
   await loadPrices(games.map((g) => g.appid), country, prices, otherStores);
 
   const due: Sale[] = [];
+  let missing = 0;
   for (const g of games.sort(byInterest)) {
     const key = `${country}:${g.appid}`;
     const price = prices.steam.get(key);
     const store = otherStores ? (prices.stores.get(key) ?? null) : null;
-    if (price === undefined) continue;
+    if (price === undefined) {
+      missing++;
+      continue;
+    }
     const deal = storeDeal(price, store);
     const reseller = otherStores ? keyshopDeal(price, store, prices.keyshops.get(key)) : null;
     const sale = price && {
@@ -523,7 +589,9 @@ async function checkGuild(client: Client<true>, guild: Guild, prices: Prices) {
     if (size <= last) rememberAlert(guild.id, g.appid, size);
     else if (sale && size >= lowestDiscount && (!last || size >= last + DEEPER_BY)) due.push({ ...g, ...sale });
   }
-  if (!due.length) return;
+  // A sale in a batch Steam didn't answer would wait a whole day, so a post waits for it a few times first
+  if (missing && !partial) return false;
+  if (!post || !due.length) return missing < games.length || !games.length;
 
   // Wishlisted games only have a name once they're asked about
   await ensureAppInfo(due.map((g) => g.appid)).catch(console.error);
@@ -547,6 +615,7 @@ async function checkGuild(client: Client<true>, guild: Guild, prices: Prices) {
   });
   // Afterwards, so a post that fails is tried again on the next check
   for (const g of due) rememberAlert(guild.id, g.appid, dealSize(g));
+  return true;
 }
 
 /** A page of what's on sale, everything or only what one person wants or wishlisted, with buttons to turn pages */
@@ -602,8 +671,10 @@ export const sales: Feature = {
     return i.editReply({ ...(await salesPage(i.guild, Number(page), mine || null)), allowedMentions: { parse: [] } });
   },
   setup(client) {
-    const run = () => void checkSales(client).catch(console.error);
-    setTimeout(run, 60_000);
-    setInterval(run, config.saleCheckHours * 3_600_000);
+    // Through the day, prices are kept current for /sales and the web UI; posting waits for each server's hour
+    const check = () => void checkSales(client, false).catch(console.error);
+    setTimeout(check, 60_000);
+    setInterval(check, config.saleCheckHours * 3_600_000);
+    setInterval(() => void postDailySales(client).catch(console.error), 10 * 60_000);
   },
 };

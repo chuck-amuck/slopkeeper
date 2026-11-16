@@ -76,13 +76,14 @@ test('records putting a setting back', async () => {
 
 test('sale alerts set their discount, wishlists and channel, one at a time if wanted', async () => {
   const guildId = 'setup-sales';
-  await run(guildId, 'sale-alerts', { min_discount: 40 });
+  await run(guildId, 'sale-alerts', { min_discount: 40, post_hour: 20 });
   assert.equal(setting(guildId, 'saleMinDiscount'), 40);
+  assert.equal(setting(guildId, 'salePostHour'), 20);
   assert.equal(setting(guildId, 'saleSteamWishlists'), true);
   await run(guildId, 'sale-alerts', { steam_wishlists: false });
   assert.equal(setting(guildId, 'saleSteamWishlists'), false);
   assert.equal(setting(guildId, 'saleMinDiscount'), 40);
-  assert.deepEqual(log(guildId), ['Set Steam wishlists in sale alerts to off', 'Set Smallest sale worth posting to 40% off']);
+  assert.deepEqual(log(guildId), ['Set Steam wishlists in sale alerts to off', 'Set Sale post time to 20:00', 'Set Smallest sale worth posting to 40% off']);
 });
 
 test('sale alerts can leave out other stores and bundles', async () => {

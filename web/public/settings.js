@@ -17,6 +17,7 @@ const FIELDS = {
   monthlyRecap: { kind: 'boolean', hint: 'Posts a recap of the month on the 1st.' },
   steamCountry: { kind: 'country', hint: 'Two-letter country code for sale prices, like us or gb.' },
   saleMinDiscount: { kind: 'number', unit: '% off', hint: 'Smaller sales aren’t posted, but still show in /sales.' },
+  salePostHour: { kind: 'hour', hint: 'In the server’s time zone. Prices are checked through the day, and everything new is posted together once a day at this hour, with bundles in a post of their own.' },
   saleSteamWishlists: { kind: 'boolean', hint: 'Watches games on members’ Steam wishlists, if their profile allows it.' },
   saleOtherStores: { kind: 'boolean', hint: 'Also posts when an official store like Humble, Fanatical or Green Man Gaming sells a Steam key for less than Steam, by at least the discount above. Copies for GOG, Epic and other launchers are left out. Prices come from IsThereAnyDeal, and need its API key on the bot. With a gg.deals key too, the cheapest key reseller is shown beside a sale, but never posts one by itself.' },
   bundleAlerts: { kind: 'boolean', hint: 'Posts a Humble, Fanatical or Green Man Gaming bundle once, when it has a game this server plays, wants or has on a Steam wishlist, pinging whoever wants it. Needs an IsThereAnyDeal API key on the bot.' },

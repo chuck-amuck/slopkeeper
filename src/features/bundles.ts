@@ -1,14 +1,14 @@
 import { EmbedBuilder, escapeMarkdown, type Client, type Guild } from 'discord.js';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { config } from '../config.ts';
-import { db } from '../db.ts';
+import { db, getKv, setKv } from '../db.ts';
 import { setting } from '../settings.ts';
 import type { Feature } from '../types.ts';
 import { announceChannel, eachGuild } from '../util.ts';
 import { factsFor } from './gamefacts.ts';
 import { everyoneOwns, MULTIPLAYER_TAGS, taste, tasteTags, type Taste } from './freegames.ts';
 import { short } from './gamestats.ts';
-import { itad, money, pauses, saleReasons, storeUrl, watched, type Watched } from './sales.ts';
+import { itad, money, pauses, postDay, saleReasons, storeUrl, watched, type Watched } from './sales.ts';
 
 // Humble Bundle, Fanatical and Green Man Gaming (listed under two names), by IsThereAnyDeal's ids for bundle sites.
 // They sell Steam keys; the rest, like itch.io, mostly don't
@@ -21,9 +21,10 @@ const SHARED_TAGS = 4;
 /** Steam's names for much the same thing, which would otherwise count as several tags in common */
 const SAME_TAG = new Map(['Rogue-like', 'Rogue-lite', 'Roguelite', 'Action Roguelike', 'Action Roguelite', 'Traditional Roguelike'].map((tag) => [tag, 'Roguelike']));
 const LISTED_GAMES = 10;
-/** Most bundle posts per server per check, so turning it on doesn't flood the channel */
-const MAX_POSTS = 3;
-const FIRST_CHECK_MS = 5 * 60_000;
+// A day's bundles share one post: a message holds 10 embeds, and 6000 characters across them
+const MAX_CARDS = 10;
+const MAX_CARD_CHARS = 6000;
+const EMBED_TEXT = 4096;
 // A message can name at most 100 people, and its text stops at 2000 characters
 const MAX_PINGS = 80;
 // Long after any bundle has ended
@@ -150,65 +151,87 @@ const tierPrice = (bundle: Bundle, tier: number) => {
   return cents === null ? null : money(cents, currency);
 };
 
-export function bundlePost(bundle: Bundle, found: Match[]) {
+/** One bundle's card, and who it pings */
+export function bundleCard(bundle: Bundle, found: Match[]) {
   const where = (m: Match) => {
     const price = tierPrice(bundle, m.tier);
     if (price === null) return 'for any price';
     return bundle.tiers.length > 1 ? `in the ${price} tier` : `for ${price}`;
   };
   const from = tierPrice(bundle, 0);
-  const lines = found.slice(0, LISTED_GAMES).map((m) => `[**${escapeMarkdown(short(m.title)).replace(/[[\]]/g, '')}**](${storeUrl(m.appid)}) ${where(m)}: ${m.reason}`);
-  if (found.length > LISTED_GAMES) lines.push(`and ${found.length - LISTED_GAMES} more`);
-  if (bundle.expiry) lines.push('', `Ends <t:${Math.floor(Date.parse(bundle.expiry) / 1000)}:R>`);
-  const pings = [...new Set(found.flatMap((m) => (m.wanted ? [...m.wanted.wanted, ...m.wanted.wishlisted] : [])))].slice(0, MAX_PINGS);
+  const games = found.slice(0, LISTED_GAMES).map((m) => `[**${escapeMarkdown(short(m.title)).replace(/[[\]]/g, '')}**](${storeUrl(m.appid)}) ${where(m)}: ${m.reason}`);
+  const ends = bundle.expiry ? ['', `Ends <t:${Math.floor(Date.parse(bundle.expiry) / 1000)}:R>`] : [];
+  const text = (shown: string[]) => [...shown, ...(found.length > shown.length ? [`and ${found.length - shown.length} more`] : []), ...ends].join('\n');
+  // Whole lines come off the end, rather than cutting a link in half
+  while (games.length > 1 && text(games).length > EMBED_TEXT) games.pop();
+  const title = `📦 ${bundle.title}`.slice(0, 256);
+  const description = text(games).slice(0, EMBED_TEXT);
+  const footer = from === null ? bundle.site : `${bundle.site} · from ${from}`;
   return {
-    content: pings.map((id) => `<@${id}>`).join(' ') || undefined,
-    embeds: [
-      new EmbedBuilder()
-        .setTitle(`📦 ${bundle.title}`.slice(0, 256))
-        .setURL(bundle.url)
-        .setDescription(lines.join('\n'))
-        .setFooter({ text: from === null ? bundle.site : `${bundle.site} · from ${from}` })
-        .setColor(0xf4900c),
-    ],
-    allowedMentions: { users: pings },
+    embed: new EmbedBuilder().setTitle(title).setURL(bundle.url).setDescription(description).setFooter({ text: footer }).setColor(0xf4900c),
+    chars: title.length + description.length + footer.length,
+    pings: found.flatMap((m) => (m.wanted ? [...m.wanted.wanted, ...m.wanted.wishlisted] : [])),
   };
 }
 
-export async function checkBundles(client: Client<true>) {
-  if (!config.itadKey) return;
+let busy = false;
+
+/** Each server's one bundle post of the day, after its sale post, with every new bundle that fits */
+export async function postDailyBundles(client: Client<true>) {
+  if (!config.itadKey || busy) return;
+  busy = true;
+  try {
+    await postBundles(client);
+  } finally {
+    busy = false;
+  }
+}
+
+async function postBundles(client: Client<true>) {
   const byRegion = new Map<string, Promise<Bundle[]>>();
   const posted = db.prepare('SELECT 1 FROM bundle_posts WHERE guild_id = ? AND bundle_id = ?');
   const markPosted = db.prepare('INSERT OR IGNORE INTO bundle_posts (guild_id, bundle_id, posted_at) VALUES (?, ?, ?)');
   db.prepare('DELETE FROM bundle_posts WHERE posted_at < ?').run(Date.now() - FORGET_POSTS_MS);
-  await eachGuild(client, 'Bundle check', async (guild) => {
-    if (!setting(guild.id, 'bundleAlerts')) return;
+  await eachGuild(client, 'Daily bundle post', async (guild) => {
+    const day = postDay(guild.id);
+    const key = `bundle_post:${guild.id}`;
+    // The day's sale post goes first, so bundles never arrive on their own while it's being retried
+    if (!day || getKv(key) === day || getKv(`sale_post:${guild.id}`) !== day || !setting(guild.id, 'bundleAlerts')) return;
+    const out = (await announceChannel(client, guild.id, 'saleChannel')) ?? (await announceChannel(client, guild.id));
+    if (!out) return;
     const country = setting(guild.id, 'steamCountry');
     if (!byRegion.has(country)) byRegion.set(country, currentBundles(country));
     const fresh = (await byRegion.get(country)!).filter((b) => !posted.get(guild.id, b.id));
-    if (!fresh.length) return;
-    const out = (await announceChannel(client, guild.id, 'saleChannel')) ?? (await announceChannel(client, guild.id));
-    if (!out) return;
+    if (!fresh.length) return setKv(key, day);
     const interested = new Map((await watched(guild)).map((g) => [g.appid, g]));
     const theirs = setting(guild.id, 'bundlesLikeWePlay') ? await taste(guild.id) : null;
     const together = await playsTogether(theirs);
-    let sent = 0;
+    const cards: (ReturnType<typeof bundleCard> & { id: number })[] = [];
+    let chars = 0;
     for (const bundle of fresh) {
-      if (sent === MAX_POSTS) return;
+      if (cards.length === MAX_CARDS) break;
       // Left unmarked when nothing matches, so someone wanting one of its games later still hears about it
       const found = await matches(guild, bundle, interested, theirs, together);
       if (!found.length) continue;
-      await out.send(bundlePost(bundle, found));
-      markPosted.run(guild.id, bundle.id, Date.now());
-      sent++;
+      const card = bundleCard(bundle, found);
+      // What doesn't fit waits for tomorrow's post
+      if (chars + card.chars > MAX_CARD_CHARS) continue;
+      chars += card.chars;
+      cards.push({ ...card, id: bundle.id });
     }
+    if (cards.length) {
+      const pings = [...new Set(cards.flatMap((c) => c.pings))].slice(0, MAX_PINGS);
+      await out.send({ content: pings.map((id) => `<@${id}>`).join(' ') || undefined, embeds: cards.map((c) => c.embed), allowedMentions: { users: pings } });
+      for (const c of cards) markPosted.run(guild.id, c.id, Date.now());
+    }
+    // Afterwards, so a post that fails is tried again at the next tick
+    setKv(key, day);
   });
 }
 
 export const bundles: Feature = {
   setup(client) {
-    const run = () => void checkBundles(client).catch(console.error);
-    setTimeout(run, FIRST_CHECK_MS);
-    setInterval(run, config.saleCheckHours * 3_600_000);
+    // A minute after the sales' tick
+    setTimeout(() => setInterval(() => void postDailyBundles(client).catch(console.error), 10 * 60_000), 60_000);
   },
 };

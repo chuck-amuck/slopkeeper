@@ -34,6 +34,8 @@ export const DEFAULTS = {
   freeGamesUnlisted: process.env.FREE_GAMES_UNLISTED === 'true',
   // Steam is always running a small sale on something, so an alert waits for one worth mentioning
   saleMinDiscount: num('SALE_MIN_DISCOUNT', 25),
+  // Sales and bundles are each posted once a day, at this hour in the server's time zone
+  salePostHour: num('SALE_POST_HOUR', 18),
   saleSteamWishlists: process.env.SALE_STEAM_WISHLISTS !== 'false',
   // Only does anything with an ITAD_API_KEY, or a GGDEALS_API_KEY for key resellers
   saleOtherStores: process.env.SALE_OTHER_STORES !== 'false',
@@ -119,6 +121,7 @@ export const DEFAULT_ENV: Partial<Record<SettingKey, string>> = {
   freeGamesMultiplayer: 'FREE_GAMES_MULTIPLAYER',
   freeGamesUnlisted: 'FREE_GAMES_UNLISTED',
   saleMinDiscount: 'SALE_MIN_DISCOUNT',
+  salePostHour: 'SALE_POST_HOUR',
   saleSteamWishlists: 'SALE_STEAM_WISHLISTS',
   saleOtherStores: 'SALE_OTHER_STORES',
   bundleAlerts: 'BUNDLE_ALERTS',
