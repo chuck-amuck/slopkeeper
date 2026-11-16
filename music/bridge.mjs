@@ -90,7 +90,7 @@ export function createBridge(options = {}) {
     try {
       const answer =
         route === 'POST /lookup'
-          ? await youtube.lookup(body.url, Number.isInteger(body.count) ? body.count : 1)
+          ? await youtube.lookup(body.url, Number.isInteger(body.count) ? body.count : 1, body.shuffle === true)
           : route === 'POST /clip'
             ? await youtube.clip(body.url)
             : route === 'POST /similar'

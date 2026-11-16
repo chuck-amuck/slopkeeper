@@ -235,8 +235,8 @@ export function createFetcher(o) {
       updateTimer = setInterval(updating, DAY);
       updateTimer.unref?.();
     },
-    /** What a YouTube or SoundCloud link is, without downloading it. A playlist gives up to `count` of its songs */
-    lookup: (url, count = 1) => run({ url, info: true, count }),
+    /** What a YouTube or SoundCloud link is, without downloading it. A playlist gives up to `count` of its songs, at random with `shuffle` */
+    lookup: (url, count = 1, shuffle = false) => run({ url, info: true, count, shuffle }),
     /** Songs like a YouTube video, from YouTube Music's mix for it */
     similar: (url) => run({ similar: url }),
     stop() {

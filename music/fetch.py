@@ -2,13 +2,16 @@
 # Reads one JSON request on stdin and writes one JSON answer on stdout:
 #   {"title", "artist", "durationMs", "dir"}  a song from Spotify, matched by name and length, then downloaded
 #   {"url", "dir"}                            a YouTube or SoundCloud link, downloaded
-#   {"url", "info": true, "count"}            what a link is, without downloading it: a song, or up to `count` songs of a YouTube playlist
+#   {"url", "info": true, "count", "shuffle"} what a link is, without downloading it: a song, or up to `count` songs of a YouTube
+#                                             playlist or SoundCloud set, picked at random with `shuffle`
 #   {"similar"}                               songs like a YouTube video, from YouTube Music's mix for it
 #   {"url", "clip": true, "dir"}              a video or track to cut a soundboard sound from, downloaded with its picture
 import json
 import os
+import random
 import re
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import quote, urlparse
 
 # A match can be this many seconds longer or shorter than Spotify says
@@ -24,6 +27,10 @@ VIDEO = re.compile(r'^https://(?:(?:www|m|music)\.)?(?:youtube\.com/watch\?(?:.*
 MIX_LENGTH = 40
 # The most songs read from a playlist: enough for shuffle to pick from, and YouTube lists 500 in about 2 seconds
 PLAYLIST_READ = 500
+# SoundCloud lists a set's tracks without their names or lengths, so each is read, about 0.7 s apiece, this many at once.
+# Only this many of them are read, shuffled or not, since shuffle can pick before reading
+SOUNDCLOUD_AT_ONCE = 8
+SOUNDCLOUD_READ = 100
 # Where a soundboard sound can come from, including any subdomain, like m.youtube.com or vm.tiktok.com
 CLIP_HOSTS = ('youtube.com', 'youtu.be', 'soundcloud.com', 'tiktok.com', 'instagram.com')
 # The editor shows the video, so it's downloaded small, and only in a format that has the sound in it too, as there's no ffmpeg
@@ -191,10 +198,57 @@ def playlist(url, count):
     }
 
 
-def lookup(url, count):
-    """What a link is: a song, or a YouTube playlist's songs"""
+def soundcloud_set(url):
+    """Whether a link is to a SoundCloud playlist or album, which SoundCloud calls a set"""
+    parts = urlparse(url)
+    host = (parts.hostname or '').lower()
+    return (host == 'soundcloud.com' or host.endswith('.soundcloud.com')) and '/sets/' in parts.path
+
+
+class Silent:
+    """A logger for yt-dlp that keeps its errors to itself, for tracks that are expected to fail now and then"""
+
+    def debug(self, message):
+        pass
+
+    info = warning = error = debug
+
+
+def soundcloud_track(url):
+    """One track of a set, or None if it can't be read, as a private, region-locked or DRM-protected one can't"""
+    try:
+        with ydl({'logger': Silent()}) as y:
+            return y.extract_info(url, download=False, process=False)
+    except Exception:
+        return None
+
+
+def soundcloud_playlist(url, count, shuffle):
+    """Up to `count` tracks of a SoundCloud set, in its order or picked at random, leaving out any that can't be read or are too long"""
+    with ydl() as y:
+        info = y.extract_info(url, download=False, process=False)
+    listed = [e['url'] for e in info.get('entries') or [] if e and e.get('url')]
+    count = min(max(int(count), 1), SOUNDCLOUD_READ)
+    chosen = random.sample(listed, min(count, len(listed))) if shuffle else listed[:count]
+    with ThreadPoolExecutor(SOUNDCLOUD_AT_ONCE) as pool:
+        read = list(pool.map(soundcloud_track, chosen))
+    songs = [about(t, link) for t, link in zip(read, chosen) if t and t.get('duration') and t['duration'] <= LONGEST]
+    return {
+        'playlist': True,
+        'title': info.get('title') or 'A SoundCloud playlist',
+        'artist': info.get('uploader') or '',
+        'songs': songs,
+        'skipped': len(chosen) - len(songs),
+        'more': len(listed) > len(chosen),
+    }
+
+
+def lookup(url, count, shuffle=False):
+    """What a link is: a song, or a YouTube playlist's or SoundCloud set's songs"""
     if youtube_playlist(url):
         return playlist(url, count)
+    if soundcloud_set(url):
+        return soundcloud_playlist(url, count, shuffle)
     # A video in a playlist, as YouTube's Share button gives it, is that video alone
     video = VIDEO.match(url)
     if video:
@@ -202,8 +256,6 @@ def lookup(url, count):
     with ydl({'noplaylist': True}) as y:
         info = y.extract_info(url, download=False, process=False)
     if info.get('_type') == 'playlist':
-        if 'soundcloud.com' in url and '/sets/' in url:
-            return {'error': 'SoundCloud playlists can’t be added yet. Add their songs one at a time.', 'missing': True}
         return {'error': 'That’s a channel or profile, not a playlist. Use a link to a playlist, or to one video or track.', 'missing': True}
     if (info.get('duration') or 0) > LONGEST:
         return {'error': f'That’s over {LONGEST // 60} minutes long.', 'missing': True}
@@ -292,7 +344,7 @@ def answer(request):
         if not LINK.match(url):
             return {'error': 'That isn’t a YouTube or SoundCloud link.', 'missing': True}
         if request.get('info'):
-            return lookup(url, request.get('count') or 1)
+            return lookup(url, request.get('count') or 1, request.get('shuffle') is True)
         info, path = download(url, request['dir'])
         return {**about(info, url), 'source': info.get('extractor_key', '').lower(), 'file': path.rsplit('/', 1)[-1]}
     source, url = find(request)

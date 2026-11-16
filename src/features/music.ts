@@ -79,6 +79,8 @@ const AUTOPLAY_WAIT_MS = 30_000;
 const PLAYED_KEPT = 500;
 const AUTOPLAY_NOTE = 'Autoplay found nothing new like the songs played, so the music stops after this one.';
 const YOUTUBE_VIDEO = /^https:\/\/(?:(?:www|m|music)\.)?(?:youtube\.com\/watch\?(?:.*&)?v=|youtu\.be\/)(?<video>[\w-]{11})/;
+// A SoundCloud track's own page, which is what a set lists, and not a set or a profile
+const SOUNDCLOUD_TRACK = /^https:\/\/(?:www\.|m\.)?soundcloud\.com\/(?<path>[\w-]+\/(?!sets(?:[/?#]|$))[\w-]+)\/?(?:[?#].*)?$/;
 /** The YouTube video a link is to, or undefined for anything else */
 const videoOf = (url: string) => url.match(YOUTUBE_VIDEO)?.groups?.video;
 
@@ -932,17 +934,20 @@ async function mixOf(s: Session, seed: { video: string; url: string }, failed: (
 /** YouTube Music's mix for a video, from the music container */
 async function mixFor(url: string): Promise<Track[]> {
   const answer = await askYoutube('/similar', { url });
-  return answer.missing ? [] : youtubeSongs(answer.songs);
+  return answer.missing ? [] : listedSongs(answer.songs);
 }
 
-/** YouTube videos the music container listed, as songs for the queue. Anything that isn't a YouTube video is left out */
-function youtubeSongs(listed: unknown): Track[] {
+/** YouTube videos or SoundCloud tracks the music container listed, as songs for the queue. Any other link is left out */
+function listedSongs(listed: unknown): Track[] {
   const songs = Array.isArray(listed) ? (listed as Record<string, unknown>[]) : [];
   return songs.flatMap((song) => {
-    const video = typeof song.url === 'string' ? videoOf(song.url) : undefined;
-    if (!video) return [];
-    const cover = typeof song.cover === 'string' && song.cover.startsWith('https://i.ytimg.com/') ? song.cover : null;
-    return [{ uri: `https://www.youtube.com/watch?v=${video}`, title: String(song.title ?? 'Untitled').slice(0, 300), artist: String(song.artist ?? '').slice(0, 300), album: '', cover, durationMs: Number(song.durationMs) || 0 }];
+    const link = typeof song.url === 'string' ? song.url : '';
+    const video = videoOf(link);
+    const track = link.match(SOUNDCLOUD_TRACK)?.groups?.path;
+    const uri = video ? `https://www.youtube.com/watch?v=${video}` : track ? `https://soundcloud.com/${track}` : null;
+    if (!uri) return [];
+    const cover = typeof song.cover === 'string' && /^https:\/\/(i\.ytimg\.com|i1\.sndcdn\.com)\//.test(song.cover) ? song.cover : null;
+    return [{ uri, title: String(song.title ?? 'Untitled').slice(0, 300), artist: String(song.artist ?? '').slice(0, 300), album: '', cover, durationMs: Number(song.durationMs) || 0 }];
   });
 }
 
@@ -1247,28 +1252,38 @@ export async function resolve(input: string, shuffle = false): Promise<{ name: s
 }
 
 /**
- * What a YouTube or SoundCloud link is, from the music container: one song, or a YouTube playlist's first
- * MOST_FROM_LINK songs, or that many picked at random from its first PLAYLIST_READ. `note` says what was left out
+ * What a YouTube or SoundCloud link is, from the music container: one song, or a playlist's first MOST_FROM_LINK
+ * songs, or that many at random. A YouTube playlist shuffles from its first PLAYLIST_READ, and a SoundCloud set from
+ * all of it, as the music container picks before reading each track. `note` says what was left out
  */
 async function lookUp(url: string, shuffle = false): Promise<{ name: string; tracks: Track[]; note?: string }> {
   const problem = unavailable();
   if (problem) throw new SpotifyError(problem);
+  const soundcloud = /^https?:\/\/([\w-]+\.)?soundcloud\.com\//i.test(url);
   let answer: Awaited<ReturnType<typeof askYoutube>>;
   try {
-    answer = await askYoutube('/lookup', { url, count: shuffle ? PLAYLIST_READ : MOST_FROM_LINK });
+    answer = await askYoutube('/lookup', { url, count: shuffle && !soundcloud ? PLAYLIST_READ : MOST_FROM_LINK, shuffle });
   } catch (err) {
     console.error('Music: couldn’t look up a link:', (err as Error).message);
     throw new SpotifyError('The music player couldn’t read that link. Try again in a moment.');
   }
   if (answer.missing) throw new SpotifyError(answer.missing);
   if (answer.playlist) {
-    const all = youtubeSongs(answer.songs);
+    const all = listedSongs(answer.songs);
     const skipped = Math.max(0, Math.floor(Number(answer.skipped)) || 0);
     const notes = [
-      answer.more === true && (shuffle ? `picked from its first ${PLAYLIST_READ}` : `the first ${MOST_FROM_LINK}; shuffle picks from its first ${PLAYLIST_READ}`),
-      skipped && `${skipped} private, deleted, live or over-long ${skipped === 1 ? 'video' : 'videos'} left out`,
+      answer.more === true &&
+        (soundcloud
+          ? !shuffle && `the first ${MOST_FROM_LINK}; shuffle picks from all of it`
+          : shuffle
+            ? `picked from its first ${PLAYLIST_READ}`
+            : `the first ${MOST_FROM_LINK}; shuffle picks from its first ${PLAYLIST_READ}`),
+      skipped &&
+        (soundcloud
+          ? `${skipped} locked or over-long ${skipped === 1 ? 'track' : 'tracks'} left out`
+          : `${skipped} private, deleted, live or over-long ${skipped === 1 ? 'video' : 'videos'} left out`),
     ].filter(Boolean);
-    return { name: String(answer.title ?? 'A YouTube playlist').slice(0, 300), tracks: pick(all, shuffle), note: notes.join(', ') };
+    return { name: String(answer.title ?? 'A playlist').slice(0, 300), tracks: pick(all, shuffle), note: notes.join(', ') };
   }
   const title = String(answer.title ?? 'Untitled').slice(0, 300);
   const cover = typeof answer.cover === 'string' && /^https:\/\/(i\.ytimg\.com|i1\.sndcdn\.com)\//.test(answer.cover) ? answer.cover : null;

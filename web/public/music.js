@@ -6,8 +6,8 @@ import { voiceBar } from './voice.js';
 const FROM_A_LIST = 100;
 const PLAYLISTS_SHOWN = 20;
 export const LINK = /^(https?:\/\/|spotify:)/i;
-/** A Spotify album or playlist, or a YouTube playlist, which can be added shuffled */
-export const LIST_LINK = /^(https?:\/\/open\.spotify\.com\/(intl-[a-z]+\/)?(album|playlist)\/|spotify:(album|playlist):|https?:\/\/((www|m|music)\.)?youtube\.com\/playlist\/?\?(.*&)?list=)/i;
+/** A Spotify album or playlist, a YouTube playlist or a SoundCloud set, which can be added shuffled */
+export const LIST_LINK = /^(https?:\/\/open\.spotify\.com\/(intl-[a-z]+\/)?(album|playlist)\/|spotify:(album|playlist):|https?:\/\/((www|m|music)\.)?youtube\.com\/playlist\/?\?(.*&)?list=|https?:\/\/(www\.|m\.)?soundcloud\.com\/[^/]+\/sets\/)/i;
 // What an uploaded file can be. The bot checks again, and how long it is
 const FILE_TYPES = ['.mp3', '.ogg', '.wav', '.m4a', '.opus', '.webm', '.flac'];
 const MOST_FILE_MB = 60;

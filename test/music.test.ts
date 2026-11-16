@@ -69,7 +69,7 @@ interface MixSong {
   cover: string | null;
 }
 const similarAsked: string[] = [];
-const lookupsAsked: { url: string; count: number }[] = [];
+const lookupsAsked: { url: string; count: number; shuffle?: boolean }[] = [];
 const mixes = new Map<string, MixSong[] | 'fail'>();
 let mixGate: Promise<void> | null = null;
 const watch = (video: string) => `https://www.youtube.com/watch?v=${video}`;
@@ -119,8 +119,17 @@ mock.method(globalThis, 'fetch', async (url: string, init: RequestInit = {}) => 
     return Response.json({ songs: mixOf(link.slice(-11)) });
   }
   if (where === '/lookup') {
-    const { url: link, count } = JSON.parse(init.body as string) as { url: string; count: number };
-    lookupsAsked.push({ url: link, count });
+    const { url: link, count, shuffle } = JSON.parse(init.body as string) as { url: string; count: number; shuffle: boolean };
+    lookupsAsked.push({ url: link, count, shuffle });
+    if (link.includes('/sets/')) {
+      const songs = [
+        { url: 'https://soundcloud.com/forss/city-ports', title: 'City Ports', artist: 'Forss', durationMs: 142_233, cover: 'https://i1.sndcdn.com/artworks-1.jpg' },
+        { url: 'https://m.soundcloud.com/forss/soulhack?in=forss/sets/soulhack', title: 'Soulhack', artist: 'Forss', durationMs: 274_459, cover: '' },
+        { url: 'https://soundcloud.com/forss/sets/other', title: 'A set, not a track', artist: '', durationMs: 1, cover: '' },
+        { url: 'https://soundcloud.com/forss', title: 'A profile', artist: '', durationMs: 1, cover: '' },
+      ];
+      return Response.json({ playlist: true, title: 'Soulhack', songs, skipped: 52, more: true });
+    }
     if (link.includes('/@')) return Response.json({ error: 'That’s a channel or profile, not a playlist.' }, { status: 404 });
     if (link.includes('list=')) {
       const size = Number(new URL(link).searchParams.get('size') ?? 3);
@@ -610,7 +619,7 @@ test('a YouTube playlist adds its songs in order, saying what was left out', asy
   const { id } = server();
   lookupsAsked.length = 0;
   assert.equal(await queueFrom(id, 'https://www.youtube.com/playlist?list=PLx&skipped=2', 'u1', false), 'Added 3 songs from **Road Trip** (2 private, deleted, live or over-long videos left out).');
-  assert.deepEqual(lookupsAsked, [{ url: 'https://www.youtube.com/playlist?list=PLx&skipped=2', count: 100 }]);
+  assert.deepEqual(lookupsAsked, [{ url: 'https://www.youtube.com/playlist?list=PLx&skipped=2', count: 100, shuffle: false }]);
   assert.deepEqual(queueOf(id).map((r) => [r.uri, r.title, r.artist]), [0, 1, 2].map((n) => [watch(`pl${String(n).padStart(9, '0')}`), `Track ${n}`, 'Band']));
   assert.match(recentActivity(id, 1)[0].action, /Added 3 songs from \*\*Road Trip\*\*/);
   stopMusic(id, 'u1');
@@ -628,6 +637,20 @@ test('a long YouTube playlist adds its first 100, or shuffles 100 from its first
   const titles = queueOf(id).map((r) => r.title);
   assert.equal(new Set(titles).size, 100);
   assert.notDeepEqual(titles.slice(0, 5), ['Track 0', 'Track 1', 'Track 2', 'Track 3', 'Track 4'], 'they’re picked at random');
+  stopMusic(id, 'u1');
+});
+
+test('a SoundCloud set adds its tracks, and shuffles from all of it', async () => {
+  const { id } = server();
+  lookupsAsked.length = 0;
+  const set = 'https://soundcloud.com/forss/sets/soulhack';
+  assert.equal(await queueFrom(id, set, 'u1', false), 'Added 2 songs from **Soulhack** (the first 100; shuffle picks from all of it, 52 locked or over-long tracks left out).');
+  assert.deepEqual(queueOf(id).map((r) => [r.uri, r.title, r.cover]), [
+    ['https://soundcloud.com/forss/city-ports', 'City Ports', 'https://i1.sndcdn.com/artworks-1.jpg'],
+    ['https://soundcloud.com/forss/soulhack', 'Soulhack', null],
+  ]);
+  assert.match(await queueFrom(id, set, 'u1', false, true), /\(52 locked or over-long tracks left out\)/);
+  assert.deepEqual(lookupsAsked.map((l) => [l.count, l.shuffle]), [[100, false], [100, true]], 'the music container picks at random, so it only reads 100');
   stopMusic(id, 'u1');
 });
 
