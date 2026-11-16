@@ -62,7 +62,7 @@ const FIELDS = {
   ttsNightReminders: { hint: 'Says the reminder in the night’s voice channel too, if people are in it.' },
   ttsHopOn: { hint: 'Says the hop-on ping in voice too, in the channel it was about.' },
   ttsRole: { kind: 'role', none: 'Everyone', hint: 'Who can use /say and have their messages read out, along with people with Manage Server. This page isn’t limited by it.' },
-  ttsMaxChars: { kind: 'number', unit: 'characters', hint: '200 is about 15 seconds of speech.' },
+  ttsMaxChars: { kind: 'number', unit: 'characters', hint: 'Up to 6000. 1000 is about a minute and a quarter of speech, and 4000 a whole paragraph of about 5 minutes.' },
   ttsCooldownSec: { kind: 'number', unit: 'seconds', hint: 'Shortest time between one person’s lines. The page counts as one person.' },
 };
 // Folded until opened, with what they're set to on the fold: long, and rarely changed once set up

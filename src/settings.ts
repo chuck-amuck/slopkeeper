@@ -76,7 +76,8 @@ export const DEFAULTS = {
   tts: process.env.TTS !== 'false',
   // Unset lets everyone use it
   ttsRole: null as string | null,
-  ttsMaxChars: num('TTS_MAX_CHARS', 200),
+  // A whole paragraph, about 5 minutes of speech
+  ttsMaxChars: num('TTS_MAX_CHARS', 4000),
   ttsCooldownSec: num('TTS_COOLDOWN_SEC', 5),
   ttsVoice: process.env.TTS_VOICE || 'tiktok',
   // The voices run a little fast at their natural speed

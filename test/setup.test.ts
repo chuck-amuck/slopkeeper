@@ -165,8 +165,8 @@ test('text to speech settings take a known voice, a role and sensible limits', (
   assert.deepEqual(checkSetting(guild, 'ttsSpeed', 50), { value: 50 });
   assert.match((checkSetting(guild, 'ttsSpeed', 49) as { error: string }).error, /50 to 150/);
   assert.match((checkSetting(guild, 'ttsSpeed', 151) as { error: string }).error, /50 to 150/);
-  assert.deepEqual(checkSetting(guild, 'ttsMaxChars', 500), { value: 500 });
-  assert.match((checkSetting(guild, 'ttsMaxChars', 501) as { error: string }).error, /20 to 500/);
+  assert.deepEqual(checkSetting(guild, 'ttsMaxChars', 6000), { value: 6000 });
+  assert.match((checkSetting(guild, 'ttsMaxChars', 6001) as { error: string }).error, /20 to 6000/);
   assert.deepEqual(checkSetting(guild, 'ttsCooldownSec', 0), { value: 0 });
   assert.match((checkSetting(guild, 'ttsCooldownSec', -1) as { error: string }).error, /0 to 3600/);
 });

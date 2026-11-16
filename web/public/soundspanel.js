@@ -1,6 +1,6 @@
 import { api, attempt, el, forget, needsVoice, recall, remember, request, state } from './lib.js';
 import { foldHead, soundGrid } from './soundgrid.js';
-import { previewButton, showPicked, voiceOptions } from './speech.js';
+import { previewButton, sayField, showPicked, voiceOptions } from './speech.js';
 import { voiceBar } from './voice.js';
 import { volumeSliders } from './volumes.js';
 
@@ -30,7 +30,7 @@ export function soundsBody(openBoard, { slash = false, volumes = ['sounds', 'spe
 
   // One line to say, in the voice picked here, which is the one the Soundboard has on this device too
   let saying = false;
-  const text = el('input', { ariaLabel: 'What to say', placeholder: 'Say something', autocomplete: 'off', enterKeyHint: 'send' });
+  const text = sayField();
   const picker = el('select', { ariaLabel: 'Voice', className: 'say-voice', onchange: () => remember(voiceKey, picker.value) });
   const send = el('button', { className: 'primary say-send' }, 'Say');
   const say = el(

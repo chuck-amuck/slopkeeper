@@ -252,16 +252,25 @@ export function forgetRemovedVoices(): number {
 }
 
 const SPEAK_TIMEOUT_MS = 15_000;
+// And this much more for each character, as a long paragraph takes a while: 3,350 characters took about 8 s
+const SPEAK_TIMEOUT_PER_CHAR_MS = 10;
 /** Lines waiting behind the one being said */
 const MOST_WAITING = 5;
 /** A line that takes this long from being asked for to being heard is kept for a look */
 const SLOW_SPEECH_S = 4;
+// A longer line is slow later, as it takes longer to make
+const SLOW_SPEECH_PER_1000_CHARS_S = 3;
 const MOST_PHRASES = 25;
 /** After this, the next message from the same person gets their name read again */
 const SAME_SPEAKER_MS = 30_000;
 const LINK = /https?:\/\/\S+/g;
 /** Discord's own limit on the option. The server's limit is applied to what gets read out, so a mention doesn't count as its id */
-const LONGEST_TYPED = 1000;
+// The most Discord lets a command's text option hold
+const LONGEST_TYPED = 6000;
+// A preview only needs to show how the voice sounds, not say a whole paragraph
+const LONGEST_PREVIEW = 300;
+// The activity log shows how a long line starts
+const LOGGED_CHARS = 200;
 const UNAVAILABLE = 'The voice isn’t available right now. Try again in a moment.';
 const STOPPED = 'Stopped before that was said.';
 
@@ -307,6 +316,8 @@ export function speechFor(guild: Guild, typed: string) {
     .replace(/[\p{Extended_Pictographic}\p{Emoji_Modifier}‍️]/gu, ' ')
     .replace(/[*~`|]/g, '')
     .replace(/_/g, ' ')
+    // A heading or a line that doesn't end a sentence gets a pause after it, rather than running into the next
+    .replace(/([\p{L}\p{N})])[ \t]*(?:\r?\n\s*)+/gu, '$1. ')
     .replace(/\s+/g, ' ')
     .trim();
 }
@@ -348,7 +359,7 @@ async function speech(text: string, voice: Voice, speed: number, signal: AbortSi
       noise_scale: voice.noise?.[0],
       noise_w_scale: voice.noise?.[1],
     }),
-    signal: AbortSignal.any([signal, AbortSignal.timeout(SPEAK_TIMEOUT_MS)]),
+    signal: AbortSignal.any([signal, AbortSignal.timeout(SPEAK_TIMEOUT_MS + text.length * SPEAK_TIMEOUT_PER_CHAR_MS)]),
   });
   if (!res.ok) throw new Error(`Voice container said HTTP ${res.status}`);
   const audio = Buffer.from(await res.arrayBuffer());
@@ -477,9 +488,19 @@ export async function previewSpeech(guild: Guild, typed: string, voiceId: string
   const recent = (previewsAt.get(guild.id) ?? []).filter((at) => now - at < 60_000);
   if (recent.length >= PREVIEWS_PER_MINUTE || now - (recent.at(-1) ?? 0) < PREVIEW_EVERY_MS) throw new TooSoon();
   previewsAt.set(guild.id, [...recent, now]);
-  const text = typed.trim() ? speechFor(guild, typed).slice(0, setting(guild.id, 'ttsMaxChars')) : `Hi, this is ${voice.name}.`;
+  const text = typed.trim() ? previewPart(speechFor(guild, typed).slice(0, setting(guild.id, 'ttsMaxChars'))) : `Hi, this is ${voice.name}.`;
   if (!hasWords(text)) throw new Error('There’s nothing in that to say.');
   return lineAudio(text, voice, setting(guild.id, 'ttsSpeed'), new AbortController().signal);
+}
+
+/** The start of a long line, up to the end of a sentence or else a word */
+export function previewPart(text: string) {
+  if (text.length <= LONGEST_PREVIEW) return text;
+  const start = text.slice(0, LONGEST_PREVIEW);
+  const sentence = start.search(/[.!?](?=[^.!?]*$)/);
+  if (sentence > LONGEST_PREVIEW / 3) return start.slice(0, sentence + 1);
+  const space = start.lastIndexOf(' ');
+  return space > 0 ? start.slice(0, space) : start;
 }
 
 /** A server asked for previews faster than they're allowed */
@@ -564,7 +585,7 @@ export async function say(channel: VoiceBasedChannel, typed: string, voiceId: st
   lastLine.set(`${guild.id}:${who}`, Date.now());
 
   const failed = await queueLine(channel, text, voice);
-  if (!failed) logActivity(guild.id, who, `Said “${text}” in <#${channel.id}>`);
+  if (!failed) logActivity(guild.id, who, `Said “${text.length > LOGGED_CHARS ? `${text.slice(0, LOGGED_CHARS).trimEnd()}…` : text}” in <#${channel.id}>`);
   return failed;
 }
 
@@ -625,7 +646,7 @@ function queueLine(channel: VoiceBasedChannel, text: string, voice: Voice) {
   const queue = queueFor(channel.guild.id);
   const { promise, resolve } = Promise.withResolvers<string | null>();
   // The voice and how long it is, never the words
-  const trace = new perf.Trace('speech_seconds', 'Speech', channel.guild.id, SLOW_SPEECH_S);
+  const trace = new perf.Trace('speech_seconds', 'Speech', channel.guild.id, SLOW_SPEECH_S + (text.length / 1000) * SLOW_SPEECH_PER_1000_CHARS_S);
   Object.assign(trace.detail, { voice: voice.id, characters: text.length, waitingAhead: queue.lines.length + (queue.running ? 1 : 0) });
   queue.lines.push({ channel, text, voice, started: resolve, trace });
   void run(queue);

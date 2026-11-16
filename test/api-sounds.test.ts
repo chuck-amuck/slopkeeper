@@ -1171,7 +1171,7 @@ test('tells the page what text to speech offers', async () => {
     assert.deepEqual(Object.keys(data.voices[0]), ['id', 'name', 'group']);
     const group = (id: string) => data.voices.find((v: { id: string }) => v.id === id).group;
     assert.deepEqual([group('glados'), group('russian'), group('demon')], ['Characters', 'Accents', 'Effects']);
-    assert.deepEqual([data.on, data.voice, data.longest], [true, 'tiktok', 200]);
+    assert.deepEqual([data.on, data.voice, data.longest], [true, 'tiktok', 4000]);
     setSetting(GUILD, 'tts', false);
     assert.equal((await ok(`/guilds/${GUILD}/say`)).on, false);
   } finally {
@@ -1214,7 +1214,7 @@ test('the page’s limits on text to speech', async () => {
   try {
     assert.equal(await post({ channelId: '702', text: 5 }), 'Type something to say.');
     assert.equal(await post({ channelId: 'v1', text: 'hello' }), 'Nobody’s in voice any more.');
-    assert.equal(await post({ channelId: '702', text: 'x'.repeat(201) }), 'That’s 201 characters, and the limit here is 200.');
+    assert.equal(await post({ channelId: '702', text: 'x'.repeat(4001) }), 'That’s 4001 characters, and the limit here is 4000.');
     assert.equal(await post({ channelId: '702', text: '🎉' }), 'There’s nothing in that to read out.');
     assert.equal(await post({ channelId: '702', text: 'hello', voice: 'nope' }), 'Pick a voice from the list.');
   } finally {

@@ -43,7 +43,7 @@ export const LIMITS = {
   joinSoundDelayMs: [0, 10_000],
   freeGamesMinRating: [0, 100],
   saleMinDiscount: [1, 100],
-  ttsMaxChars: [20, 500],
+  ttsMaxChars: [20, 6000],
   ttsCooldownSec: [0, 3600],
   ttsSpeed: [50, 150],
   ttsVolume: [25, 200],

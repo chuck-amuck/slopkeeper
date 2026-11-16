@@ -12,7 +12,7 @@ import { recentActivity } from '../src/activity.ts';
 import { config } from '../src/config.ts';
 import { Mixer } from '../src/mixer.ts';
 import * as perf from '../src/perf.ts';
-import { announceAloud, forgetRemovedVoices, forgetSpoken, lengthFor, phrases, readMessage, removePhrase, savePhrase, say, sayOut, serverVoice, speak, speechFor } from '../src/features/say.ts';
+import { announceAloud, forgetRemovedVoices, forgetSpoken, lengthFor, phrases, previewPart, readMessage, removePhrase, savePhrase, say, sayOut, serverVoice, speak, speechFor } from '../src/features/say.ts';
 import { applySpeechVolume, stopPlayback } from '../src/features/voiceAudio.ts';
 import { loopSpeechProblem } from '../src/features/loopRoom.ts';
 import { playJoinSound, setJoinSound } from '../src/features/joinSounds.ts';
@@ -350,7 +350,7 @@ test('gives up on a voice container that doesn’t answer', async (t) => {
   fakeVoice(t, (_, signal) => new Promise((_resolve, reject) => signal.addEventListener('abort', () => reject(new Error('timed out')))));
   const line = say(channel(), 'hello', undefined, 'x');
   await sleep(10);
-  assert.equal(timeout.mock.calls[0].arguments[0], 15_000);
+  assert.equal(timeout.mock.calls[0].arguments[0], 15_050, '15 s, and 10 ms for each of its 5 characters');
   timedOut.abort();
   assert.equal(await line, UNAVAILABLE);
 });
@@ -430,7 +430,22 @@ test('reads mentions, emoji and links as words', () => {
   assert.equal(speechFor(guild, 'nice <:big_brain:1234> <a:party:5678> 🎉 👍🏽'), 'nice big brain party');
   assert.equal(speechFor(guild, 'see https://example.test/a?b=1 now'), 'see link now');
   assert.equal(speechFor(guild, '**bold** ~~gone~~ `code` ||secret|| _lean_'), 'bold gone code secret lean');
-  assert.equal(speechFor(guild, '  two\n\n lines  '), 'two lines');
+  assert.equal(speechFor(guild, '  two\n\n lines  '), 'two. lines');
+});
+
+test('a line break after a heading or unfinished line is a pause, and one after a sentence stays as it was', () => {
+  const guild = { members: { cache: new Map() }, roles: { cache: new Map() }, channels: { cache: new Map() } } as never;
+  assert.equal(speechFor(guild, 'Preamble\n\nWe the people.\nArticle I. The Council\nAll powers.'), 'Preamble. We the people. Article I. The Council. All powers.');
+  assert.equal(speechFor(guild, 'THE BILL (selected)\r\n\r\nI. One, two,\nthree'), 'THE BILL (selected). I. One, two, three');
+});
+
+test('a preview of a long line says its first sentences, or its first words', () => {
+  const sentences = 'This is the first sentence of a paragraph. '.repeat(10).trim();
+  const part = previewPart(sentences);
+  assert.ok(part.length <= 300 && part.endsWith('paragraph.'), part);
+  const words = 'word '.repeat(100).trim();
+  assert.equal(previewPart(words), 'word '.repeat(60).trim());
+  assert.equal(previewPart('Short.'), 'Short.');
 });
 
 function run(t: TestContext, voice: unknown, options: { text?: string | null; pick?: string; saved?: string; role?: string; roles?: string[]; manager?: boolean } = {}) {
@@ -836,7 +851,7 @@ test('lines can be saved, with limits, separately for each server', () => {
   assert.equal(phrases(guild.id).length, 1, 'saving it twice does nothing');
   assert.equal(phrases(other.id).length, 0);
   assert.match(savePhrase(guild, '🎉')!, /nothing in that/);
-  assert.match(savePhrase(guild, 'x'.repeat(201))!, /201 characters/);
+  assert.match(savePhrase(guild, 'x'.repeat(4001))!, /4001 characters/);
   for (let n = 1; n < 25; n++) assert.equal(savePhrase(guild, `line ${n}`), null);
   assert.match(savePhrase(guild, 'one too many')!, /keep 25 lines/);
   assert.equal(savePhrase(guild, 'good game'), null, 'one already saved isn’t refused for being over');

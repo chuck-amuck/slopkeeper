@@ -523,7 +523,7 @@ button.volume-fab[aria-expanded='true'] {
   gap: var(--space-2);
 }
 
-.sounds-say input {
+.sounds-say .say-field {
   grid-column: 1 / -1;
   min-width: 0;
 }
@@ -1061,9 +1061,17 @@ main {
   min-width: 0;
 }
 
-.say-text input {
+.say-text .say-field {
   flex: 1 1 auto;
   min-width: 0;
+}
+
+/* One line high until it wraps, then it grows to about six lines and scrolls */
+.say-field {
+  display: block;
+  max-height: calc(6lh + 14px);
+  resize: none;
+  overflow-y: auto;
 }
 
 .say-voices {

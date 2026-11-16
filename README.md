@@ -413,8 +413,9 @@ The web UI's Soundboard tab, under **Manage**, also shows everything on Discord'
 
 - **Say this aloud:** right-click a message, or press and hold it on a phone, then **Apps → Say this aloud** to have it read out in your voice channel, in the server's voice, starting with whose message it is. Spoilers and code blocks are skipped, and it follows the same rules as `/say`.
 - Lines wait their turn, while sounds still layer on top. **Stop** ends the line and clears anything waiting.
-- Mentions are read as names, custom emoji as their name, and links as "link".
-- Every line goes in the Activity tab with who said it.
+- Mentions are read as names, custom emoji as their name, and links as "link". A line break after a heading or a line with no full stop is a short pause, so a pasted paragraph doesn't run its headings into the next sentence.
+- A line can be a whole paragraph: up to 4,000 characters by default (about 5 minutes) and 6,000 at most (Discord's limit for `/say`). On the web UI the box grows as you type and keeps a paste's line breaks; **Enter** says it and **Shift+Enter** starts a new line. A long line takes a few seconds to start, and the headphones preview plays only its first sentences.
+- Every line goes in the Activity tab with who said it, a long one cut to its first 200 characters.
 - The bot keeps the lines it made lately (up to 24 MB, until it restarts), so a saved line, a greeting or a line just previewed in the web UI plays straight away when it's said again in the same voice and speed.
 - The voices, all novelty ones:
   - **Characters:** **GLaDOS**, **HAL 9000**, **Bender**, **Optimus Prime**, **Kronk** and **TikTok** (the TikTok text-to-speech lady, and the default).
@@ -633,7 +634,7 @@ Each setting goes by the name `/setup show` and `/setup reset` use. A few are se
 | Default voice | web UI only | `TTS_VOICE` (a voice's id from `VOICES` in `src/features/say.ts`, like `glados` or `demon`) | `tiktok` |
 | Speech speed | `speech` | `TTS_SPEED` | 85% of the voice's natural speed |
 | Speech volume | `speech` | `TTS_VOLUME` | 100%, about as loud as a sound with even volume on |
-| Longest spoken line | `speech` | `TTS_MAX_CHARS` | 200 characters |
+| Longest spoken line | `speech` | `TTS_MAX_CHARS` (up to 6000) | 4000 characters |
 | Wait between spoken lines | `speech` | `TTS_COOLDOWN_SEC` | 5 seconds |
 | Who can use text to speech | `speech-role` | | everyone |
 | Say who joined | `speech` | `TTS_GREET` | off |

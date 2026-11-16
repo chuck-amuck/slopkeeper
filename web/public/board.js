@@ -1,6 +1,6 @@
 import { api, attempt, el, forget, icon, needsVoice, pageSignal, recall, remember, request, state, toast, undoToast } from './lib.js';
 import { foldHead, searchKeys, soundGrid } from './soundgrid.js';
-import { previewButton, showPicked, voiceOptions } from './speech.js';
+import { previewButton, sayField, showPicked, voiceOptions } from './speech.js';
 import { voiceBar } from './voice.js';
 
 // Whether Speech is folded away, on this device
@@ -13,7 +13,7 @@ const SPEECH_FOLDED = 'speechFolded';
 function sayBox(voice) {
   const guildId = state.guildId;
   const voiceKey = `voice:${guildId}`;
-  const text = el('input', { ariaLabel: 'What to say', placeholder: 'Say something', autocomplete: 'off', enterKeyHint: 'send' });
+  const text = sayField();
   const picker = el('select', { ariaLabel: 'Voice', className: 'say-voice', onchange: () => remember(voiceKey, picker.value) });
   const send = el('button', { className: 'primary say-send' }, 'Say');
   let saying = false;

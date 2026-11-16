@@ -6,6 +6,33 @@ import { api, attempt, el, fetchAudio, icon, player } from './lib.js';
 const VOICE_GROUPS = ['Characters', 'Accents', 'Effects'];
 const PREVIEW_TEXT = 'Hello, this is how I sound.';
 
+/**
+ * What to say: a box one line high that grows as the text wraps, up to a few lines, and keeps the line breaks of a
+ * pasted paragraph. Enter says it and Shift+Enter starts a new line. Setting its value from code calls `fit` itself
+ */
+export function sayField() {
+  const text = el('textarea', { ariaLabel: 'What to say', placeholder: 'Say something', autocomplete: 'off', enterKeyHint: 'send', rows: 1, className: 'say-field' });
+  const fit = () => {
+    text.style.height = '';
+    if (text.scrollHeight > text.clientHeight) text.style.height = `${text.scrollHeight + text.offsetHeight - text.clientHeight}px`;
+  };
+  const { set } = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value');
+  Object.defineProperty(text, 'value', {
+    get: Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').get,
+    set(value) {
+      set.call(this, value);
+      fit();
+    },
+  });
+  text.addEventListener('input', fit);
+  text.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' || e.shiftKey || e.isComposing) return;
+    e.preventDefault();
+    text.form?.requestSubmit();
+  });
+  return text;
+}
+
 /** The voices as a picker's options, in their groups when the bot says what they are */
 export function voiceOptions(voices, chosen) {
   const option = (v) => el('option', { value: v.id, selected: v.id === chosen }, v.name);
