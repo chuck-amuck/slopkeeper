@@ -8,12 +8,13 @@ import { addGameRole, canHandOut, gameRoles, pingableGames, pingChoices, pingMen
 import { addGame, addMemberGame, allGames, familyPlayersOf, gameById, groupMembers, hiddenGames, hideGame, libraryKnown, memberGames, NOBODY_COUNTED, ownersOf, parseSteamAppId, removeGame, setGameDetails, setOwned, setWanted, steamOwnersOf, unhideGame, wantedBy, type GameRow } from '../features/games.ts';
 import { dealText, lowestPrice, onSale, saleName, salePrices, saleReasons, storeUrl } from '../features/sales.ts';
 import { dealBundles } from '../features/deals.ts';
+import { soundStats } from '../features/soundstats.ts';
 import { currentPlayers, familyOf, patchNotes, joinFamily, leaveFamily, linkSteam, lobbiesIn, profileUrl, refreshAll, steamLinks, unlinkSteam } from '../features/steam.ts';
 import { activityIn, checkpoint, comparison, PERIODS, peopleWithStats, pickFor, playedByKey, playsIn, sessionCount, stats, totalsBy } from '../features/gamestats.ts';
 import { postVote } from '../features/gamevote.ts';
 import { recapFor } from '../features/recap.ts';
 import { countAsGame, gameKey, gameName, gameSpellings, markNotAGame, mergeGames, notGames, separateGame } from '../gameNames.ts';
-import { countIn, nightTimes, peopleIn, recordsFrom, sessionTime, soundTimes, spread, stepsOf, voiceFrom, voiceStints, whenOn } from '../features/overview.ts';
+import { CALENDAR_DAYS, countIn, dayStart, nightTimes, peopleIn, recordsFrom, sessionTime, soundTimes, spread, stepsOf, voiceByDay, voiceFrom, voiceStints, whenOn } from '../features/overview.ts';
 import { checkpointVoice, voiceTotals } from '../features/sessions.ts';
 import { idSetting, setting } from '../settings.ts';
 import { humansIn, pingWarning, zonedParts, zonedTimeToUtc } from '../util.ts';
@@ -218,6 +219,8 @@ export function statsFor(guild: Guild, url: URL) {
   const playersBefore = before && earlier(before.players);
   const voiceBefore = before && new Map(before.voice.map((p) => [p.userId, p.secs * 1000]));
   const days = (now - since) / DAY_MS;
+  const sessionSpans = game ? [] : sessionTime(guild.id, first, now, user).filter((s) => isMember(s.userId));
+  const shownDays = (now - first) / DAY_MS;
 
   return {
     timeZone,
@@ -239,9 +242,15 @@ export function statsFor(guild: Guild, url: URL) {
     // A small line under each tile, in the same steps as the activity chart
     series: {
       people: peopleIn(here.plays.filter((p) => isMember(p.userId)), steps),
-      voiceMs: spread(game ? [] : sessionTime(guild.id, first, now, user).filter((s) => isMember(s.userId)), steps).map(Math.round),
+      voiceMs: spread(sessionSpans, steps).map(Math.round),
       sounds: here.sounds && countIn(here.sounds, steps),
     },
+    // Each day's time in voice, for a range of weeks or months. Not per game, as voice time isn't
+    // Its first day is counted from midnight, as a cell is a whole day
+    calendar:
+      !game && shownDays >= CALENDAR_DAYS[0] && shownDays <= CALENDAR_DAYS[1]
+        ? voiceByDay(sessionTime(guild.id, dayStart(first, timeZone), now, user).filter((s) => isMember(s.userId)), first, now, timeZone)
+        : null,
     // When people are on, once a period has a week of them
     when: now - first >= 7 * DAY_MS ? whenOn([...here.plays.filter((p) => isMember(p.userId)), ...stints], first, now, timeZone) : null,
     trending: before && !game && days >= TRENDING_DAYS[0] - 0.5 && days <= TRENDING_DAYS[1] ? trendingOf(here.games, before.games) : null,
@@ -662,6 +671,10 @@ export async function gameRoutes({ client, guild, req, res, url, section, rest }
     return {};
   }
   if (section === 'stats' && !rest.length && req.method === 'GET') return statsFor(guild, url);
+  if (section === 'stats' && rest.length === 1 && rest[0] === 'sounds' && req.method === 'GET') {
+    const timeZone = setting(guild.id, 'timezone');
+    return soundStats(guild, statsWindow(url, timeZone), timeZone, (id) => nameOf(guild, id));
+  }
   if (section === 'free-games' && !rest.length && req.method === 'GET') {
     const games = await reviewGiveaways(guild).catch(() => {
       throw new Refused(502, 'The free game list couldn’t be read just now.');

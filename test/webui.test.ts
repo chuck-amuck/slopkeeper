@@ -25,6 +25,7 @@ const PAGES = [
   ['deals', 'Deals'],
   ['stats/overview', 'Stats: Overview'],
   ['stats/compare', 'Stats: Compare'],
+  ['stats/sounds', 'Stats: Sounds & music'],
   ['stats/recap', 'Stats: Monthly recap'],
   ['stats/health', 'Stats: Health'],
   ['activity', 'Activity'],
@@ -122,6 +123,13 @@ function seed() {
   const session = db.prepare("INSERT INTO sessions (guild_id, channel_id, started_at, ended_at) VALUES (?, '702', ?, ?)").run(GUILD, now - 30 * HOUR, now - 27 * HOUR).lastInsertRowid;
   for (const user of ['u1', 'u2']) db.prepare('INSERT INTO session_members (session_id, user_id, seconds) VALUES (?, ?, 10800)').run(session, user);
   db.prepare("INSERT INTO games (guild_id, name, added_by) VALUES (?, 'Valheim', 'u1')").run(GUILD);
+  // Weeks of records, so Overview has its calendar, and sounds, songs and speech for Sounds & music
+  const old = db.prepare("INSERT INTO sessions (guild_id, channel_id, started_at, ended_at) VALUES (?, '702', ?, ?)").run(GUILD, now - 20 * 24 * HOUR, now - 20 * 24 * HOUR + 2 * HOUR).lastInsertRowid;
+  db.prepare("INSERT INTO session_members (session_id, user_id, seconds) VALUES (?, 'u1', 7200)").run(old);
+  for (const [user, name, hoursAgo] of [['u1', 'airhorn', 2], ['u2', 'a very long sound name that goes on and on', 5], ['u1', 'airhorn', 40]] as const)
+    db.prepare('INSERT INTO sound_plays (guild_id, user_id, name, played_at) VALUES (?, ?, ?, ?)').run(GUILD, user, name, now - hoursAgo * HOUR);
+  db.prepare("INSERT INTO music_plays (guild_id, at, uri, title, artist, source, duration_ms, added_by, played_ms, skipped) VALUES (?, ?, 'u', 'A Song With Quite A Long Title (Extended Mix)', 'Some Artist', 'youtube', 200000, 'autoplay', 200000, 0)").run(GUILD, now - 3 * HOUR);
+  db.prepare("INSERT INTO speech_lines (guild_id, at, user_id, voice, characters, kind) VALUES (?, ?, 'u2', 'glados', 30, 'say')").run(GUILD, now - 4 * HOUR);
   // A sale with every part a row can have, and a bundle, for Deals
   const wanted = db.prepare("INSERT INTO games (guild_id, name, steam_appid, added_by) VALUES (?, 'The Elder Scrolls V: Skyrim Special Edition', 489830, 'u1')").run(GUILD).lastInsertRowid;
   db.prepare("INSERT INTO game_wants (game_id, user_id) VALUES (?, 'u2')").run(wanted);
@@ -248,7 +256,10 @@ test('every page of the web UI opens cleanly, on a computer and a phone', { skip
       const where = `${label} (${screen.name})`;
       // SHOTS=<folder> keeps a picture of each page, to look over a change by eye
       if (process.env.SHOTS) {
-        const { data } = await page.send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false });
+        // The whole page, not just the first screen of it
+        const { cssContentSize: size } = await page.send('Page.getLayoutMetrics');
+        const clip = { x: 0, y: 0, width: screen.width, height: Math.min(Math.ceil(size.height), 8000), scale: 1 };
+        const { data } = await page.send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: true, clip });
         writeFileSync(path.join(process.env.SHOTS, `${label.replace(/\W+/g, '-')}-${screen.name}.png`), Buffer.from(data, 'base64'));
       }
       if (!shown) failures.push(`${where}: still loading after 10 seconds`);

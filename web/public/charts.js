@@ -55,7 +55,7 @@ function tickFormat(span, timeZone) {
  * `format(value)` writes a value. `limit` ({ value, label }) draws a dashed line where it stops being fine.
  * `bands`: a share 0–1 per point to shade, like time away from Discord, named by `bandLabel`. `onPick(from, to)`
  * is called with the stretch someone drags across. `stacked`: columns stacked on each other, with the total first in
- * the tooltip, for parts of a whole like each game's share of the time
+ * the tooltip, for parts of a whole like each game's share of the time. `whole`: counts, so the axis has no fractions
  */
 export function timeChart({
   key,
@@ -75,6 +75,7 @@ export function timeChart({
   previous = null,
   onPick = null,
   stacked = false,
+  whole = false,
   height = HEIGHT,
 }) {
   sweep();
@@ -154,6 +155,7 @@ export function timeChart({
         // Room for where it stops being fine, so the dashed line is always on the chart
         max: limit ? ({ max }) => Math.max(max, limit.value) * 1.08 : undefined,
         splitNumber: 3,
+        minInterval: whole ? 1 : undefined,
         // The top is only room for the dashed line where there's one, so it isn't labelled with an odd number
         axisLabel: { color: ink, showMaxLabel: !limit, formatter: (v) => (v === 0 ? '0' : format(v)) },
         splitLine: { lineStyle: { color: line, type: 'dashed' } },
@@ -474,6 +476,131 @@ export function weekChart({ title, grid, describe, format, height = 220 }) {
     );
   });
   return el('div', { className: 'chart week-chart' }, box, scale, table);
+}
+
+/**
+ * Days on a calendar, weeks across and weekdays down (Monday first), each shaded by its value: pale for little,
+ * strong for a lot. `days`: [{ day: 'YYYY-MM-DD', start, end, value }] in order. `describe(day)` says what one means,
+ * for its tooltip and the table, and `onPick(day)` is called when one is clicked or chosen with Enter
+ */
+export function calendarChart({ title, days, describe, format, onPick }) {
+  sweep();
+  const most = Math.max(0, ...days.map((d) => d.value));
+  const weeks = Math.ceil((days.length + ((new Date(`${days[0].day}T12:00:00Z`).getUTCDay() + 6) % 7)) / 7);
+  const plot = el('div', { className: 'echart' });
+  const box = el(
+    'div',
+    { className: 'echart-box', tabIndex: 0, role: 'img', ariaLabel: `${title}. Use the arrow keys to read each day${onPick ? ', and Enter to look at it' : ''}` },
+    plot,
+    !most && el('div', { className: 'chart-empty' }, 'Nobody on in this range'),
+  );
+  let chart = null;
+  let focus = null;
+  // Square cells as wide as the box allows, from small enough for a year on a phone to big enough to tap
+  const cellFor = (width) => Math.max(3, Math.min(36, Math.floor((width - 44) / weeks)));
+  const sizeTo = (width) => (plot.style.height = `${cellFor(width) * 7 + 26}px`);
+
+  function option() {
+    const ink = colour('var(--muted)');
+    const cell = cellFor(plot.clientWidth);
+    return {
+      animation: false,
+      aria: { enabled: false },
+      textStyle: { fontFamily: getComputedStyle(document.body).fontFamily, color: ink },
+      calendar: {
+        range: [days[0].day, days.at(-1).day],
+        orient: 'horizontal',
+        cellSize: [cell, cell],
+        left: 34,
+        top: 20,
+        splitLine: { show: false },
+        itemStyle: { color: colour('var(--surface)'), borderColor: colour('var(--surface)'), borderWidth: cell > 10 ? 2 : 1 },
+        // Its names go Sunday first, whichever day the weeks start on
+        dayLabel: { firstDay: 1, color: ink, fontSize: 11, nameMap: [WEEKDAYS[6], ...WEEKDAYS.slice(0, 6)].map((d) => d.slice(0, 1)), margin: 6 },
+        monthLabel: { color: ink, fontSize: 11, margin: 4, nameMap: Array.from({ length: 12 }, (_, m) => new Date(Date.UTC(2026, m, 15)).toLocaleDateString(undefined, { month: 'short', timeZone: 'UTC' })) },
+        yearLabel: { show: false },
+      },
+      visualMap: { show: false, min: 0, max: most || 1, inRange: { color: [colour('var(--raised)'), colour('var(--series-1)')] } },
+      tooltip: {
+        confine: true,
+        className: 'chart-tooltip',
+        backgroundColor: colour('var(--text)'),
+        borderWidth: 0,
+        padding: [6, 10],
+        textStyle: { color: colour('var(--bg)'), fontSize: 12 },
+        extraCssText: 'box-shadow: none; border-radius: 6px;',
+        transitionDuration: 0,
+        formatter: ({ dataIndex }) => el('div', { className: 'echart-tip' }, describe(days[dataIndex])),
+      },
+      series: [
+        {
+          type: 'heatmap',
+          coordinateSystem: 'calendar',
+          data: days.map((d) => [d.day, d.value]),
+          itemStyle: { borderColor: colour('var(--surface)'), borderWidth: cell > 10 ? 2 : 1, borderRadius: cell > 10 ? 3 : 1 },
+          emphasis: { itemStyle: { borderColor: colour('var(--text)'), borderWidth: 1 } },
+          cursor: onPick ? 'pointer' : 'default',
+        },
+      ],
+    };
+  }
+
+  const entry = {
+    node: box,
+    chart: null,
+    observer: null,
+    shown: false,
+    draw() {
+      chart?.setOption(option(), { notMerge: true });
+    },
+  };
+  entry.observer = new ResizeObserver(() => {
+    if (!box.isConnected || !plot.clientWidth) return;
+    entry.shown = true;
+    const was = plot.style.height;
+    sizeTo(plot.clientWidth);
+    if (chart) {
+      chart.resize();
+      // The cells grow with the box, which needs the whole layout again
+      if (plot.style.height !== was) entry.draw();
+      else chart.setOption(option());
+      return;
+    }
+    void load().then(({ init }) => {
+      if (chart || !box.isConnected) return;
+      chart = entry.chart = init(plot, null, { renderer: 'svg' });
+      if (onPick) chart.on('click', ({ dataIndex }) => days[dataIndex] && onPick(days[dataIndex]));
+      entry.draw();
+    });
+  });
+  entry.observer.observe(box);
+  live.add(entry);
+
+  // Left and right a day, up and down a week
+  box.addEventListener('keydown', (e) => {
+    const moves = { ArrowLeft: -1, ArrowRight: 1, ArrowUp: -7, ArrowDown: 7 };
+    if (e.key === 'Escape') {
+      focus = null;
+      return chart?.dispatchAction({ type: 'hideTip' });
+    }
+    if (e.key === 'Enter' && focus !== null && onPick) return onPick(days[focus]);
+    if (!(e.key in moves)) return;
+    e.preventDefault();
+    focus = Math.max(0, Math.min(days.length - 1, (focus ?? days.length) + moves[e.key]));
+    chart?.dispatchAction({ type: 'showTip', seriesIndex: 0, dataIndex: focus });
+  });
+  box.addEventListener('blur', () => {
+    focus = null;
+    chart?.dispatchAction({ type: 'hideTip' });
+  });
+
+  const scale = el('div', { className: 'week-scale', ariaHidden: 'true' }, el('span', {}, format(0)), el('span', { className: 'week-ramp' }), el('span', {}, format(most)));
+  const table = el('details', {}, el('summary', {}, 'Show as a table'));
+  table.addEventListener('toggle', () => {
+    if (!table.open || table.querySelector('table')) return;
+    table.append(el('div', { className: 'table-scroll' }, el('table', {}, el('tbody', {}, days.map((d) => el('tr', {}, el('td', {}, describe(d))))))));
+  });
+  return el('div', { className: 'chart calendar-chart' }, box, scale, table);
 }
 
 export { WEEKDAYS_LONG, HOURS };

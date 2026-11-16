@@ -1,6 +1,6 @@
 import { achievementsView } from './achievements.js';
 import { health } from './health.js';
-import { HOURS, timeChart, weekChart, WEEKDAYS_LONG } from './charts.js';
+import { calendarChart, HOURS, timeChart, weekChart, WEEKDAYS_LONG } from './charts.js';
 import { ago, api, attempt, duration, el, formProblem, icon, notice, openDialog, recall, remember, request, state, toast, undoToast } from './lib.js';
 import { rangeBar, rangeFromQuery, rangeQuery } from './rangebar.js';
 
@@ -97,7 +97,7 @@ function coloursFor(guildId, names) {
 /** The people, written for a tooltip: "1.4 people on average", or for one person the share of the time */
 const peopleText = (value, one) => (one ? `on ${Math.round(value * 100)}% of the time` : `${value.toLocaleString(undefined, { maximumFractionDigits: 1 })} ${value === 1 ? 'person' : 'people'} on average`);
 
-/** Ranked rows; each is a button when it can filter the page */
+/** Ranked rows; each is a button when it can filter the page. A row's bar goes by `ms`, written as `text` if it has one */
 function ranked(rows, onPick) {
   const top = Math.max(...rows.map((r) => r.ms));
   return el(
@@ -109,7 +109,7 @@ function ranked(rows, onPick) {
         { className: 'rank', ...(onPick && { onclick: () => onPick(r), title: `Show just ${r.label}` }) },
         el('span', { className: 'rank-name' }, r.label),
         el('span', { className: 'rank-track' }, el('span', { className: 'rank-bar', style: `width: ${Math.max(1, (r.ms / top) * 100)}%` })),
-        el('span', { className: 'rank-value' }, duration(r.ms)),
+        el('span', { className: 'rank-value' }, r.text ?? duration(r.ms)),
         r.note && el('span', { className: 'rank-note' }, r.note),
       ),
     ),
@@ -124,6 +124,7 @@ const lastPlayed = (ms) => `last played ${ago(ms)}`;
 const VIEWS = [
   ['overview', 'Overview', overview],
   ['compare', 'Compare', compare],
+  ['sounds', 'Sounds & music', soundsAndMusic],
   ['recap', 'Monthly recap', recap],
   ['health', 'Health', health],
 ];
@@ -504,6 +505,24 @@ function overview(main, address) {
     );
   }
 
+  /** Each day's time in voice on a calendar, for a range of weeks or months. A day picked becomes the range */
+  function calendarCard(data) {
+    if (!data.calendar?.length) return null;
+    const date = (d) => new Date(`${d.day}T12:00:00Z`).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' });
+    const whose = user ? `${user.name}’s` : 'Everyone’s';
+    return card(
+      'Days in voice',
+      calendarChart({
+        title: `${whose} time in voice each day`,
+        days: data.calendar.map((d) => ({ ...d, value: d.ms })),
+        format: (ms) => (ms ? duration(ms) : '0'),
+        describe: (d) => `${date(d)}: ${d.ms ? duration(d.ms) : 'nobody'} in voice`,
+        onPick: (d) => bar.zoom(d.start, Math.min(d.end, Date.now())),
+      }),
+      el('p', { className: 'hint' }, `${whose} time in voice each day, added up, in the server’s time zone (${data.timeZone}). Tap a day to look at just that day.`),
+    );
+  }
+
   function whenCard(data) {
     if (!data.when) return null;
     const one = !!user;
@@ -567,6 +586,7 @@ function overview(main, address) {
       ...[
       ...tiles(data),
       activityCard(data),
+      calendarCard(data),
       whenCard(data),
       ...(data.spellings.length
         ? [
@@ -624,6 +644,142 @@ function overview(main, address) {
         if (ticket === latest && guildId === state.guildId && main.isConnected) render(data);
       } catch (err) {
         content.replaceChildren(notice('error', err.message));
+        throw err;
+      }
+    });
+  }
+
+  void show();
+}
+
+const SOURCES = { file: 'uploaded files', youtube: 'YouTube', soundcloud: 'SoundCloud', spotify: 'Spotify', bandcamp: 'Bandcamp' };
+const KINDS = [
+  ['sounds', 'sounds'],
+  ['music', 'songs'],
+  ['speech', 'lines said aloud'],
+];
+
+/** Stats → Sounds & music: the soundboard, the music and speech over a range, with who and what most */
+function soundsAndMusic(main, address) {
+  const guildId = state.guildId;
+  let range = rangeFromQuery(address.params, PERIODS) ?? { preset: PERIODS.some(([id]) => id === recall('period')) ? recall('period') : 'month' };
+  let latest = 0;
+  let timeZone;
+  const content = el('div', { className: 'stack' }, notice('loading', 'Loading stats…'));
+  const bar = rangeBar({
+    presets: PERIODS,
+    value: range,
+    timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+    onChange: (picked) => {
+      range = picked;
+      if (picked.preset) remember('period', picked.preset);
+      address.write(new URLSearchParams(rangeQuery(range)));
+      void show();
+    },
+  });
+  main.append(el('div', { className: 'toolbar range-toolbar' }, bar.node), content);
+  address.write(new URLSearchParams(rangeQuery(range)));
+
+  const day = (ms, tz) => new Date(ms).toLocaleDateString(undefined, { timeZone: tz, month: 'long', day: 'numeric', year: 'numeric' });
+
+  /** Which records start after the range does, so their numbers are partial, or haven't started at all */
+  function startNote(data) {
+    const late = KINDS.filter(([key]) => data.from[key] === null || data.from[key] > data.since);
+    if (!late.length) return null;
+    const started = new Map();
+    const none = [];
+    for (const [key, label] of late) {
+      if (data.from[key] === null) none.push(label);
+      else {
+        const when = day(data.from[key], data.timeZone);
+        started.set(when, [...(started.get(when) ?? []), label]);
+      }
+    }
+    const list = (labels) => {
+      const text = labels.length > 1 ? `${labels.slice(0, -1).join(', ')} and ${labels.at(-1)}` : labels[0];
+      return text[0].toUpperCase() + text.slice(1);
+    };
+    const parts = [...started].map(([when, labels]) => `${list(labels)} are counted from ${when}, when the bot started noting them.`);
+    if (none.length) parts.push(`${list(none)}: none yet. The bot notes them from now on.`);
+    return el('p', { className: 'hint stats-note' }, parts.join(' '));
+  }
+
+  function render(data) {
+    const { totals, previous: was, activity } = data;
+    const plain = (n) => String(Math.round(n));
+    const moved = (key, write) => change(totals[key], was?.[key], write);
+    const note = was ? el('p', { className: 'hint stats-note' }, '▲ and ▼ compare with the stretch before, as long as this one.') : null;
+    const tiles = el(
+      'div',
+      { className: 'stats' },
+      trendTile('Sounds played', plain(totals.sounds), moved('sounds', plain), activity.sounds),
+      trendTile('Songs played', plain(totals.songs), moved('songs', plain), activity.songs),
+      trendTile('Music heard', duration(totals.listenedMs), moved('listenedMs', duration)),
+      trendTile('Lines said', plain(totals.lines), moved('lines', plain), activity.lines),
+    );
+    if (!totals.sounds && !totals.songs && !totals.lines) return content.replaceChildren(tiles, startNote(data) ?? '', notice('empty', 'Nothing played or said in this range.'));
+
+    const counted = (n, word) => ({ ms: n, text: count(n, word) });
+    const chart = card(
+      'Over time',
+      timeChart({
+        key: 'sounds-activity',
+        title: 'Sounds, songs and lines over time',
+        times: activity.times,
+        until: activity.until,
+        timeLabel: (ms) => stepLabel(ms, activity.step, data.timeZone),
+        timeZone: data.timeZone,
+        series: [
+          { id: 'sounds', label: 'Sounds', color: 'var(--series-1)', values: activity.sounds },
+          { id: 'songs', label: 'Songs', color: 'var(--series-2)', values: activity.songs },
+          { id: 'lines', label: 'Lines said', color: 'var(--series-3)', values: activity.lines },
+        ],
+        format: plain,
+        whole: true,
+        height: 180,
+        onPick: (from, to) => bar.zoom(from, to),
+      }),
+    );
+    // Where songs were found, when that was noted
+    const sources = data.sources.filter((s) => s.source !== 'unknown').map((s) => `${s.songs} from ${SOURCES[s.source] ?? s.source}`).join(', ');
+    const skipped = !totals.skipped ? 'None were skipped.' : totals.songs === 1 ? 'It was skipped.' : `${totals.skipped} of ${totals.songs} were skipped.`;
+    const { say, message, announcement } = data.kinds;
+    const ways = [say && `${say} said with /say or the web UI`, message && `${message} read out from the speech channel`, announcement && count(announcement, 'announcement')].filter(Boolean).join(', ');
+    content.replaceChildren(
+      ...[
+        tiles,
+        note,
+        startNote(data),
+        chart,
+        data.sounds.length > 0 && card('Top sounds', ranked(data.sounds.map((s) => ({ label: s.name, ...counted(s.plays, 'play') })))),
+        data.soundPeople.length > 0 && card('Who plays the most sounds', ranked(data.soundPeople.map((p) => ({ label: p.name, ...counted(p.plays, 'sound') })))),
+        data.songs.length > 0 &&
+          card(
+            'Top songs',
+            ranked(data.songs.map((s) => ({ label: s.artist ? `${s.title} · ${s.artist}` : s.title, ...counted(s.plays, 'play'), note: s.listenedMs ? `${duration(s.listenedMs)} heard` : null }))),
+            el('p', { className: 'hint' }, `Each song heard from its start. ${skipped}${sources ? ` ${sources[0].toUpperCase()}${sources.slice(1)}.` : ''}`),
+          ),
+        data.artists.length > 0 && card('Top artists', ranked(data.artists.map((a) => ({ label: a.name, ...counted(a.plays, 'song') })))),
+        data.djs.length > 0 && card('Who puts music on', ranked(data.djs.map((p) => ({ label: p.name, ...counted(p.songs, 'song') })))),
+        data.voices.length > 0 &&
+          card('Voices', ranked(data.voices.map((v) => ({ label: v.name, ...counted(v.lines, 'line') }))), ways && el('p', { className: 'hint' }, `${ways[0].toUpperCase()}${ways.slice(1)}. What was said isn’t kept.`)),
+        data.speakers.length > 0 && card('Who says the most', ranked(data.speakers.map((p) => ({ label: p.name, ...counted(p.lines, 'line') })))),
+        el('p', { className: 'hint' }, 'Only people still in the server are listed. Drag across the chart with a mouse to look closer.'),
+      ].filter(Boolean),
+    );
+  }
+
+  async function show() {
+    const ticket = ++latest;
+    await attempt(async () => {
+      const { range: period, ...dates } = rangeQuery(range);
+      const query = new URLSearchParams(period ? { period } : dates);
+      try {
+        const data = await request(api(`/stats/sounds?${query}`));
+        if (data.timeZone !== timeZone) bar.timeZone((timeZone = data.timeZone));
+        if (ticket === latest && guildId === state.guildId && main.isConnected) render(data);
+      } catch (err) {
+        if (ticket === latest) content.replaceChildren(notice('error', err.message));
         throw err;
       }
     });

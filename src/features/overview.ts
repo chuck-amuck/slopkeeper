@@ -1,6 +1,6 @@
 import { db } from '../db.ts';
 import { gameName } from '../gameNames.ts';
-import { zonedParts, zonedTimeToUtc } from '../util.ts';
+import { zonedDate, zonedParts, zonedTimeToUtc } from '../util.ts';
 
 /**
  * The web UI's Stats overview: a period cut into steps for its charts, time spread across them, and when in the week
@@ -35,9 +35,9 @@ interface PersonSpan extends Span {
  * The steps that suit a period's length: hours up to 2 days, then days up to 45, weeks up to 400 and months beyond.
  * Each starts on the hour, or at midnight in the time zone. Every step is listed, so a quiet one shows as a gap
  */
-export function stepsOf(first: number, until: number, timeZone: string): Steps {
+export function stepsOf(first: number, until: number, timeZone: string, only?: Step): Steps {
   const days = (until - first) / DAY;
-  const step: Step = days <= 2 ? 'hour' : days <= 45 ? 'day' : days <= 400 ? 'week' : 'month';
+  const step: Step = only ?? (days <= 2 ? 'hour' : days <= 45 ? 'day' : days <= 400 ? 'week' : 'month');
   const { year, month, day, hour } = zonedParts(first, timeZone);
   const top = step === 'hour' ? zonedTimeToUtc(year, month, day, hour, 0, timeZone) : 0;
   const boundary = (i: number) => {
@@ -165,6 +165,24 @@ export function whenOn(spans: PersonSpan[], first: number, until: number, timeZo
   byQuarter(first, until, slotOf, (slot, ms) => (slotMs[slot] += ms));
   const people = personMs.map((ms, i) => (slotMs[i] ? Math.round((ms / slotMs[i]) * 100) / 100 : null));
   return Array.from({ length: 7 }, (_, day) => people.slice(day * 24, day * 24 + 24));
+}
+
+// The calendar shows a range from two weeks to a year: shorter has too few days to see a pattern in, longer too many to fit
+export const CALENDAR_DAYS = [14, 400];
+
+/** Midnight in the time zone on the day a moment falls on */
+export function dayStart(ms: number, timeZone: string) {
+  const { year, month, day } = zonedParts(ms, timeZone);
+  return zonedTimeToUtc(year, month, day, 0, 0, timeZone);
+}
+
+/**
+ * Each day's time in voice, all of it added up, for the Overview's calendar. `spans` should go back to the first
+ * day's midnight, so that day is whole. `day` is its date in the time zone
+ */
+export function voiceByDay(spans: (Span & { weight?: number })[], first: number, until: number, timeZone: string) {
+  const days = stepsOf(first, until, timeZone, 'day');
+  return spread(spans, days).map((ms, i) => ({ day: zonedDate(days.starts[i], timeZone), start: days.starts[i], end: days.ends[i], ms: Math.round(ms) }));
 }
 
 /** Sounds played in a period, by one person if given */
