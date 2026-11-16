@@ -89,6 +89,7 @@ class Page {
 }
 
 let chrome: ChildProcess | undefined;
+let chromeSaid = '';
 let profile: string | undefined;
 let web: ReturnType<typeof createWeb> | undefined;
 
@@ -124,7 +125,9 @@ function seed() {
 before(async () => {
   if (!browserPath) return;
   profile = mkdtempSync(path.join(tmpdir(), 'sk-browser-'));
-  chrome = spawn(browserPath, ['--headless=new', '--no-sandbox', '--disable-gpu', '--no-first-run', '--remote-debugging-port=0', `--user-data-dir=${profile}`, 'about:blank'], { stdio: 'ignore' });
+  chrome = spawn(browserPath, ['--headless=new', '--no-sandbox', '--disable-gpu', '--disable-dev-shm-usage', '--no-first-run', '--no-default-browser-check', '--remote-debugging-port=0', `--user-data-dir=${profile}`, 'about:blank'], { stdio: ['ignore', 'ignore', 'pipe'] });
+  // Kept to say why, if it never starts
+  chrome.stderr!.on('data', (chunk: Buffer) => (chromeSaid = (chromeSaid + chunk).slice(-4000)));
 });
 
 test('every page of the web UI opens cleanly, on a computer and a phone', { skip: !browserPath && 'no Chrome or Chromium here', timeout: 240_000 }, async () => {
@@ -134,16 +137,16 @@ test('every page of the web UI opens cleanly, on a computer and a phone', { skip
   await new Promise<void>((resolve) => web!.listen(0, '127.0.0.1', resolve));
   const site = `http://127.0.0.1:${(web!.address() as AddressInfo).port}`;
 
-  // Chrome writes its DevTools port here once it's listening
+  // Chrome writes its DevTools port here once it's listening, which takes a while on a busy CI machine
   let port = '';
-  for (let i = 0; i < 100 && !port; i++) {
+  for (let i = 0; i < 600 && !port && chrome!.exitCode === null; i++) {
     try {
       port = readFileSync(path.join(profile!, 'DevToolsActivePort'), 'utf8').split('\n')[0];
     } catch {
       await sleep(100);
     }
   }
-  assert.ok(port, 'Chrome started');
+  assert.ok(port, `${browserPath} didn't start (exit code ${chrome!.exitCode}):\n${chromeSaid}`);
   const target = (await (await fetch(`http://127.0.0.1:${port}/json/new?about:blank`, { method: 'PUT' })).json()) as { webSocketDebuggerUrl: string };
   const page = await Page.open(target.webSocketDebuggerUrl);
 
