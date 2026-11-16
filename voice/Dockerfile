@@ -1,6 +1,8 @@
 FROM python:3.12-slim-bookworm
 
-RUN pip install --no-cache-dir --root-user-action=ignore 'piper-tts[http]==1.8.0'
+# Every package pinned and checked against its hash, as serve.py patches onnxruntime's and Piper's insides
+COPY requirements.txt /tmp/requirements.txt
+RUN pip install --no-cache-dir --root-user-action=ignore --require-hashes --no-deps -r /tmp/requirements.txt && rm /tmp/requirements.txt
 
 COPY start.sh serve.py accent.py /
 
