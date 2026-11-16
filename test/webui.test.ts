@@ -8,9 +8,10 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { after, before, test } from 'node:test';
+import { after, before, mock, test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { db } from '../src/db.ts';
+import { config } from '../src/config.ts';
+import { db, setKv } from '../src/db.ts';
 import { createWeb } from '../web/src/server.ts';
 
 const PASSWORD = 'browser-test';
@@ -21,6 +22,7 @@ const PAGES = [
   ['games', 'Games'],
   ['nights', 'Game nights'],
   ['pick', 'Pick a game'],
+  ['deals', 'Deals'],
   ['stats/overview', 'Stats: Overview'],
   ['stats/compare', 'Stats: Compare'],
   ['stats/recap', 'Stats: Monthly recap'],
@@ -120,7 +122,34 @@ function seed() {
   const session = db.prepare("INSERT INTO sessions (guild_id, channel_id, started_at, ended_at) VALUES (?, '702', ?, ?)").run(GUILD, now - 30 * HOUR, now - 27 * HOUR).lastInsertRowid;
   for (const user of ['u1', 'u2']) db.prepare('INSERT INTO session_members (session_id, user_id, seconds) VALUES (?, ?, 10800)').run(session, user);
   db.prepare("INSERT INTO games (guild_id, name, added_by) VALUES (?, 'Valheim', 'u1')").run(GUILD);
+  // A sale with every part a row can have, and a bundle, for Deals
+  const wanted = db.prepare("INSERT INTO games (guild_id, name, steam_appid, added_by) VALUES (?, 'The Elder Scrolls V: Skyrim Special Edition', 489830, 'u1')").run(GUILD).lastInsertRowid;
+  db.prepare("INSERT INTO game_wants (game_id, user_id) VALUES (?, 'u2')").run(wanted);
+  db.prepare(
+    "INSERT INTO sale_prices (country, appid, discount, was, price, final, store, store_off, store_url, store_name, keyshop, keyshop_url, currency, lowest) VALUES ('us', 489830, 75, '$39.99', '$9.99', 999, 799, 80, 'https://example.com/store', 'Green Man Gaming', 650, 'https://example.com/keys', 'USD', 649)",
+  ).run();
+  config.itadKey = 'browser-test';
+  const bundle = {
+    id: 1,
+    title: 'Humble Choice: An Unusually Long Bundle Name For A Phone',
+    site: 'Humble Bundle',
+    url: 'https://example.com/bundle',
+    expiry: new Date(now + 5 * 24 * HOUR).toISOString(),
+    from: '$1.00',
+    games: [{ title: 'The Elder Scrolls V: Skyrim Special Edition', appid: 489830, where: 'in the $12.00 tier', wanted: null, like: 'Like Valheim (Open World, Survival, Crafting, Exploration)' }],
+  };
+  setKv(`deal_bundles:${GUILD}`, JSON.stringify({ at: now - 2 * HOUR, value: [bundle] }));
 }
+
+// The bot's own calls out, to Steam and GamerPower, get empty answers, so no page waits on the internet
+const realFetch = fetch;
+mock.method(globalThis, 'fetch', async (input: string | URL | Request, init?: RequestInit) => {
+  const url = new URL(input instanceof Request ? input.url : input);
+  if (url.hostname === '127.0.0.1' || url.hostname === 'localhost') return realFetch(input, init);
+  if (url.hostname.endsWith('gamerpower.com')) return new Response('[]');
+  if (url.pathname === '/api/storesearch/') return new Response('{"items":[]}');
+  return new Response('{}');
+});
 
 before(async () => {
   if (!browserPath) return;

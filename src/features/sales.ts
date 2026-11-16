@@ -12,6 +12,7 @@ import { checkpoint, plural, short, stats } from './gamestats.ts';
 import { appInfo, ensureAppInfo, linkFor, refreshStale, refreshWishlists } from './steam.ts';
 import { commandMention } from '../commandIds.ts';
 import { sendPost } from '../postFailures.ts';
+import { feeds } from '../changes.ts';
 
 const PLAYED_DAYS = 180;
 // A sale that only gets a little deeper isn't worth another post
@@ -52,7 +53,7 @@ interface StorePrice {
   now: number | null;
   shop: string | null;
   url: string | null;
-  /** the lowest any of them, Steam included, has ever charged. Null when unknown, or when IsThereAnyDeal couldn't be asked and this is the last check's price */
+  /** the lowest any of them, Steam included, has ever charged, or null when unknown. When IsThereAnyDeal couldn't be asked, the last check's */
   lowest: number | null;
   currency: string;
 }
@@ -217,20 +218,24 @@ function rememberPrice(country: string, appid: number, price: PriceOverview | nu
   if (!price || (!price.discount_percent && !deal)) db.prepare('DELETE FROM sale_prices WHERE country = ? AND appid = ?').run(country, appid);
   else {
     const reseller = keyshopDeal(price, store, keyshop);
+    const lowest = store?.lowest != null && store.currency === price.currency ? store.lowest : null;
     db.prepare(
-      'INSERT OR REPLACE INTO sale_prices (country, appid, discount, was, price, final, store, store_off, store_url, store_name, keyshop, keyshop_url, currency) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-    ).run(country, appid, price.discount_percent, steamNormal(price), price.final_formatted, price.final, deal?.cents ?? null, deal?.off ?? null, deal?.url ?? null, deal?.shop ?? null, reseller?.now ?? null, reseller?.url ?? null, price.currency);
+      'INSERT OR REPLACE INTO sale_prices (country, appid, discount, was, price, final, store, store_off, store_url, store_name, keyshop, keyshop_url, currency, lowest) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    ).run(country, appid, price.discount_percent, steamNormal(price), price.final_formatted, price.final, deal?.cents ?? null, deal?.off ?? null, deal?.url ?? null, deal?.shop ?? null, reseller?.now ?? null, reseller?.url ?? null, price.currency, lowest);
   }
 }
 
 /** What the last check kept, standing in while a store can't be asked, so its deal isn't mistaken for a new one */
 function lastPrices(country: string, appid: number) {
-  const row = db.prepare('SELECT store, store_url, store_name, keyshop, keyshop_url, currency FROM sale_prices WHERE country = ? AND appid = ?').get(country, appid) as
-    | { store: number | null; store_url: string | null; store_name: string | null; keyshop: number | null; keyshop_url: string | null; currency: string | null }
+  const row = db.prepare('SELECT store, store_url, store_name, keyshop, keyshop_url, currency, lowest FROM sale_prices WHERE country = ? AND appid = ?').get(country, appid) as
+    | { store: number | null; store_url: string | null; store_name: string | null; keyshop: number | null; keyshop_url: string | null; currency: string | null; lowest: number | null }
     | undefined;
   if (!row?.currency) return { store: null, keyshop: null };
   return {
-    store: row.store != null && row.store_url ? { now: row.store, shop: row.store_name, url: row.store_url, lowest: null, currency: row.currency } : null,
+    store:
+      (row.store != null && row.store_url) || row.lowest != null
+        ? { now: row.store_url ? row.store : null, shop: row.store_name, url: row.store_url, lowest: row.lowest, currency: row.currency }
+        : null,
     keyshop: row.keyshop != null && row.keyshop_url ? { now: row.keyshop, url: row.keyshop_url, currency: row.currency } : null,
   };
 }
@@ -297,12 +302,20 @@ async function loadPrices(appids: number[], country: string, prices: Prices, oth
   }
 }
 
-/** IsThereAnyDeal knows the lowest price a Steam key has had, in the server's own money. Without it there's no line */
-function priceHistory(g: Sale, store: StorePrice | null | undefined) {
-  const now = g.store?.cents ?? g.final;
-  if (store?.lowest == null || store.currency !== g.currency) return null;
-  return now <= store.lowest ? 'Lowest price yet.' : `Lowest ever ${money(store.lowest, store.currency)}.`;
+/**
+ * How the cheapest price now compares with the lowest a Steam key has ever had, which IsThereAnyDeal knows, in the
+ * server's own money: `yet` when it's that low or lower. Null without it
+ */
+export function lowestPrice(g: Pick<Sale, 'final' | 'store' | 'currency'>, lowest: number | null | undefined, currency = g.currency) {
+  if (lowest == null || currency !== g.currency) return null;
+  const yet = (g.store?.cents ?? g.final) <= lowest;
+  return { yet, text: yet ? 'Lowest price yet' : `Lowest ever ${money(lowest, currency)}` };
 }
+
+const priceHistory = (g: Sale, store: StorePrice | null | undefined) => {
+  const low = lowestPrice(g, store?.lowest, store?.currency);
+  return low && `${low.text}.`;
+};
 
 export const money = (amount: number, currency: string) => {
   try {
@@ -402,6 +415,8 @@ export interface Sale extends Watched {
   price: string;
   final: number;
   currency: string;
+  /** the lowest a Steam key has ever sold for, in `currency`, if IsThereAnyDeal knows */
+  lowest: number | null;
   /** Another store selling a Steam key for less than Steam: its price, how far under Steam's normal price, its link and name */
   store: { price: string; cents: number; off: number; url: string; shop: string } | null;
   /** The cheapest key reseller, when it's under every official price: never a deal by itself */
@@ -443,7 +458,7 @@ function saleLine(g: Sale, name: string, history: string | null = null) {
 /** Everything on sale at the last check, in this server's store region, with other stores' deals if the server wants them */
 export function salePrices(guildId: string) {
   const rows = db
-    .prepare('SELECT appid, discount, was, price, final, currency, store, store_off, store_url, store_name, keyshop, keyshop_url FROM sale_prices WHERE country = ?')
+    .prepare('SELECT appid, discount, was, price, final, currency, store, store_off, store_url, store_name, keyshop, keyshop_url, lowest FROM sale_prices WHERE country = ?')
     .all(setting(guildId, 'steamCountry')) as {
     appid: number;
     discount: number;
@@ -457,6 +472,7 @@ export function salePrices(guildId: string) {
     store_name: string | null;
     keyshop: number | null;
     keyshop_url: string | null;
+    lowest: number | null;
   }[];
   const otherStores = setting(guildId, 'saleOtherStores');
   return new Map(
@@ -509,6 +525,7 @@ export function checkSales(client: Client<true>, post = false) {
     await refreshWishlists();
     const prices = newPrices();
     await eachGuild(client, 'Sale check', async (guild) => void (await checkGuild(client, guild, prices, post)));
+    feeds.deals.changedEverywhere();
   });
 }
 
@@ -579,6 +596,7 @@ async function checkGuild(client: Client<true>, guild: Guild, prices: Prices, po
       currency: price.currency,
       store: deal && { ...deal, price: money(deal.cents, price.currency) },
       keyshop: reseller && { cents: reseller.now, url: reseller.url, price: money(reseller.now, price.currency) },
+      lowest: null,
     };
     const size = sale ? dealSize(sale) : 0;
     const last = alerted(guild.id, g.appid);

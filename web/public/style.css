@@ -3811,6 +3811,45 @@ header.tabs-below nav button {
   color: var(--muted);
 }
 
+/* Deals */
+
+.deals-toolbar {
+  justify-content: space-between;
+}
+
+.deals-toolbar .hint {
+  margin: 0;
+}
+
+.deal-extras {
+  flex-basis: 100%;
+  font-size: var(--text-sm);
+}
+
+.deal-low {
+  color: var(--muted);
+}
+
+.deal-low.best {
+  color: var(--good);
+  font-weight: 600;
+}
+
+.deal-games {
+  flex-basis: 100%;
+  margin: 4px 0 0;
+  padding-left: 20px;
+  font-size: var(--text-sm);
+}
+
+.deal-games li + li {
+  margin-top: 4px;
+}
+
+.deal-games .sale-why {
+  display: block;
+}
+
 /* The Recently deleted card on the Library page */
 
 .bin:empty {

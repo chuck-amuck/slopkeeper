@@ -6,7 +6,8 @@ import { reviewGiveaways } from '../features/freegames.ts';
 import { achievementProgress } from '../features/achievements.ts';
 import { addGameRole, canHandOut, gameRoles, pingableGames, pingChoices, pingMenu, removeGameRole } from '../features/gameroles.ts';
 import { addGame, addMemberGame, allGames, familyPlayersOf, gameById, groupMembers, hiddenGames, hideGame, libraryKnown, memberGames, NOBODY_COUNTED, ownersOf, parseSteamAppId, removeGame, setGameDetails, setOwned, setWanted, steamOwnersOf, unhideGame, wantedBy, type GameRow } from '../features/games.ts';
-import { dealText, onSale, saleName, salePrices, saleReasons, storeUrl } from '../features/sales.ts';
+import { dealText, lowestPrice, onSale, saleName, salePrices, saleReasons, storeUrl } from '../features/sales.ts';
+import { dealBundles } from '../features/deals.ts';
 import { currentPlayers, familyOf, patchNotes, joinFamily, leaveFamily, linkSteam, lobbiesIn, profileUrl, refreshAll, steamLinks, unlinkSteam } from '../features/steam.ts';
 import { activityIn, checkpoint, comparison, PERIODS, peopleWithStats, pickFor, playedByKey, playsIn, sessionCount, stats, totalsBy } from '../features/gamestats.ts';
 import { postVote } from '../features/gamevote.ts';
@@ -247,7 +248,7 @@ export function statsFor(guild: Guild, url: URL) {
   };
 }
 
-/** Every game with time on record, longest first, and what else it's been called */
+/** What's on sale that the server plays or wants, most wanted first */
 export async function saleList(guild: Guild) {
   const games = await onSale(guild);
   return {
@@ -262,6 +263,47 @@ export async function saleList(guild: Guild) {
       deal: dealText(g),
       why: saleReasons(g, (id) => nameOf(guild, id)),
     })),
+  };
+}
+
+/**
+ * The Deals tab: what's on sale that the server plays or wants, and bundles with games for it, all as of the bot's
+ * last checks. `people` is who each is for, so the page can show just what's for whoever's looking
+ */
+export async function dealList(guild: Guild) {
+  const show = (id: string) => nameOf(guild, id);
+  // As /sales mine: who asked for it or has it on their Steam wishlist
+  const forWhom = (g: { wanted: string[]; wishlisted: string[] }) => [...new Set([...g.wanted, ...g.wishlisted])];
+  const sales = await onSale(guild);
+  const kept = dealBundles(guild.id);
+  return {
+    sales: sales.map((g) => ({
+      appid: g.appid,
+      name: saleName(g),
+      url: storeUrl(g.appid),
+      discount: g.discount,
+      was: g.was,
+      price: g.price,
+      store: g.store && { price: g.store.price, off: g.store.off, url: g.store.url, shop: g.store.shop },
+      keyshop: g.keyshop && { price: g.keyshop.price, url: g.keyshop.url },
+      lowest: lowestPrice(g, g.lowest),
+      why: saleReasons(g, show),
+      people: forWhom(g),
+    })),
+    // Why there are none to show: no IsThereAnyDeal key to look them up with, the server turned them off, or not looked through yet
+    bundlesOff: !config.itadKey ? 'no-key' : !setting(guild.id, 'bundleAlerts') ? 'off' : null,
+    bundles: config.itadKey && setting(guild.id, 'bundleAlerts')
+      ? (kept?.bundles.map((b) => ({
+          id: b.id,
+          title: b.title,
+          site: b.site,
+          url: b.url,
+          expiry: b.expiry,
+          from: b.from,
+          games: b.games.map((m) => ({ title: m.title, url: storeUrl(m.appid), where: m.where, why: m.wanted ? saleReasons(m.wanted, show) : m.like, people: m.wanted ? forWhom(m.wanted) : [] })),
+        })) ?? null)
+      : null,
+    bundlesAt: (config.itadKey && setting(guild.id, 'bundleAlerts') && kept?.at) || null,
   };
 }
 
@@ -627,6 +669,7 @@ export async function gameRoutes({ client, guild, req, res, url, section, rest }
     return { games: games.map(({ title, url: link, worth, platforms, show, reason }) => ({ title, url: link, worth, platforms, show, reason })) };
   }
   if (section === 'sales' && !rest.length && req.method === 'GET') return saleList(guild);
+  if (section === 'deals' && !rest.length && req.method === 'GET') return dealList(guild);
   if (section === 'game-names' && !rest.length && req.method === 'GET') return gameNameList(guild);
   if (section === 'game-names' && rest.length === 1 && ['merge', 'separate', 'not-a-game', 'a-game'].includes(rest[0]) && req.method === 'POST') return changeGameNames(guild, req, rest[0]);
   if (section === 'lobbies' && !rest.length && req.method === 'GET') return lobbyList(guild);

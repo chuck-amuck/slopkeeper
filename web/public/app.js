@@ -1,4 +1,5 @@
 import { renderActivity } from './activity.js';
+import { renderDeals } from './deals.js';
 import { renderGames } from './games.js';
 import { api, attempt, el, formProblem, icon, newPage, notice, openDialog, player, recall, remember, request, RequestError, session, state, toast } from './lib.js';
 import { musicPlayer, noMusicPlayer } from './miniplayer.js';
@@ -24,6 +25,7 @@ const TABS = [
   ['games', 'Games', renderGames, 'star'],
   ['nights', 'Game nights', renderNights, 'calendar', 'Nights'],
   ['pick', 'Pick a game', renderPick, 'dice', 'Pick'],
+  ['deals', 'Deals', renderDeals, 'tag'],
   ['stats', 'Stats', renderStats, 'chart'],
   ['activity', 'Activity', renderActivity, 'clock'],
   ['settings', 'Settings', renderSettings, 'sliders'],

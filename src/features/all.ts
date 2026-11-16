@@ -15,6 +15,7 @@ import { music } from './music.ts';
 import { patchNotes } from './patchnotes.ts';
 import { recap } from './recap.ts';
 import { bundles } from './bundles.ts';
+import { deals } from './deals.ts';
 import { sales } from './sales.ts';
 import { speak } from './say.ts';
 import { sessions } from './sessions.ts';
@@ -23,7 +24,7 @@ import { soundboard } from './soundboard.ts';
 import { steam } from './steam.ts';
 
 /** Every feature, in /help order, with /help itself first */
-export const features: Feature[] = [hopOn, gamePings, gameNights, sessions, gameStats, recap, games, gameVotes, steam, achievements, patchNotes, freeGames, sales, bundles, soundboard, speak, music, setup, backups, webApi, health];
+export const features: Feature[] = [hopOn, gamePings, gameNights, sessions, gameStats, recap, games, gameVotes, steam, achievements, patchNotes, freeGames, sales, bundles, deals, soundboard, speak, music, setup, backups, webApi, health];
 features.unshift(help(features));
 
 /**

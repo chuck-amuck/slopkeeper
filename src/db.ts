@@ -572,7 +572,8 @@ if (!db.prepare("SELECT 1 FROM pragma_table_info('deleted_sounds') WHERE name = 
 }
 
 // Another official store selling a Steam copy for less than Steam: its price in cents of Steam's currency, how far
-// under Steam's normal price, its link and name. Then the cheapest key reseller, when it's cheaper still
+// under Steam's normal price, its link and name. Then the cheapest key reseller, when it's cheaper still, and the
+// lowest a Steam key has ever sold for, from IsThereAnyDeal, in the same money
 for (const [column, type] of [
   ['store', 'INTEGER'],
   ['store_off', 'INTEGER'],
@@ -581,6 +582,7 @@ for (const [column, type] of [
   ['store_name', 'TEXT'],
   ['keyshop', 'INTEGER'],
   ['keyshop_url', 'TEXT'],
+  ['lowest', 'INTEGER'],
 ]) {
   if (!db.prepare("SELECT 1 FROM pragma_table_info('sale_prices') WHERE name = ?").get(column)) db.exec(`ALTER TABLE sale_prices ADD COLUMN ${column} ${type}`);
 }

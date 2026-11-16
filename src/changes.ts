@@ -53,7 +53,7 @@ export function changeFeed(): ChangeFeed {
 
 /**
  * What the web UI can keep up with: sounds and speech playing, the music, who's in which voice channel, game nights,
- * the activity log, the sound library with its groups, bin and Discord soundboard, the volumes, and the health numbers
+ * the activity log, the sound library with its groups, bin and Discord soundboard, the volumes, the health numbers and the deals
  */
 export const feeds = {
   playing: changeFeed(),
@@ -65,6 +65,8 @@ export const feeds = {
   volumes: changeFeed(),
   /** Another minute of health numbers kept, for every server at once */
   health: changeFeed(),
+  /** Prices checked, or bundles worked out again */
+  deals: changeFeed(),
 };
 
 export type FeedName = keyof typeof feeds;

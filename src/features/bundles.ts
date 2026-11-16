@@ -52,6 +52,8 @@ interface ItadBundle {
   tiers: { price: { amountInt: number; currency: string } | null; games: { title: string; type: string | null }[] }[];
 }
 
+export const running = (b: Pick<Bundle, 'expiry'>) => !b.expiry || Date.parse(b.expiry) > Date.now();
+
 /** Every bundle running now on the sites above, priced in this region's money */
 export async function currentBundles(country: string): Promise<Bundle[]> {
   const all: ItadBundle[] = [];
@@ -148,18 +150,22 @@ export async function matches(guild: Guild, bundle: Bundle, interested: Map<numb
   return found.sort((a, b) => Number(!!b.wanted) - Number(!!a.wanted));
 }
 
-const tierPrice = (bundle: Bundle, tier: number) => {
+/** A tier's price, or null when it's pay what you want */
+export function tierPrice(bundle: Bundle, tier: number) {
   const { cents, currency } = bundle.tiers[tier];
   return cents === null ? null : money(cents, currency);
-};
+}
+
+/** Where in a bundle a game is: "in the $10.00 tier", "for $5.00" or "for any price" */
+export function tierPlace(bundle: Bundle, tier: number) {
+  const price = tierPrice(bundle, tier);
+  if (price === null) return 'for any price';
+  return bundle.tiers.length > 1 ? `in the ${price} tier` : `for ${price}`;
+}
 
 /** One bundle's card, and who it pings */
 export function bundleCard(bundle: Bundle, found: Match[]) {
-  const where = (m: Match) => {
-    const price = tierPrice(bundle, m.tier);
-    if (price === null) return 'for any price';
-    return bundle.tiers.length > 1 ? `in the ${price} tier` : `for ${price}`;
-  };
+  const where = (m: Match) => tierPlace(bundle, m.tier);
   const from = tierPrice(bundle, 0);
   const games = found.slice(0, LISTED_GAMES).map((m) => `[**${escapeMarkdown(short(m.title)).replace(/[[\]]/g, '')}**](${storeUrl(m.appid)}) ${where(m)}: ${m.reason}`);
   const ends = bundle.expiry ? ['', `Ends <t:${Math.floor(Date.parse(bundle.expiry) / 1000)}:R>`] : [];
