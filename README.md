@@ -292,7 +292,7 @@ Most giveaways are filler, so a game is only posted if it looks worth having. Ea
 | Only multiplayer games | off | Needs a multiplayer or co-op tag. |
 | Games not on Steam | hidden | A game with no Steam page can't be rated, so it's hidden unless you show these. |
 
-A game is also hidden if everyone here with a linked Steam account already owns it. Ratings and tags come from [SteamSpy](https://steamspy.com) and are kept for a month. A hidden game is looked at again at each check, so loosening a filter can still catch it while it's free. If the lookup fails, the game waits for the next check.
+A game is also hidden if everyone here with a linked Steam account already owns it. Ratings and tags come from [SteamSpy](https://steamspy.com), and tags from Steam's store for games too new for SteamSpy to have any. They're kept for a month, or a day for a game neither had tags for. A hidden game is looked at again at each check, so loosening a filter can still catch it while it's free. If the lookup fails, the game waits for the next check.
 
 The web UI's Settings page lists what's free right now, with the reason each game is posted or hidden.
 

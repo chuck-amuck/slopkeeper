@@ -4,6 +4,9 @@ import { gameKey } from '../gameNames.ts';
 import { requestTimeout } from '../util.ts';
 
 const REFRESH_AFTER_MS = 30 * 24 * 3_600_000;
+// A game remembered without tags is asked about again sooner: older versions only asked SteamSpy, which has no tags for newer games
+const NO_TAGS_REFRESH_MS = 24 * 3_600_000;
+const TAG_NAMES_MS = 7 * 24 * 3_600_000;
 const KEPT_TAGS = 12;
 // SteamSpy asks for no more than one request a second
 export const lookups = { gapMs: 1000 };
@@ -37,15 +40,33 @@ export async function findOnSteam(title: string) {
   return (items as { id: number; name: string }[]).find((item) => gameKey(item.name) === gameKey(title)) ?? null;
 }
 
+let tagNames: { at: number; names: Map<number, string> } | null = null;
+
+/** A game's tags from Steam's store, most voted first, which covers games too new for SteamSpy */
+async function steamTags(appid: number) {
+  if (!tagNames || Date.now() - tagNames.at > TAG_NAMES_MS) {
+    const { response } = await getJson('https://api.steampowered.com/IStoreService/GetTagList/v1/?language=english');
+    tagNames = { at: Date.now(), names: new Map(((response?.tags ?? []) as { tagid: number; name: string }[]).map((t) => [t.tagid, t.name])) };
+  }
+  const input = { ids: [{ appid }], context: { language: 'english', country_code: 'US' }, data_request: { include_tag_count: KEPT_TAGS } };
+  const { response } = await getJson(`https://api.steampowered.com/IStoreBrowseService/GetItems/v1/?input_json=${encodeURIComponent(JSON.stringify(input))}`);
+  const tags = (response?.store_items?.[0]?.tags ?? []) as { tagid: number; weight: number }[];
+  return [...tags]
+    .sort((a, b) => b.weight - a.weight)
+    .flatMap((t) => tagNames!.names.get(t.tagid) ?? [])
+    .slice(0, KEPT_TAGS);
+}
+
 async function lookUp(title: string): Promise<GameFacts> {
   const match = await findOnSteam(title);
   if (!match) return { appid: null, positive: 0, negative: 0, tags: [] };
   const spy = await getJson(`https://steamspy.com/api.php?request=appdetails&appid=${match.id}`);
   // It sends an empty array rather than an object when a game has no tags
-  const tags = Object.entries((spy.tags ?? {}) as Record<string, number>)
+  let tags = Object.entries((spy.tags ?? {}) as Record<string, number>)
     .sort((a, b) => b[1] - a[1])
     .map(([tag]) => tag)
     .slice(0, KEPT_TAGS);
+  if (!tags.length) tags = await steamTags(match.id).catch((err) => (console.error(err), []));
   return { appid: match.id, positive: Number(spy.positive) || 0, negative: Number(spy.negative) || 0, tags };
 }
 
@@ -54,6 +75,7 @@ const remembered = (key: string) => db.prepare('SELECT appid, positive, negative
 function known(key: string): GameFacts | null {
   const row = remembered(key);
   if (!row || Date.now() - row.checked_at >= REFRESH_AFTER_MS) return null;
+  if (row.appid !== null && row.tags === '[]' && Date.now() - row.checked_at >= NO_TAGS_REFRESH_MS) return null;
   return { appid: row.appid, positive: row.positive, negative: row.negative, tags: JSON.parse(row.tags) as string[] };
 }
 

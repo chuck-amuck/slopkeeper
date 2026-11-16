@@ -14,6 +14,8 @@ interface Listed {
   positive: number;
   negative: number;
   tags: Record<string, number> | never[];
+  /** what Steam's store has, for games SteamSpy has no tags for */
+  steamTags?: string[];
 }
 const catalog = new Map<string, Listed>();
 const asked: string[] = [];
@@ -34,6 +36,17 @@ mock.method(globalThis, 'fetch', async (url: string) => {
   if (link.hostname === 'www.gamerpower.com') return new Response(JSON.stringify(feed));
   if (down) return new Response('nope', { status: 503 });
   if (errorJson) return new Response('{"items":[]}', { status: 500 });
+  if (link.pathname === '/IStoreService/GetTagList/v1/') {
+    return new Response(JSON.stringify({ response: { tags: ['Roguelite', 'FPS', 'Co-op', 'Horror'].map((name, n) => ({ tagid: n + 1, name })) } }));
+  }
+  if (link.pathname === '/IStoreBrowseService/GetItems/v1/') {
+    const { appid } = JSON.parse(link.searchParams.get('input_json')!).ids[0];
+    const game = [...catalog.values()].find((g) => g.id === appid);
+    const names = ['Roguelite', 'FPS', 'Co-op', 'Horror'];
+    // Steam sends them in no particular order, with a weight for each
+    const tags = (game?.steamTags ?? []).map((name, n) => ({ tagid: names.indexOf(name) + 1, weight: n * -10 + 100 })).reverse();
+    return new Response(JSON.stringify({ response: { store_items: [{ appid, tags }] } }));
+  }
   if (link.hostname === 'store.steampowered.com') {
     const term = link.searchParams.get('term')!;
     const found = catalog.get(term);
@@ -187,7 +200,7 @@ test('taste uses only the last six months and voice time', async () => {
 });
 
 test('facts are kept, a game not on Steam is remembered, and old facts are refreshed', async (t) => {
-  list('Cached', 90, 10);
+  list('Cached', 90, 10, ['FPS']);
   asked.length = 0;
   await factsFor('Cached');
   await factsFor('CACHED!');
@@ -202,8 +215,22 @@ test('facts are kept, a game not on Steam is remembered, and old facts are refre
   assert.equal((await factsFor('Cached')).positive, 500);
 });
 
+test('a game SteamSpy has no tags for gets them from Steam’s store, and is asked again a day later if neither has any', async (t) => {
+  const fresh = list('Too New', 90, 10);
+  fresh.steamTags = ['Horror', 'Co-op'];
+  assert.deepEqual((await factsFor('Too New')).tags, ['Horror', 'Co-op']);
+  list('Not Tagged Yet', 90, 10);
+  assert.deepEqual((await factsFor('Not Tagged Yet')).tags, []);
+  catalog.get('Not Tagged Yet')!.steamTags = ['FPS'];
+  asked.length = 0;
+  await factsFor('Not Tagged Yet');
+  assert.deepEqual(asked, [], 'not straight away');
+  t.mock.timers.enable({ apis: ['Date'], now: Date.now() + 25 * HOUR });
+  assert.deepEqual((await factsFor('Not Tagged Yet')).tags, ['FPS']);
+});
+
 test('asking twice at once looks a game up once', async () => {
-  list('Twice', 90, 10);
+  list('Twice', 90, 10, ['FPS']);
   asked.length = 0;
   const [a, b] = await Promise.all([factsFor('Twice'), factsFor('Twice')]);
   assert.deepEqual(a, b);
