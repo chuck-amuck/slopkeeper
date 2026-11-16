@@ -206,6 +206,9 @@ export function time(name: Timing, seconds: number, labels: Labels = {}) {
   }
 }
 
+/** A count's total since the process started */
+export const counterValue = (name: Counter, labels: Labels = {}) => counters.get(keyOf(name, labels))?.value ?? 0;
+
 /** The current value of a gauge, if it's been set */
 export const gaugeValue = (name: Gauge, labels: Labels = {}) => gauges.get(keyOf(name, labels))?.value;
 

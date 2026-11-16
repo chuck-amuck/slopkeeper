@@ -1,21 +1,11 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server } from 'node:http';
 import path from 'node:path';
-import {
-  createAudioPlayer,
-  createAudioResource,
-  entersState,
-  getVoiceConnection,
-  joinVoiceChannel,
-  NoSubscriberBehavior,
-  StreamType,
-  VoiceConnectionStatus,
-  type AudioPlayer,
-  type VoiceConnection,
-} from '@discordjs/voice';
-import { PermissionFlagsBits, type Client, type Guild, type VoiceBasedChannel } from 'discord.js';
+import { createAudioPlayer, createAudioResource, getVoiceConnection, NoSubscriberBehavior, StreamType, type AudioPlayer } from '@discordjs/voice';
+import type { Client, Guild, VoiceBasedChannel } from 'discord.js';
 import { MIX_VOLUME, Mixer } from './mixer.ts';
 import { containerUsage } from './perf.ts';
+import { destroy, join, loopVoiceTotals, voiceProblem } from './voiceJoin.ts';
 
 /**
  * The loop bot: a second Discord bot that only plays the looping room, so the main bot is free to play everywhere else.
@@ -41,8 +31,6 @@ export interface LoopProgram {
 }
 
 const MAX_VOICES = 12;
-const CONNECT_TIMEOUT_MS = 15_000;
-const RECONNECT_TIMEOUT_MS = 5_000;
 // Told to leave by the main bot as the room empties, but it shouldn't sit there alone if that's missed
 const EMPTY_LEAVE_MS = 30_000;
 const MOST_MS = 60_000;
@@ -53,18 +41,9 @@ const humansIn = (channel: VoiceBasedChannel) => [...channel.members.values()].f
 
 /** Why the loop bot can't play in a channel, or null if it can */
 function cantJoin(channel: VoiceBasedChannel): string | null {
-  const perms = channel.permissionsFor(channel.guild.members.me!);
-  const missing = (
-    [
-      [PermissionFlagsBits.ViewChannel, 'View Channel'],
-      [PermissionFlagsBits.Connect, 'Connect'],
-      [PermissionFlagsBits.Speak, 'Speak'],
-    ] as const
-  )
-    .filter(([flag]) => !perms?.has(flag))
-    .map(([, name]) => name);
-  if (missing.length) return `The loop bot can’t play in ${channel.name}. It needs **${missing.join('**, **')}** there.`;
-  return channel.joinable ? null : `The loop bot can’t join ${channel.name}, it’s full.`;
+  const problem = voiceProblem(channel);
+  if (problem === 'full') return `The loop bot can’t join ${channel.name}, it’s full.`;
+  return problem && `The loop bot can’t play in ${channel.name}. It needs **${problem.missing.join('**, **')}** there.`;
 }
 
 /** One server's looping room, as this bot plays it */
@@ -119,7 +98,7 @@ export class LoopRoom {
     this.partStops = [];
     this.player.stop(true);
     const connection = getVoiceConnection(this.guild.id);
-    if (connection && connection.state.status !== VoiceConnectionStatus.Destroyed) connection.destroy();
+    if (connection) destroy(connection);
   }
 
   /** Leaves a while after the last person goes, in case the main bot's word doesn't arrive */
@@ -197,35 +176,11 @@ export class LoopRoom {
 
   /** Gets into the channel. Returns whether it had to join afresh, which starts the room over, or why it couldn't */
   private async connect(channel: VoiceBasedChannel): Promise<boolean | string> {
-    let connection: VoiceConnection | undefined = getVoiceConnection(this.guild.id);
-    const fresh = !connection || connection.joinConfig.channelId !== channel.id || connection.state.status === VoiceConnectionStatus.Disconnected || connection.state.status === VoiceConnectionStatus.Destroyed;
-    if (fresh) {
-      const isNew = !connection || connection.state.status === VoiceConnectionStatus.Destroyed;
-      connection = joinVoiceChannel({ channelId: channel.id, guildId: this.guild.id, adapterCreator: this.guild.voiceAdapterCreator, selfDeaf: true });
-      if (isNew) this.watch(connection);
-      connection.subscribe(this.player);
-    }
-    try {
-      await entersState(connection!, VoiceConnectionStatus.Ready, CONNECT_TIMEOUT_MS);
-    } catch {
-      console.error(`Voice connection to ${channel.name} in ${this.guild.name} timed out in state ${connection!.state.status}`);
-      this.stop();
-      return `The loop bot couldn’t connect to ${channel.name}. It tries again when someone comes in.`;
-    }
-    return fresh;
-  }
-
-  private watch(connection: VoiceConnection) {
-    // Without a listener, a voice network error would be thrown and take the whole bot down
-    connection.on('error', (err) => console.error(`Voice connection error in ${this.guild.name}:`, err.message));
-    connection.on(VoiceConnectionStatus.Disconnected, async () => {
-      try {
-        await Promise.race([entersState(connection, VoiceConnectionStatus.Signalling, RECONNECT_TIMEOUT_MS), entersState(connection, VoiceConnectionStatus.Connecting, RECONNECT_TIMEOUT_MS)]);
-      } catch {
-        // Disconnected by someone, or the channel went away. The main bot sends the room again when someone comes in
-        this.stop();
-      }
-    });
+    // Disconnected by someone, or the channel went away: the main bot sends the room again when someone comes in
+    const joined = await join(channel, this.player, { bot: 'loop', onLost: () => this.stop() });
+    if (joined) return joined.fresh;
+    this.stop();
+    return `The loop bot couldn’t connect to ${channel.name}. It tries again when someone comes in.`;
   }
 }
 
@@ -281,7 +236,10 @@ export function createLoopApi(client: Client, token: string, filesRoot: string, 
       if (url.pathname === '/status' && req.method === 'GET') {
         return reply(200, { ready: client.isReady(), name: client.user?.displayName ?? null, guilds: [...client.guilds.cache.keys()] });
       }
-      if (url.pathname === '/stats' && req.method === 'GET') return reply(200, { ...containerUsage(), ready: client.isReady() });
+      if (url.pathname === '/stats' && req.method === 'GET') {
+        // Its voice troubles since it started, which the main bot adds to its health numbers
+        return reply(200, { ...containerUsage(), ready: client.isReady(), voice: loopVoiceTotals() });
+      }
       const match = /^\/guilds\/(\d{1,20})\/loop$/.exec(url.pathname);
       if (!match) return reply(404, { error: 'Not found.' });
       const guild = client.guilds.cache.get(match[1]);

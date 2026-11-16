@@ -1,5 +1,5 @@
-import { AudioPlayerStatus, type AudioPlayer, NoSubscriberBehavior, StreamType, VoiceConnectionStatus, createAudioPlayer, createAudioResource, entersState, getVoiceConnection, joinVoiceChannel, type VoiceConnection } from '@discordjs/voice';
-import { PermissionFlagsBits, type Guild, type VoiceBasedChannel } from 'discord.js';
+import { AudioPlayerStatus, type AudioPlayer, NoSubscriberBehavior, StreamType, createAudioPlayer, createAudioResource, getVoiceConnection } from '@discordjs/voice';
+import type { Guild, VoiceBasedChannel } from 'discord.js';
 import { existsSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -10,6 +10,7 @@ import * as perf from '../perf.ts';
 import { setting } from '../settings.ts';
 import type { DiscordSound } from '../discordSounds.ts';
 import { humansIn } from '../util.ts';
+import { destroy, join, voiceProblem } from '../voiceJoin.ts';
 import { type Sound, VOLUME, findSound, recordPlay, soundGain } from './soundLibrary.ts';
 import { botClient, checkLoopRoom, isLooping, silenced } from './loopRoom.ts';
 
@@ -19,18 +20,8 @@ const MAX_VOICES = 12;
 
 const IDLE_LEAVE_MS = 5 * 60_000;
 
-const CONNECT_TIMEOUT_MS = 15_000;
-
-const RECONNECT_TIMEOUT_MS = 5_000;
-
 /** A sound that takes this long to be heard is kept for a look */
 const SLOW_SOUND_S = 2;
-
-const VOICE_PERMISSIONS = [
-  [PermissionFlagsBits.ViewChannel, 'View Channel'],
-  [PermissionFlagsBits.Connect, 'Connect'],
-  [PermissionFlagsBits.Speak, 'Speak'],
-] as const;
 
 /** How loud a sound plays in voice, where 1 is the file as it is */
 export const voiceVolume = (guildId: string, name: string) => VOLUME * soundGain(guildId, name);
@@ -76,32 +67,9 @@ export function leaveWhenIdle(guildId: string, a: GuildAudio) {
 
 /** Why the bot can't play in a channel, or null if it can */
 export function cantJoin(channel: VoiceBasedChannel): string | null {
-  const perms = channel.permissionsFor(channel.guild.members.me!);
-  const missing = VOICE_PERMISSIONS.filter(([flag]) => !perms?.has(flag)).map(([, name]) => name);
-  if (missing.length) return `I can’t play in ${channel}. A server admin needs to give my role **${missing.join('**, **')}** there.`;
-  return channel.joinable ? null : `I can’t join ${channel}, it’s full.`;
-}
-
-function destroy(connection: VoiceConnection) {
-  if (connection.state.status !== VoiceConnectionStatus.Destroyed) connection.destroy();
-}
-
-function watch(connection: VoiceConnection, guildId: string) {
-  // Without a listener, a voice network error would be thrown and take the whole bot down
-  connection.on('error', (err) => console.error(`Voice connection error in server ${guildId}:`, err.message));
-  connection.on(VoiceConnectionStatus.Disconnected, async () => {
-    perf.count('voice_disconnects_total');
-    try {
-      // Being dragged to another channel also lands here, and reconnects by itself
-      await Promise.race([
-        entersState(connection, VoiceConnectionStatus.Signalling, RECONNECT_TIMEOUT_MS),
-        entersState(connection, VoiceConnectionStatus.Connecting, RECONNECT_TIMEOUT_MS),
-      ]);
-    } catch {
-      // Disconnected by someone, or the channel went away. Nothing else clears this, and every click would wait on it
-      destroy(connection);
-    }
-  });
+  const problem = voiceProblem(channel);
+  if (problem === 'full') return `I can’t join ${channel}, it’s full.`;
+  return problem && `I can’t play in ${channel}. A server admin needs to give my role **${problem.missing.join('**, **')}** there.`;
 }
 
 /** Gets the bot into a channel, ready to play. Returns null on success or the reason it couldn't, for the user */
@@ -111,35 +79,10 @@ export async function connect(channel: VoiceBasedChannel): Promise<string | null
 
   const a = audioFor(channel.guild.id);
   clearTimeout(a.idleTimer);
-  let connection = getVoiceConnection(channel.guild.id);
-  const joining = performance.now();
-  let joined = false;
-  // Joining again also revives a connection that dropped, which is otherwise only cleared up a few seconds later
-  if (!connection || connection.joinConfig.channelId !== channel.id || connection.state.status === VoiceConnectionStatus.Disconnected) {
-    const isNew = !connection;
-    // The loop belongs to the room, so it doesn't follow the bot anywhere else
-    if (connection && connection.joinConfig.channelId !== channel.id) a.mixer?.stopLoops();
-    connection = joinVoiceChannel({
-      channelId: channel.id,
-      guildId: channel.guild.id,
-      adapterCreator: channel.guild.voiceAdapterCreator,
-      selfDeaf: true,
-    });
-    if (isNew) watch(connection, channel.guild.id);
-    connection.subscribe(a.player);
-    joined = true;
-  }
-  try {
-    await entersState(connection, VoiceConnectionStatus.Ready, CONNECT_TIMEOUT_MS);
-    if (joined) perf.time('voice_connect_seconds', (performance.now() - joining) / 1000);
-  } catch {
-    perf.count('voice_connect_failures_total');
-    console.error(`Voice connection to ${channel.name} in ${channel.guild.name} (${channel.guild.id}) timed out in state ${connection.state.status}`);
-    // Left in place it would be reused, and every later click would time out as well
-    destroy(connection);
-    return `I couldn’t connect to ${channel}. Try again in a moment.`;
-  }
-  return null;
+  // The loop belongs to the room, so it doesn't follow the bot anywhere else
+  const was = getVoiceConnection(channel.guild.id);
+  if (was && was.joinConfig.channelId !== channel.id) a.mixer?.stopLoops();
+  return (await join(channel, a.player)) ? null : `I couldn’t connect to ${channel}. Try again in a moment.`;
 }
 
 /** Layers onto whatever is already playing; a fresh mixer is only needed once the last one has gone quiet */

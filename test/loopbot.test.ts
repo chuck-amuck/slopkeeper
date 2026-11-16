@@ -199,4 +199,8 @@ test('the API needs the password, and plays, stops and reports', async (t) => {
   assert.equal((await call(`/guilds/${guild.id}/loop`, { method: 'DELETE' })).status, 200);
   assert.equal(getVoiceConnection(guild.id), undefined);
   assert.equal((await call('/elsewhere')).status, 404);
+  // Its memory and CPU, and its voice troubles since it started, for the main bot's health numbers
+  const { body } = await call('/stats');
+  assert.equal(body.ready, true);
+  assert.ok(Number.isInteger(body.voice.connectFailures) && Number.isInteger(body.voice.disconnects));
 });

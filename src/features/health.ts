@@ -6,6 +6,7 @@ import { config } from '../config.ts';
 import { db, getKv, setKv, transaction } from '../db.ts';
 import { machineChange, readMachine, type MachineReading } from '../machine.ts';
 import * as perf from '../perf.ts';
+import { LOOP_VOICE_COUNTS, type LoopVoice } from '../voiceJoin.ts';
 import type { Feature } from '../types.ts';
 
 /**
@@ -236,6 +237,40 @@ const polled = () =>
     { container: 'loop', url: config.loopBotUrl, token: config.loopToken },
   ].filter((c) => c.url);
 
+const LOOP_SEEN_KEY = 'loop_voice_seen';
+
+/**
+ * Adds what's new in the loop bot's voice totals to this bot's counts, labelled as the loop bot's. What it last saw is
+ * kept, so neither bot restarting loses or repeats any: a loop bot that started since then has all of its totals new
+ */
+export function loopVoice(voice: unknown) {
+  if (!voice || typeof voice !== 'object') return;
+  const now = voice as Record<string, unknown>;
+  if (!isCount(now.startedAt)) return;
+  let seen: Partial<LoopVoice> = {};
+  try {
+    seen = JSON.parse(getKv(LOOP_SEEN_KEY) ?? '{}');
+  } catch {}
+  const restarted = seen.startedAt !== now.startedAt;
+  const next: Record<string, number> = { startedAt: now.startedAt };
+  let changed = restarted;
+  for (const [field, name] of Object.entries(LOOP_VOICE_COUNTS) as [keyof typeof LOOP_VOICE_COUNTS, string][]) {
+    const before = restarted ? 0 : (seen[field] ?? 0);
+    const total = now[field];
+    // A missing or odd total leaves the last one standing, so the next good one isn't counted twice
+    if (!isCount(total) || total < before) {
+      next[field] = before;
+      continue;
+    }
+    next[field] = total;
+    if (total > before) {
+      perf.count(name as perf.Counter, { bot: 'loop' }, total - before);
+      changed = true;
+    }
+  }
+  if (changed) setKv(LOOP_SEEN_KEY, JSON.stringify(next));
+}
+
 export async function poll() {
   await Promise.all(
     polled().map(async ({ container, url, token }) => {
@@ -246,6 +281,7 @@ export async function poll() {
         if (!usage) throw new Error(`answered ${res.status}`);
         containerSeen(container, usage);
         if (container === 'voice' && isCount(body?.modelsLoaded)) perf.gauge('voice_models_loaded', body.modelsLoaded);
+        if (container === 'loop') loopVoice(body?.voice);
       } catch {
         perf.gauge('container_up', 0, { container });
       }
