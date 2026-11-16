@@ -1,5 +1,6 @@
 import { fakeClient } from './helpers.ts';
 import assert from 'node:assert/strict';
+import { setTimeout as sleep } from 'node:timers/promises';
 import { mock, test } from 'node:test';
 import { recentActivity } from '../src/activity.ts';
 import { config } from '../src/config.ts';
@@ -279,9 +280,11 @@ test('a check that’s still posting when the next is due doesn’t post the rep
     return { id: 'x' };
   });
   const first = tick(client);
-  await tick(client);
+  // Without the guard the second would wait on the same held post, so it isn't awaited until that's let go
+  const second = tick(client);
+  await Promise.race([second, sleep(200)]);
   release();
-  await first;
+  await Promise.all([first, second]);
   assert.equal(sent, 1);
   assert.equal(allNights('slow').length, before + 1);
 });
