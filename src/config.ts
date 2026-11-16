@@ -29,7 +29,7 @@ export const config = {
   apiPort: Number(process.env.API_PORT || 8787),
   // The voice container, for text to speech. Unset turns it off
   voiceUrl: process.env.VOICE_URL || null,
-  // The music container, which plays Spotify, and the password it shares with the bot. Unset turns music off
+  // The music container, which finds songs and downloads them with yt-dlp, and the password it shares with the bot. Unset turns music off
   musicUrl: process.env.MUSIC_URL || null,
   musicToken: process.env.MUSIC_TOKEN || null,
   // Where the music container's downloaded audio is, read-only, shared with it as a volume

@@ -108,10 +108,18 @@ export function createFetcher(o) {
     writeIndex(index);
   }
 
+  /**
+   * What a song is kept under. A Spotify song is found by the name and artist the bot sends, so those are part of it:
+   * a song asked for under another name can't change what everyone else hears for that link
+   */
+  const songKey = (request) => (request.uri ? `${request.uri}\n${String(request.title ?? '').trim().toLowerCase()}\n${String(request.artist ?? '').trim().toLowerCase()}` : request.url);
+
   /** Audio for a song or link, from the folder if it's there, or found and downloaded. Only one fetch runs per song */
   async function fetchAudio(request) {
-    const key = request.uri ?? request.url;
-    const kept = readIndex()[key];
+    const key = songKey(request);
+    const index = readIndex();
+    // Kept from before songs were kept by name too, under their link alone
+    const kept = index[key] ?? (request.uri ? index[request.uri] : undefined);
     if (kept && fs.existsSync(path.join(o.audioDir, kept.file))) {
       // Marks it as just used, so it's the last to go
       const now = new Date();

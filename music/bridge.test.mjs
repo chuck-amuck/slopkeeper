@@ -102,6 +102,29 @@ test('each song is fetched once, however often or at once it’s asked for, and 
   assert.equal(runs(dataDir).length, 2);
 });
 
+test('a song asked for under another name gets its own download, and doesn’t change what the real name plays', async () => {
+  const dataDir = temp();
+  const { base } = await bridge({ dataDir });
+  await fetchSong(base, song(1, { title: 'Something Else Entirely' }));
+  await fetchSong(base, song(1));
+  // The stand-in names files by link; yt-dlp names them by the video it found
+  assert.equal(runs(dataDir).length, 2);
+  // Case and spaces don't count as another name
+  await fetchSong(base, song(1, { title: ' song 1 ', artist: 'BAND' }));
+  assert.equal(runs(dataDir).length, 2);
+});
+
+test('a song kept under its link alone, from before, is still played from the folder', async () => {
+  const dataDir = temp();
+  fs.mkdirSync(path.join(dataDir, 'audio'), { recursive: true });
+  fs.writeFileSync(path.join(dataDir, 'audio', 'youtube-old.webm'), 'song');
+  fs.writeFileSync(path.join(dataDir, 'audio', 'index.json'), JSON.stringify({ [song(1).uri]: { file: 'youtube-old.webm', source: 'youtube', url: null, title: 'Song 1', durationMs: 4000 } }));
+  const { base } = await bridge({ dataDir });
+  const answer = await (await fetchSong(base, song(1))).json();
+  assert.equal(answer.file, 'youtube-old.webm');
+  assert.deepEqual(runs(dataDir), []);
+});
+
 test('the least recently played audio goes once the folder is over its cap', async () => {
   const dataDir = temp();
   // Room for two four-second songs

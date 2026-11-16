@@ -89,10 +89,10 @@ async function playIntro(guild: Guild, room: VoiceBasedChannel, intro: Sound, ru
   if (!current()) return false;
   return new Promise((resolve) => {
     let stop!: () => void;
-    // A file that won't play ends by itself too, so the loop still starts
-    mixInto(guild.id, (mixer) => (stop = mixer.add(intro.file, soundGain(guild.id, intro.name), (byItself) => {
+    // A file that won't play still lets the loop start
+    mixInto(guild.id, (mixer) => (stop = mixer.add(intro.file, soundGain(guild.id, intro.name), (byItself, failed) => {
       if (introStops.get(guild.id) === stop) introStops.delete(guild.id);
-      resolve(byItself && current());
+      resolve((byItself || !!failed) && current());
     })));
     introStops.set(guild.id, stop);
   });

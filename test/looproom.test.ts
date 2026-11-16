@@ -333,6 +333,16 @@ test('the intro plays after its delay, at the sound’s own level, and the loop 
   assert.equal(loops().length, 1);
 });
 
+test('an intro file that won’t play still lets the loop start', { skip: !hasFfmpeg }, async (t) => {
+  const { guild, therapy, enter, loops, intros } = await withIntro(t);
+  enter(therapy, 'ana');
+  const started = checkLoopRoom(guild);
+  await sleep(50);
+  (intros()[0].end as (byItself: boolean, failed: boolean) => void)(false, true);
+  await started;
+  assert.equal(loops().length, 1);
+});
+
 test('someone else coming in stops the loop and starts again from the intro', { skip: !hasFfmpeg }, async (t) => {
   const { guild, therapy, enter, loops, intros, finish, state } = await withIntro(t);
   const stopped = t.mock.method(Mixer.prototype, 'stopLoops');

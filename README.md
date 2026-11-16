@@ -19,7 +19,8 @@ Everything happens through slash commands (type `/` in any channel, or run `/hel
 - [Getting together](#getting-together): [hop-on pings](#hop-on-pings) · [game pings](#game-pings) · [game nights](#game-nights)
 - [Playing games](#playing-games): [Steam accounts](#steam-accounts) · [What do we play?](#what-do-we-play) · [Game library](#game-library) · [Sale alerts](#sale-alerts) · [Free games](#free-games)
 - [Stats](#stats): [session recaps](#session-recaps) · [voice leaderboards](#voice-leaderboards) · [game stats](#game-stats) · [comparing two people](#comparing-two-people) · [monthly recap](#monthly-recap)
-- [Soundboard](#soundboard): [playing sounds](#playing-sounds) · [managing sounds](#managing-sounds) · [text to speech](#text-to-speech) · [even volume](#even-volume) · [Discord's soundboard](#discords-soundboard)
+- [Soundboard](#soundboard): [playing sounds](#playing-sounds) · [managing sounds](#managing-sounds) · [text to speech](#text-to-speech) · [who can change sounds](#who-can-change-sounds) · [even volume](#even-volume) · [soundboard volume](#soundboard-volume) · [looping sound room](#looping-sound-room) · [Discord's soundboard](#discords-soundboard)
+- [Music](#music)
 - [Server settings](#server-settings): [settings and defaults](#settings-and-defaults)
 - [Multiple servers](#multiple-servers)
 - [Web UI](#web-ui)
@@ -404,7 +405,7 @@ You have to be in a voice channel to play a sound. The bot joins whichever chann
 | `/sound restore name` | Brings back a sound from the bin with its emoji, volume, group and untrimmed original. If the name's been taken, it comes back numbered, like `horn-2`. It isn't put back on Discord's soundboard, and anyone who had it as a join sound has to pick it again. |
 | `/sound volume name percent` | Sets how loud one sound plays, from 25 to 200, where 100 is normal. |
 
-The [management API](#management-api) can also trim a sound. The bot keeps the first version, so it can be restored until the sound is replaced. A copy on Discord's soundboard stays as it is until it's added again.
+The web UI's **Manage** can also trim a sound, and so can the [management API](#management-api). The bot keeps the first version, so it can be restored until the sound is replaced. A copy on Discord's soundboard stays as it is until it's added again.
 
 #### Adding a sound from a link
 
@@ -460,7 +461,7 @@ It skips bots, images, links with no words and anything over the longest line, a
 
 Everyone can, until a role is set with `/setup sound-managers`. Then only people with that role or **Manage Server** can use `/sound add`, `emoji`, `remove`, `restore`, `volume`, `discord-add`, `discord-remove` and `discord-sync`, or the changes under a panel's **⚙️ Settings**. Everyone else can still play and test sounds, stop playback, post a panel and set their own join sound. If the role is deleted, only people with **Manage Server** can change sounds until a new one is set.
 
-The web UI isn't limited by the role, because it doesn't know who's using it. Anyone with its password can change everything.
+The web UI isn't limited by the role: anyone with its password can change everything, even when [Pangolin](#signing-in-through-pangolin) says who they are.
 
 ### Even volume
 
@@ -536,8 +537,8 @@ The bot plays music in voice, from a queue everyone shares. Songs are found on S
 
 How it plays:
 
-- **Queue:** the bot keeps its own queue for each server, kept across restarts, up to 500 songs. An album or playlist adds up to its first 100 songs, or 100 at random from up to its first 1,000 when shuffled. When the queue runs out the music stops, unless Autoplay is on. A restart or redeploy carries the music on from the same second, in the same channel, once the bot and the music player are back (usually 10–20 seconds), as long as someone is still in that channel and it was less than 10 minutes. Paused music stays paused at its place.
-- **Finding songs:** each Spotify song is matched by name and length, trying YouTube Music's official audio first, then YouTube, then SoundCloud. Live versions, covers and remixes are passed over unless that's what the Spotify song is. The first two songs in the queue are fetched as soon as they're queued, and each next one while a song plays, so they start without a wait. A song none of them has is skipped, and the Music tab says so.
+- **Queue:** the bot keeps its own queue for each server, kept across restarts, up to 500 songs. An album or playlist adds up to its first 100 songs, or 100 at random from up to its first 1,000 when shuffled. When the queue runs out the music stops, unless Autoplay is on. A restart or redeploy carries the music on from the same second, in the same channel, once the bot and the music player are back (usually 10–20 seconds; an uploaded file doesn't wait for the music player), as long as someone is still in that channel and it was less than 10 minutes. Paused music stays paused at its place.
+- **Finding songs:** each Spotify song is matched by name and length, trying YouTube Music's official audio first, then YouTube, then SoundCloud. Live versions, covers and remixes are passed over unless that's what the Spotify song is. The first two songs in the queue are fetched as soon as they're queued, and each next one while a song plays, so they start without a wait. A song none of them has is skipped, and the Music tab says so. So is one whose file won't play, but a second in a row pauses the music, since something wider is wrong. If the bot can't see the music player's files (`MUSIC_AUDIO_DIR`), the music pauses and says so, rather than skipping every song.
 - **Autoplay** reads YouTube Music's mix for the last song in the queue that someone added, the one playing included (the one YouTube radio would play after it; once those have all played, the last of them) and picks songs not played or offered since the music started, between 1 and 10 minutes long, and not live versions, covers or remixes. Once that mix runs out, or YouTube won't give it, it goes on from the latest song played instead. A song it offered isn't picked again, even once taken out or swapped, and what played is remembered through a restart. If the last song ends before Autoplay has found any, it waits up to 30 seconds, or until someone adds a song. It needs the song to have come from YouTube: a Spotify song is matched there, and SoundCloud songs can't be followed. If it finds nothing new, the Music tab and the card say the music stops after the song playing. Spotify's own suggestions aren't open to new apps, so it doesn't use them.
 - **Several servers** can play at once, each with its own queue.
 - **Playlists:** a link to any public playlist (yours, someone else's, or Spotify's own, like Today's Top Hits) adds its first 100 songs, or those 100 in random order when shuffled. They're read from Spotify's public embed player, which needs no sign-in but lists no more than 100 songs and no album covers. The covers fill in a few seconds later, the next songs first, from Spotify's public oEmbed (also no sign-in). Private playlists can't be read. If the Spotify account has [signed in](#the-music-container), playlists it made or collaborates on are read through it instead, which reaches the whole playlist and shows covers.
@@ -563,7 +564,7 @@ Every setting has a sensible default, so only the announce channel needs setting
 | `/setup timezone [zone]` | The server's time zone, used for the weekly post, counting "nights" on leaderboards, and reading game night times. Autocompletes, e.g. `America/Chicago`, `Europe/London`. |
 | `/setup steam-region [country]` | Steam store region for sale prices, as a two-letter country code. |
 | `/setup free-game-filters [min_rating] [like_what_we_play] [multiplayer_only] [not_on_steam]` | Chooses which free games are worth posting. See [Free games](#free-games). |
-| `/setup sale-alerts [min_discount] [steam_wishlists] [other_stores] [channel]` | Sets the smallest sale worth posting, whether Steam wishlists count, whether other stores' prices count, and a channel of their own. See [Sale alerts](#sale-alerts). |
+| `/setup sale-alerts [min_discount] [post_hour] [steam_wishlists] [other_stores] [bundles] [bundles_like_we_play] [channel]` | Sets the smallest sale worth posting, the hour of the day's sale post, whether Steam wishlists count, whether other stores' prices count, whether bundles are posted and whether ones only like what the server plays count, and a channel of their own. See [Sale alerts](#sale-alerts) and [Bundles](#bundles). |
 | `/setup free-games [enabled] [channel]` | Turns free game posts on or off. `channel` gives them their own channel; without it they go to the announce channel. To move them back to the announce channel, use `/setup reset setting:Free games channel`. |
 | `/setup gamenight-reminder [minutes]` | How long before a game night to remind the people who are in. `0` turns reminders off. |
 | `/setup monthly-recap [enabled]` | Turns the post on the 1st of each month on or off. |
@@ -571,7 +572,7 @@ Every setting has a sensible default, so only the announce channel needs setting
 | `/setup steam-status [enabled]` | Whether what linked members in voice are playing on Steam counts when Discord doesn't show it. |
 | `/setup sounds [even_volume] [join_sounds] [join_cooldown_minutes] [join_delay_ms] [volume]` | Turns [even volume](#even-volume) and join sounds on or off, and sets how often one person's join sound can play and how long the bot waits after connecting before it plays. `volume` sets how loud every sound plays. |
 | `/setup loop-room [channel] [off] [sound] [volume] …` | Plays a sound, and speech if you like, nonstop while anyone's in a voice channel. `off:True` turns it off and keeps the rest of its settings. See [looping sound room](#looping-sound-room). |
-| `/setup music [volume] [dj_role] [everyone]` | How loud music plays, and who can control it. `everyone:True` takes the role limit off. See [Music](#music). |
+| `/setup music [volume] [autoplay] [dj_role] [everyone]` | How loud music plays, whether Autoplay adds similar songs once the queue runs out, and who can control it. `everyone:True` takes the role limit off. See [Music](#music). |
 | `/setup sound-managers [role] [everyone]` | Limits changing sounds to a role, plus people with **Manage Server**. `everyone:True` lets everyone change them again, which is the default. See [who can change sounds](#who-can-change-sounds). |
 | `/setup speech [enabled] [speed] [volume] …` | Text to speech: on or off, its speed, the limits on `/say`, and what the bot says aloud by itself. See [Text to speech](#text-to-speech). |
 | `/setup speech-role [role] [everyone]` | Limits `/say` and having messages read out to a role, plus people with **Manage Server**. `everyone:True` lets everyone again. |

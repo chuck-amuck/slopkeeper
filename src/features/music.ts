@@ -113,6 +113,8 @@ interface Position {
 /** Music playing, or paused, in one server */
 interface Session {
   guild: Guild;
+  /** Songs in a row whose file wouldn't play: two is something wider than one file, like the music folder */
+  failedInRow?: number;
   channelId: string;
   phase: 'starting' | 'playing' | 'paused';
   /** When the music started, which pauses, skips and restarts keep until it stops: the web UI's music player stays hidden till then */
@@ -419,7 +421,7 @@ export async function askYoutube(where: '/fetch' | '/lookup' | '/similar' | '/cl
 }
 
 /** The audio for a song: a file the music container downloaded, with where it came from, or why there isn't one */
-async function fetchAudio(row: QueueRow, trace?: perf.Trace): Promise<{ file: string; source: string; url: string | null } | { missing: string }> {
+async function fetchAudio(row: QueueRow, trace?: perf.Trace, retried = false): Promise<{ file: string; source: string; url: string | null } | { missing: string }> {
   // An upload is here already
   const uploaded = uploadedName(row.uri);
   if (uploaded) return existsSync(fileOf(uploaded)) ? { file: fileOf(uploaded), source: 'file', url: null } : { missing: 'The uploaded file is gone.' };
@@ -431,17 +433,26 @@ async function fetchAudio(row: QueueRow, trace?: perf.Trace): Promise<{ file: st
   perf.time('music_download_seconds', (performance.now() - asked) / 1000, { kept: kept ? 'yes' : 'no' });
   if (trace) trace.detail.kept = kept;
   if (typeof answer.file !== 'string' || !SAFE_FILE.test(answer.file)) throw new Error('the music container named the file oddly');
+  // Without the music container's folder, every song would fail the same way, so this pauses rather than skipping them all.
+  // A file the container let go of just after answering is fetched again first
+  if (!existsSync(path.join(config.musicAudioDir, answer.file)) && !retried) return fetchAudio(row, trace, true);
+  if (!existsSync(path.join(config.musicAudioDir, answer.file))) throw new Unreadable(`The music player downloaded ${row.title}, but the bot can’t see its files (MUSIC_AUDIO_DIR), so the music paused.`);
   return { file: path.join(config.musicAudioDir, answer.file), source: String(answer.source ?? 'youtube'), url: typeof answer.url === 'string' ? answer.url : null };
 }
+
+/** A song the music container has, in a folder the bot can't read */
+class Unreadable extends Error {}
 
 /** Downloads still going, by song, so Autoplay looking for a song's video and fetching it ahead share one */
 const fetching = new Map<string, ReturnType<typeof fetchAudio>>();
 
 function fetchShared(row: QueueRow): ReturnType<typeof fetchAudio> {
-  let job = fetching.get(row.uri);
+  // By name too, like the music container, so a song queued under another name gets its own download
+  const key = [row.uri, row.title.trim().toLowerCase(), row.artist.trim().toLowerCase()].join('\n');
+  let job = fetching.get(key);
   if (!job) {
-    job = fetchAudio(row).finally(() => fetching.delete(row.uri));
-    fetching.set(row.uri, job);
+    job = fetchAudio(row).finally(() => fetching.delete(key));
+    fetching.set(key, job);
   }
   return job;
 }
@@ -586,6 +597,10 @@ async function playCurrent(s: Session, fromMs = 0): Promise<string | null> {
   } catch (err) {
     if (s.turn !== turn) return null;
     console.error(`Music: couldn’t get ${row.title}:`, (err as Error).message);
+    if (err instanceof Unreadable) {
+      pauseHere(s, err.message);
+      return err.message;
+    }
     pauseHere(s, `The music player couldn’t get ${row.title}, so the music paused. Try again in a moment.`);
     return `The music player couldn’t get ${row.title}. Try again in a moment.`;
   }
@@ -604,6 +619,8 @@ async function playCurrent(s: Session, fromMs = 0): Promise<string | null> {
   const source = found.source;
   trace.detail.source = source;
   const heard = () => {
+    // Any song heard, however the last one ended, starts the count of files that won't play again
+    s.failedInRow = 0;
     trace.step('starting');
     trace.end();
     // From the top only: a seek, a resume or carrying on after a restart is the same play
@@ -621,7 +638,7 @@ async function playCurrent(s: Session, fromMs = 0): Promise<string | null> {
       console.error('Couldn’t note a song for Stats:', err);
     }
   };
-  const stop = channel ? await playLong(channel, found.file, (byItself) => onSongEnd(s, turn, byItself), fromMs, heard) : 'That voice channel is gone.';
+  const stop = channel ? await playLong(channel, found.file, (byItself, failed) => onSongEnd(s, turn, byItself, failed), fromMs, heard) : 'That voice channel is gone.';
   if (s.turn !== turn) {
     if (typeof stop !== 'string') stop();
     return null;
@@ -665,12 +682,26 @@ function playedTo(s: Session, ms: number, skipped: boolean) {
 }
 
 /** A song from a file is over: it ended, so the next one plays, or it was cut off, so the music pauses */
-function onSongEnd(s: Session, turn: number, byItself: boolean) {
+function onSongEnd(s: Session, turn: number, byItself: boolean, failed = false) {
   if (s.turn !== turn || sessions.get(s.guild.id) !== s) return;
   s.stopAudio = undefined;
   if (byItself && s.phase === 'playing') playedTo(s, s.current.duration_ms, false);
-  if (byItself && s.phase === 'playing') void moveOn(s).catch((err) => console.error(`Moving on to the next song in ${s.guild.name} failed:`, err));
-  else if (s.phase !== 'paused') pauseHere(s, null);
+  const movingOn = (note: string | null) =>
+    void moveOn(s)
+      .then((next) => {
+        if (note && !next && sessions.get(s.guild.id) === s) {
+          s.note ??= note;
+          cardChanged(s.guild.id);
+        }
+      })
+      .catch((err) => console.error(`Moving on to the next song in ${s.guild.name} failed:`, err));
+  if (byItself && s.phase === 'playing') movingOn(null);
+  // A file that won't play is skipped, like a song that can't be found. A second in a row is something wider, like the
+  // music folder, so the music pauses there rather than going through the whole queue
+  else if (failed && s.phase === 'playing' && !s.failedInRow) {
+    s.failedInRow = 1;
+    movingOn(`Couldn’t play ${s.current.title}, so it was skipped.`);
+  } else if (s.phase !== 'paused') pauseHere(s, failed ? `Couldn’t play ${s.current.title} either, so the music paused.` : null);
 }
 
 function stopAudioOf(s: Session) {
@@ -1096,11 +1127,13 @@ async function resumeOne(client: Client, saved: SavedSession) {
   sessions.set(guild.id, s);
   saveSessions();
   if (!saved.playing) return;
+  // An uploaded file plays without the music container, so it doesn't wait for it
+  const needsPlayer = !uploadedName(first.uri);
   const until = Date.now() + READY_WAIT_MS;
-  while (unavailable() && Date.now() < until) await sleep(READY_CHECK_MS);
+  while (needsPlayer && unavailable() && Date.now() < until) await sleep(READY_CHECK_MS);
   // Someone pressed play, skipped or stopped meanwhile
   if (sessions.get(guild.id) !== s || s.turn !== 0 || s.phase !== 'paused') return;
-  const problem = unavailable();
+  const problem = needsPlayer && unavailable();
   if (problem) {
     s.note = 'The bot restarted and the music player didn’t come back in time, so the music paused.';
     cardChanged(guild.id);

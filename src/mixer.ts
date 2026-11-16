@@ -74,6 +74,9 @@ interface Source {
   stop(): void;
 }
 
+/** `byItself` is whether a sound played to the end; `failed` whether it ended because ffmpeg couldn't play the file */
+export type OnEnd = (byItself: boolean, failed?: boolean) => void;
+
 /** One playing sound, decoded to raw PCM by its own ffmpeg process */
 class Voice implements Source {
   readonly proc: ChildProcess;
@@ -87,9 +90,9 @@ class Voice implements Source {
   heard = false;
   replaces: Source[] = [];
   private stopped = false;
-  private onEnd: ((byItself: boolean) => void) | undefined;
+  private onEnd: OnEnd | undefined;
 
-  constructor(file: string, gain: number, onEnd?: (byItself: boolean) => void, options: VoiceOptions = {}) {
+  constructor(file: string, gain: number, onEnd?: OnEnd, options: VoiceOptions = {}) {
     this.file = file;
     this.gain = gain;
     this.onEnd = onEnd;
@@ -104,9 +107,10 @@ class Voice implements Source {
     this.pcm = this.proc.stdout!;
     // Without a 'readable' listener, Node resumes stdout when ffmpeg exits and the unread PCM is discarded
     this.pcm.on('readable', () => {});
-    // 'close' only follows 'end' once every buffered byte has been read, so nothing is cut off.
-    // A stopped sound has already said so, so closing here means it played to the end
-    this.pcm.once('close', () => this.finish(true));
+    // The process's 'close' waits for stdout's, which only follows 'end' once every buffered byte has been read, so nothing
+    // is cut off. A stopped sound has already said so, so closing here means it played to the end, or ffmpeg failed. One
+    // killed from outside, as when memory runs out, isn't the file's fault
+    this.proc.once('close', (code, signal) => this.finish(code === 0, code !== 0 && !signal));
 
     // Only surface ffmpeg's errors for sounds that failed by themselves; a stopped one always complains about the closed pipe
     let stderr = '';
@@ -116,14 +120,14 @@ class Voice implements Source {
     });
     this.proc.once('error', (err) => {
       console.error('ffmpeg error:', err.message);
-      this.finish(false);
+      this.finish(false, true);
     });
   }
 
-  /** `byItself` is whether it played to the end, rather than being stopped or failing to start */
-  private finish(byItself: boolean) {
+  /** `byItself` is whether it played to the end, rather than being stopped or failing */
+  private finish(byItself: boolean, failed = false) {
     this.ended = true;
-    this.onEnd?.(byItself);
+    this.onEnd?.(byItself, failed && !this.stopped);
     this.onEnd = undefined;
   }
 
@@ -265,11 +269,11 @@ export class Mixer extends Readable {
    * `onEnd` runs once the sound is over, however that came about. Returns a way to stop it. The mixer emits 'playing'
    * whenever a sound starts or ends, so what's playing can be shown as it changes
    */
-  add(file: string, gain = 1, onEnd?: (byItself: boolean) => void, options: VoiceOptions = {}): () => void {
+  add(file: string, gain = 1, onEnd?: OnEnd, options: VoiceOptions = {}): () => void {
     // Music isn't in what's playing, so its comings and goings don't count as a change
     const shown = options.group !== 'music';
-    const ended = (byItself: boolean) => {
-      onEnd?.(byItself);
+    const ended = (byItself: boolean, failed?: boolean) => {
+      onEnd?.(byItself, failed);
       if (shown) this.emit('playing');
     };
     const voice = options.loop && options.everyMs ? new LayeredVoice(file, gain, options.everyMs, ended, options) : new Voice(file, gain, ended, options);

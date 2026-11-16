@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { feeds } from '../changes.ts';
 import * as discordBoard from '../discordSounds.ts';
-import { Mixer, type Playing, type VoiceOptions } from '../mixer.ts';
+import { Mixer, type OnEnd, type Playing, type VoiceOptions } from '../mixer.ts';
 import * as perf from '../perf.ts';
 import { setting } from '../settings.ts';
 import type { DiscordSound } from '../discordSounds.ts';
@@ -166,7 +166,7 @@ export function mixIn(guildId: string, file: string, gain: number, onEnd?: (byIt
  * Plays a long file, like a song, at the music volume, where newer sounds can't push it out, from `startMs` in.
  * `onEnd` runs once it's over, saying whether it played to the end. Returns a way to stop it, or the reason it couldn't play, for the user
  */
-export async function playLong(channel: VoiceBasedChannel, file: string, onEnd: (byItself: boolean) => void, startMs = 0, onHeard?: () => void): Promise<(() => void) | string> {
+export async function playLong(channel: VoiceBasedChannel, file: string, onEnd: OnEnd, startMs = 0, onHeard?: () => void): Promise<(() => void) | string> {
   const heard = timeStart(channel, 'music');
   const problem = await connect(channel);
   if (problem) return problem;

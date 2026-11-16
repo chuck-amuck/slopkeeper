@@ -55,7 +55,11 @@ const RUNNING: PlayerStatus = { youtube: { ready: true, version: '2026.10.26', m
 
 config.musicUrl = 'http://music.test';
 config.musicToken = 'music-token';
-config.musicAudioDir = '/audio';
+// The music container's folder, which it shares with the bot
+config.musicAudioDir = `${process.env.DATA_DIR}/music-audio`;
+mkdirSync(config.musicAudioDir, { recursive: true });
+// Songs the container says it has, but whose file the bot can't see
+const unseen = new Set<string>();
 
 // The music container. Songs are "downloaded" unless `youtube` says a song is missing, fails, or waits until the test lets it go on
 const fetched: string[] = [];
@@ -109,7 +113,9 @@ mock.method(globalThis, 'fetch', async (url: string, init: RequestInit = {}) => 
     if (how instanceof Promise) await how;
     if (how === 'missing') return Response.json({ error: 'No match on YouTube or SoundCloud.' }, { status: 404 });
     if (how === 'fail') return Response.json({ error: 'Sign in to confirm you’re not a bot' }, { status: 502 });
-    return Response.json({ file: `yt-${key.slice(-4)}.webm`, source: 'youtube', url: body.uri ? watch(`yt${body.uri.slice(-9)}`) : body.url });
+    const file = `yt-${key.slice(-4)}.webm`;
+    if (!unseen.has(key)) writeFileSync(`${config.musicAudioDir}/${file}`, '');
+    return Response.json({ file, source: 'youtube', url: body.uri ? watch(`yt${body.uri.slice(-9)}`) : body.url });
   }
   if (where === '/similar') {
     const { url: link } = JSON.parse(init.body as string) as { url: string };
@@ -152,10 +158,12 @@ interface Played {
   stopped: boolean;
   heard: () => void;
   end: () => void;
+  /** ffmpeg couldn't play it */
+  fail: () => void;
 }
 const played: Played[] = [];
-mock.method(Mixer.prototype, 'add', (file: string, _gain: number, onEnd: (byItself: boolean) => void, { onHeard, ...options }: VoiceOptions) => {
-  const voice: Played = { file, options, stopped: false, heard: () => onHeard?.(), end: () => onEnd(true) };
+mock.method(Mixer.prototype, 'add', (file: string, _gain: number, onEnd: (byItself: boolean, failed?: boolean) => void, { onHeard, ...options }: VoiceOptions) => {
+  const voice: Played = { file, options, stopped: false, heard: () => onHeard?.(), end: () => onEnd(true), fail: () => onEnd(false, true) };
   played.push(voice);
   return () => {
     voice.stopped = true;
@@ -194,7 +202,7 @@ function server() {
 }
 
 const song = (n: number, durationMs = 200_000): Track => ({ uri: `spotify:track:${String(n).padStart(22, '0')}`, title: `Song ${n}`, artist: 'Band', album: 'Album', cover: null, durationMs });
-const audioFile = (n: number) => `/audio/yt-${String(n).padStart(4, '0')}.webm`;
+const audioFile = (n: number) => `${config.musicAudioDir}/yt-${String(n).padStart(4, '0')}.webm`;
 const titles = (guildId: string) => queueOf(guildId).map((r) => r.title);
 /** Lets the clock move, for where a song has got to */
 const clock = (t: TestContext) => {
@@ -209,6 +217,7 @@ beforeEach(() => {
   fetched.length = 0;
   played.length = 0;
   youtube.clear();
+  unseen.clear();
   covers.clear();
   similarAsked.length = 0;
   mixes.clear();
@@ -560,6 +569,56 @@ test('a song that can’t be fetched pauses and says why', async () => {
   assert.equal(musicState(id).phase, 'paused');
   assert.match(musicState(id).note!, /couldn’t get Song 1/);
   assert.deepEqual(titles(id), ['Song 1', 'Song 2'], 'nothing is skipped, as it may work in a moment');
+  stopMusic(id, 'u1');
+});
+
+test('a song ffmpeg can’t play is skipped without counting as played, and a second in a row pauses the music', async () => {
+  const { id, guild, channel } = server();
+  addTracks(id, [song(1), song(2), song(3), song(4), song(5)], 'u1');
+  await startMusic(guild, channel);
+  lastPlayed().heard();
+  lastPlayed().fail();
+  await sleep(5);
+  assert.deepEqual(titles(id), ['Song 2', 'Song 3', 'Song 4', 'Song 5']);
+  assert.equal(musicState(id).phase, 'playing');
+  assert.equal(musicState(id).note, 'Couldn’t play Song 1, so it was skipped.');
+  const plays = () => db.prepare('SELECT title, played_ms FROM music_plays WHERE guild_id = ? ORDER BY id').all(id) as { title: string; played_ms: number | null }[];
+  assert.notEqual(plays()[0]?.played_ms, 200_000, 'not played to the end in Stats');
+  // One that plays out in between starts the count again
+  lastPlayed().heard();
+  lastPlayed().end();
+  await sleep(5);
+  lastPlayed().fail();
+  await sleep(5);
+  assert.deepEqual(titles(id), ['Song 4', 'Song 5']);
+  assert.equal(musicState(id).phase, 'playing');
+  // Two in a row
+  lastPlayed().fail();
+  await sleep(5);
+  assert.equal(musicState(id).phase, 'paused');
+  assert.equal(musicState(id).note, 'Couldn’t play Song 4 either, so the music paused.');
+  assert.deepEqual(titles(id), ['Song 4', 'Song 5']);
+  // Skipping past it to a song that's heard starts the count again too
+  addTracks(id, [song(6)], 'u1');
+  await skipMusic(id, 'u1');
+  await startMusic(guild, channel);
+  lastPlayed().heard();
+  lastPlayed().fail();
+  await sleep(5);
+  assert.equal(musicState(id).note, 'Couldn’t play Song 5, so it was skipped.');
+  stopMusic(id, 'u1');
+});
+
+test('without the music container’s folder, the music pauses and says so, rather than skipping every song', async () => {
+  const { id, guild, channel } = server();
+  // A song no other test fetches, so its file was never written
+  unseen.add(song(9171).uri);
+  addTracks(id, [song(9171), song(2)], 'u1');
+  const errors = mock.method(console, 'error', () => {});
+  assert.match((await startMusic(guild, channel))!, /can’t see its files \(MUSIC_AUDIO_DIR\)/);
+  errors.mock.restore();
+  assert.equal(musicState(id).phase, 'paused');
+  assert.deepEqual(titles(id), ['Song 9171', 'Song 2']);
   stopMusic(id, 'u1');
 });
 
@@ -974,6 +1033,23 @@ test('after a restart the music waits for the music player to start, and someone
   assert.equal(await startMusic(guild, channel), null, 'someone pressed play');
   await again;
   assert.equal(played.length, before + 2, 'played once, not twice');
+  stopMusic(id, 'u1');
+});
+
+test('after a restart an uploaded file carries on without waiting for the music player', async (t) => {
+  t.mock.method(console, 'log', () => {});
+  const { id, guild, channel, join } = server();
+  join();
+  const name = 'cafecafecafecafe.mp3';
+  mkdirSync(`${process.env.DATA_DIR}/music-files`, { recursive: true });
+  writeFileSync(`${process.env.DATA_DIR}/music-files/${name}`, '');
+  addTracks(id, [{ uri: `file:${name}`, title: 'My Mix', artist: 'Uploaded file', album: '', cover: null, durationMs: 60_000 }], 'u1');
+  await startMusic(guild, channel);
+  const before = played.length;
+  // The player never comes back
+  await restart(guild, null);
+  assert.equal(played.length, before + 1);
+  assert.equal(musicState(id).phase, 'playing');
   stopMusic(id, 'u1');
 });
 

@@ -1,7 +1,7 @@
 import './helpers.ts';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
@@ -187,6 +187,27 @@ test('says when a sound is over, however it ended', { skip: !hasFfmpeg }, async 
   assert.equal(new Set(ended).size, ended.length, 'each one only says so once');
   assert.ok(ended.includes('stopped'));
   assert.ok(ended.includes('dropped'));
+});
+
+test('a file ffmpeg can’t play says it failed, rather than that it played to the end', { skip: !hasFfmpeg }, async () => {
+  const mixer = new Mixer(0.5, 4);
+  const { done } = record(mixer);
+  const ended: [string, boolean, boolean | undefined][] = [];
+  const broken = path.join(dir, 'broken.mp3');
+  writeFileSync(broken, 'not audio at all');
+  mixer.add(path.join(dir, 'gone.wav'), 1, (byItself, failed) => ended.push(['gone', byItself, failed]));
+  mixer.add(broken, 1, (byItself, failed) => ended.push(['broken', byItself, failed]));
+  mixer.add(tone('fine.wav', 440, 0.2), 1, (byItself, failed) => ended.push(['fine', byItself, failed]));
+  const errors: unknown[] = [];
+  const realError = console.error;
+  console.error = (...args: unknown[]) => void errors.push(args);
+  try {
+    await done;
+  } finally {
+    console.error = realError;
+  }
+  assert.deepEqual(ended.sort(), [['broken', false, true], ['fine', true, false], ['gone', false, true]]);
+  assert.equal(errors.length, 2, 'each failure is logged');
 });
 
 test('a loop keeps going past the sound’s length, without a gap, until stopped', { skip: !hasFfmpeg }, async () => {
