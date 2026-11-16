@@ -189,7 +189,7 @@ test('every page of the web UI opens cleanly, on a computer and a phone', { skip
         return false;
       })();
       await sleep(500);
-      const look = await page.evaluate<{ text: number; errors: string[]; wide: number; width: number }>(`(() => {
+      const look = await page.evaluate<{ text: number; errors: string[]; wide: number; width: number; past: string[] }>(`(() => {
         const main = document.querySelector('main');
         return {
           text: main ? main.innerText.trim().length : 0,
@@ -197,13 +197,18 @@ test('every page of the web UI opens cleanly, on a computer and a phone', { skip
           // On a phone, Chrome zooms out to fit a page that's too wide, so the screen's width is the measure
           wide: Math.max(document.documentElement.scrollWidth, document.body.scrollWidth),
           width: document.documentElement.clientWidth,
+          // The innermost elements past the screen's edge, to say what's too wide
+          past: [...document.querySelectorAll('body *')]
+            .filter((n) => n.getClientRects().length && n.getBoundingClientRect().right > ${screen.width} + 1 && ![...n.children].some((c) => c.getBoundingClientRect().right > ${screen.width} + 1))
+            .slice(0, 3)
+            .map((n) => n.tagName.toLowerCase() + (n.className && typeof n.className === 'string' ? '.' + n.className.trim().split(/\s+/).join('.') : '') + ' "' + (n.textContent || '').trim().slice(0, 40) + '" ends at ' + Math.round(n.getBoundingClientRect().right)),
         };
       })()`);
       const where = `${label} (${screen.name})`;
       if (!shown) failures.push(`${where}: still loading after 10 seconds`);
       if (look.text < 20) failures.push(`${where}: next to nothing on the page`);
       for (const error of look.errors) failures.push(`${where}: shows "${error}"`);
-      if (Math.max(look.wide, look.width) > screen.width + 1) failures.push(`${where}: scrolls sideways (${look.wide} px wide on a ${screen.width} px screen)`);
+      if (Math.max(look.wide, look.width) > screen.width + 1) failures.push(`${where}: scrolls sideways (${look.wide} px wide on a ${screen.width} px screen): ${look.past.join('; ')}`);
       for (const problem of problems) failures.push(`${where}: ${problem}`);
     }
   }
