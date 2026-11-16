@@ -240,7 +240,7 @@ export class RateLimited extends SpotifyError {
 }
 
 /** The first MOST_FROM_LINK, or that many at random */
-function pick<T>(items: T[], shuffle: boolean): T[] {
+export function pick<T>(items: T[], shuffle: boolean): T[] {
   if (!shuffle) return items.slice(0, MOST_FROM_LINK);
   const mixed = [...items];
   for (let i = mixed.length - 1; i > 0; i--) {

@@ -2,7 +2,7 @@
 # Reads one JSON request on stdin and writes one JSON answer on stdout:
 #   {"title", "artist", "durationMs", "dir"}  a song from Spotify, matched by name and length, then downloaded
 #   {"url", "dir"}                            a YouTube or SoundCloud link, downloaded
-#   {"url", "info": true}                     what a link is, without downloading it
+#   {"url", "info": true, "count"}            what a link is, without downloading it: a song, or up to `count` songs of a YouTube playlist
 #   {"similar"}                               songs like a YouTube video, from YouTube Music's mix for it
 #   {"url", "clip": true, "dir"}              a video or track to cut a soundboard sound from, downloaded with its picture
 import json
@@ -22,6 +22,8 @@ LINK = re.compile(r'^https?://((www|m|music)\.)?(youtube\.com|youtu\.be|soundclo
 VIDEO = re.compile(r'^https://(?:(?:www|m|music)\.)?(?:youtube\.com/watch\?(?:.*&)?v=|youtu\.be/)(?P<video>[\w-]{11})')
 # How much of a mix is read. Its first songs are the closest, and reading more takes no longer
 MIX_LENGTH = 40
+# The most songs read from a playlist: enough for shuffle to pick from, and YouTube lists 500 in about 2 seconds
+PLAYLIST_READ = 500
 # Where a soundboard sound can come from, including any subdomain, like m.youtube.com or vm.tiktok.com
 CLIP_HOSTS = ('youtube.com', 'youtu.be', 'soundcloud.com', 'tiktok.com', 'instagram.com')
 # The editor shows the video, so it's downloaded small, and only in a format that has the sound in it too, as there's no ffmpeg
@@ -166,6 +168,48 @@ def similar(url):
     return {'songs': songs}
 
 
+def youtube_playlist(url):
+    """Whether a link is to a YouTube or YouTube Music playlist itself, not to a video in one or to a channel"""
+    parts = urlparse(url)
+    return (parts.hostname or '').lower().endswith('youtube.com') and parts.path.rstrip('/') == '/playlist' and 'list=' in parts.query
+
+
+def playlist(url, count):
+    """Up to `count` songs from a YouTube playlist, in its order, leaving out private, deleted, live and over-long videos"""
+    count = min(max(int(count), 1), PLAYLIST_READ)
+    with ydl({'extract_flat': 'in_playlist', 'playlistend': count}) as y:
+        info = y.extract_info(url, download=False)
+    entries = [e for e in info.get('entries') or [] if e]
+    songs = [song_from(e) for e in entries if e.get('id') and e.get('duration') and e['duration'] <= LONGEST]
+    return {
+        'playlist': True,
+        'title': info.get('title') or 'A YouTube playlist',
+        'artist': info.get('uploader') or info.get('channel') or '',
+        'songs': songs,
+        'skipped': len(entries) - len(songs),
+        'more': len(entries) >= count,
+    }
+
+
+def lookup(url, count):
+    """What a link is: a song, or a YouTube playlist's songs"""
+    if youtube_playlist(url):
+        return playlist(url, count)
+    # A video in a playlist, as YouTube's Share button gives it, is that video alone
+    video = VIDEO.match(url)
+    if video:
+        url = f"https://{'music' if '//music.' in url else 'www'}.youtube.com/watch?v={video.group('video')}"
+    with ydl({'noplaylist': True}) as y:
+        info = y.extract_info(url, download=False, process=False)
+    if info.get('_type') == 'playlist':
+        if 'soundcloud.com' in url and '/sets/' in url:
+            return {'error': 'SoundCloud playlists can’t be added yet. Add their songs one at a time.', 'missing': True}
+        return {'error': 'That’s a channel or profile, not a playlist. Use a link to a playlist, or to one video or track.', 'missing': True}
+    if (info.get('duration') or 0) > LONGEST:
+        return {'error': f'That’s over {LONGEST // 60} minutes long.', 'missing': True}
+    return about(info, url)
+
+
 def clip_link(url):
     """Whether a link is from somewhere a soundboard sound can come from"""
     try:
@@ -248,13 +292,7 @@ def answer(request):
         if not LINK.match(url):
             return {'error': 'That isn’t a YouTube or SoundCloud link.', 'missing': True}
         if request.get('info'):
-            with ydl({'noplaylist': True}) as y:
-                info = y.extract_info(url, download=False, process=False)
-            if info.get('_type') == 'playlist':
-                return {'error': 'Playlists from YouTube and SoundCloud can’t be added. Add their songs one at a time.', 'missing': True}
-            if (info.get('duration') or 0) > LONGEST:
-                return {'error': f'That’s over {LONGEST // 60} minutes long.', 'missing': True}
-            return about(info, url)
+            return lookup(url, request.get('count') or 1)
         info, path = download(url, request['dir'])
         return {**about(info, url), 'source': info.get('extractor_key', '').lower(), 'file': path.rsplit('/', 1)[-1]}
     source, url = find(request)

@@ -26,7 +26,7 @@ import { db, getKv, setKv, transaction } from '../db.ts';
 import { durationOf, hasAudio, tagsOf } from '../discordSounds.ts';
 import * as perf from '../perf.ts';
 import { idSetting, setSetting, setting } from '../settings.ts';
-import { coverFor, isShortLink, MOST_FROM_LINK, myPlaylists, parseLink, playlistsReady, RateLimited, search, searchReady, SpotifyError, tracksFor, type Track } from '../spotify.ts';
+import { coverFor, isShortLink, MOST_FROM_LINK, myPlaylists, parseLink, pick, playlistsReady, RateLimited, search, searchReady, SpotifyError, tracksFor, type Track } from '../spotify.ts';
 import type { Feature } from '../types.ts';
 import { humansIn } from '../util.ts';
 import { botChannelId, onMusicCheck, onPlaybackStop, playLong } from './voiceAudio.ts';
@@ -64,6 +64,8 @@ export const AUTOPLAY = 'autoplay';
 const AUTOPLAY_SHOWN = 3;
 /** Spotify songs matched to YouTube videos kept for each session, for Autoplay to go on from */
 const MATCHES_KEPT = 100;
+// Shuffle picks from this many of a YouTube playlist's songs, the most the music container reads
+const PLAYLIST_READ = 500;
 /** Autoplay passes over anything shorter or longer, such as intros, mixes and whole albums */
 const AUTOPLAY_SHORTEST_MS = 60_000;
 const AUTOPLAY_LONGEST_MS = 10 * 60_000;
@@ -930,8 +932,12 @@ async function mixOf(s: Session, seed: { video: string; url: string }, failed: (
 /** YouTube Music's mix for a video, from the music container */
 async function mixFor(url: string): Promise<Track[]> {
   const answer = await askYoutube('/similar', { url });
-  if (answer.missing) return [];
-  const songs = Array.isArray(answer.songs) ? (answer.songs as Record<string, unknown>[]) : [];
+  return answer.missing ? [] : youtubeSongs(answer.songs);
+}
+
+/** YouTube videos the music container listed, as songs for the queue. Anything that isn't a YouTube video is left out */
+function youtubeSongs(listed: unknown): Track[] {
+  const songs = Array.isArray(listed) ? (listed as Record<string, unknown>[]) : [];
   return songs.flatMap((song) => {
     const video = typeof song.url === 'string' ? videoOf(song.url) : undefined;
     if (!video) return [];
@@ -1229,29 +1235,41 @@ export function tidyFiles() {
 // ---------- adding by search or link ----------
 
 /** Songs for whatever was typed: a Spotify link to a song, album or playlist, a YouTube or SoundCloud link, or words to search for. The name says what was found */
-export async function resolve(input: string, shuffle = false): Promise<{ name: string; tracks: Track[]; capped?: boolean }> {
+export async function resolve(input: string, shuffle = false): Promise<{ name: string; tracks: Track[]; capped?: boolean; note?: string }> {
   if (isShortLink(input)) throw new SpotifyError('Short spotify.link links can’t be read. Open it and copy the open.spotify.com link instead.');
   const link = parseLink(input);
   if (link) return tracksFor(link, shuffle);
-  if (OTHER_LINK.test(input.trim())) return lookUp(input.trim());
+  if (OTHER_LINK.test(input.trim())) return lookUp(input.trim(), shuffle);
   if (/^https?:\/\//i.test(input.trim())) throw new SpotifyError('That isn’t a Spotify, YouTube or SoundCloud link.');
   const [top] = await search(input);
   if (!top) throw new SpotifyError(`Nothing on Spotify matches “${input.trim()}”.`);
   return { name: `${top.title} by ${top.artist}`, tracks: [top] };
 }
 
-/** What a YouTube or SoundCloud link is, from the music container */
-async function lookUp(url: string): Promise<{ name: string; tracks: Track[] }> {
+/**
+ * What a YouTube or SoundCloud link is, from the music container: one song, or a YouTube playlist's first
+ * MOST_FROM_LINK songs, or that many picked at random from its first PLAYLIST_READ. `note` says what was left out
+ */
+async function lookUp(url: string, shuffle = false): Promise<{ name: string; tracks: Track[]; note?: string }> {
   const problem = unavailable();
   if (problem) throw new SpotifyError(problem);
   let answer: Awaited<ReturnType<typeof askYoutube>>;
   try {
-    answer = await askYoutube('/lookup', { url });
+    answer = await askYoutube('/lookup', { url, count: shuffle ? PLAYLIST_READ : MOST_FROM_LINK });
   } catch (err) {
     console.error('Music: couldn’t look up a link:', (err as Error).message);
     throw new SpotifyError('The music player couldn’t read that link. Try again in a moment.');
   }
   if (answer.missing) throw new SpotifyError(answer.missing);
+  if (answer.playlist) {
+    const all = youtubeSongs(answer.songs);
+    const skipped = Math.max(0, Math.floor(Number(answer.skipped)) || 0);
+    const notes = [
+      answer.more === true && (shuffle ? `picked from its first ${PLAYLIST_READ}` : `the first ${MOST_FROM_LINK}; shuffle picks from its first ${PLAYLIST_READ}`),
+      skipped && `${skipped} private, deleted, live or over-long ${skipped === 1 ? 'video' : 'videos'} left out`,
+    ].filter(Boolean);
+    return { name: String(answer.title ?? 'A YouTube playlist').slice(0, 300), tracks: pick(all, shuffle), note: notes.join(', ') };
+  }
   const title = String(answer.title ?? 'Untitled').slice(0, 300);
   const cover = typeof answer.cover === 'string' && /^https:\/\/(i\.ytimg\.com|i1\.sndcdn\.com)\//.test(answer.cover) ? answer.cover : null;
   const track: Track = { uri: String(answer.url ?? url), title, artist: String(answer.artist ?? '').slice(0, 300), album: '', cover, durationMs: Number(answer.durationMs) || 0 };
@@ -1270,7 +1288,9 @@ export async function queueFrom(guildId: string, input: string, who: string, nex
   const cut =
     found.tracks.length > added
       ? ` (only ${added} fitted)`
-      : found.capped
+      : found.note !== undefined
+        ? found.note && ` (${found.note})`
+        : found.capped
         ? ` (the first ${MOST_FROM_LINK} Spotify shows)`
         : !shuffle && found.tracks.length >= MOST_FROM_LINK
           ? ` (the first ${MOST_FROM_LINK}; shuffle picks from all of it)`
@@ -1640,7 +1660,7 @@ export const music: Feature = {
           s
             .setName('play')
             .setDescription('Add a song or album, and start the music in your voice channel')
-            .addStringOption((o) => o.setName('song').setDescription('A song to search for, or a Spotify link').setAutocomplete(true).setMaxLength(300))
+            .addStringOption((o) => o.setName('song').setDescription('A song to search for, or a Spotify, YouTube or SoundCloud link').setAutocomplete(true).setMaxLength(300))
             .addBooleanOption((o) => o.setName('next').setDescription('Play it after the current song, instead of at the end'))
             .addBooleanOption((o) => o.setName('shuffle').setDescription('For an album or playlist: 100 of its songs at random, instead of the first 100')),
         )

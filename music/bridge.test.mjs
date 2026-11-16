@@ -33,6 +33,7 @@ const FAKE_FETCH = `
     if (r.title === 'Broken') process.exit(1);
     if (r.title === 'Missing') return console.log(JSON.stringify({ error: 'No match on YouTube or SoundCloud.', missing: true }));
     if (r.title === 'Odd') return console.log(JSON.stringify({ file: '../escape.webm' }));
+    if (r.info && r.url.includes('/playlist')) return console.log(JSON.stringify({ playlist: true, title: 'A List', count: r.count, songs: [] }));
     if (r.info) return console.log(JSON.stringify({ url: r.url, title: 'A Video', artist: 'Someone', durationMs: 61000, cover: null }));
     setTimeout(() => {
       const file = 'youtube-' + (r.uri ?? r.url).replace(/\\W/g, '') + '.webm';
@@ -153,6 +154,15 @@ test('a link can be looked up without downloading, and downloaded when it plays'
   assert.equal(fs.readdirSync(path.join(dataDir, 'audio')).length, 0);
   assert.equal((await fetchSong(base, { url })).status, 200);
   assert.deepEqual(runs(dataDir), [`${url} info`, url]);
+});
+
+test('a playlist is looked up with how many of its songs are wanted', async () => {
+  const dataDir = temp();
+  const { base } = await bridge({ dataDir });
+  const ask100 = await ask(base, '/lookup', { method: 'POST', body: JSON.stringify({ url: 'https://www.youtube.com/playlist?list=PLx', count: 100 }) });
+  assert.equal((await ask100.json()).count, 100);
+  const askOdd = await ask(base, '/lookup', { method: 'POST', body: JSON.stringify({ url: 'https://www.youtube.com/playlist?list=PLx', count: 'lots' }) });
+  assert.equal((await askOdd.json()).count, 1, 'anything but a whole number asks for one');
 });
 
 test('songs like a YouTube video are listed for Autoplay, without downloading anything', async () => {

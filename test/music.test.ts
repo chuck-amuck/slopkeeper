@@ -69,6 +69,7 @@ interface MixSong {
   cover: string | null;
 }
 const similarAsked: string[] = [];
+const lookupsAsked: { url: string; count: number }[] = [];
 const mixes = new Map<string, MixSong[] | 'fail'>();
 let mixGate: Promise<void> | null = null;
 const watch = (video: string) => `https://www.youtube.com/watch?v=${video}`;
@@ -118,8 +119,16 @@ mock.method(globalThis, 'fetch', async (url: string, init: RequestInit = {}) => 
     return Response.json({ songs: mixOf(link.slice(-11)) });
   }
   if (where === '/lookup') {
-    const { url: link } = JSON.parse(init.body as string) as { url: string };
-    if (link.includes('list=')) return Response.json({ error: 'Playlists from YouTube and SoundCloud can’t be added.' }, { status: 404 });
+    const { url: link, count } = JSON.parse(init.body as string) as { url: string; count: number };
+    lookupsAsked.push({ url: link, count });
+    if (link.includes('/@')) return Response.json({ error: 'That’s a channel or profile, not a playlist.' }, { status: 404 });
+    if (link.includes('list=')) {
+      const size = Number(new URL(link).searchParams.get('size') ?? 3);
+      const songs = Array.from({ length: Math.min(size, count) }, (_, n) => ({ url: watch(`pl${String(n).padStart(9, '0')}`), title: `Track ${n}`, artist: 'Band', durationMs: 120_000, cover: `https://i.ytimg.com/vi/pl${n}/hqdefault.jpg` }));
+      // A link that isn't a YouTube video doesn't get in, whatever the container says
+      songs.push({ url: 'https://evil.test/x', title: 'Bad', artist: '', durationMs: 1, cover: '' });
+      return Response.json({ playlist: true, title: 'Road Trip', songs, skipped: Number(new URL(link).searchParams.get('skipped') ?? 0), more: size > count });
+    }
     return Response.json({ url: link, title: 'A Video', artist: 'Someone', durationMs: 61_000, cover: 'https://i.ytimg.com/vi/abc/hqdefault.jpg' });
   }
   // Status changes are set by the tests instead
@@ -592,8 +601,33 @@ test('a YouTube or SoundCloud link adds what it is, and plays from the link', as
   assert.deepEqual([row.uri, row.title, row.artist, row.cover, row.duration_ms], [link, 'A Video', 'Someone', 'https://i.ytimg.com/vi/abc/hqdefault.jpg', 61_000]);
   await startMusic(guild, channel);
   assert.equal(fetched[0], link);
-  await assert.rejects(queueFrom(id, 'https://www.youtube.com/playlist?list=x', 'u1', false), /Playlists from YouTube/);
+  await assert.rejects(queueFrom(id, 'https://www.youtube.com/@band', 'u1', false), /channel or profile/);
   await assert.rejects(queueFrom(id, 'https://vimeo.com/1', 'u1', false), /isn’t a Spotify, YouTube or SoundCloud link/);
+  stopMusic(id, 'u1');
+});
+
+test('a YouTube playlist adds its songs in order, saying what was left out', async () => {
+  const { id } = server();
+  lookupsAsked.length = 0;
+  assert.equal(await queueFrom(id, 'https://www.youtube.com/playlist?list=PLx&skipped=2', 'u1', false), 'Added 3 songs from **Road Trip** (2 private, deleted, live or over-long videos left out).');
+  assert.deepEqual(lookupsAsked, [{ url: 'https://www.youtube.com/playlist?list=PLx&skipped=2', count: 100 }]);
+  assert.deepEqual(queueOf(id).map((r) => [r.uri, r.title, r.artist]), [0, 1, 2].map((n) => [watch(`pl${String(n).padStart(9, '0')}`), `Track ${n}`, 'Band']));
+  assert.match(recentActivity(id, 1)[0].action, /Added 3 songs from \*\*Road Trip\*\*/);
+  stopMusic(id, 'u1');
+});
+
+test('a long YouTube playlist adds its first 100, or shuffles 100 from its first 500', async () => {
+  const { id } = server();
+  lookupsAsked.length = 0;
+  assert.equal(await queueFrom(id, 'https://www.youtube.com/playlist?list=PLy&size=700', 'u1', false), 'Added 100 songs from **Road Trip** (the first 100; shuffle picks from its first 500).');
+  assert.deepEqual(queueOf(id).slice(0, 2).map((r) => r.title), ['Track 0', 'Track 1']);
+  stopMusic(id, 'u1');
+  clearQueue(id, 'u1');
+  assert.equal(await queueFrom(id, 'https://www.youtube.com/playlist?list=PLy&size=700', 'u1', false, true), 'Added 100 random songs from **Road Trip** (picked from its first 500).');
+  assert.deepEqual(lookupsAsked.map((l) => l.count), [100, 500]);
+  const titles = queueOf(id).map((r) => r.title);
+  assert.equal(new Set(titles).size, 100);
+  assert.notDeepEqual(titles.slice(0, 5), ['Track 0', 'Track 1', 'Track 2', 'Track 3', 'Track 4'], 'they’re picked at random');
   stopMusic(id, 'u1');
 });
 
