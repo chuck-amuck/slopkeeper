@@ -97,7 +97,8 @@ export function musicPlayer(openMusic, { inWindow = false, extra = null } = {}) 
     const rows = data.queue.slice(held);
     upNext.hidden = !rows.length;
     upNextHead.querySelector('.fold-count').textContent = String(rows.length);
-    const key = JSON.stringify([rows.map((r) => r.id), data.autoplayLike]);
+    // Covers count too: a playlist's songs get theirs a moment after they're added
+    const key = JSON.stringify([rows.map((r) => [r.id, r.cover]), data.autoplayLike]);
     if (key === shownNext) return;
     shownNext = key;
     const listed = rows.slice(0, UP_NEXT_SHOWN);

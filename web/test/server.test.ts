@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { readdirSync } from 'node:fs';
-import { createServer, type IncomingHttpHeaders } from 'node:http';
+import { createServer, request, type IncomingHttpHeaders } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { after, before, beforeEach, mock, test } from 'node:test';
 import { createWeb } from '../src/server.ts';
@@ -284,6 +284,27 @@ test('only the bot’s server routes are passed on, not its report or metrics', 
     assert.equal(res.status, 404, path);
   }
   assert.equal(seen.length, before, 'the bot never heard of them');
+});
+
+test('a path that climbs out of the server routes is refused, however it’s written', async () => {
+  const cookie = await login();
+  const before = seen.length;
+  const port = new URL(base).port;
+  // Sent as written: fetch would tidy the path up before sending it
+  const raw = (method: string, path: string) =>
+    new Promise<number>((resolve, reject) => {
+      const req = request({ host: '127.0.0.1', port, method, path, headers: { cookie, ...write, 'content-type': 'application/json' } }, (res) => {
+        res.resume();
+        resolve(res.statusCode!);
+      });
+      req.once('error', reject);
+      req.end(method === 'POST' ? '{"memoryBytes":1,"cpuSeconds":1}' : undefined);
+    });
+  for (const path of ['/api/guilds/../metrics', '/api/guilds/%2e%2e/perf/web', '/api/guilds/%2E./metrics', '/api/guilds/..%5cmetrics', '/api/guilds/..\\metrics', '/api/guilds/x/./../../metrics']) {
+    assert.equal(await raw(path.includes('perf') ? 'POST' : 'GET', path), 404, path);
+  }
+  assert.equal(seen.length, before, 'the bot never heard of them');
+  assert.equal(await raw('GET', '/api/guilds/1/sounds/a..b'), 200, 'dots inside a name are fine');
 });
 
 test('says how long the bot took, so the page can tell it from the network', async () => {

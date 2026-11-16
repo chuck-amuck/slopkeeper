@@ -705,7 +705,8 @@ export function renderMusic(main) {
     const people = rows.filter((r) => !r.autoplay);
     const autoplay = rows.filter((r) => r.autoplay);
     // Rebuilding mid-drag would drop what's being dragged
-    const key = JSON.stringify([held(), data.queue.map((r) => [r.id, r.autoplay]), data.autoplayLike]);
+    // Covers count too: a playlist's songs get theirs a moment after they're added
+    const key = JSON.stringify([held(), data.queue.map((r) => [r.id, r.autoplay, r.cover]), data.autoplayLike]);
     if (dragging || key === shownQueue) return;
     shownQueue = key;
     queueCount.textContent = people.length ? `${people.length} song${people.length === 1 ? '' : 's'}` : '';

@@ -5074,3 +5074,23 @@ button.health-slow-row:hover {
   max-width: 100%;
   overflow-x: auto;
 }
+
+/* Phones */
+
+/* Taps never wait to see whether they're a double tap, so spamming a sound doesn't zoom the page. Drag handles keep
+   their own `touch-action: none` */
+button,
+a,
+[role='button'] {
+  touch-action: manipulation;
+}
+
+/* iOS zooms in on any field under 16px when it's focused */
+@media (pointer: coarse) {
+  input,
+  select,
+  textarea,
+  .volume-box input {
+    font-size: 16px;
+  }
+}

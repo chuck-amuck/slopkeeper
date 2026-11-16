@@ -314,7 +314,9 @@ export function createWeb({ password, apiToken, botUrl, proxySecret }: WebOption
       return res.end(req.method === 'HEAD' ? undefined : body);
     }
 
-    // Only what the page uses: the bot's other routes are for the web UI itself, like its report every 30 seconds, and scrapers
+    // Only what the page uses: the bot's other routes are for the web UI itself, like its report every 30 seconds, and scrapers.
+    // fetch would resolve a .. in the path after this check, or a backslash as a slash, and reach those routes after all
+    if (path.includes('\\') || /%5c/i.test(path) || path.split('/').some((part) => /^(\.|%2e){1,2}$/i.test(part))) return json(res, 404, { error: 'Not found.' });
     const isApi = path === '/api/guilds' || path.startsWith('/api/guilds/');
     const isAuth = path === '/auth/login' || path === '/auth/logout';
     const isTimings = path === '/api/perf';
