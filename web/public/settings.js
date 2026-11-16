@@ -1,4 +1,4 @@
-import { api, attempt, confirmButton, devicePref, el, formProblem, notice, openDialog, postDialog, request, RequestError, state, toast, undoToast } from './lib.js';
+import { ago, api, attempt, confirmButton, devicePref, el, formProblem, icon, notice, openDialog, postDialog, request, RequestError, state, toast, undoToast } from './lib.js';
 
 const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
@@ -72,6 +72,12 @@ const FIELDS = {
 const FOLDED = new Set(['Looping sound room', 'Free games']);
 // How long "Saved" shows beside a field
 const SAVED_MS = 2000;
+
+/** The bot's text, with **bold** as bold */
+const rich = (text) => text.split(/\*\*(.+?)\*\*/g).map((part, i) => (i % 2 ? el('strong', {}, part) : part));
+const plainText = (text) => text.replace(/\*\*/g, '');
+const when = (p) => (p.at ? ` (${ago(p.at)})` : '');
+const problemText = (p) => `${plainText(p.text)}${when(p)}`;
 // A number field's arrows change it a step at a time, so it saves once they stop
 const NUMBER_SAVE_MS = 600;
 
@@ -136,6 +142,39 @@ export function renderSettings(main) {
     if (guildId !== state.guildId || !main.isConnected) return;
     for (const [key, update] of fields) update(fresh.settings.find((s) => s.key === key), fresh);
     for (const fold of folds) fold.paint(fresh);
+    paintProblems(fresh.problems);
+  }
+
+  /** What stops the bot doing what the settings ask, each with a way to the setting that fixes it */
+  const problemsBox = el('section', { className: 'card problems', id: 'settings-problems', hidden: true, ariaLabelledBy: 'settings-problems-title' });
+  function paintProblems(problems = []) {
+    problemsBox.hidden = !problems.length;
+    problemsBox.replaceChildren(
+      el('h2', { id: 'settings-problems-title' }, icon('alert'), problems.length === 1 ? ' 1 thing needs fixing' : ` ${problems.length} things need fixing`),
+      el(
+        'ul',
+        {},
+        problems.map((p) =>
+          el(
+            'li',
+            {},
+            el('span', {}, ...rich(p.text), when(p)),
+            p.key && ' ',
+            p.key && el('button', { type: 'button', className: 'link', onclick: () => goTo(p.key) }, 'Go to setting'),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /** Opens a setting's group if it's folded, and puts the cursor in it */
+  function goTo(key) {
+    const input = document.getElementById(`setting-${key}`);
+    if (!input) return;
+    const fold = input.closest('details');
+    if (fold) fold.open = true;
+    input.closest('.field')?.scrollIntoView({ behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'center' });
+    input.focus({ preventScroll: true });
   }
 
   function control(setting, spec, data, save) {
@@ -148,10 +187,13 @@ export function renderSettings(main) {
         options.map(([id, label]) => el('option', { value: id, selected: String(value ?? '') === String(id) }, label)),
       );
     switch (spec.kind) {
-      case 'channel':
-        return select([['', spec.none], ...data.channels.map((c) => [c.id, c.category ? `#${c.name} (${c.category})` : `#${c.name}`])]);
+      case 'channel': {
+        const cant = (c) => (data.postChannels?.includes(setting.key) && c.canPost === false ? ', can’t post' : '');
+        return select([['', spec.none], ...data.channels.map((c) => [c.id, c.category || cant(c) ? `#${c.name} (${[c.category, cant(c).slice(2)].filter(Boolean).join(', ')})` : `#${c.name}`])]);
+      }
       case 'role':
-        return select([['', spec.none], ...data.roles.map((r) => [r.id, `@${r.name}`])]);
+        // Only the hop-on role is handed out, so only it has to be below the bot's
+        return select([['', spec.none], ...data.roles.map((r) => [r.id, setting.key === 'hopOnRole' && r.canGive === false ? `@${r.name} (above my role)` : `@${r.name}`])]);
       case 'voice':
         return select([['', spec.none], ...data.voiceChannels.map((c) => [c.id, `🔊 ${c.name}`])]);
       case 'sound':
@@ -235,16 +277,19 @@ export function renderSettings(main) {
     const save = (value) =>
       attempt(async () => {
         say(null);
+        fromSave = null;
         try {
           // An empty channel or role picker is the same as never having picked one
           const { warning } =
             value === '' ? await request(api(`/settings/${setting.key}`), { method: 'DELETE' }) : await request(api(`/settings/${setting.key}`), { method: 'PUT', json: { value } });
           say(warning);
+          fromSave = warning ? { text: warning, bad: false } : null;
           // Beside the field rather than in the corner, where it's easy to miss
           savedAt = Date.now();
           setTimeout(() => current && paintStatus(current), SAVED_MS + 50);
         } catch (err) {
           say(err.message, true);
+          fromSave = { text: err.message, bad: true };
           // The field may be scrolled out of sight by now
           toast(`${setting.label} wasn’t saved: ${err.message}`, true);
         }
@@ -254,6 +299,7 @@ export function renderSettings(main) {
     const reset = (previous) =>
       attempt(async () => {
         say(null);
+        fromSave = null;
         await request(api(`/settings/${setting.key}`), { method: 'DELETE' });
         undoToast(`${setting.label} is back to the default.`, () => save(previous));
         await refresh();
@@ -261,6 +307,8 @@ export function renderSettings(main) {
 
     // What the control was last drawn from, so a refresh only redraws fields that changed
     let drawn;
+    /** What the last save said, which stays until the next one */
+    let fromSave = null;
     let savedAt = 0;
     let current = null;
     let latestData = data;
@@ -281,6 +329,9 @@ export function renderSettings(main) {
     const update = (next, fresh) => {
       current = next;
       latestData = fresh;
+      // What the last save said, if anything, and otherwise what's wrong with it now
+      if (fromSave) say(fromSave.text, fromSave.bad);
+      else say((fresh.problems ?? []).filter((p) => p.key === next.key).map(problemText).join(' ') || null);
       const choices = { channel: fresh.channels, role: fresh.roles, voice: fresh.voiceChannels, sound: fresh.sounds, speaker: fresh.voices }[spec.kind];
       const from = JSON.stringify([current.value, current.limits, choices]);
       // A field someone is in keeps its control, so what they're typing or picking isn't thrown away
@@ -565,6 +616,7 @@ export function renderSettings(main) {
       const [data, joinSounds, gamePings] = await Promise.all([request(api('/settings')), request(api('/join-sounds')), request(api('/game-pings'))]);
       if (guildId !== state.guildId || !main.isConnected) return;
       const byKey = new Map(data.settings.map((s) => [s.key, s]));
+      paintProblems(data.problems);
       // The bot says how to group them, the same way /setup show does
       // (an older bot sends none, and its settings all go under Other until it's updated)
       const given = data.groups ?? [];
@@ -654,7 +706,7 @@ export function renderSettings(main) {
         el('datalist', { id: 'time-zones' }, data.timeZones.map((zone) => el('option', { value: zone }))),
         el('div', { className: 'toolbar settings-find' }, find, jump),
         nothing,
-        el('div', { className: 'settings-cards stack' }, deviceCard(), ...cards, joinCard),
+        el('div', { className: 'settings-cards stack' }, problemsBox, deviceCard(), ...cards, joinCard),
       );
     } catch (err) {
       loading.replaceWith(notice('error', err.message));

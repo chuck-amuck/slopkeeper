@@ -6,6 +6,7 @@ import { announceChannel, eachGuild, requestTimeout } from '../util.ts';
 import { factsFor, type GameFacts } from './gamefacts.ts';
 import { stats } from './gamestats.ts';
 import { every } from '../schedule.ts';
+import { sendPost } from '../postFailures.ts';
 
 // GamerPower tracks free-to-keep games; this asks for full games only, not DLC, betas or loot
 const FEED = 'https://www.gamerpower.com/api/filter?platform=steam.epic-games-store.gog&type=game';
@@ -151,7 +152,7 @@ export async function check(client: Client<true>) {
       // Left unmarked either way, so it's looked at again until it passes or stops being free
       const { show, reason } = await verdict(guild, g, theirs);
       if (!show) continue;
-      await out.send({ embeds: [embed(g, reason)] });
+      await sendPost('freeGames', guild.id, out, { embeds: [embed(g, reason)] });
       markPosted.run(guild.id, g.id);
       sent++;
     }

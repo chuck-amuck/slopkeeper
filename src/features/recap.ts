@@ -5,6 +5,7 @@ import { due, every, once } from '../schedule.ts';
 import type { Feature } from '../types.ts';
 import { announceChannel, eachGuild, formatDuration, zonedParts, zonedTimeToUtc } from '../util.ts';
 import { checkpoint, plural, rank, short, stats } from './gamestats.ts';
+import { sendPost } from '../postFailures.ts';
 
 /** The start and end of a calendar month in a time zone; `month` may run past either end of the year */
 export function monthBounds(year: number, month: number, timeZone: string) {
@@ -118,7 +119,7 @@ export async function maybePostMonthly(client: Client<true>) {
       const month = zonedParts(at, timeZone);
       const { start, end } = monthBounds(month.year, month.month - 1, timeZone);
       const embed = buildRecap(guild, start, end);
-      if (embed) await out.send({ embeds: [embed] });
+      if (embed) await sendPost('recap', guild.id, out, { embeds: [embed] });
     });
   });
 }

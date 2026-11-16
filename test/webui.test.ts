@@ -4,7 +4,7 @@
 import { base, GUILD, TOKEN } from './apiFixture.ts';
 import assert from 'node:assert/strict';
 import { spawn, execFileSync, type ChildProcess } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -217,6 +217,11 @@ test('every page of the web UI opens cleanly, on a computer and a phone', { skip
         };
       })()`);
       const where = `${label} (${screen.name})`;
+      // SHOTS=<folder> keeps a picture of each page, to look over a change by eye
+      if (process.env.SHOTS) {
+        const { data } = await page.send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false });
+        writeFileSync(path.join(process.env.SHOTS, `${label.replace(/\W+/g, '-')}-${screen.name}.png`), Buffer.from(data, 'base64'));
+      }
       if (!shown) failures.push(`${where}: still loading after 10 seconds`);
       if (look.text < 20) failures.push(`${where}: next to nothing on the page`);
       for (const error of look.errors) failures.push(`${where}: shows "${error}"`);

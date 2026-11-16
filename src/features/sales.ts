@@ -11,6 +11,7 @@ import { allGames, groupMembers, ownersOfApp } from './games.ts';
 import { checkpoint, plural, short, stats } from './gamestats.ts';
 import { appInfo, ensureAppInfo, linkFor, refreshStale, refreshWishlists } from './steam.ts';
 import { commandMention } from '../commandIds.ts';
+import { sendPost } from '../postFailures.ts';
 
 const PLAYED_DAYS = 180;
 // A sale that only gets a little deeper isn't worth another post
@@ -597,7 +598,7 @@ async function checkGuild(client: Client<true>, guild: Guild, prices: Prices, po
   if (due.length > POSTED_GAMES) lines.push(`and ${due.length - POSTED_GAMES} more: ${commandMention(guild.id, 'sales')}`);
 
   const pings = [...new Set(due.flatMap((g) => [...g.wanted, ...g.wishlisted, ...g.others]))].slice(0, MAX_PINGS);
-  await out.send({
+  await sendPost('sales', guild.id, out, {
     content: pings.map((id) => `<@${id}>`).join(' ') || undefined,
     embeds: [new EmbedBuilder().setTitle(`💸 ${plural(due.length, 'game')} on sale`).setDescription(lines.join('\n')).setColor(0x57f287)],
     // Each person sees the full list, or only theirs, without posting it again for everyone

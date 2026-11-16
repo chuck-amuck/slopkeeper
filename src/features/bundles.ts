@@ -10,6 +10,7 @@ import { factsFor } from './gamefacts.ts';
 import { everyoneOwns, MULTIPLAYER_TAGS, taste, tasteTags, type Taste } from './freegames.ts';
 import { short } from './gamestats.ts';
 import { itad, money, pauses, postDay, saleReasons, storeUrl, watched, type Watched } from './sales.ts';
+import { sendPost } from '../postFailures.ts';
 
 // Humble Bundle, Fanatical and Green Man Gaming (listed under two names), by IsThereAnyDeal's ids for bundle sites.
 // They sell Steam keys; the rest, like itch.io, mostly don't
@@ -223,7 +224,7 @@ async function postBundles(client: Client<true>) {
       }
       if (cards.length) {
         const pings = [...new Set(cards.flatMap((c) => c.pings))].slice(0, MAX_PINGS);
-        await out.send({ content: pings.map((id) => `<@${id}>`).join(' ') || undefined, embeds: cards.map((c) => c.embed), allowedMentions: { users: pings } });
+        await sendPost('bundles', guild.id, out, { content: pings.map((id) => `<@${id}>`).join(' ') || undefined, embeds: cards.map((c) => c.embed), allowedMentions: { users: pings } });
         for (const c of cards) markPosted.run(guild.id, c.id, Date.now());
       }
     });

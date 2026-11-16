@@ -2463,6 +2463,34 @@ dialog .start input {
   border-top: 0;
 }
 
+/* Settings: what needs fixing, at the top */
+.card.problems {
+  border-color: color-mix(in srgb, var(--warn) 45%, var(--line));
+}
+
+.card.problems h2 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--warn);
+}
+
+.card.problems .ico {
+  width: 18px;
+  height: 18px;
+}
+
+.card.problems ul {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 12px 16px 14px 36px;
+}
+
+.card.problems .link {
+  white-space: nowrap;
+}
+
 /* The loop bot can't play the room, which is otherwise silent */
 .card-note.warning {
   margin: 10px 16px 0;

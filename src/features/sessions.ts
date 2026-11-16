@@ -7,6 +7,7 @@ import { onSteamChange } from '../steamStatus.ts';
 import type { Feature } from '../types.ts';
 import { announceChannel, eachGuild, formatDuration, humansIn, playingGames, servedGuilds, zonedDate } from '../util.ts';
 import { checkpoint, short, stats } from './gamestats.ts';
+import { sendPost } from '../postFailures.ts';
 
 interface LiveSession {
   guildId: string;
@@ -174,7 +175,8 @@ async function finish(client: Client<true>, channelId: string) {
   const played = [...new Set([...s.games].filter((game) => !isNotAGame(s.guildId, game)).map((game) => gameName(s.guildId, game)))];
   if (played.length) embed.addFields({ name: 'Played', value: played.join(', ') });
 
-  await (await announceChannel(client, s.guildId))?.send({ embeds: [embed] });
+  const out = await announceChannel(client, s.guildId);
+  if (out) await sendPost('sessionRecap', s.guildId, out, { embeds: [embed] });
 }
 
 /** Records a session if it was long enough to count. Returns whether it was */
@@ -273,7 +275,7 @@ export async function maybePostWeekly(client: Client<true>) {
       const out = await announceChannel(client, guild.id);
       if (!out) return false;
       const embed = leaderboard(guild.id, at - 7 * DAY, '🏆 This week in voice', at);
-      if (embed) await out.send({ embeds: [embed] });
+      if (embed) await sendPost('weekly', guild.id, out, { embeds: [embed] });
     }, WEEKLY);
   });
 }

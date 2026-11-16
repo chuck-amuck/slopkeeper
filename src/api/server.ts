@@ -2,7 +2,7 @@ import { ChannelType, type Guild, type VoiceChannel } from 'discord.js';
 import { type IncomingMessage } from 'node:http';
 import { linkWebUser, logActivity, recentActivity, webUser, webUserFor } from '../activity.ts';
 import { VOICES } from '../features/say.ts';
-import { checkSetting, GROUPS, LABELS, LIMITS, show, source, STEPS } from '../features/setup.ts';
+import { checkSetting, GROUPS, LABELS, LIMITS, POSTING_CHANNELS, settingProblems, show, source, STEPS } from '../features/setup.ts';
 import { afterSettingsChanged } from '../features/soundboard.ts';
 import { listSounds } from '../features/soundLibrary.ts';
 import { loopBotStatus, loopSpeechProblem } from '../features/loopRoom.ts';
@@ -37,8 +37,11 @@ function settingList(guild: Guild) {
     roles: [...guild.roles.cache.values()]
       .filter((r) => r.id !== guild.id && !r.managed)
       .sort((a, b) => b.position - a.position)
-      .map((r) => ({ id: r.id, name: r.name })),
+      // Discord only lets the bot hand out roles below its own highest one
+      .map((r) => ({ id: r.id, name: r.name, canGive: !guild.members.me || r.position < guild.members.me.roles.highest.position })),
     timeZones: TIME_ZONES,
+    problems: settingProblems(guild),
+    postChannels: POSTING_CHANNELS,
     voices: VOICES.map(({ id, name }) => ({ id, name })),
   };
 }

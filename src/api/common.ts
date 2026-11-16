@@ -6,7 +6,7 @@ import { type IncomingMessage, type ServerResponse } from 'node:http';
 import { pipeline } from 'node:stream/promises';
 import { FROM_WEB, fromWebUser, webUser } from '../activity.ts';
 import * as discordBoard from '../discordSounds.ts';
-import { checkSetting } from '../features/setup.ts';
+import { checkSetting, missingToPost } from '../features/setup.ts';
 import { idSetting, setting } from '../settings.ts';
 import { canSee, humansIn, zonedTimeToUtc } from '../util.ts';
 
@@ -162,7 +162,8 @@ export const textChannels = (guild: Guild) =>
   [...guild.channels.cache.values()]
     .filter((c): c is TextChannel | NewsChannel => (c.type === ChannelType.GuildText || c.type === ChannelType.GuildAnnouncement) && listed(guild)(c))
     .sort((a, b) => a.rawPosition - b.rawPosition)
-    .map((c) => ({ id: c.id, name: channelName(guild, c), category: c.parent?.name ?? null }));
+    // canPost marks the ones the pickers can say the bot can't post in
+    .map((c) => ({ id: c.id, name: channelName(guild, c), category: c.parent?.name ?? null, canPost: !missingToPost(guild, c) }));
 
 /** Aborts once whoever asked has gone, or after the longest a request waits for a change */
 export function untilGone(req: IncomingMessage, res: ServerResponse) {

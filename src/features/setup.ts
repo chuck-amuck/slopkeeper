@@ -19,6 +19,9 @@ import { cantJoin } from './voiceAudio.ts';
 import { findSound, listSounds } from './soundLibrary.ts';
 import { loopSpeechProblem } from './loopRoom.ts';
 import { commandMention } from '../commandIds.ts';
+import { config } from '../config.ts';
+import { POSTS, postFailures, type Post } from '../postFailures.ts';
+import { voiceProblem } from '../voiceJoin.ts';
 
 const ANNOUNCE_PERMISSIONS = [
   [PermissionFlagsBits.ViewChannel, 'View Channel'],
@@ -231,9 +234,8 @@ export function show(key: SettingKey, value: unknown): string {
 
 /** Why the bot can't post in a channel, or null if it can */
 function cantPost(guild: Guild, channel: GuildBasedChannel): string | null {
-  const perms = channel.permissionsFor(guild.members.me!);
-  const missing = ANNOUNCE_PERMISSIONS.filter(([flag]) => !perms?.has(flag)).map(([, name]) => name);
-  return missing.length ? `I can’t post in ${channel} yet. Give my role **${missing.join('**, **')}** there, then run this again.` : null;
+  const missing = missingToPost(guild, channel);
+  return missing ? `I can’t post in ${channel} yet. Give my role **${missing}** there, then run this again.` : null;
 }
 
 function greetingProblem(greeting: string) {
@@ -279,26 +281,118 @@ export const GROUPS: [string, SettingKey[]][] = [
   ['Text to speech', ['tts', 'ttsVoice', 'ttsSpeed', 'ttsVolume', 'ttsChannel', 'ttsChannelWho', 'ttsGreet', 'ttsGreeting', 'ttsNightReminders', 'ttsHopOn', 'ttsRole', 'ttsMaxChars', 'ttsCooldownSec']],
 ];
 
-/** What stops the bot doing what its settings ask, for the top of /setup show */
-function settingProblems(guild: Guild): string[] {
-  const problems: string[] = [];
-  const announce = idSetting(guild.id, 'announceChannel');
-  const channel = announce ? guild.channels.cache.get(announce) : undefined;
-  if (!announce) problems.push(`Nothing gets posted until an announce channel is set with ${commandMention(guild.id, 'setup announce-channel')}.`);
-  else if (!channel) problems.push('The announce channel is gone. Pick another one.');
-  else {
-    const problem = cantPost(guild, channel);
-    if (problem) problems.push(problem);
+/** Something that stops the bot doing what its settings ask, and the setting to change, if one will fix it */
+export interface SettingProblem {
+  key: SettingKey | null;
+  text: string;
+  /** When it happened, for a post that couldn't go out */
+  at?: number;
+}
+
+// Posts that go to their own channel if one's set, or else the announce channel, and whether they're on
+const POST_CHANNELS: [SettingKey, string, (guildId: string) => boolean][] = [
+  ['saleChannel', 'Sale alerts', () => true],
+  ['freeGamesChannel', 'Free games', (id) => setting(id, 'freeGames')],
+  ['patchNotesChannel', 'Patch notes', (id) => setting(id, 'patchNotes') !== 'off'],
+];
+/** The channel settings the bot posts in, so the web UI can say which channels it can't */
+export const POSTING_CHANNELS: SettingKey[] = ['announceChannel', ...POST_CHANNELS.map(([key]) => key)];
+/** Each of the bot's own posts: the setting for its own channel, if it has one, and whether it's on */
+const POSTED: Record<Post, [SettingKey | null, (guildId: string) => boolean]> = {
+  hopOn: [null, () => true],
+  sessionRecap: [null, (id) => setting(id, 'sessionRecap')],
+  weekly: [null, (id) => setting(id, 'weeklyLeaderboard')],
+  recap: [null, (id) => setting(id, 'monthlyRecap')],
+  sales: ['saleChannel', () => true],
+  bundles: ['saleChannel', (id) => setting(id, 'bundleAlerts')],
+  freeGames: ['freeGamesChannel', (id) => setting(id, 'freeGames')],
+  patchNotes: ['patchNotesChannel', (id) => setting(id, 'patchNotes') !== 'off'],
+};
+// A refusal older than this has most likely been put right, as the bot can't see a channel's permissions change
+const FAILURE_SHOWN_MS = 2 * 86_400_000;
+const ROLE_GATES: [SettingKey, string][] = [
+  ['soundManagerRole', 'Managing sounds'],
+  ['ttsRole', 'Text to speech'],
+  ['musicDjRole', 'Controlling music'],
+];
+
+/** What's missing for the bot to post in a channel, or null if nothing is, or it can't tell yet */
+export function missingToPost(guild: Guild, channel: GuildBasedChannel): string | null {
+  // Its own member isn't known for a moment after it joins
+  if (!guild.members.me) return null;
+  const perms = channel.permissionsFor(guild.members.me);
+  const missing = ANNOUNCE_PERMISSIONS.filter(([flag]) => !perms?.has(flag)).map(([, name]) => name);
+  return missing.length ? missing.join('**, **') : null;
+}
+
+/**
+ * Everything that stops the bot doing what its settings ask, for the top of /setup show and the web UI's Settings:
+ * channels and roles that are gone or the bot can't use, and posts that couldn't go out, until one of them does
+ */
+export function settingProblems(guild: Guild): SettingProblem[] {
+  const problems: SettingProblem[] = [];
+  const name = (c: GuildBasedChannel) => `#${c.name}`;
+  const channelOf = (key: SettingKey) => {
+    const id = idSetting(guild.id, key as Parameters<typeof idSetting>[1]);
+    return { id, channel: id ? guild.channels.cache.get(id) : undefined };
+  };
+  const postsIn = (key: SettingKey, what: string) => {
+    const { id, channel } = channelOf(key);
+    if (!id) return;
+    if (!channel) return problems.push({ key, text: `${what}: the channel is gone. Pick another one.` });
+    const missing = missingToPost(guild, channel);
+    if (missing) problems.push({ key, text: `${what}: I can’t post in ${name(channel)}. Give my role **${missing}** there.` });
+  };
+
+  if (!idSetting(guild.id, 'announceChannel')) problems.push({ key: 'announceChannel', text: 'Nothing gets posted until an announce channel is set.' });
+  else postsIn('announceChannel', 'Announcements');
+  for (const [key, what, on] of POST_CHANNELS) if (on(guild.id)) postsIn(key, what);
+
+  if (setting(guild.id, 'tts')) {
+    const { id, channel } = channelOf('ttsChannel');
+    if (id && !channel) problems.push({ key: 'ttsChannel', text: 'Text to speech: the channel it reads is gone. Pick another one.' });
+    else if (channel && !channel.permissionsFor(guild.members.me!)?.has(PermissionFlagsBits.ViewChannel)) {
+      problems.push({ key: 'ttsChannel', text: `Text to speech: I can’t see ${name(channel)}. Give my role **View Channel** there.` });
+    }
   }
+
+  const { id: loopId, channel: loopChannel } = channelOf('loopRoom');
+  if (loopId && !loopChannel) problems.push({ key: 'loopRoom', text: 'The looping room’s channel is gone. Pick another one.' });
+  // The loop bot has its own permissions, and its own note in the room's settings
+  else if (loopChannel?.isVoiceBased() && !config.loopBotUrl) {
+    const problem = voiceProblem(loopChannel);
+    if (problem === 'full') problems.push({ key: 'loopRoom', text: `The looping room, ${name(loopChannel)}, is full, so I can’t join it.` });
+    else if (problem) problems.push({ key: 'loopRoom', text: `The looping room: I can’t play in ${name(loopChannel)}. Give my role **${problem.missing.join('**, **')}** there.` });
+  }
+
   const hopOnRole = idSetting(guild.id, 'hopOnRole');
   const role = hopOnRole ? guild.roles.cache.get(hopOnRole) : undefined;
-  if (hopOnRole && !role) problems.push('The hop-on role is gone, so hop-on pings ping nobody.');
+  if (hopOnRole && !role) problems.push({ key: 'hopOnRole', text: 'The hop-on role is gone, so hop-on pings ping nobody.' });
   if (role) {
     const warning = roleWarning(guild, role).trim();
-    if (warning) problems.push(warning.replace(/^⚠️ /, ''));
+    if (warning) problems.push({ key: 'hopOnRole', text: warning.replace(/^⚠️ /, '') });
   }
-  const loopRoom = idSetting(guild.id, 'loopRoom');
-  if (loopRoom && !guild.channels.cache.get(loopRoom)) problems.push('The looping room’s channel is gone.');
+  for (const [key, what] of ROLE_GATES) {
+    const id = idSetting(guild.id, key as Parameters<typeof idSetting>[1]);
+    if (id && !guild.roles.cache.has(id)) problems.push({ key, text: `${what}: the role it needs is gone, so only people who can manage the server can. Pick another, or none.` });
+  }
+
+  // Posts Discord refused where nothing above says why: the channel they'd go to now, while they're on and it's recent.
+  // A channel already listed above says it all, and a moved post's next try is the test
+  const said = new Set(problems.map((p) => p.key));
+  const refused = new Map<SettingKey, { posts: string[]; at: number; error: string; channel: GuildBasedChannel | undefined }>();
+  for (const failure of postFailures(guild.id)) {
+    const [own, on] = POSTED[failure.post];
+    const key = own && idSetting(guild.id, own as Parameters<typeof idSetting>[1]) ? own : 'announceChannel';
+    if (!on(guild.id) || idSetting(guild.id, key as Parameters<typeof idSetting>[1]) !== failure.channelId || said.has(key) || Date.now() - failure.at > FAILURE_SHOWN_MS) continue;
+    const entry = refused.get(key) ?? { posts: [], at: failure.at, error: failure.error, channel: guild.channels.cache.get(failure.channelId) };
+    entry.posts.push(POSTS[failure.post].toLowerCase());
+    refused.set(key, entry);
+  }
+  for (const [key, { posts, at, error, channel }] of refused) {
+    const what = posts.length === 1 ? `the last ${posts[0]}` : `the last ${posts.slice(0, -1).join(', ')} and ${posts.at(-1)}`;
+    problems.push({ key, at, text: `Discord refused ${what}${channel ? ` in ${name(channel)}` : ''}: “${error}”.` });
+  }
   return problems;
 }
 
@@ -319,7 +413,9 @@ export function settingsEmbed(guild: Guild) {
     .setColor(problems.length ? 0xfee75c : 0x5865f2)
     .addFields(groups.map(([name, keys]) => ({ name, value: keys.map(line).join('\n').slice(0, 1024) })))
     .setFooter({ text: 'Change one with its /setup command, or put it back with /setup reset. The web UI has every setting too.' });
-  if (problems.length) embed.setDescription(problems.map((p) => `⚠️ ${p}`).join('\n').slice(0, 4096));
+  // In Discord, the one that needs a command says which
+  const text = (p: SettingProblem) => (p.key === 'announceChannel' && !idSetting(guild.id, 'announceChannel') ? p.text.replace(/\.$/, ` with ${commandMention(guild.id, 'setup announce-channel')}.`) : p.text);
+  if (problems.length) embed.setDescription(problems.map((p) => `⚠️ ${text(p)}${p.at ? ` (<t:${Math.floor(p.at / 1000)}:R>)` : ''}`).join('\n').slice(0, 4096));
   return embed;
 }
 

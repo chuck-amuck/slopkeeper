@@ -21,6 +21,7 @@ import { announceAloud } from './say.ts';
 import { checkSteamStatusOf } from './steam.ts';
 import { commandMention } from '../commandIds.ts';
 import { getKv, setKv } from '../db.ts';
+import { sendPost } from '../postFailures.ts';
 
 /** When a server was last pinged, kept in the database so a restart doesn't ping again */
 const lastPingAt = (guildId: string) => Number(getKv(`hopOnPingAt:${guildId}`) ?? 0);
@@ -48,7 +49,7 @@ async function onVoiceState(client: Client<true>, oldState: VoiceState, newState
   const hopOnRole = idSetting(guildId, 'hopOnRole');
   const roles = [...new Set([...(hopOnRole ? [hopOnRole] : []), ...rolesForGames(guildId, games)])];
   if (roles.length) text = `${roles.map((id) => `<@&${id}>`).join(' ')} ${text}`;
-  await out.send({ content: text, allowedMentions: { roles }, components: [buttons(channel)] });
+  await sendPost('hopOn', guildId, out, { content: text, allowedMentions: { roles }, components: [buttons(channel)] });
   const doing = games.length ? `playing ${listNames(games)}` : 'in voice';
   void announceAloud(channel, `${listNames(humans.map((m) => m.displayName))} ${humans.length === 1 ? 'is' : 'are'} ${doing}, hop on`, 'ttsHopOn').catch(console.error);
 }

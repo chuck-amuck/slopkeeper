@@ -8,6 +8,7 @@ import { announceChannel, eachGuild, paginate } from '../util.ts';
 import { checkpoint, stats } from './gamestats.ts';
 import { allGames } from './games.ts';
 import { patchNotes as readPatchNotes } from './steam.ts';
+import { sendPost } from '../postFailures.ts';
 
 const DAY = 86_400_000;
 const CHECK_EVERY_MS = 30 * 60_000;
@@ -62,7 +63,7 @@ async function postDigest(client: Client<true>, guild: Guild, posts: PatchPost[]
     const out = await notesChannel(client, guild.id);
     if (!out) return false;
     const lines = posts.map((p) => `**${p.game}**: [${p.title.replace(/[[\]]/g, '')}](${p.url})`);
-    for (const page of paginate(lines, DIGEST_PAGE_CHARS)) await out.send({ embeds: [new EmbedBuilder().setTitle('🩹 Patch notes this week').setDescription(page.join('\n')).setColor(0x1b2838)] });
+    for (const page of paginate(lines, DIGEST_PAGE_CHARS)) await sendPost('patchNotes', guild.id, out, { embeds: [new EmbedBuilder().setTitle('🩹 Patch notes this week').setDescription(page.join('\n')).setColor(0x1b2838)] });
     posts.forEach(done);
   }, WEEKLY);
 }
@@ -81,7 +82,7 @@ export async function maybePostPatches(client: Client<true>) {
     const out = await notesChannel(client, guild.id);
     if (!out) return;
     for (const post of posts) {
-      await out.send({ embeds: [noteEmbed(post)] });
+      await sendPost('patchNotes', guild.id, out, { embeds: [noteEmbed(post)] });
       done(post);
     }
   });
