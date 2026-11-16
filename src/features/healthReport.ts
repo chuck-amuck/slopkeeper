@@ -152,24 +152,37 @@ interface Row {
 /** Every series in the range, a cell per point: name → labels (as kept) → cells */
 type Read = Map<string, Map<string, { labels: perf.Labels; cells: (Cell | null)[] }>>;
 
+// Counters and gauges, nearly every row, added up into each point by SQLite rather than one by one here, where a month of
+// them would hold up the bot. A row that counted nothing has no maximum, as `add` has it
+const grouped = db.prepare(`
+  SELECT CAST((at - CAST(:start AS INTEGER)) / CAST(:step AS INTEGER) AS INTEGER) AS i, name, labels,
+    SUM(count) AS count, SUM(sum) AS sum, COALESCE(MAX(CASE WHEN count > 0 THEN max END), MAX(max)) AS max
+  FROM perf_minutes WHERE span = :span AND at >= :from AND at < :to AND buckets IS NULL
+  GROUP BY i, name, labels`);
+// Timings, whose buckets are added up here
+const bucketed = db.prepare('SELECT at, name, labels, count, sum, max, buckets FROM perf_minutes WHERE span = ? AND at >= ? AND at < ? AND buckets IS NOT NULL');
+const lastRollup = db.prepare('SELECT MAX(at) AS at FROM perf_minutes WHERE span = 15');
+
 function read(start: number, step: number, points: number): Read {
   const end = start + step * points;
   // Fifteen-minute rows where they're coarse enough, then the minutes not added up into one yet. Two days of minutes are kept
   const coarse = step >= ROLLUP_MS;
-  const rolled = coarse ? ((db.prepare('SELECT MAX(at) AS at FROM perf_minutes WHERE span = 15').get() as { at: number | null }).at ?? start - ROLLUP_MS) + ROLLUP_MS : start;
-  const rows = [
-    ...(coarse ? (db.prepare('SELECT at, name, labels, count, sum, max, buckets FROM perf_minutes WHERE span = 15 AND at >= ? AND at < ?').all(start, Math.min(end, rolled)) as unknown as Row[]) : []),
-    ...(db.prepare('SELECT at, name, labels, count, sum, max, buckets FROM perf_minutes WHERE span = 1 AND at >= ? AND at < ?').all(Math.max(start, rolled), end) as unknown as Row[]),
-  ];
+  const rolled = coarse ? ((lastRollup.get() as { at: number | null }).at ?? start - ROLLUP_MS) + ROLLUP_MS : start;
   const found: Read = new Map();
-  for (const row of rows) {
-    const i = Math.floor((row.at - start) / step);
-    if (i < 0 || i >= points) continue;
+  const into = (i: number, row: { name: string; labels: string; count: number; sum: number; max: number }, buckets: number[] | null) => {
+    if (i < 0 || i >= points) return;
     const byLabels = found.get(row.name) ?? found.set(row.name, new Map()).get(row.name)!;
     let series = byLabels.get(row.labels);
     if (!series) byLabels.set(row.labels, (series = { labels: JSON.parse(row.labels) as perf.Labels, cells: new Array<Cell | null>(points).fill(null) }));
-    series.cells[i] = add(series.cells[i], { count: row.count, sum: row.sum, max: row.max, buckets: row.buckets ? (JSON.parse(row.buckets) as number[]) : null });
-  }
+    series.cells[i] = add(series.cells[i], { count: row.count, sum: row.sum, max: row.max, buckets });
+  };
+  const readSpan = (span: 1 | 15, from: number, to: number) => {
+    if (from >= to) return;
+    for (const row of grouped.all({ start, step, span, from, to }) as unknown as (Row & { i: number })[]) into(row.i, row, null);
+    for (const row of bucketed.all(span, from, to) as unknown as Row[]) into(Math.floor((row.at - start) / step), row, JSON.parse(row.buckets!) as number[]);
+  };
+  if (coarse) readSpan(15, start, Math.min(end, rolled));
+  readSpan(1, Math.max(start, rolled), end);
   return found;
 }
 

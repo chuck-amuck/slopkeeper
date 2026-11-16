@@ -3,7 +3,7 @@ import { Events, Status, type Client, type Interaction } from 'discord.js';
 import { monitorEventLoopDelay, performance, PerformanceObserver } from 'node:perf_hooks';
 import { feeds } from '../changes.ts';
 import { config } from '../config.ts';
-import { db, transaction } from '../db.ts';
+import { db, getKv, setKv, transaction } from '../db.ts';
 import { machineChange, readMachine, type MachineReading } from '../machine.ts';
 import * as perf from '../perf.ts';
 import type { Feature } from '../types.ts';
@@ -255,7 +255,23 @@ export async function poll() {
   if (config.apiToken && Date.now() - (webSeenAt || webWaitingSince) > WEB_STALE_MS) perf.gauge('container_up', 0, { container: 'web' });
 }
 
-const loopDelay = monitorEventLoopDelay({ resolution: 20 });
+// The sampler's timer fires this often, and what it reads includes the wait itself: an idle loop reads this much
+const LOOP_RESOLUTION_MS = 20;
+const loopDelay = monitorEventLoopDelay({ resolution: LOOP_RESOLUTION_MS });
+
+/**
+ * Takes the sampler's own 20 ms out of the delays kept before it was taken out as they're read, once, so the chart
+ * doesn't drop by 20 ms where it changed
+ */
+export function correctLoopDelays(before = Date.now()) {
+  if (getKv('loop_delay_corrected')) return;
+  const ms = LOOP_RESOLUTION_MS / 1000;
+  transaction(() => {
+    // By span and name, as the index has them, rather than looking through every row
+    db.prepare("UPDATE perf_minutes SET sum = MAX(0, sum - count * ?), max = MAX(0, max - ?) WHERE span IN (1, 15) AND name = 'event_loop_delay_seconds' AND at <= ?").run(ms, ms, before);
+    setKv('loop_delay_corrected', String(before));
+  });
+}
 let busy = performance.eventLoopUtilization();
 
 /** The bot as it is now */
@@ -263,7 +279,7 @@ export function sample(client: Client) {
   perf.gauge('discord_connected', client.ws.status === Status.Ready ? 1 : 0);
   if (client.ws.ping >= 0) perf.gauge('discord_gateway_ping_seconds', client.ws.ping / 1000);
   perf.gauge('voice_connections', getVoiceConnections().size);
-  if (loopDelay.count) perf.gauge('event_loop_delay_seconds', loopDelay.percentile(99) / 1e9);
+  if (loopDelay.count) perf.gauge('event_loop_delay_seconds', Math.max(0, loopDelay.percentile(99) / 1e6 - LOOP_RESOLUTION_MS) / 1000);
   loopDelay.reset();
   const since = performance.eventLoopUtilization(busy);
   busy = performance.eventLoopUtilization();
@@ -332,6 +348,11 @@ const timers: NodeJS.Timeout[] = [];
 export const health: Feature = {
   setup(client) {
     perf.keep(true);
+    try {
+      correctLoopDelays();
+    } catch (err) {
+      console.error('Couldn’t correct the event loop delays kept:', err);
+    }
     webWaitingSince = Date.now();
     loopDelay.enable();
     gcPauses.observe({ entryTypes: ['gc'] });

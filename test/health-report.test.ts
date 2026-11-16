@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import { beforeEach, test } from 'node:test';
 import { healthOf } from '../src/api/health.ts';
 import { feeds } from '../src/changes.ts';
-import { db } from '../src/db.ts';
-import { browserReport, containerSeen, sampleMachine, store } from '../src/features/health.ts';
+import { db, setKv } from '../src/db.ts';
+import { browserReport, containerSeen, correctLoopDelays, sampleMachine, store } from '../src/features/health.ts';
 import { customWindow, healthReport, quantile, verdictOf } from '../src/features/healthReport.ts';
 import type { MachineReading } from '../src/machine.ts';
 import * as perf from '../src/perf.ts';
@@ -75,6 +75,26 @@ test('a week reads the fifteen-minute rows, then the minutes not added up yet, w
   assert.equal(report.stutter.status, 'slow');
   assert.equal(healthReport(GUILD, '30d', NOW).points, 120);
   assert.equal(healthReport(GUILD, '24h', NOW).stutter.frames, 2000, 'a day reads fifteen-minute rows too');
+});
+
+test('gauges are added up into each point, however many minutes and series it has', () => {
+  // A day is read a point every 15 minutes, here from minutes alone, as none have been added up yet
+  const point = Math.floor(NOW / (15 * MINUTE)) * 15 * MINUTE - 30 * MINUTE;
+  minute(point, 'discord_gateway_ping_seconds', {}, 1, 0.1, 0.1);
+  minute(point + MINUTE, 'discord_gateway_ping_seconds', {}, 2, 0.5, 0.4);
+  minute(point + 14 * MINUTE, 'discord_gateway_ping_seconds', {}, 1, 0.3, 0.3);
+  // A minute that counted nothing adds nothing
+  minute(point + 2 * MINUTE, 'discord_gateway_ping_seconds', {}, 0, 0, 99);
+  minute(point + 15 * MINUTE, 'discord_gateway_ping_seconds', {}, 1, 0.05, 0.05);
+  // Two series of one counter, added together
+  minute(point, 'mixer_frames_total', { a: '1' }, 100, 100, 0);
+  minute(point + 3 * MINUTE, 'mixer_frames_total', { a: '2' }, 50, 50, 0);
+  minute(point + 3 * MINUTE, 'mixer_late_frames_total', {}, 3, 3, 0);
+  const report = healthReport(GUILD, '24h', NOW);
+  const i = (point - report.start) / (15 * MINUTE);
+  assert.deepEqual(report.discord.ping.slice(i, i + 2), [0.225, 0.05]);
+  assert.equal(report.stutter.frames, 150);
+  assert.equal(report.stutter.late, 3);
 });
 
 test('Discord and each container count the time they were away', () => {
@@ -335,4 +355,25 @@ test('the Health route takes a custom range', async () => {
   assert.equal(hour.step, 60_000);
   assert.ok(hour.verdict && hour.machine);
   await refused(400, `/guilds/${GUILD}/health?from=${Date.now()}&to=${Date.now() - 3_600_000}`);
+});
+
+test('event loop delays kept before the sampler’s own 20 ms was taken out are corrected once', () => {
+  setKv('loop_delay_corrected', '');
+  minute(at(10), 'event_loop_delay_seconds', {}, 4, 0.1, 0.05);
+  minute(at(9), 'event_loop_delay_seconds', {}, 4, 0.04, 0.01);
+  minute(at(9), 'heap_used_bytes', {}, 4, 400, 100);
+  minute(at(0), 'event_loop_delay_seconds', {}, 4, 0, 0);
+  correctLoopDelays(at(5));
+  correctLoopDelays(at(0));
+  const rows = db.prepare('SELECT at, name, sum, max FROM perf_minutes ORDER BY at, name').all() as { at: number; name: string; sum: number; max: number }[];
+  assert.deepEqual(
+    rows.map((r) => [r.name, Math.round(r.sum * 1000) / 1000, Math.round(r.max * 1000) / 1000]),
+    [
+      ['event_loop_delay_seconds', 0.02, 0.03],
+      ['event_loop_delay_seconds', 0, 0],
+      ['heap_used_bytes', 400, 100],
+      ['event_loop_delay_seconds', 0, 0],
+    ],
+    'only before it, only once, and never below nothing',
+  );
 });

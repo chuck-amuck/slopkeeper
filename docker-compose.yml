@@ -11,7 +11,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 256M
+          memory: 384M # every sound playing runs its own ffmpeg, about 10 MB each, up to 12 at once plus music and speech
 
   web:
     image: ghcr.io/chuck-amuck/slopkeeper-web:latest # the web UI, optional. Needs API_TOKEN in .env, which also turns the bot's API on
