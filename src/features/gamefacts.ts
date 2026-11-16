@@ -46,7 +46,10 @@ let tagNames: { at: number; names: Map<number, string> } | null = null;
 async function steamTags(appid: number) {
   if (!tagNames || Date.now() - tagNames.at > TAG_NAMES_MS) {
     const { response } = await getJson('https://api.steampowered.com/IStoreService/GetTagList/v1/?language=english');
-    tagNames = { at: Date.now(), names: new Map(((response?.tags ?? []) as { tagid: number; name: string }[]).map((t) => [t.tagid, t.name])) };
+    const names = new Map(((response?.tags ?? []) as { tagid: number; name: string }[]).map((t) => [t.tagid, t.name]));
+    // An empty list is a bad answer, not a week without tags
+    if (!names.size) throw new Error('Steam sent no tag names');
+    tagNames = { at: Date.now(), names };
   }
   const input = { ids: [{ appid }], context: { language: 'english', country_code: 'US' }, data_request: { include_tag_count: KEPT_TAGS } };
   const { response } = await getJson(`https://api.steampowered.com/IStoreBrowseService/GetItems/v1/?input_json=${encodeURIComponent(JSON.stringify(input))}`);
