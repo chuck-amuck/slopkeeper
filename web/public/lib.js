@@ -64,6 +64,8 @@ const ICONS = {
   chevron: '<path d="M6.5 9.5 12 15l5.5-5.5"/>',
   check: '<path d="M5 12.5l4.5 4.5L19 7.5"/>',
   upload: '<path d="M12 15V4M7.5 8.5 12 4l4.5 4.5M5 15v4h14v-4"/>',
+  download: '<path d="M12 4v11M7.5 10.5 12 15l4.5-4.5M5 15v4h14v-4"/>',
+  copy: '<rect x="8.5" y="8.5" width="11" height="11" rx="2"/><path d="M15.5 5.5V5a1.5 1.5 0 0 0-1.5-1.5H6A1.5 1.5 0 0 0 4.5 5v8A1.5 1.5 0 0 0 6 14.5h.5"/>',
   note: '<path d="M9 18V5.5l10-2v12"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="16.5" cy="15.5" r="2.5"/>',
   dice: '<rect x="4" y="4" width="16" height="16" rx="3.5"/><g fill="currentColor" stroke="none"><circle cx="8.5" cy="8.5" r="1.5"/><circle cx="15.5" cy="8.5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="8.5" cy="15.5" r="1.5"/><circle cx="15.5" cy="15.5" r="1.5"/></g>',
   calendar: '<rect x="4" y="5.5" width="16" height="14.5" rx="2.5"/><path d="M4 10.5h16M8.5 3.5v4M15.5 3.5v4"/>',

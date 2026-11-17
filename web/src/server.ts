@@ -308,7 +308,7 @@ export function createWeb({ password, apiToken, botUrl, proxySecret }: WebOption
       // So the page knows not to draw from what it kept once the session's over, before it's asked anything
       'x-slopkeeper-session-until': (cookieValue(req) ?? '').split('.')[0],
     };
-    for (const name of ['content-type', 'content-length', 'cache-control']) {
+    for (const name of ['content-type', 'content-length', 'cache-control', 'content-disposition']) {
       const value = answer.headers.get(name);
       if (value) headers[name] = value;
     }

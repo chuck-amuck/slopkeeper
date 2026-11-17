@@ -56,6 +56,9 @@ function originalOf(guildId: string, name: string): string | undefined {
 
 export const isTrimmed = (guildId: string, name: string) => originalOf(guildId, name) !== undefined;
 
+/** A sound's file before any trim, to cut another sound from all of it */
+export const untrimmedFile = (guildId: string, name: string) => originalOf(guildId, name) ?? findSound(guildId, name)?.file;
+
 /** Every trimmed sound's name, from one look at the folder */
 export function trimmedSounds(guildId: string): Set<string> {
   const dir = originalsDir(guildId);
@@ -485,6 +488,14 @@ export function placeSound(guildId: string, name: string, groupId: number | null
   transaction(() => others.forEach((n, i) => put.run(guildId, n, groupId, i)));
   libraryChanged(guildId);
   return null;
+}
+
+/** Puts a sound just after `beside` in its group, if it's in one and the sound isn't in a group already */
+export function placeBeside(guildId: string, name: string, beside: string) {
+  const at = placeOf(guildId, beside);
+  if (!at || placeOf(guildId, name)) return;
+  const order = (db.prepare('SELECT name FROM sound_places WHERE group_id = ? ORDER BY pos, name').all(at.group_id) as { name: string }[]).map((p) => p.name);
+  placeSound(guildId, name, at.group_id, order[order.indexOf(beside) + 1] ?? null);
 }
 
 /** Where a sound is: its group and place in it, or null in none */

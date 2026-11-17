@@ -9,11 +9,11 @@ import { db } from '../db.ts';
 import * as discordBoard from '../discordSounds.ts';
 import { musicState } from '../features/music.ts';
 import { phrases, previewSpeech, removePhrase, savePhrase, say, serverVoice, TooSoon, voiceGroup, VOICES } from '../features/say.ts';
-import { addGroup, addSound, addToDiscord, BIN_DAYS, changeEmoji, deleteGroup, fillGroup, moveGroup, placeSound, renameGroup, soundGroups, deletedSounds, eraseDeleted, expiresAt, favourites, findSound, listSounds, parseEmoji, playCounts, removeSound, renameSound, restoreDeleted, restoreSound, saveFromDiscord, setFavourite, setSoundVolume, type Sound, soundLevels, soundVolumes, swapOnDiscord, syncToDiscord, takeOffDiscord, trimmedSounds, trimProblem, trimSound, untaken, uploadProblem, volumeProblem } from '../features/soundLibrary.ts';
+import { addGroup, addSound, addToDiscord, BIN_DAYS, changeEmoji, deleteGroup, fillGroup, moveGroup, placeSound, renameGroup, soundGroups, deletedSounds, eraseDeleted, expiresAt, favourites, findSound, listSounds, parseEmoji, playCounts, removeSound, renameSound, restoreDeleted, restoreSound, saveFromDiscord, setFavourite, setSoundVolume, type Sound, soundLevels, soundVolumes, swapOnDiscord, syncToDiscord, takeOffDiscord, trimmedSounds, trimProblem, trimSound, untaken, untrimmedFile, placeBeside, uploadProblem, volumeProblem } from '../features/soundLibrary.ts';
 import { joinSounds, setJoinSound } from '../features/joinSounds.ts';
 import { playDiscordSound, playFromWeb, playingNow, stopPlayback, stopPlayingOne } from '../features/voiceAudio.ts';
 import { postPanel, refreshPanels } from '../features/soundPanel.ts';
-import { downloaded, downloadLink, LONGEST_PART, linksReady, partProblem, savePart, soundLinks } from '../features/soundLinks.ts';
+import { downloaded, downloadLink, LONGEST_PART, linksReady, partProblem, savePart, soundLinks, soundSource } from '../features/soundLinks.ts';
 import { setting } from '../settings.ts';
 import { type Ask, Refused, by, cantDo, cantPost, memberList, nameOf, plain, postingChannel, readBody, readJson, refuse, untilGone, voiceChannelFor } from './common.ts';
 
@@ -120,6 +120,8 @@ export async function soundList(guild: Guild) {
     clipSeconds: discordBoard.CLIP_SECONDS,
     // Adding from a link needs the music container
     links: linksReady() ? { longest: LONGEST_PART } : null,
+    // The longest part Cut another keeps, which needs nothing more
+    longestPart: LONGEST_PART,
   };
 }
 
@@ -197,14 +199,27 @@ export async function handleSounds(client: Client<true>, guild: Guild, req: Inco
   }
 
   if (part === 'audio' && method === 'GET') {
-    const { file } = soundOf(guild, name);
+    const { file, name: soundName } = soundOf(guild, name);
+    const ext = path.extname(file).toLowerCase();
     res.writeHead(200, {
-      'content-type': AUDIO_TYPES[path.extname(file).toLowerCase()] ?? 'application/octet-stream',
+      'content-type': AUDIO_TYPES[ext] ?? 'application/octet-stream',
       'content-length': statSync(file).size,
       'cache-control': 'no-store',
+      // Download saves it as a file named after the sound. Names are only letters, numbers, - and _
+      ...(url.searchParams.has('download') && { 'content-disposition': `attachment; filename="${soundName}${ext}"` }),
     });
     createReadStream(file).pipe(res);
     return null;
+  }
+
+  // All of a sound, before any trim, to cut another sound from
+  if (part === 'source' && method === 'POST') {
+    const { name: soundName } = soundOf(guild, name);
+    const file = untrimmedFile(guild.id, soundName);
+    if (!file) throw new Refused(404, 'No sound by that name.');
+    const got = await soundSource(guild.id, soundName, file);
+    if (got.error !== undefined) throw new Refused(400, got.error);
+    return got;
   }
 
   if (part === 'play' && method === 'POST') {
@@ -391,9 +406,9 @@ async function handleGroups(client: Client<true>, guild: Guild, req: IncomingMes
  * `end`, `discord`, and `replace` or `keep` for a name that's taken, saves that part as a sound
  */
 async function handleLinks(client: Client<true>, guild: Guild, req: IncomingMessage, res: ServerResponse, id?: string, part?: string) {
-  if (!linksReady()) throw new Refused(400, 'Adding sounds from links needs the music container, which this bot doesn’t have.');
   if (id === undefined) {
     if (req.method !== 'POST') throw new Refused(405, 'Not here.');
+    if (!linksReady()) throw new Refused(400, 'Adding sounds from links needs the music container, which this bot doesn’t have.');
     const { url } = await readJson(req);
     if (typeof url !== 'string' || url.length > 2000 || !/^https:\/\/\S+$/.test(url.trim())) throw new Refused(400, 'Paste a link that starts with https://.');
     const got = await downloadLink(guild.id, url.trim());
@@ -401,20 +416,21 @@ async function handleLinks(client: Client<true>, guild: Guild, req: IncomingMess
     return got;
   }
   const d = downloaded(guild.id, id);
-  if (!d) throw new Refused(404, 'That download has gone. Paste the link again.');
+  if (!d) throw new Refused(404, 'That download has gone. Paste the link again, or open Cut another again.');
+  const gone = d.url === null ? 'That copy has gone. Open Cut another again.' : 'That download has gone. Paste the link again.';
   if (part === 'media' && req.method === 'GET') {
-    if (d.gone) throw new Refused(404, 'That download has gone. Paste the link again.');
+    if (d.gone) throw new Refused(404, gone);
     res.writeHead(200, { 'content-type': d.type, 'content-length': d.bytes, 'cache-control': 'no-store' });
     // The music container can delete it at any moment
     createReadStream(d.file).once('error', () => res.destroy()).pipe(res);
     return null;
   }
   if (part === 'wave' && req.method === 'GET') {
-    if (d.gone) throw new Refused(404, 'That download has gone. Paste the link again.');
+    if (d.gone) throw new Refused(404, gone);
     return { peaks: await d.wave().catch(() => null) };
   }
   if (part !== undefined || req.method !== 'PUT') throw new Refused(404, 'Not found.');
-  const { name, start, end, discord, replace, keep } = await readJson(req);
+  const { name, start, end, discord, replace, keep, beside } = await readJson(req);
   refuse(guild, partProblem(start, end, d.seconds));
   if (typeof name !== 'string') throw new Refused(400, 'Give the sound a name.');
   refuse(guild, uploadProblem(name, '.mp3', 0));
@@ -424,7 +440,10 @@ async function handleLinks(client: Client<true>, guild: Guild, req: IncomingMess
   const [from, to] = [start as number, end as number];
   const added = await savePart(guild, id, saveAs, from, to, discord !== false);
   if (typeof added === 'string') throw new Refused(400, added);
-  logActivity(guild.id, by(), `${added.replaced ? 'Replaced' : 'Added'} sound **${saveAs}** from ${(to - from).toFixed(1)} s of “${d.title}”`);
+  // Cut another puts the new sound next to the one it came from
+  if (typeof beside === 'string' && beside !== saveAs && findSound(guild.id, beside)) placeBeside(guild.id, saveAs, beside);
+  const of = d.url === null ? `the sound **${d.title}**` : `“${d.title}”`;
+  logActivity(guild.id, by(), `${added.replaced ? 'Replaced' : 'Added'} sound **${saveAs}** from ${(to - from).toFixed(1)} s of ${of}`);
   await refreshPanels(client, guild.id);
   return { name: saveAs, replaced: added.replaced, discordProblem: added.problem && plain(guild, added.problem) };
 }

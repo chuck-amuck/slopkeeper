@@ -8,7 +8,7 @@ import { test, type TestContext } from 'node:test';
 import { config } from '../src/config.ts';
 import { db } from '../src/db.ts';
 import { LONGEST_PART, partProblem, resetDownloads } from '../src/features/soundLinks.ts';
-import { GUILD, activityText, call, ok, panelEdits, refused, sounds, upload } from './apiFixture.ts';
+import { GUILD, activityText, call, ok, panelEdits, refused, sounds, upload, wav } from './apiFixture.ts';
 
 // Sounds cut from part of a video or track that the music container downloads
 
@@ -164,4 +164,55 @@ test('the music container not answering says so, and without one, links aren’t
   config.musicUrl = null;
   assert.equal((await ok(`/guilds/${GUILD}/sounds`)).links, null);
   assert.match(await refused(400, `/guilds/${GUILD}/sound-links`, { method: 'POST', json: { url: TIKTOK } }), /needs the music container/);
+});
+
+test('another sound is cut from all of a sound, before its trim, without the music container, and goes beside it', async (t) => {
+  t.after(() => Object.assign(config, { musicUrl: 'http://music.test' }));
+  config.musicUrl = null;
+  resetDownloads();
+  await upload('horn', 'clip.wav', wav(3) as BodyInit);
+  await ok(`/guilds/${GUILD}/sounds/horn/trim`, { method: 'POST', json: { start: 1, end: 2 } });
+  const { groups } = await ok(`/guilds/${GUILD}/sound-groups`, { method: 'POST', json: { name: 'Memes' } });
+  await upload('after');
+  for (const name of ['horn', 'after']) await ok(`/guilds/${GUILD}/sounds/${name}`, { method: 'PATCH', json: { place: { group: groups[0].id } } });
+
+  const got = await ok(`/guilds/${GUILD}/sounds/horn/source`, { method: 'POST' });
+  assert.equal(got.url, null);
+  assert.equal(got.title, 'horn');
+  assert.ok(Math.abs(got.seconds - 3) < 0.1, `all ${got.seconds} s of it, before the trim`);
+  const media = await call(`/guilds/${GUILD}/sound-links/${got.id}/media`);
+  assert.equal(media.headers.get('content-type'), 'audio/wav');
+  await media.arrayBuffer();
+  assert.ok((await ok(`/guilds/${GUILD}/sound-links/${got.id}/wave`)).peaks.length > 100);
+
+  // Twice from one copy, as Save and cut another does, each after the one before
+  for (const [name, start, beside] of [['horn-2', 0, 'horn'], ['horn-3', 2, 'horn-2']] as const) {
+    assert.equal((await savePart(got.id, { name, start, end: start + 0.5, beside })).status, 200);
+  }
+  const list = await sounds();
+  assert.ok(Math.abs(list.find((s) => s.name === 'horn-2').seconds - 0.5) < 0.1);
+  assert.equal(list.find((s) => s.name === 'horn-2').link, null, 'nothing to pick again from');
+  assert.ok(Math.abs(list.find((s) => s.name === 'horn').seconds - 1) < 0.1, 'the sound itself is left alone');
+  assert.deepEqual((await ok(`/guilds/${GUILD}/sounds`)).groups[0].sounds, ['horn', 'horn-2', 'horn-3', 'after']);
+  assert.match(activityText().at(-1)!, /Added sound \*\*horn-3\*\* from 0\.5 s of the sound \*\*horn\*\*/);
+
+  // Replacing the sound it's cut from works, as the cut comes from a copy
+  assert.equal((await savePart(got.id, { name: 'horn', start: 0, end: 3, replace: true })).status, 200);
+  assert.ok(Math.abs((await sounds()).find((s) => s.name === 'horn').seconds - 3) < 0.1);
+  assert.match(await refused(404, `/guilds/${GUILD}/sounds/nope/source`, { method: 'POST' }), /No sound by that name/);
+});
+
+test('a sound from a link has the video to cut another from, and Download saves a sound as a file named after it', async (t) => {
+  fakeMusic(t);
+  const got = await download(TIKTOK);
+  assert.equal((await savePart(got.id, { name: 'beep', start: 2, end: 3 })).status, 200);
+  assert.equal((await savePart(got.id, { name: 'boop', start: 3, end: 4, beside: 'beep' })).status, 200);
+  assert.deepEqual((await sounds()).find((s) => s.name === 'boop').link, { url: TIKTOK, title: 'A Clip', start: 3, end: 4 });
+
+  const file = await call(`/guilds/${GUILD}/sounds/beep/audio?download=1`);
+  assert.equal(file.headers.get('content-disposition'), 'attachment; filename="beep.mp3"');
+  assert.ok((await file.arrayBuffer()).byteLength > 1000);
+  const played = await call(`/guilds/${GUILD}/sounds/beep/audio`);
+  assert.equal(played.headers.get('content-disposition'), null, 'a preview plays rather than saving');
+  await played.arrayBuffer();
 });

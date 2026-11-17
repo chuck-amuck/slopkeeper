@@ -1,7 +1,7 @@
 import { type Guild } from 'discord.js';
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { config } from '../config.ts';
@@ -25,7 +25,8 @@ const SAFE_FILE = /^[\w.-]+$/;
 
 interface Download {
   guildId: string;
-  url: string;
+  /** Null for a copy of a library sound, to cut another from */
+  url: string | null;
   title: string;
   artist: string;
   source: string;
@@ -34,6 +35,8 @@ interface Download {
   file: string;
   at: number;
   peaks?: Promise<number[]>;
+  /** A copy the bot made, so the bot deletes it, where the music container deletes its own downloads */
+  own?: boolean;
 }
 
 /** What each server has downloaded lately, by an id the page holds. Gone after a restart, when the page asks for the link again */
@@ -68,7 +71,27 @@ async function fetchClip(url: string): Promise<Omit<Download, 'guildId' | 'at' |
 }
 
 function forgetOld(now = Date.now()) {
-  for (const [id, d] of downloads) if (now - d.at > KEPT_MS) downloads.delete(id);
+  for (const [id, d] of downloads) {
+    if (now - d.at <= KEPT_MS) continue;
+    downloads.delete(id);
+    if (d.own) rmSync(d.file, { force: true });
+  }
+}
+
+// Where copies of library sounds wait while another sound is cut from them. A copy, as saving can replace the sound itself
+const sourceDir = () => path.join(tmpdir(), 'slopkeeper-sources');
+
+/** Makes a library sound's file something to cut another sound from, like a download. Returns what it is, or why it can't */
+export async function soundSource(guildId: string, name: string, file: string) {
+  forgetOld();
+  const seconds = await durationOf(file).catch(() => NaN);
+  if (!(seconds > 0)) return { error: 'That sound has nothing the bot can read.' };
+  const id = randomUUID();
+  mkdirSync(sourceDir(), { recursive: true });
+  const copy = path.join(sourceDir(), `${id}${path.extname(file).toLowerCase()}`);
+  copyFileSync(file, copy);
+  downloads.set(id, { guildId, url: null, title: name, artist: '', source: 'sound', video: false, file: copy, seconds, at: Date.now(), own: true });
+  return { id, url: null, title: name, artist: '', source: 'sound', video: false, seconds };
 }
 
 /** Downloads a link for a server, so the page can show it. Returns what it is, or why it can't be had */
@@ -93,6 +116,8 @@ const MEDIA_TYPES: Record<string, string> = {
   '.mp3': 'audio/mpeg',
   '.opus': 'audio/ogg',
   '.ogg': 'audio/ogg',
+  '.wav': 'audio/wav',
+  '.flac': 'audio/flac',
 };
 
 /** A server's download, if it still has it */
@@ -175,6 +200,7 @@ export async function savePart(guild: Guild, id: string, name: string, start: nu
   if (!d || d.guildId !== guild.id) return 'That download has gone. Paste the link again.';
   // The music container deletes what nobody's asked for in an hour, so someone slow to pick gets it downloaded again
   if (!existsSync(d.file)) {
+    if (d.url === null) return 'That copy has gone. Open Cut another again.';
     const again = await fetchClip(d.url);
     if (typeof again === 'string') return again;
     d.file = again.file;
@@ -186,12 +212,14 @@ export async function savePart(guild: Guild, id: string, name: string, start: nu
     await cutAudio(d.file, cut, start, Math.min(end, d.seconds) - start);
     const added = await addSound(guild, name, '.mp3', readFileSync(cut), undefined, toDiscord);
     if (!added) return 'That part has no sound the bot can read.';
-    db.prepare('INSERT OR REPLACE INTO sound_links (guild_id, name, url, title, start_s, end_s) VALUES (?, ?, ?, ?, ?, ?)').run(guild.id, name, d.url, d.title, start, end);
+    // A cut from a library sound has no link to pick again from. One that replaced a sound from a link drops that link
+    if (d.url !== null) db.prepare('INSERT OR REPLACE INTO sound_links (guild_id, name, url, title, start_s, end_s) VALUES (?, ?, ?, ?, ?, ?)').run(guild.id, name, d.url, d.title, start, end);
+    else db.prepare('DELETE FROM sound_links WHERE guild_id = ? AND name = ?').run(guild.id, name);
     // Saving it told open pages already, before it had its link
     libraryChanged(guild.id);
     return added;
   } catch (err) {
-    console.error(`Couldn’t cut ${name} from ${d.url} in server ${guild.id}:`, err instanceof Error ? err.message : err);
+    console.error(`Couldn’t cut ${name} from ${d.url ?? `the sound ${d.title}`} in server ${guild.id}:`, err instanceof Error ? err.message : err);
     return 'That part couldn’t be cut, so nothing was saved.';
   } finally {
     rmSync(folder, { recursive: true, force: true });
@@ -213,5 +241,6 @@ export function soundLinks(guildId: string): Map<string, SoundLink> {
 
 /** For tests: forgets every download */
 export function resetDownloads() {
+  for (const d of downloads.values()) if (d.own) rmSync(d.file, { force: true });
   downloads.clear();
 }

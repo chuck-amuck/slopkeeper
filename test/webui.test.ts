@@ -1,10 +1,10 @@
 // Every page of the web UI in a real browser, against the real management API with the API tests' fake server: no
 // script errors, no failed requests, nothing blank or showing an error, and nothing that scrolls sideways on a phone.
 // It needs Chrome or Chromium (CHROME names one). In CI one is required; elsewhere, without one, it's skipped
-import { base, GUILD, TOKEN } from './apiFixture.ts';
+import { base, GUILD, soundFolder, TOKEN, wav } from './apiFixture.ts';
 import assert from 'node:assert/strict';
 import { spawn, execFileSync, type ChildProcess } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -17,8 +17,8 @@ import { createWeb } from '../web/src/server.ts';
 const PASSWORD = 'browser-test';
 // A sound this device saw last time, that's since been deleted
 const STALE = { sounds: [{ name: 'deleted since', plays: 3 }], groups: [] };
-// A page's address, its name, what it remembers, and what must be true of it once it's shown
-const PAGES: [string, string, Record<string, string>?, string?][] = [
+// A page's address, its name, what it remembers, what must be true of it once it's shown, and what to do on it first
+const PAGES: [string, string, Record<string, string>?, string?, string?][] = [
   ['board', 'Soundboard'],
   // Drawn at once from what was seen last, and the server remembered, so its parts are asked for as the page starts. Then
   // what's since changed: a sound deleted and the server renamed
@@ -29,6 +29,14 @@ const PAGES: [string, string, Record<string, string>?, string?][] = [
     `![...document.querySelectorAll('.tile-name')].some((n) => n.textContent === 'deleted since') && !document.body.innerText.includes('Old server name')`,
   ],
   ['board', 'Soundboard: Manage', { soundboardView: 'manage' }],
+  // Cut another, from a sound that has no link, opens the picker on all of it with both ways to save
+  [
+    'board',
+    'Soundboard: Cut another',
+    { soundboardView: 'manage' },
+    `(() => { const d = document.querySelector('dialog[open]'); return !!d && /Cut another from airhorn/.test(d.textContent) && [...d.querySelectorAll('button')].some((b) => b.textContent === 'Save and cut another') && d.querySelector('input[aria-label="Sound name"]').value === 'airhorn-2'; })()`,
+    `document.querySelector('[aria-label="Cut another sound from airhorn"]').click()`,
+  ],
   ['music', 'Music'],
   ['games', 'Games'],
   ['nights', 'Game nights'],
@@ -121,6 +129,9 @@ after(async () => {
 
 /** Somewhere for each view to have something to show */
 function seed() {
+  // Sounds, so the Soundboard has tiles and Manage has rows, one with the longest name there can be
+  mkdirSync(soundFolder, { recursive: true });
+  for (const name of ['airhorn', 'a-very-long-sound-name-for-rows']) writeFileSync(path.join(soundFolder, `${name}.wav`), wav(1));
   const HOUR = 3_600_000;
   const now = Date.now();
   const play = db.prepare("INSERT INTO game_plays (guild_id, user_id, game, channel_id, started_at, ended_at) VALUES (?, ?, ?, '702', ?, ?)");
@@ -218,7 +229,7 @@ test('every page of the web UI opens cleanly, on a computer and a phone', { skip
   const failures: string[] = [];
   for (const screen of SCREENS) {
     await page.send('Emulation.setDeviceMetricsOverride', { width: screen.width, height: screen.height, deviceScaleFactor: 1, mobile: screen.mobile });
-    for (const [hash, label, stored = {}, expect] of PAGES) {
+    for (const [hash, label, stored = {}, expect, act] of PAGES) {
       // A fresh page each time, with what it remembers set first
       await page.send('Page.navigate', { url: `${site}/#${hash}` });
       await page.evaluate(`localStorage.clear(); ${Object.entries(stored).map(([k, v]) => `localStorage.setItem(${JSON.stringify(k)}, ${JSON.stringify(v)});`).join('')} true`);
@@ -237,6 +248,10 @@ test('every page of the web UI opens cleanly, on a computer and a phone', { skip
         return false;
       })();
       await sleep(500);
+      if (act && shown) {
+        await page.evaluate(act);
+        await sleep(1500);
+      }
       const look = await page.evaluate<{ text: number; errors: string[]; wide: number; width: number; past: string[] }>(`(() => {
         const main = document.querySelector('main');
         return {

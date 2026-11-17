@@ -31,6 +31,7 @@ const bot = createServer((req, res) => {
     if (req.url === '/guilds/1/refused') return res.writeHead(400, { 'content-type': 'application/json' }).end('{"error":"No."}');
     if (req.url === '/guilds/1/big') return res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' }).end(BIG);
     if (req.url === '/guilds/1/audio') return res.writeHead(200, { 'content-type': 'audio/wav', 'cache-control': 'no-store', 'x-private': 'leak' }).end('RIFF');
+    if (req.url === '/guilds/1/audio?download=1') return res.writeHead(200, { 'content-type': 'audio/wav', 'content-disposition': 'attachment; filename="a.wav"' }).end('RIFF');
     res.writeHead(200, { 'content-type': 'application/json', 'content-length': 11 }).end('{"ok":true}');
   });
 });
@@ -273,6 +274,10 @@ test('passes audio back with its type, and nothing else from the bot', async () 
   assert.equal(res.headers.get('cache-control'), 'no-store');
   assert.equal(res.headers.get('x-private'), null);
   assert.equal(await res.text(), 'RIFF');
+  // Download saves it under the sound's name
+  const file = await fetch(`${base}/api/guilds/1/audio?download=1`, { headers: { cookie: await login() } });
+  assert.equal(file.headers.get('content-disposition'), 'attachment; filename="a.wav"');
+  await file.text();
 });
 
 test('stops waiting on the bot once the page has gone', async () => {

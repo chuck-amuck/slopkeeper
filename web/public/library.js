@@ -904,6 +904,8 @@ export function renderLibrary(main) {
             { className: 'sheet-list' },
             item('volume', `Volume (${sound.percent}%)`, () => pickVolume(sound)),
             item('scissors', sound.trimmed ? 'Trim or restore' : 'Trim', () => attempt(() => trim(sound))),
+            item('copy', 'Cut another', () => attempt(() => cutAnother(sound))),
+            item('download', 'Download', () => download(sound)),
             item('pencil', 'Rename', rename),
             grouping && item('grip', 'Move to group', () => moveSheet(sound, group)),
           ),
@@ -941,6 +943,8 @@ export function renderLibrary(main) {
         nameBox,
         el('button', { className: 'quiet icon sound-extra', title: 'Volume', ariaLabel: `Volume for ${sound.name}`, onclick: () => pickVolume(sound) }, icon('volume')),
         el('button', { className: 'quiet icon sound-extra', title: 'Trim', ariaLabel: `Trim ${sound.name}`, onclick: () => attempt(() => trim(sound)) }, icon('scissors')),
+        el('button', { className: 'quiet icon sound-extra', title: 'Cut another sound from this one', ariaLabel: `Cut another sound from ${sound.name}`, onclick: () => attempt(() => cutAnother(sound)) }, icon('copy')),
+        el('button', { className: 'quiet icon sound-extra', title: 'Download', ariaLabel: `Download ${sound.name}`, onclick: () => download(sound) }, icon('download')),
         el('label', { className: 'toggle' }, toggle, el('span', {}, 'On Discord')),
         remove,
         el('button', { type: 'button', className: 'quiet icon sound-more', ariaLabel: `More for ${sound.name}`, ariaHasPopup: 'dialog', onclick: moreSheet }, icon('more')),
@@ -956,30 +960,65 @@ export function renderLibrary(main) {
     return `Even volume turned this one ${gainDb > 0 ? 'up' : 'down'} by ${Math.abs(gainDb)} dB. This slider goes on top of that.`;
   }
 
-  /** Downloads a link and picks part of it, as a new sound, or again for `sound`, a sound that came from a link */
-  async function addFromLink(url, sound = null) {
+  function savedToast(saved) {
+    const done = saved.replaced ? `Replaced ${saved.name}. The old one is in Recently deleted.` : `Added ${saved.name}.`;
+    toast(saved.discordProblem ? `${done}\nBot soundboard only: ${saved.discordProblem}.` : done);
+  }
+
+  /**
+   * Picks a part of `got` and saves it: again for `sound`, beside `from` to cut another from it, or else as a new sound.
+   * Save and cut another saves each part as it goes. Resolves with whether anything was saved
+   */
+  async function pickAndSave(got, { sound = null, from = null } = {}) {
+    let any = false;
+    const onSaved = (saved) => {
+      any = true;
+      savedToast(saved);
+      void attempt(load);
+    };
+    const saved = await pickPart(main, got, { longest: data.longestPart, clipSeconds: data.clipSeconds, isSound, sound, from, onSaved });
+    if (saved) {
+      any = true;
+      savedToast(saved);
+      await load();
+    }
+    return any;
+  }
+
+  /** Downloads a link and picks part of it, as a new sound, or again for `sound`, or beside `from`, which came from it */
+  async function addFromLink(url, { sound = null, from = null } = {}) {
     if (linkButton.disabled) return;
     linkButton.disabled = true;
     linkButton.textContent = 'Downloading…';
-    if (sound) toast(`Downloading ${sound.link.title ?? 'the link'} again…`);
+    const of = sound ?? from;
+    if (of) toast(`Downloading ${of.link.title ?? 'the link'} again…`);
     try {
       const got = await downloadLink(url);
       linkButton.textContent = 'Get';
-      const saved = await pickPart(main, got, { longest: data.links.longest, clipSeconds: data.clipSeconds, isSound, sound });
-      if (!saved) return;
-      if (!sound) linkInput.value = '';
-      const done = saved.replaced ? `Replaced ${saved.name}. The old one is in Recently deleted.` : `Added ${saved.name}.`;
-      toast(saved.discordProblem ? `${done}\nBot soundboard only: ${saved.discordProblem}.` : done);
-      await load();
+      if ((await pickAndSave(got, { sound, from })) && !of) linkInput.value = '';
     } finally {
       linkButton.disabled = false;
       linkButton.textContent = 'Get';
     }
   }
 
+  /** Cuts a new sound from the video `sound` came from, while the bot can still get links, or else from all of `sound` */
+  async function cutAnother(sound) {
+    if (sound.link && data.links) return addFromLink(sound.link.url, { from: sound });
+    await pickAndSave(await request(soundPath(sound.name, '/source'), { method: 'POST' }), { from: sound });
+  }
+
+  /** Saves a sound as a file, as it plays now */
+  function download(sound) {
+    const link = el('a', { href: soundPath(sound.name, '/audio?download=1'), download: '' });
+    document.body.append(link);
+    link.click();
+    link.remove();
+  }
+
   async function trim(sound) {
     const done = await pickTrim(main, sound);
-    if (done === 'again') return attempt(() => addFromLink(sound.link.url, sound));
+    if (done === 'again') return attempt(() => addFromLink(sound.link.url, { sound }));
     if (!done) return;
     toast(done === 'restored' ? `Restored ${sound.name}.` : `Trimmed ${sound.name}.`);
     await load();

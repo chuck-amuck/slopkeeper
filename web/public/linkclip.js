@@ -41,15 +41,26 @@ export const nameFromTitle = (title) =>
 /** Has the bot download a link. Resolves with what it is: its id, title, length and whether there's a picture */
 export const downloadLink = (url) => request(api('/sound-links'), { method: 'POST', json: { url } });
 
+/** `base`, or base-2, base-3… if that's taken, as the bot names a sound kept beside one of the same name */
+export function freeName(base, isSound) {
+  let name = base;
+  for (let n = 2; isSound(name); n++) name = `${base.slice(0, 32 - String(n).length - 1)}-${n}`;
+  return name;
+}
+
 /**
  * Picks part of a download and saves it as a sound. `sound` is a sound from a link being picked again: it starts at the part
- * picked before and replaces that sound. Resolves with the bot's answer once it's saved, or null if it's dismissed
+ * picked before and replaces that sound. `from` is a sound to cut another sound from, saved beside it: from its link, at the
+ * part it uses, or from all of its own audio. With `onSaved`, Save and cut another saves, tells it, and stays open to pick
+ * the next part. Resolves with the bot's answer to the last save once it's closed, or null if nothing was saved
  */
-export function pickPart(main, got, { longest, clipSeconds, isSound, sound = null }) {
+export function pickPart(main, got, { longest, clipSeconds, isSound, sound = null, from = null, onSaved = null }) {
   return new Promise((resolve) => {
     const seconds = got.seconds;
-    let start = sound?.link ? Math.min(sound.link.start, seconds - SHORTEST) : 0;
-    let end = sound?.link ? Math.min(sound.link.end, seconds) : Math.min(seconds, clipSeconds);
+    // A copy of a library sound starts as all of it; a link starts where the sound's part is
+    const part = got.source !== 'sound' ? (sound ?? from)?.link : null;
+    let start = part ? Math.min(part.start, seconds - SHORTEST) : 0;
+    let end = part ? Math.min(part.end, seconds) : Math.min(seconds, from ? longest : clipSeconds);
     let toDiscord = sound ? sound.onDiscord : recall('uploadToDiscord') !== 'no';
     // What to do about a name that's taken: replace or keep
     let choice = sound ? 'replace' : null;
@@ -72,8 +83,12 @@ export function pickPart(main, got, { longest, clipSeconds, isSound, sound = nul
     const here = (label, move) => el('button', { type: 'button', className: 'quiet', title: `${label} where the player is`, onclick: () => move(media.currentTime) }, label);
     const preview = el('button', { type: 'button', disabled: true, onclick: () => (stopAt !== null ? stop() : play()) }, 'Preview');
     const save = el('button', { className: 'primary', type: 'submit' }, sound ? 'Replace' : 'Save');
+    // Saves and moves on to the part after, for chopping one video or sound into several
+    const another = !sound && onSaved && el('button', { type: 'submit', value: 'another' }, 'Save and cut another');
+    // Each part cut from a sound goes after the one cut before it, so they keep their order
+    let beside = from?.name ?? null;
     const name = el('input', {
-      value: sound?.name ?? nameFromTitle(got.title),
+      value: sound?.name ?? (from ? freeName(from.name, isSound) : nameFromTitle(got.title)),
       maxLength: 32,
       ariaLabel: 'Sound name',
       required: true,
@@ -137,6 +152,7 @@ export function pickPart(main, got, { longest, clipSeconds, isSound, sound = nul
     function partProblem() {
       const text = name.value.trim().toLowerCase();
       if (end - start > longest + STEP) return `Keep at most ${longest / 60} minutes.`;
+      if (!text) return 'Give it a name.';
       if (!NAME_PATTERN.test(text)) return 'Names use lowercase letters, numbers, - and _.';
       if (!sound && isSound(text) && !choice) return 'Choose what to do about the name that’s taken.';
       return null;
@@ -150,6 +166,7 @@ export function pickPart(main, got, { longest, clipSeconds, isSound, sound = nul
       length.textContent = `Keeps ${clock(end - start)} of ${clock(seconds)}`;
       const problemNow = partProblem();
       save.disabled = Boolean(problemNow) || end - start < SHORTEST;
+      if (another) another.disabled = save.disabled;
       why.hidden = !problemNow || problemNow.startsWith('Choose');
       why.textContent = problemNow ?? '';
       showChoice(typed);
@@ -190,10 +207,10 @@ export function pickPart(main, got, { longest, clipSeconds, isSound, sound = nul
     canvas.addEventListener('pointerup', () => (dragging = null));
 
     const node = openDialog(main, {
-      title: sound ? `Pick again for ${sound.name}` : 'Add a sound from a link',
+      title: sound ? `Pick again for ${sound.name}` : from ? `Cut another from ${from.name}` : 'Add a sound from a link',
       className: 'link-dialog',
       body: [
-        el('p', { className: 'link-source' }, el('a', { href: got.url, target: '_blank', rel: 'noopener noreferrer' }, got.title), got.artist && ` · ${got.artist}`),
+        got.url ? el('p', { className: 'link-source' }, el('a', { href: got.url, target: '_blank', rel: 'noopener noreferrer' }, got.title), got.artist && ` · ${got.artist}`) : null,
         media,
         canvas,
         status,
@@ -214,25 +231,43 @@ export function pickPart(main, got, { longest, clipSeconds, isSound, sound = nul
         discordNote,
       ],
       start: [preview],
-      actions: [save],
+      actions: [another, save].filter(Boolean),
       close: 'Cancel',
       noValidate: true,
       onsubmit: async (e) => {
         e.preventDefault();
         if (save.disabled) return;
+        const next = another && e.submitter === another;
+        const pressed = next ? another : save;
+        const label = pressed.textContent;
         problem.hidden = true;
         save.disabled = true;
-        save.textContent = 'Saving…';
+        if (another) another.disabled = true;
+        pressed.textContent = 'Saving…';
         try {
-          outcome = await request(api(`/sound-links/${encodeURIComponent(got.id)}`), {
+          const answer = await request(api(`/sound-links/${encodeURIComponent(got.id)}`), {
             method: 'PUT',
-            json: { name: name.value.trim().toLowerCase(), start, end, discord: toDiscord, replace: choice === 'replace', keep: choice === 'keep' },
+            json: { name: name.value.trim().toLowerCase(), start, end, discord: toDiscord, replace: choice === 'replace', keep: choice === 'keep', ...(beside && { beside }) },
           });
-          node.close();
+          if (!next) {
+            outcome = answer;
+            return node.close();
+          }
+          pressed.textContent = label;
+          if (beside) beside = answer.name;
+          onSaved(answer);
+          // The next part starts where this one ended, as long again, and needs its own name
+          const last = end - start;
+          start = Math.max(0, Math.min(end, seconds - SHORTEST));
+          end = Math.min(seconds, start + last);
+          name.value = '';
+          choice = null;
+          show(false);
+          name.focus();
         } catch (err) {
           problem.textContent = err.message;
           problem.hidden = false;
-          save.textContent = sound ? 'Replace' : 'Save';
+          pressed.textContent = label;
           show(false);
         }
       },
@@ -242,6 +277,7 @@ export function pickPart(main, got, { longest, clipSeconds, isSound, sound = nul
       media.removeAttribute('src');
       media.load();
       if (source) URL.revokeObjectURL(source);
+      // Only a part saved with Save: those saved with Save and cut another were told as they were saved
       resolve(outcome);
     });
 
