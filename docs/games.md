@@ -11,7 +11,7 @@ Linking Steam, picking a game everyone in voice owns, and the server's game libr
 
 A game qualifies if Steam tags it multiplayer, co-op or PvP, or it's in the [game library](#game-library). A library game with a player cap is skipped when there are more people than that, and games hidden with **Never suggest this** are skipped.
 
-The answer also shows **Also works** (other games everyone owns, most played first), **One purchase away** (games all but one person owns, and who needs to buy them) and **Not counted** (people whose games the bot doesn't know, left out rather than blocking every game).
+The answer also shows **Also works** (other games everyone owns, most played first), **One purchase away** (games all but one person owns, and who needs to buy them) and **Not counted** (people whose games the bot doesn't know, left out rather than blocking every game: no Steam link and no games marked, or a private profile it has never seen the games of; a profile made private keeps the games seen before).
 
 - **🎲 Reroll** picks again, for the same people and options. Anyone can press it.
 - **🗳️ Vote** starts a 1-minute vote on up to 10 of the games: the 5 played most here, then a random mix. Everyone in the channel gets one vote, it closes when they've all voted, and a tie is settled at random.
@@ -34,7 +34,7 @@ The bot knows who owns what from linked Steam libraries, which sync every 6 hour
 
 The web UI's Games page does all of this for anyone, under **Steam accounts**.
 
-**Steam families:** Steam doesn't say who's in a family, so you tell the bot (up to 6 people). Someone in a family counts as owning a game a family member owns, if Steam tags it for Family Sharing. Each person playing at once needs their own copy, so two people sharing one copy show as one short. Games only marked by hand don't count for the family.
+**Steam families:** Steam doesn't say who's in a family, so you tell the bot (up to 6 people, in every server). Someone in a family counts as owning a game a family member owns, if Steam tags it for Family Sharing. Each person playing at once needs their own copy, so two people sharing one copy show as one short. The bot can't see whether an owner outside the group is using their copy, and games only marked by hand don't count for the family.
 
 **Steam status:** every minute, the bot checks what linked members in voice are playing on Steam. When Discord shows no game for someone, their Steam game counts for game time, recaps and hop-on pings. It needs public game details, and `/setup steam-status` turns it off.
 
@@ -66,4 +66,4 @@ Running `/game want` or `/game own` again, or pressing **Undo**, takes it back.
 
 ## Patch notes
 
-`/setup patch-notes` posts Steam patch notes for games played here in the past 30 days, either as they come out or as a **weekly digest** on the leaderboard's day and hour. They never ping anyone, and it's off by default. Turning it on doesn't post a backlog, and games whose developers don't tag their patch notes on Steam are missed.
+`/setup patch-notes` posts Steam patch notes for games with a Steam ID played here in the past 30 days, either as they come out or as a **weekly digest** on the leaderboard's day and hour (even with the leaderboard post off). They go to the announce channel or one you pick, never ping anyone, and it's off by default. Turning it on doesn't post a backlog, and games whose developers don't tag their patch notes on Steam are missed.

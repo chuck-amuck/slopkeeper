@@ -37,7 +37,7 @@ The web UI's Settings page can add and remove game roles too. It only asks for i
 - The game's ping role is pinged when the night is planned.
 - 15 minutes before the start, the bot pings everyone who's **In** or **Maybe** (`/setup gamenight-reminder` changes or turns this off).
 - The Discord event goes live at the start, and ends 3 hours later or once its voice channel empties, whichever is later.
-- **Edit** and **Cancel night** are for the host and anyone with Manage Events. If the time moves, everyone who's in is told and reminded again. Cancelling tells them too.
+- **Edit** and **Cancel night** are for the host and anyone with Manage Events. If the time moves, everyone who's **In** or **Maybe** is told and reminded again. Cancelling tells them too.
 
 **Repeating nights:** `repeat` plans one every week or every 2 weeks. Each night gets its own card, event and ping, posted 6 days ahead, at the same local time when the clocks change. **Edit** and **Cancel night** change one night; **Stop repeating** on any card ends the series.
 
