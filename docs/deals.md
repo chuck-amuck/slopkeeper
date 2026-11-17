@@ -4,14 +4,14 @@ The bot posts when a game the server wants goes on sale or into a bundle, and wh
 
 ## Sale alerts
 
-Once a day, at 18:00 in the server's time zone, the bot posts what went on sale since the last post:
+Once a day, at 18:00 in the server's time zone unless `/setup sale-alerts post_hour:` says otherwise, the bot posts what went on sale since the last post. If it's down at that hour, it posts when it's back that day:
 
 > 💸 **3 games on sale**
 > **Deep Rock Galactic**: 60% off, $11.99, was $29.99. Lowest price yet. Played 14h · Needs it: @Sam, @Alex
 > **Hades**: 50% off, $12.49, was $24.99. Lowest ever $6.24. Wanted by @Jo
 > **Portal 2**: $1.99 as a Steam key from Fanatical, 80% under Steam’s $9.99. Lowest ever $0.99. On @Alex’s Steam wishlist
 
-**Everything on sale** and **Just mine** under the post show whoever presses them the full list, or only what they want, without posting it again.
+**Everything on sale** and **Just mine** under the post show whoever presses them the full list, or only what they want or wishlisted, without posting it again.
 
 It watches four kinds of game:
 
@@ -24,7 +24,7 @@ Games hidden with **Never suggest this** are only watched if someone asked for t
 
 A game is posted at 25% off or more, and again only if the same sale gets at least 10 points deeper. Up to 10 games are listed, most wanted first. The rest, and sales that start and end between two posts, are in `/sales` and the web UI's [Deals](web-ui.md) tab. The hour, the channel, the smallest sale and the rest are set with `/setup sale-alerts` (see [Settings and defaults](server-setup.md#settings-and-defaults)). Prices are in the server's Steam store region, set with `/setup steam-region`.
 
-**Who's pinged:** only the people a sale matters to. That's whoever wanted the game or has it on their wishlist, until they own it. For played and library games, it's also everyone in the group who doesn't own it. The group is the members who linked Steam or marked a game as owned. Nobody who has played it here is pinged, and nobody whose Steam library is private is pinged unless they asked for the game.
+**Who's pinged:** only the people a sale matters to. That's whoever wanted the game or has it on their wishlist, until they own it. For played and library games, it's also everyone in the group who doesn't own it, except a library game added by `/game want`, which pings only the people who wanted it. The group is the members who linked Steam or marked a game as owned. Nobody who has played it here is pinged, and nobody whose Steam library is private is pinged unless they asked for the game.
 
 | Command | What it does |
 | --- | --- |

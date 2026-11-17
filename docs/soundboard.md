@@ -25,18 +25,18 @@ You have to be in a voice channel to play a sound.
 
 | Command | What it does |
 | --- | --- |
-| `/sound add name file [emoji]` | Uploads a sound: mp3, ogg, wav, m4a, opus, webm or flac, up to 5 MB. Names are up to 32 lowercase letters, numbers, `-` and `_`. |
+| `/sound add name file [emoji]` | Uploads a sound: mp3, ogg, wav, m4a, opus, webm or flac, up to 5 MB, with audio in it. Names are up to 32 lowercase letters, numbers, `-` and `_`. |
 | `/sound emoji name [emoji]` | Sets or clears a sound's emoji. Custom emoji have to be from this server. |
 | `/sound volume name percent` | How loud one sound plays, from 25 to 200 (100 is normal). |
 | `/sound remove name` | Deletes a sound, from Discord's soundboard too. It stays in the bin for 30 days. |
-| `/sound restore name` | Brings a sound back from the bin, with its settings. It isn't put back on Discord's soundboard, and join sounds have to be picked again. |
+| `/sound restore name` | Brings a sound back from the bin, with its settings, numbered (like `horn-2`) if its name was taken. It isn't put back on Discord's soundboard, and join sounds have to be picked again. |
 
 ```
 /sound add name:airhorn file:<airhorn.mp3> emoji:📯
 /sound remove name:old-meme
 ```
 
-Adding a sound under a name that's taken asks first: **Replace it** (the old one goes to the bin) or **Keep both** (the new one becomes `airhorn-2`).
+Adding a sound under a name that's taken asks first, for 5 minutes: **Replace it** (the old one goes to the bin), **Keep both** (the new one becomes `airhorn-2`) or **Cancel**.
 
 **⚙️ Settings** under a panel does all of this without leaving Discord, and only you see it: pick a sound to test, rename, change its volume or emoji, put it on Discord's soundboard or delete it, or **Add a sound** from a file.
 
@@ -48,7 +48,7 @@ In the web UI's **Manage**, paste a link to a YouTube video or Short, a TikTok, 
 
 - Drag the ends of the waveform, type the times, or play to a moment and press **Start here** or **End here**.
 - **Preview** plays the part, which can be up to 3 minutes long.
-- The name starts as the video's title.
+- The name starts as the video's title. **Also add to Discord's soundboard** works for a part of 5 seconds or less.
 - **Save and cut another** keeps the editor open on the same video, starting where the last part ended, so one video makes several sounds.
 
 The sound's **Trim** later has **Pick again from the link**, to choose a different part of the same video. Instagram turns down many Reels without signing in, and TikTok sometimes refuses a video; the editor says so. This needs the host's [music container](self-hosting.md#the-music-container).
