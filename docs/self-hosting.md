@@ -2,16 +2,9 @@
 
 For whoever runs the bot: the Discord application, the containers and their settings.
 
-Setting up involves two people, who can be the same person:
-
-- **The host** runs the bot. They own the Discord application, keep its token and Steam key, and run the container.
-- **The server admin** adds the bot to their server and runs `/setup` there.
-
-The two parts can happen in either order. The bot sets up any server it's added to, whether it's already running or not.
+The host runs the bot and keeps its tokens; each server's admin then adds it and runs `/setup` (see [Setting up a server](server-setup.md)). The two can happen in either order, and can be the same person.
 
 ## Hosting the bot
-
-For whoever runs the bot.
 
 1. **Create the application.** Go to https://discord.com/developers/applications → **New Application**. Then, on the **Bot** tab:
    - **Reset Token** and copy it into `.env` as `DISCORD_TOKEN`. Keep it secret: anyone with the token can control the bot.
@@ -32,9 +25,9 @@ For whoever runs the bot.
 
 Local dev (Node 24+): `npm install && npm run dev`. `npm run typecheck` runs tsc, and `npm test` runs the tests (the audio ones need ffmpeg and are skipped without it). GitHub Actions runs them on every push, with the same static ffmpeg as the image, and each image is only built once its own checks pass.
 
-Data (SQLite DB and uploaded sounds) lives in the `slopkeeper-data` volume at `/data`, with each server's sounds in `sounds/<server id>/`, and the first version of any trimmed sound in `originals/` inside that. The bot copies its database to `backups/` in that volume once a day, beside the bot rather than holding it up, and keeps the last 7 copies, leaving out the [performance numbers](api.md#performance-numbers). Those guard against a bad update or a damaged database, not against losing the disk, and they don't include sounds, so back the volume up elsewhere too.
+Data (SQLite DB and uploaded sounds) lives in the `slopkeeper-data` volume at `/data`, with each server's sounds in `sounds/<server id>/`, and the first version of any trimmed sound in `originals/` inside that. The bot copies its database to `backups/` in that volume once a day and keeps the last 7 copies, leaving out the [performance numbers](api.md#performance-numbers). Those guard against a bad update or a damaged database, not against losing the disk, and they don't include sounds, so back the volume up elsewhere too.
 
-Voice sessions in progress are saved when the bot stops, without a recap, so a restart mid-session splits it in two. A crash loses them. Game stats are saved every 5 minutes and when the bot stops, so a crash loses at most a few minutes of them.
+Voice sessions in progress are saved when the bot stops, and carry on if it's back within 10 minutes. A crash loses them. Game stats are saved every 5 minutes and when the bot stops, so a crash loses at most a few minutes of them.
 
 ## Configuration
 
@@ -97,7 +90,7 @@ Set `VOICE_URL=http://voice:5000` on the bot, and don't publish the port. On fir
   - Spanish is [`es_ES-davefx-medium`](https://huggingface.co/rhasspy/piper-voices/tree/main/es/es_ES/davefx/medium) (CC0).
   - German is the neutral speaker of [`de_DE-thorsten_emotional-medium`](https://huggingface.co/rhasspy/piper-voices/tree/main/de/de_DE/thorsten_emotional/medium) (CC0), which also has amused, angry, disgusted, drunk, sleepy, surprised and whispering speakers.
 
-`BUILT_IN` and `STYLES` in `src/features/say.ts` list the built-in voices. Each model loads the first time it's used, and a model other than the first one that hasn't spoken for 30 minutes is let go again, so the next line in that voice takes about a second longer. `VOICE_IDLE_MINUTES` in the container's `environment` changes the 30 minutes, and `0` keeps every model loaded. At most ten models besides the first stay loaded: past that, the one that spoke longest ago is let go. `VOICE_MAX_MODELS` changes the ten, and `0` takes the limit off. With eleven loaded it uses about 1.3 GB, and a long line at the slowest speed briefly takes it near 1.7 GB; with only the first one it's about 200 MB. A larger added model takes more, so with several of those lower `VOICE_MAX_MODELS` or raise the memory limit. It makes a short line in about a second on two CPU cores.
+`BUILT_IN` and `STYLES` in `src/features/say.ts` list the built-in voices. Each model loads the first time it's used, and one other than the first is let go after 30 minutes unused (`VOICE_IDLE_MINUTES` in the container's environment, `0` to keep them), so the next line in that voice takes about a second longer. At most ten besides the first stay loaded (`VOICE_MAX_MODELS`, `0` for no limit). With eleven loaded it uses about 1.3 GB, briefly near 1.7 GB for a long line at the slowest speed, and about 200 MB with only the first. Larger added models take more, so lower `VOICE_MAX_MODELS` or raise the memory limit if you add several. A short line takes about a second on two CPU cores.
 
 ## The music container
 

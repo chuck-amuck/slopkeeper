@@ -4,68 +4,57 @@ For server admins: adding the bot, `/setup`, and every setting with its default.
 
 ## Adding the bot to a server
 
-For the server admin. You need the **Manage Server** permission in the server.
+You need the **Manage Server** permission in the server.
 
-1. **Add the bot.** Open the invite link from the host, pick your server, leave every permission ticked and click **Authorize**. If the bot is running, it posts a short hello in your server's system channel.
-   - **Manage Roles** lets `/notify` hand out the hop-on role, and `/gamerole` make and hand out game roles. Without it, or with the role above the bot's, `/notify`, `/pings` and the web UI tell people a server admin will have to give them the role, and the Settings page marks such roles "an admin hands it out". Nothing else needs it.
-   - **Create Expressions** lets the bot copy sounds into the server's soundboard.
-   - **Manage Expressions** lets it swap out or take off sounds other people added there. Everything else works without it.
-   - **Create Events** lets game nights show up in the server's Events list.
+1. **Add the bot.** Open the invite link from the host, pick your server, leave every permission ticked and click **Authorize**. It posts a short hello in the system channel.
+   - **Manage Roles** lets `/notify` and `/gamerole` hand out roles. Without it, people are told to ask an admin for the role.
+   - **Create Expressions** and **Manage Expressions** let it copy sounds to the server's soundboard, and swap out sounds other people added there.
+   - **Create Events** lets game nights show in the server's Events list.
 
-   If the bot was added with an older invite link, its role may be missing **Create Events** or **Manage Expressions**. Either open the new link again (it updates the permissions without removing the bot), or tick them on the bot's role in **Server Settings → Roles**.
-2. **Pick the announce channel:** `/setup announce-channel channel:#somewhere`. This is where hop-on pings, session recaps, the weekly leaderboard and sale alerts are posted. If the bot can't post there, it tells you which permission to give its role.
-3. **Make the hop-on role** (optional, for `/notify`).
-   - In **Server Settings → Roles**, create a role such as `hop-on`, and drag the bot's role (**Slopkeeper**) **above** it so `/notify` can hand it out: Discord only lets a bot hand out roles below its own. If you'd rather it didn't manage roles, skip that, and `/notify` tells people to ask an admin for the role.
-   - Then run `/setup hopon-role role:@hop-on`.
-4. **Set the time zone** if it isn't the host's: `/setup timezone zone:Europe/London`.
-   Want free game posts? They're off until you run `/setup free-games enabled:True`, optionally with `channel:#free-games`.
-5. **Add game pings** (optional) for the games your server plays: `/gamerole add game:Valheim`, and so on. Then `/gamerole menu` in a channel people will see, so they can pick theirs.
-6. **Check voice channels.** The bot needs **Connect** and **Speak** in any voice channel you want the soundboard in. That's automatic unless the channel overrides permissions. If a channel blocks it, a sound click tells you which permission is missing.
-7. **Check it:** `/setup show`. Anything you haven't set uses a default, which is listed there.
+   A bot added with an older invite link may be missing **Create Events** or **Manage Expressions**. Open the new link again (it keeps the bot), or tick them on the bot's role.
+2. **Pick the announce channel:** `/setup announce-channel channel:#somewhere`, where hop-on pings, recaps, leaderboards and sale alerts go. If the bot can't post there, it says which permission is missing.
+3. **Make a hop-on role** (optional): create a role such as `hop-on` in **Server Settings → Roles**, drag the bot's role above it, and run `/setup hopon-role role:@hop-on`.
+4. **Set the time zone** if it isn't the host's: `/setup timezone zone:Europe/London`. Free game posts are off until `/setup free-games enabled:True`.
+5. **Add game pings** (optional): `/gamerole add game:Valheim` for each game, then `/gamerole menu` where people will see it.
+6. **Check voice channels:** the bot needs **Connect** and **Speak** in any channel the soundboard is used in. A sound click says if one is missing.
+7. **Check it:** `/setup show` lists every setting, and anything that needs fixing first.
 
 Then tell people to run `/steam link`, `/notify` and `/pings` (see [Getting started](../README.md#getting-started-for-everyone-in-the-server)), and post a `/sound panel` somewhere handy.
 
 ## Server settings
 
-Server admins (anyone with **Manage Server**) set the bot up for their server from Discord with `/setup`. Nobody else sees it. To let other roles use it, go to **Server Settings → Integrations → Slopkeeper**.
-
-Every setting has a sensible default, so only the announce channel needs setting. Replies to `/setup` are only shown to you.
+`/setup` is for people with **Manage Server**, and its replies are only shown to you. Other roles can be allowed in **Server Settings → Integrations → Slopkeeper**. Every setting has a default, so only the announce channel needs setting, and every setting can also be changed in the web UI's Settings.
 
 | Command | What it does |
 | --- | --- |
-| `/setup show` | Lists every setting in the same groups as the web UI's Settings, with its current value. A changed setting says where it comes from: **set here** (with `/setup`) or **host default** (the host's `.env`). Anything stopping the bot is listed first: a missing announce channel, a channel that's gone or where the bot is missing a permission it needs, a role that's gone or above the bot's, and a post Discord refused when the bot can't tell why (until the next one goes out, it's turned off, or two days have passed). |
-| `/setup announce-channel channel` | Sets where hop-on pings, session recaps, the weekly leaderboard, the monthly recap and sale alerts are posted, and free games unless they have their own channel. Until it's set, the bot works but posts nothing. It checks that it can post in the channel and tells you which permission is missing if not. |
-| `/setup hopon-role [role] [off]` | Sets the role that hop-on pings ping, which `/notify` hands out. `off:True` posts hop-on pings without pinging a role. It warns you if its own role is below this one, since Discord then won't let it hand the role out. |
-| `/setup hopon [min_people] [cooldown_minutes]` | How many people a voice channel needs before a hop-on ping, and how long to wait before the next one. |
-| `/setup sessions [recaps] [recap_min_minutes] [grace_minutes]` | Whether a recap is posted when a session ends (sessions count in stats either way). The shortest session that counts: shorter ones get no recap and aren't in stats or leaderboards. Also how long a channel stays empty before its session ends. |
-| `/setup leaderboard [enabled] [day] [hour]` | Whether and when the weekly voice leaderboard is posted. |
-| `/setup timezone [zone]` | The server's time zone, used for the weekly post, counting "nights" on leaderboards, and reading game night times. Autocompletes, e.g. `America/Chicago`, `Europe/London`. |
-| `/setup steam-region [country]` | Steam store region for sale prices, as a two-letter country code. |
-| `/setup free-game-filters [min_rating] [like_what_we_play] [multiplayer_only] [not_on_steam]` | Chooses which free games are worth posting. See [Free games](deals.md#free-games). |
-| `/setup sale-alerts [min_discount] [post_hour] [steam_wishlists] [other_stores] [bundles] [bundles_like_we_play] [channel]` | Sets the smallest sale worth posting, the hour of the day's sale post, whether Steam wishlists count, whether other stores' prices count, whether bundles are posted and whether ones only like what the server plays count, and a channel of their own. See [Sale alerts](deals.md#sale-alerts) and [Bundles](deals.md#bundles). |
-| `/setup free-games [enabled] [channel]` | Turns free game posts on or off. `channel` gives them their own channel; without it they go to the announce channel. To move them back to the announce channel, use `/setup reset setting:Free games channel`. |
-| `/setup gamenight-reminder [minutes]` | How long before a game night to remind the people who are in. `0` turns reminders off. |
-| `/setup monthly-recap [enabled]` | Turns the post on the 1st of each month on or off. |
-| `/setup patch-notes [mode] [channel]` | Posts patch notes for games played here: `each` as they come out, `digest` once a week, or `off`. `channel` gives them their own channel. |
-| `/setup steam-status [enabled]` | Whether what linked members in voice are playing on Steam counts when Discord doesn't show it. |
-| `/setup sounds [even_volume] [join_sounds] [join_cooldown_minutes] [join_delay_ms] [volume]` | Turns [even volume](soundboard.md#volume) and join sounds on or off, and sets how often one person's join sound can play and how long the bot waits after connecting before it plays. `volume` sets how loud every sound plays. |
-| `/setup loop-room [channel] [off] [sound] [volume] …` | Plays a sound, and speech if you like, nonstop while anyone's in a voice channel. `off:True` turns it off and keeps the rest of its settings. See [looping sound room](soundboard.md#looping-sound-room). |
-| `/setup music [volume] [autoplay] [dj_role] [everyone]` | How loud music plays, whether Autoplay adds similar songs once the queue runs out, and who can control it. `everyone:True` takes the role limit off. See [Music](music.md). |
-| `/setup sound-managers [role] [everyone]` | Limits changing sounds to a role, plus people with **Manage Server**. `everyone:True` lets everyone change them again, which is the default. See [who can change sounds](soundboard.md#who-can-change-sounds). |
-| `/setup speech [enabled] [speed] [volume] …` | Text to speech: on or off, its speed, the limits on `/say`, and what the bot says aloud by itself. See [Text to speech](speech.md). |
-| `/setup speech-role [role] [everyone]` | Limits `/say` and having messages read out to a role, plus people with **Manage Server**. `everyone:True` lets everyone again. |
-| `/setup speech-channel [channel] [off] [who]` | Reads out what people type in a channel. `off:True` stops it. |
+| `/setup show` | Every setting and where it comes from (**set here** or **host default**), with anything that needs fixing first: a missing announce channel, a channel or role that's gone, a missing permission, or a post Discord refused. |
+| `/setup announce-channel channel` | Where hop-on pings, recaps, leaderboards and sale alerts go, and free games unless they have their own channel. Until it's set, the bot posts nothing. |
+| `/setup hopon-role [role] [off]` | The role hop-on pings ping and `/notify` hands out. `off:True` posts them without a ping. |
+| `/setup hopon [min_people] [cooldown_minutes]` | How many people a channel needs for a hop-on ping, and the wait before the next. |
+| `/setup sessions [recaps] [recap_min_minutes] [grace_minutes]` | Whether recaps are posted, the shortest session counted, and how long a channel stays empty before its session ends. |
+| `/setup leaderboard [enabled] [day] [hour]` | Whether and when the weekly leaderboard is posted. |
+| `/setup timezone [zone]` | The server's time zone, for posts, leaderboards and game night times. |
+| `/setup steam-region [country]` | The Steam store region for sale prices, as a two-letter country code. |
+| `/setup sale-alerts …` | The smallest sale, the post hour, wishlists, other stores, bundles and a channel. See [Sale alerts](deals.md#sale-alerts). |
+| `/setup free-games [enabled] [channel]` | Free game posts on or off, and their own channel. `/setup reset setting:Free games channel` moves them back. |
+| `/setup free-game-filters …` | Which free games are worth posting. See [Free games](deals.md#free-games). |
+| `/setup gamenight-reminder [minutes]` | How long before a game night to remind people. `0` turns it off. |
+| `/setup monthly-recap [enabled]` | The post on the 1st of each month. |
+| `/setup patch-notes [mode] [channel]` | Patch notes `each` as they come out, as a weekly `digest`, or `off`. |
+| `/setup steam-status [enabled]` | Whether Steam's "playing" counts when Discord shows nothing. |
+| `/setup sounds …` | [Even volume](soundboard.md#volume), join sounds with their cooldown and delay, and the soundboard volume. |
+| `/setup loop-room …` | The [looping sound room](soundboard.md#looping-sound-room). `off:True` turns it off and keeps its settings. |
+| `/setup music [volume] [autoplay] [dj_role] [everyone]` | Music volume, Autoplay, and who can control it. See [Music](music.md). |
+| `/setup sound-managers [role] [everyone]` | Limits changing sounds to a role, plus **Manage Server**. See [who can change sounds](soundboard.md#who-can-change-sounds). |
+| `/setup speech …` | Text to speech: on or off, speed, volume, limits, and what it says by itself. See [Text to speech](speech.md). |
+| `/setup speech-role [role] [everyone]` | Limits speech to a role, plus **Manage Server**. |
+| `/setup speech-channel [channel] [off] [who]` | A text channel read aloud. |
 | `/setup reset setting` | Puts one setting back to its default. |
 
-Only the options you fill in change. Give none and the reply shows how those settings are now, without changing anything.
+Only the options you fill in change, and with none the reply shows how those settings are now.
 
-Examples:
 ```
-/setup announce-channel channel:#bot-stuff
-/setup hopon-role role:@hop-on
 /setup hopon min_people:3 cooldown_minutes:60
-/setup timezone zone:Europe/London
-/setup free-games enabled:True channel:#free-games
 /setup leaderboard day:Friday hour:22
 /setup reset setting:Hop-on cooldown
 ```
@@ -160,4 +149,4 @@ One running bot can serve several servers. Each server gets its own:
 
 **Steam links are shared.** Your Steam account is the same everywhere, so you link it once with `/steam link` and every server you're in can use it. In each server, the bot only counts people who are members there. Someone in another server never shows up in your picker, game list, sale pings or stats.
 
-**Choosing which servers can use it:** with `ALLOWED_GUILD_IDS` set, the bot leaves any server that isn't on the list as soon as it's added. Without it, anyone with the invite link can add the bot. Set it if the bot is public (see [Setup](self-hosting.md)).
+**Choosing which servers can use it:** with `ALLOWED_GUILD_IDS` set, the bot leaves any server that isn't on the list as soon as it's added. Without it, anyone with the invite link can add the bot. Set it if the bot is public (see [Self-hosting](self-hosting.md#configuration)).

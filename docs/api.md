@@ -67,6 +67,13 @@ It applies the same rules as `/sound` and `/setup`, and every request needs an `
 | `POST /guilds/:id/say` | Reads out `text` in `channelId`, with an optional `voice`. Answers once the line starts |
 | `POST /guilds/:id/phrases` | Saves `text`, and answers with the `phrases` |
 | `DELETE /guilds/:id/phrases/:id` | Removes a saved line, and answers with the `phrases` |
+| `GET /guilds/:id/voices` | The voices added in the web UI, for every server, each with its settings and download `state`, and `most`, how many there can be. 409 without `VOICE_URL`, as for the routes below |
+| `POST /guilds/:id/voices` | Adds a voice: `{ "name": "...", "model": "<.onnx link>" }`, plus any of the fields in an [export entry](speech.md#adding-voices). The voice container downloads it |
+| `PUT /guilds/:id/voices/:voice` | Changes a voice, with only the fields given |
+| `DELETE /guilds/:id/voices/:voice` | Removes a voice and its model. Returns `picks`, how many servers' picks of it went back to their default |
+| `POST /guilds/:id/voices/:voice/preview` | The voice saying `text` (or a sample) as a WAV file, with any changed settings given beside it, before they're saved. 409 until it's downloaded |
+| `GET /guilds/:id/voices/export` | Every added voice as `slopkeeper-voices.json` |
+| `POST /guilds/:id/voices/import` | `{ "voices": [...], "replace": false, "dryRun": true }`, the `voices` being an export's list. Returns what it would add, change, leave, remove and skip; only `"dryRun": false` does it |
 | `GET /guilds/:id/music` | What's playing, how far in, the queue, the music volume and why music can't play, if it can't. `since` is when the music started, the same through pauses, skips and restarts until it stops. It and every music control's answer carry the `version` that `/updates` counts, so a page can tell an older answer from a newer one |
 | `GET /guilds/:id/music/search?q=<words>` | Up to 10 songs from Spotify |
 | `POST /guilds/:id/music/queue` | Adds a search result `{ "track": {...} }`, what's typed `{ "query": "<words or link>" }` or an upload `{ "file": "<id>" }`, at the end or `"next": true`. With nothing queued, `"next": true` plays it now in `"channelId"` if anyone's there |
