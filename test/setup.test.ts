@@ -157,7 +157,7 @@ test('patch notes start off, take a mode and a channel, and refuse anything else
 test('text to speech settings take a known voice, a role and sensible limits', () => {
   const guild = { channels: { cache: new Map() }, roles: { cache: new Map([['talkers', { id: 'talkers' }]]) } } as never;
   assert.equal(setting('speech', 'tts'), true);
-  assert.equal(setting('speech', 'ttsVoice'), 'tiktok');
+  assert.equal(setting('speech', 'ttsVoice'), 'southern-man');
   assert.deepEqual(checkSetting(guild, 'ttsVoice', 'demon'), { value: 'demon' });
   assert.deepEqual(checkSetting(guild, 'ttsVoice', '5'), { error: 'Pick a voice from the list.' }, 'the numbered voices are gone');
   assert.deepEqual(checkSetting(guild, 'ttsVoice', '3'), { error: 'Pick a voice from the list.' });

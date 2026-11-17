@@ -82,22 +82,9 @@ voice:
     - slopkeeper-voice:/voices
 ```
 
-Set `VOICE_URL=http://voice:5000` on the bot, and don't publish the port. On first start it downloads twenty-five models (about 1.7 GB) into its volume, and after that it needs no internet:
+Set `VOICE_URL=http://voice:5000` on the bot, and don't publish the port. On first start it downloads eleven models (about 750 MB) into its volume, and after that it needs no internet. Voices [added in the web UI](speech.md#adding-voices) download into the same volume when they're added. A model that can't be fetched leaves its voice talking with the first model until the container restarts:
 
 - `en_US-libritts_r-medium` (79 MB, CC BY 4.0) holds 904 voices. The effect styles are built on three of them, with ffmpeg effects added by the bot.
-- The character voices are community models, 61 to 109 MB each, fetched at a fixed version and checked against their hashes. If one can't be fetched, its voice talks with the first model until the container restarts.
-  - [GLaDOS](https://huggingface.co/NullPoExc/piper-glados) (no license given)
-  - [HAL 9000](https://huggingface.co/OccultAI/HAL-9000-Piper-TTS) (Apache 2.0)
-  - [Bender](https://huggingface.co/Schmalvis/bender-tts-model) (no license given)
-  - [Optimus Prime](https://huggingface.co/crazygiscool/optimus-piper-voice) by crazygiscool (CC BY-NC 4.0: non-commercial use only)
-  - [Kronk](https://huggingface.co/russdill/kronk) (no license given)
-  - TikTok, from cosycove's BeefStew, which is no longer online, via a copy in [fox3000foxy/piper-voices-collection](https://huggingface.co/fox3000foxy/piper-voices-collection) (no license given)
-  - [JARVIS](https://huggingface.co/vishalrao8/piper-jarvis-high) (MIT)
-  - [Rocket Raccoon](https://huggingface.co/AkumaVenom/RocketRacoon-Piper-US-Medium) (no license given)
-  - [Death](https://huggingface.co/drewThomasson/piper_tts_finetune_death_from_puss_and_boots) (MIT)
-  - [BMO](https://huggingface.co/ziadnotme/bmo-tts-piper) (no license given)
-  - [Counter-Strike announcer](https://huggingface.co/RoxasYTB/piper-checkpoints-css-announcer-en) (no license given). Its settings list seven speakers though the model takes none, so the container treats any model like that as having one
-  - Bobby, Carl and Patrick, from simoniz0r's piper-voice-models, which is no longer online, via the same collection (no license given)
 - The English accents are Piper models trained on English readers, 61 to 74 MB each.
   - Scottish is [`en_GB-alba-medium`](https://huggingface.co/rhasspy/piper-voices/tree/main/en/en_GB/alba/medium) (CC BY 4.0).
   - Northern English is [`en_GB-northern_english_male-medium`](https://huggingface.co/rhasspy/piper-voices/tree/main/en/en_GB/northern_english_male/medium) and the Southern English woman [`en_GB-southern_english_female-low`](https://huggingface.co/rhasspy/piper-voices/tree/main/en/en_GB/southern_english_female/low) (both CC BY-SA 4.0). The woman is only made in low quality.

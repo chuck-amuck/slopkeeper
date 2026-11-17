@@ -98,7 +98,7 @@ test('reads out a line in the server’s voice, or the one asked for, and logs w
   assert.equal(await say(voice, 'and again', 'robot', 'ben'), null);
   await sleep(300);
   assert.deepEqual(asked, [
-    { text: 'hello there', model: 'tiktok', speaker: undefined, length: 1.25 },
+    { text: 'hello there', model: 'southern_male', speaker: 0, length: 1.25 },
     { text: 'and again', model: undefined, speaker: 400, length: lengthFor(85) },
   ]);
   const lines = recentActivity(voice.guild.id, 5).map((r) => `${r.actor}: ${r.action}`).toReversed();
@@ -109,7 +109,7 @@ test('reads out a line in the server’s voice, or the one asked for, and logs w
   assert.deepEqual(
     kept.map(({ user_id, voice, characters, kind }) => ({ user_id, voice, characters, kind })),
     [
-      { user_id: 'ana', voice: 'tiktok', characters: 11, kind: 'say' },
+      { user_id: 'ana', voice: 'southern-man', characters: 11, kind: 'say' },
       { user_id: 'ben', voice: 'robot', characters: 9, kind: 'say' },
     ],
   );
@@ -129,11 +129,11 @@ test('a slow line keeps how long each step took, with its voice and length but n
     return new Response(readFileSync(speechFile), { headers: { 'server-timing': 'load;dur=0, synth;dur=812.5, total;dur=820' } });
   });
   const voice = channel();
-  assert.equal(await say(voice, 'secret plans', 'hal', 'ana'), null);
+  assert.equal(await say(voice, 'secret plans', 'scottish', 'ana'), null);
   await sleep(300);
   const { slow } = perf.take(true);
   assert.equal(slow.length, 1);
-  assert.deepEqual([slow[0].what, slow[0].guildId, slow[0].detail], ['Speech', voice.guild.id, { voice: 'hal', characters: 12, waitingAhead: 0, kept: false }]);
+  assert.deepEqual([slow[0].what, slow[0].guildId, slow[0].detail], ['Speech', voice.guild.id, { voice: 'scottish', characters: 12, waitingAhead: 0, kept: false }]);
   assert.deepEqual(
     slow[0].steps.map(([name, , of]) => (of ? `${of} > ${name}` : name)),
     ['waiting', 'making > voice container', 'voice container > saying it', 'making > levelling and effects', 'making', 'starting'],
@@ -142,7 +142,7 @@ test('a slow line keeps how long each step took, with its voice and length but n
   assert.doesNotMatch(JSON.stringify(slow), /secret|plans/);
   const text = perf.prometheus();
   assert.match(text, /^slopkeeper_speech_seconds_count 1$/m);
-  assert.match(text, /^slopkeeper_voice_synth_seconds_sum\{voice="hal"\} 0.8125$/m);
+  assert.match(text, /^slopkeeper_voice_synth_seconds_sum\{voice="scottish"\} 0.8125$/m);
   assert.match(text, /^slopkeeper_speech_make_seconds_count\{length="short"\} 1$/m);
   assert.match(text, /^slopkeeper_audio_start_seconds_count\{kind="speech"\} 1$/m);
   assert.doesNotMatch(text, /voice_model_load_seconds_count/, 'a model already loaded took no loading');
@@ -152,52 +152,45 @@ test('a line said again soon in the same voice and speed is made once, and a new
   const asked = fakeVoice(t);
   const voice = channel();
   for (const text of ['gg', 'gg', 'gg']) {
-    assert.equal(await say(voice, text, 'tiktok', 'ana'), null);
+    assert.equal(await say(voice, text, 'irish', 'ana'), null);
     await sleep(300);
   }
   assert.equal(asked.length, 1);
-  assert.equal(await say(voice, 'gg', 'hal', 'ana'), null);
+  assert.equal(await say(voice, 'gg', 'scottish', 'ana'), null);
   await sleep(300);
   setSetting(voice.guild.id, 'ttsSpeed', 120);
-  assert.equal(await say(voice, 'gg', 'tiktok', 'ana'), null);
+  assert.equal(await say(voice, 'gg', 'irish', 'ana'), null);
   await sleep(300);
-  assert.deepEqual(asked.map((a) => a.model), ['tiktok', 'hal', 'tiktok']);
+  assert.deepEqual(asked.map((a) => a.model), ['jenny', 'alba', 'jenny']);
   assert.deepEqual(leftovers(), []);
 });
 
 test('the same line asked for in two servers at once is made once', { skip: !hasFfmpeg }, async (t) => {
   const asked = fakeVoice(t, async () => (await sleep(100), new Response(readFileSync(speechFile))));
   const [one, two] = [channel(), channel()];
-  assert.deepEqual(await Promise.all([say(one, 'gg', 'hal', 'ana'), say(two, 'gg', 'hal', 'ben')]), [null, null]);
+  assert.deepEqual(await Promise.all([say(one, 'gg', 'scottish', 'ana'), say(two, 'gg', 'scottish', 'ben')]), [null, null]);
   await sleep(400);
   assert.equal(asked.length, 1);
   assert.deepEqual(leftovers(), []);
 });
 
-test('the character voices ask for their own model, delivery and speed', { skip: !hasFfmpeg }, async (t) => {
+test('the built-in voices ask for their own model, speaker and speed', { skip: !hasFfmpeg }, async (t) => {
   const bodies: unknown[] = [];
   t.mock.method(globalThis, 'fetch', async (_url: string, init: RequestInit) => {
     bodies.push(JSON.parse(init.body as string));
     return new Response(readFileSync(speechFile));
   });
   const voice = channel();
-  const ids = ['glados', 'hal', 'bender', 'optimus', 'kronk', 'tiktok', 'jarvis', 'death', 'broadcast', 'russian', 'spanish', 'german'];
+  const ids = ['scottish', 'northern', 'irish', 'broadcast', 'russian', 'spanish', 'german'];
   for (const id of [...ids, 'southern-woman', 'southern-man', 'australian-woman', 'demon', 'giant']) {
     assert.equal(await say(voice, 'good news everyone', id, id), null);
     await sleep(300);
   }
   assert.deepEqual(bodies, [
-    // Their own curve: 85% speed takes 18% longer, which these models give at 1.25
-    { text: 'good news everyone', voice: 'glados', length_scale: 1.25, noise_scale: 0.333, noise_w_scale: 0.333 },
-    { text: 'good news everyone', voice: 'hal', length_scale: 1.25 },
-    { text: 'good news everyone', voice: 'bender', length_scale: 1.25 },
-    { text: 'good news everyone', voice: 'optimus', length_scale: 1.25 },
-    // Kronk stretches like the default model, then 15% slower and with steadier timing
-    { text: 'good news everyone', voice: 'kronk', length_scale: 1.56, noise_scale: 0.667, noise_w_scale: 0.333 },
-    { text: 'good news everyone', voice: 'tiktok', length_scale: 1.25 },
-    // JARVIS on the middle curve and 10% slower, as its own settings are, and Death on the default model's curve
-    { text: 'good news everyone', voice: 'jarvis', length_scale: 1.44 },
-    { text: 'good news everyone', voice: 'death', length_scale: 1.36 },
+    // The character curve: 85% speed takes 18% longer, which these models give at 1.25, and the middle curve between
+    { text: 'good news everyone', voice: 'alba', length_scale: 1.25 },
+    { text: 'good news everyone', voice: 'northern', length_scale: 1.31 },
+    { text: 'good news everyone', voice: 'jenny', length_scale: 1.25 },
     // The accents: KSS 15% slower than the character curve, Dmitri on its own curve, and the German model's neutral speaker
     { text: 'good news everyone', voice: 'kss', length_scale: 1.44 },
     { text: 'good news everyone', voice: 'dmitri', length_scale: 1.31 },
@@ -220,7 +213,9 @@ test('every voice’s model is one the voice container fetches, and the English 
   const fetched = new Set([...readFileSync(path.join(import.meta.dirname, '../voice/start.sh'), 'utf8').matchAll(/^fetch (\S+) /gm)].map((m) => m[1]));
   for (const voice of voices()) if (voice.model) assert.ok(fetched.has(voice.model), `${voice.name} needs voice/start.sh to fetch ${voice.model}`);
   const group = (id: string) => voiceGroup(voices().find((v) => v.id === id)!);
-  assert.deepEqual(['jarvis', 'announcer', 'irish', 'australian-man', 'russian', 'trailer'].map(group), ['Characters', 'Characters', 'Accents', 'Accents', 'Accents', 'Effects']);
+  assert.deepEqual(['scottish', 'irish', 'australian-man', 'russian', 'trailer'].map(group), ['Accents', 'Accents', 'Accents', 'Accents', 'Effects']);
+  // Characters are added in the web UI, so the public image carries none
+  assert.ok(!voices().some((v) => voiceGroup(v) === 'Characters'));
 });
 
 const MODEL = 'https://huggingface.co/someone/voice/resolve/main/voice.onnx';
@@ -265,15 +260,15 @@ test('a server whose voice was removed talks in the default voice, but asking fo
   assert.equal(await sayOut(voice, 'and here'), null);
   await sleep(300);
   assert.equal(await say(voice, 'not this', 'racer', 'b'), 'Pick a voice from the list.');
-  assert.deepEqual(asked.map((a) => [a.text, a.model]), [['still here', 'tiktok'], ['and here', 'tiktok']]);
+  assert.deepEqual(asked.map((a) => [a.text, a.model]), [['still here', 'southern_male'], ['and here', 'southern_male']]);
 });
 
 test('a pick of a voice that’s gone is kept, and falls back to the server’s own default, then the bot’s', () => {
   setSetting('old-numbered', 'ttsVoice', '5');
-  setSetting('old-loop', 'ttsVoice', 'glados');
+  setSetting('old-loop', 'ttsVoice', 'scottish');
   setSetting('old-loop', 'loopVoice', '9');
-  assert.equal(serverVoice('old-loop', '9').id, 'glados', 'the server’s default, not the bot’s');
-  assert.equal(serverVoice('old-numbered').id, 'tiktok');
+  assert.equal(serverVoice('old-loop', '9').id, 'scottish', 'the server’s default, not the bot’s');
+  assert.equal(serverVoice('old-numbered').id, 'southern-man');
   assert.equal(storedSetting('old-numbered', 'ttsVoice'), '5', 'kept, in case it comes back');
   assert.match(missingVoice('5')!, /5 isn’t a voice any more/);
 });
@@ -928,7 +923,7 @@ test('/say picks a saved line, in the voice picked or the server’s, under the 
   assert.equal(await run(t, voice, { text: null, saved, pick: 'demon' }), 'Said it.');
   assert.equal(await run(t, voice, { text: 'typed wins', saved }), 'Said it.');
   await sleep(200);
-  assert.deepEqual(asked.map((a) => [a.text, a.model ?? a.speaker]), [['good game', 'tiktok'], ['good game', 499], ['typed wins', 'tiktok']]);
+  assert.deepEqual(asked.map((a) => [a.text, a.model ?? a.speaker]), [['good game', 'southern_male'], ['good game', 499], ['typed wins', 'southern_male']]);
   setSetting(voice.guild.id, 'ttsCooldownSec', 3600);
   await run(t, voice, { text: null, saved });
   assert.match(await run(t, voice, { text: null, saved }), /^Wait /);
@@ -953,8 +948,6 @@ test('/say suggests saved lines and voices as you type', async () => {
   assert.deepEqual(await suggest('good', null), []);
   // Voices are searched, as there are more than Discord's 25 choices would allow to grow
   assert.deepEqual(await suggest('RO', voice.guild.id, 'voice'), [
-    { name: 'Kronk', value: 'kronk' },
-    { name: 'Rocket Raccoon', value: 'rocket' },
     { name: 'State broadcast', value: 'broadcast' },
     { name: 'Robot', value: 'robot' },
   ]);

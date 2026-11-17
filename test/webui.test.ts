@@ -65,7 +65,7 @@ const PAGES: [string, string, Record<string, string>?, string?, string?][] = [
     `(() => { const d = document.querySelector('dialog[open]'); return !!d && /Added \\(1\\)/.test(d.textContent) && /Skipped \\(1\\)/.test(d.textContent) && /Already the same \\(1\\)/.test(d.textContent); })()`,
     `(() => {
       const input = document.querySelector('#settings-voices input[type=file]');
-      const list = [{ name: 'Narrator', model: 'https://example.com/narrator.onnx' }, { name: 'A pirate with a long name to wrap', model: 'https://example.com/pirate.onnx' }, { name: 'GLaDOS', model: 'https://example.com/g.onnx' }];
+      const list = [{ name: 'Narrator', model: 'https://example.com/narrator.onnx' }, { name: 'A pirate with a long name to wrap', model: 'https://example.com/pirate.onnx' }, { name: 'Scottish', model: 'https://example.com/g.onnx' }];
       const files = new DataTransfer();
       files.items.add(new File([JSON.stringify(list)], 'voices.json', { type: 'application/json' }));
       input.files = files.files;
@@ -174,7 +174,7 @@ function seed() {
   for (const [user, name, hoursAgo] of [['u1', 'airhorn', 2], ['u2', 'a very long sound name that goes on and on', 5], ['u1', 'airhorn', 40]] as const)
     db.prepare('INSERT INTO sound_plays (guild_id, user_id, name, played_at) VALUES (?, ?, ?, ?)').run(GUILD, user, name, now - hoursAgo * HOUR);
   db.prepare("INSERT INTO music_plays (guild_id, at, uri, title, artist, source, duration_ms, added_by, played_ms, skipped) VALUES (?, ?, 'u', 'A Song With Quite A Long Title (Extended Mix)', 'Some Artist', 'youtube', 200000, 'autoplay', 200000, 0)").run(GUILD, now - 3 * HOUR);
-  db.prepare("INSERT INTO speech_lines (guild_id, at, user_id, voice, characters, kind) VALUES (?, ?, 'u2', 'glados', 30, 'say')").run(GUILD, now - 4 * HOUR);
+  db.prepare("INSERT INTO speech_lines (guild_id, at, user_id, voice, characters, kind) VALUES (?, ?, 'u2', 'scottish', 30, 'say')").run(GUILD, now - 4 * HOUR);
   // A sale with every part a row can have, and a bundle, for Deals
   const wanted = db.prepare("INSERT INTO games (guild_id, name, steam_appid, added_by) VALUES (?, 'The Elder Scrolls V: Skyrim Special Edition', 489830, 'u1')").run(GUILD).lastInsertRowid;
   db.prepare("INSERT INTO game_wants (game_id, user_id) VALUES (?, 'u2')").run(wanted);

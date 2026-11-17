@@ -86,7 +86,7 @@ test('a voice added by its Hugging Face page is sent to the voice container, and
 test('a voice needs a name of its own and a link to a model', async (t) => {
   fakeContainer(t);
   const refusedAdd = (json: unknown) => refused(400, `/guilds/${GUILD}/voices`, { method: 'POST', json });
-  assert.match(await refusedAdd({ name: 'glados', model: FILE }), /already a voice called glados/);
+  assert.match(await refusedAdd({ name: 'scottish', model: FILE }), /already a voice called scottish/);
   assert.match(await refusedAdd({ name: 'X', model: FILE.replace('https', 'http') }), /starting https/);
   assert.match(await refusedAdd({ name: 'X', model: 'https://huggingface.co/someone/voices' }), /\.onnx file/);
   assert.match(await refusedAdd({ name: 'X', model: FILE, volume: 30 }), /loudness/);
@@ -111,14 +111,14 @@ test('changing a voice’s settings keeps its download, and a new link downloads
   assert.deepEqual([voice.volume, voice.pace, voice.speaker, voice.noise, voice.curve, voice.name, voice.state], [-3, 1.2, 1, [0.333, 0.333], 'low', 'Old narrator', 'ready']);
   const spoken = serverVoice(GUILD, 'narrator');
   assert.deepEqual([spoken.effects, spoken.pace, spoken.speaker], ['volume=-3dB', 1.2, 1]);
-  assert.match(await refused(400, `/guilds/${GUILD}/voices/narrator`, { method: 'PUT', json: { name: 'Bender' } }), /already a voice called Bender/);
+  assert.match(await refused(400, `/guilds/${GUILD}/voices/narrator`, { method: 'PUT', json: { name: 'Russian' } }), /already a voice called Russian/);
 
   ready.delete('narrator');
   const moved = (await (await put({ model: 'https://example.com/other.onnx' })).json()).voice;
   assert.equal(moved.state, 'waiting');
   await settle();
   assert.equal(container.voices[0].model, 'https://example.com/other.onnx');
-  assert.equal(serverVoice(GUILD, 'narrator').id, 'tiktok', 'not offered until the new one is downloaded');
+  assert.equal(serverVoice(GUILD, 'narrator').id, 'southern-man', 'not offered until the new one is downloaded');
   assert.equal(await refused(404, `/guilds/${GUILD}/voices/nobody`, { method: 'PUT', json: {} }), 'That voice isn’t there any more.');
 });
 
@@ -128,11 +128,11 @@ test('removing a voice takes it from the container and puts servers that picked 
   await settle();
   setSetting(GUILD, 'ttsVoice', 'narrator');
   setSetting('elsewhere', 'loopVoice', 'narrator');
-  setSetting('other', 'ttsVoice', 'glados');
+  setSetting('other', 'ttsVoice', 'scottish');
   assert.deepEqual(await ok(`/guilds/${GUILD}/voices/narrator`, { method: 'DELETE' }), { picks: 2 });
   await settle();
   assert.deepEqual(container.voices, []);
-  assert.deepEqual([storedSetting(GUILD, 'ttsVoice'), storedSetting('elsewhere', 'loopVoice'), storedSetting('other', 'ttsVoice')], [undefined, undefined, 'glados']);
+  assert.deepEqual([storedSetting(GUILD, 'ttsVoice'), storedSetting('elsewhere', 'loopVoice'), storedSetting('other', 'ttsVoice')], [undefined, undefined, 'scottish']);
   const { entries: activity } = await ok(`/guilds/${GUILD}/activity`);
   assert.equal(activity[0].action, 'Removed the voice Narrator, and 2 servers’ picks of it');
 });
@@ -144,7 +144,7 @@ test('a voice that isn’t downloaded yet shows in Settings as the one it’s st
   const { problems } = await ok(`/guilds/${GUILD}/settings`);
   assert.deepEqual(
     problems.filter((p: any) => p.key === 'ttsVoice').map((p: any) => p.text),
-    ['The default voice: Narrator is still downloading, so it’s **TikTok** for now.'],
+    ['The default voice: Narrator is still downloading, so it’s **Southern English man** for now.'],
   );
 });
 
@@ -165,7 +165,7 @@ test('the voices export, and an import says what it would do before doing it', a
   const next = [
     { id: 'narrator', name: 'Narrator', model: FILE, volume: 1 },
     { id: 'robo', name: 'Robo', model: 'https://example.com/robo.onnx', noise: [0.5, 0.3] },
-    { name: 'GLaDOS', model: FILE },
+    { name: 'Scottish', model: FILE },
     { name: 'Robo', model: FILE },
     { name: 'Odd', model: 'ftp://example.com/odd.onnx' },
   ];
@@ -175,7 +175,7 @@ test('the voices export, and an import says what it would do before doing it', a
   assert.deepEqual(planned.removed, ['Pirate']);
   assert.deepEqual(
     planned.skipped.map((s: any) => s.what),
-    ['GLaDOS', 'Robo', 'Odd'],
+    ['Scottish', 'Robo', 'Odd'],
   );
   assert.equal((await list()).length, 2, 'a dry run changes nothing');
 

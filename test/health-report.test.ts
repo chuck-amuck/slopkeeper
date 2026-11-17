@@ -143,7 +143,7 @@ test('the web UI is judged by the share of answers that failed, those that found
 
 test('the slow list is this server’s, ranked leaving out time spent waiting', () => {
   const slow = db.prepare('INSERT INTO perf_slow (at, guild_id, what, seconds, steps, detail) VALUES (?, ?, ?, ?, ?, ?)');
-  slow.run(at(10), GUILD, 'Speech', 33, JSON.stringify([['waiting', 32.8], ['making', 0.2]]), JSON.stringify({ voice: 'glados', characters: 40 }));
+  slow.run(at(10), GUILD, 'Speech', 33, JSON.stringify([['waiting', 32.8], ['making', 0.2]]), JSON.stringify({ voice: 'scottish', characters: 40 }));
   slow.run(at(9), GUILD, 'Music', 12, JSON.stringify([['download', 11.9], ['starting', 0.1]]), '{}');
   slow.run(at(8), 'elsewhere', 'Sound', 50, '[]', '{}');
   slow.run(at(7), null, 'Web UI: guilds', 3, '[]', '{}');
@@ -158,7 +158,7 @@ test('the slow list is this server’s, ranked leaving out time spent waiting', 
     ],
     'newest first, without another server’s or anything from before the hour',
   );
-  assert.equal(listed[2].detail.voice, 'GLaDOS');
+  assert.equal(listed[2].detail.voice, 'Scottish');
   for (let n = 0; n < 30; n++) slow.run(at(5) + n, GUILD, 'Sound', 2, '[]', '{}');
   const many = healthReport(GUILD, '1h', NOW).slow;
   assert.ok(many.some((s) => s.what === 'Music'), 'the slowest stay listed beside the 20 newest');

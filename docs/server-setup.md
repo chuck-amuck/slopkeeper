@@ -135,7 +135,7 @@ Each setting goes by the name `/setup show` and `/setup reset` use. A few are se
 | Autoplay | `music`, or `/music autoplay` | `MUSIC_AUTOPLAY` | off |
 | Who can control music | `music` | | everyone |
 | Text to speech | `speech` | `TTS` (`false` to turn off) | on |
-| Default voice | web UI only | `TTS_VOICE` (a voice's id, such as `glados`, `demon` or one added in the web UI) | `tiktok` |
+| Default voice | web UI only | `TTS_VOICE` (a voice's id, such as `scottish`, `demon` or one added in the web UI) | `southern-man` |
 | Speech speed | `speech` | `TTS_SPEED` | 85% of the voice's natural speed |
 | Speech volume | `speech` | `TTS_VOLUME` | 100%, about as loud as a sound with even volume on |
 | Longest spoken line | `speech` | `TTS_MAX_CHARS` (up to 6000) | 4000 characters |

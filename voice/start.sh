@@ -24,51 +24,6 @@ for remote, sha, local in ((model, model_sha, f"/voices/{name}.onnx"), (config, 
     os.replace(f"{local}.part", local)
 EOF
 }
-fetch glados NullPoExc/piper-glados b5eea11fb38bc8705b54102437fb6a553a54ec4d \
-  en_US-glados-medium.onnx d07baf291367306bf25b8013a488e40a6f663a5da9154926b5f9160286364147 \
-  config.json 108c16883ad72e74f8c1894dd75b045fc955d4c3b338e4a501737cf6c85ce99e
-fetch hal OccultAI/HAL-9000-Piper-TTS 22f9ba2c6229614a4c186a08578d9cc80e2c653b \
-  hal.onnx 0e08c82dc027bc72b8b839324801709e205e8c201ccae171b92e37a664d94361 \
-  hal.onnx.json cb6f82c03fc9e6db1f3b6978b9601bab9854f92c40d3a0681501944b8c26745e
-fetch bender Schmalvis/bender-tts-model c35c0bbdd6cd2eb0fe8c1b1d0b1d87e7cca6ed33 \
-  bender-v2.onnx 6167fe149434dfa5937da41d27209ae8fbc21d7f6e28f522dec2d137afc79424 \
-  bender-v2.onnx.json 6d131604279f4ee08004583e4cbd05864aa6e15df2c8f0fc667c8757072fb704
-fetch optimus crazygiscool/optimus-piper-voice cbd038a6ddd21a58bd50b0e7cd1c4e14b40c77c0 \
-  optimus-final.onnx 0f52de2f01bac922dcd5815f6c367681766457cbb2f07a83bf2129aef5917585 \
-  optimus-final.onnx.json a08cf76c01428751a15b5db0f9303af04ca7bbf08317123c6241ed06d8beb328
-fetch kronk russdill/kronk 9403433305b256e73bc0fe1c685a80dbd88a1f87 \
-  en/en_US/kronk/medium/kronk-medium.onnx 957a7ee834fc34664868ae93412b46046e8bf708ceff851fa791d2ab27fd9820 \
-  en/en_US/kronk/medium/kronk-medium.onnx.json 500dfed0cc937b002b09ee8d7eea059b0250504addf7ad73fbff959c00282cb9
-# The TikTok voice's own repo is gone, so it comes from a collection that kept a copy
-fetch tiktok fox3000foxy/piper-voices-collection 0ce0fe21f3dfc87a8e318030b28b753cacfbbcf3 \
-  cosycove--BeefStew/src_data_tts_voices_tiktok_lady.onnx.onnx 8f329dc194051481ff141153444098975c052dfef6fa39f376fbcf0748c7a32c \
-  cosycove--BeefStew/src_data_tts_voices_tiktok_lady.onnx.onnx.json 108c16883ad72e74f8c1894dd75b045fc955d4c3b338e4a501737cf6c85ce99e
-fetch jarvis vishalrao8/piper-jarvis-high cfef54cd400ee23f06a7992decc1c597d8d007ae \
-  en_GB-jarvis-high.onnx 6cc4ace257f80b04e222ee669f7cd8285e3edbee3c31d40ae7a75f2b8a2a970a \
-  en_GB-jarvis-high.onnx.json 8a9d54e6f67a4ee433bf35025d5ad50197ca459fcb4ec3a5b8f140492884dce0
-fetch death drewThomasson/piper_tts_finetune_death_from_puss_and_boots bfd49135f21f8063f5e30992eda8b1d71005ecc1 \
-  en_US-death-high_onnx/en_US-death-high.onnx 5c95b0fb97522385bc507a0421bcc17cbc957cde66276648b3e4d7cb0dd8d1ea \
-  en_US-death-high_onnx/en_US-death-high.onnx.json 85aca75ec63f93968748bac2ea3cd201b642604b65caedb8be71b5dae866aac9
-fetch bmo ziadnotme/bmo-tts-piper 98649fd42055535111330f015fc7754beb14ae14 \
-  en_US-bmo_voice.onnx 2b323dfdd76efb36b096b93ef8a6f0a60a26886aaaeeba97e691c13641611fb8 \
-  en_US-bmo_voice.onnx.json 0786c36ebf1ffc2b6979391941d64bd2ed0279bd0114654d980ad957ec914776
-fetch rocket AkumaVenom/RocketRacoon-Piper-US-Medium cd0709c9d4b68771c63816d1dc59528c76f5e091 \
-  rocket_racoon.onnx f47cc8322363a7c8e8a8d03b71c219c3e2adfe46bd11ee7a93649af7a8caede7 \
-  rocket_racoon.onnx.json 108c16883ad72e74f8c1894dd75b045fc955d4c3b338e4a501737cf6c85ce99e
-# Its settings list 7 speakers, though the model takes none, which serve.py works around
-fetch announcer RoxasYTB/piper-checkpoints-css-announcer-en 4ac3941cee53f1ce56ce1b337d72b504ed8c9c4f \
-  css-announcer-en.onnx 37fb11446b4c898916eacc24a69af53085edc1270b04eea54452c585019d3c05 \
-  css-announcer-en.onnx.json 3cf98638b5139e1e55376845606ae52d50d6e2e768e9348d95ae80baa8eaed93
-# The Bobby, Carl and Patrick models' own repo is gone, so they come from the same collection as TikTok
-fetch bobby fox3000foxy/piper-voices-collection d7b6505a32653648cc09da0244fd1f79e732a336 \
-  simoniz0r--piper-voice-models/en_US-bobby-medium.onnx.onnx a97094cc9fbc2626c7ef95cbe025bb4bbbf7a19dd49cda28890b5c334337c715 \
-  simoniz0r--piper-voice-models/en_US-bobby-medium.onnx.onnx.json 683b7b410f9b45b58f94e55deb369ba8ae9f6a033b967179d9dff5aff5b0f257
-fetch carl fox3000foxy/piper-voices-collection d7b6505a32653648cc09da0244fd1f79e732a336 \
-  simoniz0r--piper-voice-models/en_US-carl-medium.onnx.onnx 30f9cd2e3b769decf00a0e0b25f749d1ef4776fc8d8266a06e40bce7d8387873 \
-  simoniz0r--piper-voice-models/en_US-carl-medium.onnx.onnx.json a889eb297afbd3453f3d98ab9f87f388ac4f93dfbe937d68f623b049d234a735
-fetch patrick fox3000foxy/piper-voices-collection d7b6505a32653648cc09da0244fd1f79e732a336 \
-  simoniz0r--piper-voice-models/en_US-patrick-medium.onnx.onnx 8671d5f3259d9d20dd92463676c9f657a629a0951cfb49dc3d5b57ae520f39c7 \
-  simoniz0r--piper-voice-models/en_US-patrick-medium.onnx.onnx.json 0a23ba28d3e68e9e9d390412198eebdeeb4aa214673b2de700d5f705926a84dd
 # English models with British, Irish and Australian accents
 fetch alba rhasspy/piper-voices ae9d8352b73c1b1750748843e753a504b00e05b0 \
   en/en_GB/alba/medium/en_GB-alba-medium.onnx 1f9da809b6da1ef4190bb5dd6cce4f4af803274539e9cf9e0693085150bac3d7 \

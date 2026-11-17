@@ -24,9 +24,9 @@ test('sounds, songs and lines are counted with who and what most, members only, 
   song('Song A', 'Artist', 'u1', now - HOUR, 180_000);
   song('Song A', 'Artist', 'autoplay', now - 2 * HOUR, 200_000);
   song('Song B', 'Other', 'gone', now - 3 * HOUR, 10_000, 1, 'file');
-  line('u2', 'glados', 'say', now - HOUR);
-  line('u2', 'glados', 'message', now - 2 * HOUR);
-  line(null, 'hal', 'announcement', now - 3 * HOUR);
+  line('u2', 'scottish', 'say', now - HOUR);
+  line('u2', 'scottish', 'message', now - 2 * HOUR);
+  line(null, 'irish', 'announcement', now - 3 * HOUR);
   const data = await ok(`/guilds/${GUILD}/stats/sounds?period=week`);
   assert.deepEqual(data.totals, { sounds: 4, songs: 3, listenedMs: 390_000, skipped: 1, lines: 3 });
   assert.deepEqual(data.sounds, [
@@ -47,8 +47,8 @@ test('sounds, songs and lines are counted with who and what most, members only, 
     { source: 'file', songs: 1 },
   ]);
   assert.deepEqual(data.voices, [
-    { voice: 'glados', name: 'GLaDOS', lines: 2 },
-    { voice: 'hal', name: 'HAL 9000', lines: 1 },
+    { voice: 'scottish', name: 'Scottish', lines: 2 },
+    { voice: 'irish', name: 'Irish (Jenny)', lines: 1 },
   ]);
   assert.deepEqual(data.speakers, [{ id: 'u2', name: 'Ben', lines: 2 }]);
   assert.deepEqual(data.kinds, { say: 1, message: 1, announcement: 1 });

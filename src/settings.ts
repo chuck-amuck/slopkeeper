@@ -84,7 +84,7 @@ export const DEFAULTS = {
   // A whole paragraph, about 5 minutes of speech
   ttsMaxChars: num('TTS_MAX_CHARS', 4000),
   ttsCooldownSec: num('TTS_COOLDOWN_SEC', 5),
-  ttsVoice: process.env.TTS_VOICE || 'tiktok',
+  ttsVoice: process.env.TTS_VOICE || 'southern-man',
   // The voices run a little fast at their natural speed
   ttsSpeed: num('TTS_SPEED', 85),
   // 100 is about as loud as a sound with Even volume on

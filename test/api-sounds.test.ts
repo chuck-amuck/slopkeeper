@@ -1183,16 +1183,15 @@ test('tells the page what text to speech offers', async () => {
   try {
     const data = await ok(`/guilds/${GUILD}/say`);
     assert.deepEqual(data.voices.map((v: { name: string }) => v.name), [
-      ...['GLaDOS', 'HAL 9000', 'Bender', 'Optimus Prime', 'Kronk', 'TikTok', 'JARVIS', 'Rocket Raccoon', 'Death', 'BMO'],
-      ...['Counter-Strike announcer', 'Bobby', 'Carl', 'Patrick', 'Scottish', 'Northern English', 'Southern English woman'],
+      ...['Scottish', 'Northern English', 'Southern English woman'],
       ...['Southern English man', 'Irish (Jenny)', 'Australian man', 'Australian woman', 'State broadcast', 'Russian', 'Spanish', 'German'],
       ...['Demon', 'Helium', 'Giant', 'Robot', 'Alien', 'Walkie-talkie', 'Phone call', 'Megaphone', 'Stadium PA', 'Newsreel'],
       ...['Cathedral', 'Underwater', 'Ghost', 'Trailer narrator'],
     ]);
     assert.deepEqual(Object.keys(data.voices[0]), ['id', 'name', 'group']);
     const group = (id: string) => data.voices.find((v: { id: string }) => v.id === id).group;
-    assert.deepEqual([group('glados'), group('russian'), group('demon')], ['Characters', 'Accents', 'Effects']);
-    assert.deepEqual([data.on, data.voice, data.longest], [true, 'tiktok', 4000]);
+    assert.deepEqual([group('scottish'), group('russian'), group('demon')], ['Accents', 'Accents', 'Effects']);
+    assert.deepEqual([data.on, data.voice, data.longest], [true, 'southern-man', 4000]);
     setSetting(GUILD, 'tts', false);
     assert.equal((await ok(`/guilds/${GUILD}/say`)).on, false);
   } finally {

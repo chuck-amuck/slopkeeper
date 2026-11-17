@@ -234,28 +234,11 @@ const STYLES: readonly Voice[] = [
 ];
 
 /**
- * The built-in voices besides the styles. Each is turned up or down to be as loud as the default model's voices once levelled,
- * which the limiter in levelling squeezes, so a cut of several dB lowers it far less
+ * The built-in voices besides the styles: English accents and other languages reading English. Characters are added in
+ * the web UI (see voices.ts), so the public code and image carry none. Each is turned up or down to be as loud as the
+ * default model's voices once levelled, which the limiter in levelling squeezes, so a cut of several dB lowers it far less
  */
 const BUILT_IN: readonly Voice[] = [
-  // Calmer than the model's own 0.667 and 0.8, which wobble in longer lines
-  { id: 'glados', name: 'GLaDOS', model: 'glados', noise: [0.333, 0.333], stretches: CHARACTER_STRETCHES },
-  { id: 'hal', name: 'HAL 9000', model: 'hal', stretches: CHARACTER_STRETCHES },
-  { id: 'bender', name: 'Bender', model: 'bender', stretches: CHARACTER_STRETCHES },
-  { id: 'optimus', name: 'Optimus Prime', model: 'optimus', stretches: CHARACTER_STRETCHES },
-  // Kronk stretches like the default model's voices, but sounded rushed: it's 15% slower, with steadier timing
-  { id: 'kronk', name: 'Kronk', model: 'kronk', noise: [0.667, 0.333], pace: 1.15 },
-  { id: 'tiktok', name: 'TikTok', model: 'tiktok', stretches: CHARACTER_STRETCHES },
-  // Its own settings make it 10% slower, as Bobby's do 15%
-  { id: 'jarvis', name: 'JARVIS', model: 'jarvis', pace: 1.1, stretches: MIDDLE_STRETCHES, effects: 'volume=4dB' },
-  { id: 'rocket', name: 'Rocket Raccoon', model: 'rocket', stretches: CHARACTER_STRETCHES, effects: 'volume=-1.5dB' },
-  // Death stretches like the default model's voices
-  { id: 'death', name: 'Death', model: 'death' },
-  { id: 'bmo', name: 'BMO', model: 'bmo', stretches: CHARACTER_STRETCHES, effects: 'volume=-3.5dB' },
-  { id: 'announcer', name: 'Counter-Strike announcer', model: 'announcer', stretches: CHARACTER_STRETCHES, effects: 'volume=-6dB' },
-  { id: 'bobby', name: 'Bobby', model: 'bobby', pace: 1.15, stretches: CHARACTER_STRETCHES, effects: 'volume=-3.5dB' },
-  { id: 'carl', name: 'Carl', model: 'carl', stretches: MIDDLE_STRETCHES, effects: 'volume=-6.5dB' },
-  { id: 'patrick', name: 'Patrick', model: 'patrick', stretches: CHARACTER_STRETCHES, effects: 'volume=-8.5dB' },
   // English models with British, Irish and Australian accents
   { id: 'scottish', name: 'Scottish', model: 'alba', stretches: CHARACTER_STRETCHES, effects: 'volume=-2dB' },
   { id: 'northern', name: 'Northern English', model: 'northern', stretches: MIDDLE_STRETCHES, effects: 'volume=4dB' },
@@ -311,9 +294,8 @@ export function voices(): readonly Voice[] {
   return built.list;
 }
 
-const ACCENTS = new Set(['broadcast', 'russian', 'spanish', 'german', 'scottish', 'northern', 'southern-woman', 'southern-man', 'irish', 'australian-man', 'australian-woman']);
-/** How the web UI groups the voices */
-export const voiceGroup = (voice: Voice) => (STYLES.includes(voice) ? 'Effects' : (voice.group ?? (ACCENTS.has(voice.id) ? 'Accents' : 'Characters')));
+/** How the web UI groups the voices: the built-in ones are all accents, and an added one is in the group it was given */
+export const voiceGroup = (voice: Voice) => (STYLES.includes(voice) ? 'Effects' : BUILT_IN.includes(voice) ? 'Accents' : (voice.group ?? 'Characters'));
 
 /** A voice's name, even one that's still downloading, or undefined for one that's gone */
 export const voiceName = (id: string) => voices().find((v) => v.id === id)?.name ?? addedVoices().find((v) => v.id === id)?.name;
