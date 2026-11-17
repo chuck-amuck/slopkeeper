@@ -7,13 +7,13 @@ For server admins: adding the bot, `/setup`, and every setting with its default.
 You need the **Manage Server** permission in the server.
 
 1. **Add the bot.** Open the invite link from the host, pick your server, leave every permission ticked and click **Authorize**. It posts a short hello in the system channel.
-   - **Manage Roles** lets `/notify` and `/gamerole` hand out roles. Without it, people are told to ask an admin for the role.
-   - **Create Expressions** and **Manage Expressions** let it copy sounds to the server's soundboard, and swap out sounds other people added there.
+   - **Manage Roles** lets `/notify` and `/gamerole` hand out roles below the bot's own. Without it, or for a role above the bot's, people are told to ask an admin, and Settings marks the role "an admin hands it out".
+   - **Create Expressions** lets it copy sounds to the server's soundboard. **Manage Expressions** is only for swapping out or removing sounds other people added there.
    - **Create Events** lets game nights show in the server's Events list.
 
    A bot added with an older invite link may be missing **Create Events** or **Manage Expressions**. Open the new link again (it keeps the bot), or tick them on the bot's role.
 2. **Pick the announce channel:** `/setup announce-channel channel:#somewhere`, where hop-on pings, recaps, leaderboards and sale alerts go. If the bot can't post there, it says which permission is missing.
-3. **Make a hop-on role** (optional): create a role such as `hop-on` in **Server Settings → Roles**, drag the bot's role above it, and run `/setup hopon-role role:@hop-on`.
+3. **Make a hop-on role** (optional): create a role such as `hop-on` in **Server Settings → Roles**, drag the bot's role above it (Discord only lets a bot hand out roles below its own), and run `/setup hopon-role role:@hop-on`.
 4. **Set the time zone** if it isn't the host's: `/setup timezone zone:Europe/London`. Free game posts are off until `/setup free-games enabled:True`.
 5. **Add game pings** (optional): `/gamerole add game:Valheim` for each game, then `/gamerole menu` where people will see it.
 6. **Check voice channels:** the bot needs **Connect** and **Speak** in any channel the soundboard is used in. A sound click says if one is missing.
@@ -27,7 +27,7 @@ Then tell people to run `/steam link`, `/notify` and `/pings` (see [Getting star
 
 | Command | What it does |
 | --- | --- |
-| `/setup show` | Every setting and where it comes from (**set here** or **host default**), with anything that needs fixing first: a missing announce channel, a channel or role that's gone, a missing permission, or a post Discord refused. |
+| `/setup show` | Every setting and where it comes from (**set here** or **host default**), with anything that needs fixing first: a missing announce channel, a channel or role that's gone, a role above the bot's, a missing permission, or a post Discord refused (until the next one goes out, or for two days). |
 | `/setup announce-channel channel` | Where hop-on pings, recaps, leaderboards and sale alerts go, and free games unless they have their own channel. Until it's set, the bot posts nothing. |
 | `/setup hopon-role [role] [off]` | The role hop-on pings ping and `/notify` hands out. `off:True` posts them without a ping. |
 | `/setup hopon [min_people] [cooldown_minutes]` | How many people a channel needs for a hop-on ping, and the wait before the next. |
@@ -48,7 +48,7 @@ Then tell people to run `/steam link`, `/notify` and `/pings` (see [Getting star
 | `/setup sound-managers [role] [everyone]` | Limits changing sounds to a role, plus **Manage Server**. See [who can change sounds](soundboard.md#who-can-change-sounds). |
 | `/setup speech …` | Text to speech: on or off, speed, volume, limits, and what it says by itself. See [Text to speech](speech.md). |
 | `/setup speech-role [role] [everyone]` | Limits speech to a role, plus **Manage Server**. |
-| `/setup speech-channel [channel] [off] [who]` | A text channel read aloud. |
+| `/setup speech-channel [channel] [off] [who]` | A text channel read aloud. `who` limits it to people in voice, and `off:True` stops it. |
 | `/setup reset setting` | Puts one setting back to its default. |
 
 Only the options you fill in change, and with none the reply shows how those settings are now.
