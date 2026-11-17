@@ -2,96 +2,68 @@
 
 Linking Steam, picking a game everyone in voice owns, and the server's game library.
 
-The bot builds a picture of who owns what from two sources:
-- **Linked Steam libraries.** These sync every 6 hours. Before a pick, anyone in voice whose data is more than an hour old is synced again.
-- **Manual marks** from `/game own`, for games that aren't on Steam or that someone plays through Family Sharing.
-
-## Steam accounts
+## What do we play?
 
 | Command | What it does |
 | --- | --- |
-| `/steam link profile [user]` | Links a Steam account and immediately reads its library. `profile` can be a profile URL (`https://steamcommunity.com/id/samplays`), a vanity name (`samplays`) or a 17-digit SteamID64. Use `user` to link it for someone else. A **Link my Steam** button does the same with a form, on `/steam list` and on a `/whatdoweplay` card when someone in voice isn't counted. |
-| `/steam unlink [user]` | Removes a link and forgets that library. Defaults to you. |
-| `/steam list` | Shows everyone who's linked, with a profile link, game count and family. 🔒 means their game details are private. |
-| `/steam family with [user]` | Says who shares a Steam library. `user` joins the family of `with`, and defaults to you. |
-| `/steam unfamily [user]` | Takes someone out of their family. Defaults to you. |
-| `/steam friends` | Run it while you're in voice. Lists anyone there who still needs to add each other on Steam. |
-| `/steam lobbies` | Shows who's in a joinable Steam lobby right now, with a link to their profile. |
-| `/steam refresh` | Re-reads every linked library now. Useful right after someone buys a game, or after fixing their privacy setting. |
+| `/whatdoweplay [type] [deck]` | Run it in voice. It picks a random game everyone in your channel can play. `type` keeps to co-op or PvP games and `deck` to Steam Deck ones, both from Steam's store. |
+| `/gamevote [minutes]` | Run it in voice. Everyone in your channel votes on the games they all own. It's open 1 minute by default, up to 10. |
 
-All of this can also be done for anyone from **Steam accounts** on the web UI's Games page.
+A game qualifies if Steam tags it multiplayer, co-op or PvP, or it's in the [game library](#game-library). A library game with a player cap is skipped when there are more people than that, and games hidden with **Never suggest this** are skipped.
 
-Every minute, the bot checks what linked members in voice are playing on Steam. If Discord shows no game for someone, that game counts for game time, session recaps and hop-on pings. If Discord shows one, Discord wins, so nothing counts twice. It needs public game details, and shows nothing for someone who's invisible on Steam. `/setup steam-status` turns it off.
+The answer also shows **Also works** (other games everyone owns, most played first), **One purchase away** (games all but one person owns, and who needs to buy them) and **Not counted** (people whose games the bot doesn't know, left out rather than blocking every game).
 
-`/steam friends` only needs one of two people to have a public friends list. If both are private, it says it can't tell. `/steam lobbies` only finds games that use Steam lobbies. Discord won't open `steam://` links, so it links to their profile, while the web UI links straight to the lobby.
+- **🎲 Reroll** picks again, for the same people and options. Anyone can press it.
+- **🗳️ Vote** starts a 1-minute vote on up to 10 of the games: the 5 played most here, then a random mix. Everyone in the channel gets one vote, it closes when they've all voted, and a tie is settled at random.
+- **Never suggest this** hides the game from future picks. `/game unhide` or the web UI's Games page brings it back.
 
-Steam doesn't tell the bot who's in a Steam family, so you say. A family holds up to 6 people, and applies in every server, as links do. Someone in a family counts as owning a game if a family member owns it on Steam and Steam tags it for Family Sharing, even if that member isn't in the server. Each person playing at once needs their own copy, so two people in a family with one copy show as one short. The bot can't see whether an owner outside the group is using their copy. Games only marked by hand don't count, as there's no way to know if they're shareable.
+## Steam accounts
 
-## Patch notes
+The bot knows who owns what from linked Steam libraries, which sync every 6 hours (and again before a pick, if more than an hour old), and from games marked with `/game own`.
 
-`/setup patch-notes` posts patch notes for games with a Steam ID that were played in the server in the last 30 days. **Each one** posts them as they're found, and **weekly digest** posts them together on the weekly leaderboard's day and hour, even if the leaderboard post is off, or when the bot is back up to a day later. Notes found after a week's digest wait for the next one. They go to the announce channel, or the channel you pick, and never ping anyone. It's off by default.
+| Command | What it does |
+| --- | --- |
+| `/steam link profile [user]` | Links a Steam account by profile URL, vanity name or SteamID64, for you or `user`. **Link my Steam** buttons on `/steam list` and `/whatdoweplay` do the same. |
+| `/steam unlink [user]` | Removes a link and forgets that library. |
+| `/steam list` | Everyone who's linked. 🔒 means their game details are private, so the bot can't see their games. |
+| `/steam family with [user]` | Says you (or `user`) share a Steam family with `with`. |
+| `/steam unfamily [user]` | Takes someone out of their family. |
+| `/steam friends` | Run it in voice: who there still needs to add each other on Steam. |
+| `/steam lobbies` | Who's in a joinable Steam lobby right now. |
+| `/steam refresh` | Re-reads every linked library now, say right after someone buys a game. |
 
-It starts from the latest notes, so turning it on doesn't post a backlog. Steam only marks a post as patch notes if the developer tags it, so some games will be missed.
+The web UI's Games page does all of this for anyone, under **Steam accounts**.
+
+**Steam families:** Steam doesn't say who's in a family, so you tell the bot (up to 6 people). Someone in a family counts as owning a game a family member owns, if Steam tags it for Family Sharing. Each person playing at once needs their own copy, so two people sharing one copy show as one short. Games only marked by hand don't count for the family.
+
+**Steam status:** every minute, the bot checks what linked members in voice are playing on Steam. When Discord shows no game for someone, their Steam game counts for game time, recaps and hop-on pings. It needs public game details, and `/setup steam-status` turns it off.
+
+## Game library
+
+The library is the group's list of games it cares about. Add a game when you want sale alerts for it, it has a player cap, it isn't on Steam, or Steam doesn't tag it multiplayer but you play it together.
+
+| Command | What it does |
+| --- | --- |
+| `/game add name [steam] [max_players]` | Adds a game. `steam` takes the store URL or app ID, for sale alerts and Steam ownership. `max_players` is the most one lobby holds. |
+| `/game want name` | Pings you when a game goes on sale, and adds it to the library. Takes a name or a Steam store link. |
+| `/game own name [user]` | Marks a game as owned by you or `user`, for games that aren't on Steam or that someone plays through Family Sharing. |
+| `/game list` | Every library game, its player cap, who owns it and who still needs it. |
+| `/game remove name` | Removes a game and its marks. **Undo** puts it back for 15 minutes. |
+| `/game unhide name` | Lets `/whatdoweplay` suggest a hidden game again. |
+
+Running `/game want` or `/game own` again, or pressing **Undo**, takes it back.
+
+```
+/game add name:Deep Rock Galactic steam:https://store.steampowered.com/app/548430 max_players:4
+/game own name:Minecraft user:@Alex
+```
 
 ## Achievements
 
 | Command | What it does |
 | --- | --- |
-| `/achievements game [with]` | Shows Steam achievement progress for you and `with`, or else everyone in your voice channel, plus goals: what nobody there has yet, the most common first. |
+| `/achievements game [with]` | Steam achievement progress for you and `with`, or everyone in your voice channel, plus goals nobody there has yet. Hidden achievements aren't named, in case they're spoilers. |
 
-Hidden achievements count towards the total, but aren't named as goals in case they're spoilers. Anyone with private game details, no Steam link or no copy of the game is left out, and it says so.
+## Patch notes
 
-## What do we play?
-
-| Command | What it does |
-| --- | --- |
-| `/whatdoweplay [type] [deck]` | Run it while you're in voice. It picks a random game that everyone in your channel can play. `type` keeps to co-op or PvP games, and `deck` to games that work on Steam Deck. Those come from Steam's store, so they leave out games with no Steam link, and Steam doesn't list a game's player limit. |
-| `/gamevote [minutes]` | Run it while you're in voice. Everyone in your channel votes on the games they all own. It stays open for 1 minute by default, up to 10. |
-
-Which games qualify:
-- Steam games tagged **Multi-player**, **Online Co-op** or **Online PvP**, plus any game in the library, even one Steam doesn't tag as multiplayer.
-- A library game with a `max_players` is skipped when there are more people in voice than that.
-- Games hidden with **Never suggest this** are skipped.
-
-The reply also shows:
-- **Also works:** other games everyone owns, most-played first.
-- **One purchase away:** games everyone but one person owns, and who needs to buy them.
-- **Not counted:** people in voice whose games the bot doesn't know: no Steam link and no games marked, or a private Steam profile it has never seen the games of. They're left out instead of blocking every game, and it says which. Someone in a Steam family whose games the bot has seen still counts, and a profile made private keeps the games seen before.
-
-Buttons:
-- **🎲 Reroll** picks again from the games that qualify. It's greyed out when only one game qualifies.
-- **🗳️ Vote** starts a 1-minute `/gamevote`. It's greyed out when only one game qualifies.
-- **Never suggest this** hides a game from future picks, and tells whoever pressed it how to undo it: `/game unhide`, or the web UI's Games page.
-
-**🎲 Reroll** keeps to the `type` and `deck` you chose, and to the people in the channel it was picked for, so anyone can press it, even someone not in voice. **🗳️ Vote** covers every game that qualifies.
-
-How a vote works:
-- The ballot has up to 10 games from the same list: the 5 you've played most, then a random mix of the rest.
-- Everyone in the voice channel gets one vote and can change it until the vote closes. People outside the channel can't vote.
-- The card shows how many have voted and who it's waiting on. It closes as soon as everyone in the channel has voted, or when time runs out. A tie is settled at random, and the result says so.
-- Each voice channel can only have one vote open at a time.
-
-## Game library
-
-The library is the group's shared list of games it cares about. Add a game to the library when:
-- you want **sale alerts** for it,
-- it has a **player cap** the picker should respect,
-- it **isn't on Steam**, so ownership has to be marked by hand, or
-- Steam doesn't tag it as multiplayer but you still play it together.
-
-| Command | What it does |
-| --- | --- |
-| `/game add name [steam] [max_players]` | Adds a game. `steam` takes the store URL or app ID and turns on sale alerts and automatic Steam ownership. `max_players` is the most people one lobby holds. |
-| `/game want name` | Pings you when a game goes on sale. Takes a library game, a name or a Steam store link, and adds a new game to the library. Run it again, or press **Undo** on the reply, to take it back. |
-| `/game own name [user]` | Marks a game as owned by you, or by `user`, for non-Steam games and Family Sharing. Run it again, or press **Undo**, to unmark it. It's not needed if Steam already shows the person owning the game. |
-| `/game list` | Shows every library game, its player cap, who owns it and who still needs it, with ◀ ▶ buttons once it's too long for one page. |
-| `/game remove name` | Removes a game from the library, along with its manual ownership marks. **Undo** on the reply puts it back as it was, for 15 minutes. |
-| `/game unhide name` | Lets `/whatdoweplay` suggest a game that was hidden with **Never suggest this**. |
-
-Examples:
-```
-/game add name:Deep Rock Galactic steam:https://store.steampowered.com/app/548430 max_players:4
-/game add name:Minecraft
-/game own name:Minecraft
-/game own name:Minecraft user:@Alex
-```
+`/setup patch-notes` posts Steam patch notes for games played here in the past 30 days, either as they come out or as a **weekly digest** on the leaderboard's day and hour. They never ping anyone, and it's off by default. Turning it on doesn't post a backlog, and games whose developers don't tag their patch notes on Steam are missed.
