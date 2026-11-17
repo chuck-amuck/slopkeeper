@@ -15,7 +15,7 @@ The bot plays music in voice from a queue everyone shares. Songs are found on Sp
 
 `/music play` answers with a music card: the song playing, when it ends and what's next, with **Play/Pause**, **Skip**, **Shuffle**, **Stop**, **Refresh** and **Autoplay** buttons. It keeps up as songs change, and a newer card takes over from it.
 
-The web UI's **Music** tab has all of this, plus search results to pick from, a progress bar to jump within a song, a volume slider and drag to reorder. Its **Upload** adds an audio file of up to 60 MB and 20 minutes, which plays like any song and is deleted once it has played.
+The web UI's **Music** tab has all of this, plus search results to pick from, a progress bar to jump within a song, a volume slider and drag to reorder. Its **Upload** adds an audio file of up to 60 MB and 20 minutes, which plays like any song, even while the music container is down, and is deleted once it has played.
 
 ## Playlists and links
 
@@ -35,7 +35,7 @@ On the Music tab, **+** keeps one of Autoplay's songs and **✕** takes it out. 
 
 - **Queue:** each server has its own, up to 500 songs. When it runs out, the music stops unless Autoplay is on.
 - **Finding songs:** each Spotify song is matched by name and length on YouTube Music, then YouTube, then SoundCloud, passing over live versions, covers and remixes unless that's what the song is. The next songs are fetched ahead, so they start without a wait. A song that can't be found or won't play is skipped, and a second in a row pauses the music.
-- **Restarts:** after a restart or update, the music carries on from the same second in the same channel, if someone's still there and it was under 10 minutes ago.
+- **Restarts:** after a restart or update, the music carries on from the same second in the same channel, if someone's still there and it was under 10 minutes ago. Paused music stays paused.
 - **With sounds and speech:** they play on top, and music drops to under a third while the bot talks.
 - **Everyone leaving** pauses the music and keeps the queue. The soundboard's **Stop** leaves music playing. While music plays, the bot doesn't leave for being idle, and the looping room waits.
 - **Who can control it:** everyone, until `/setup music dj_role:` sets a role. Then only that role and people with **Manage Server** can add, pause, skip, shuffle and stop. Anyone can see the queue, and the web UI isn't limited by the role.

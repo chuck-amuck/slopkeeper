@@ -22,9 +22,9 @@ Neither the accents nor the styles imitate a known person. In Discord, `voice` i
 
 ## Settings
 
-`/setup speech` sets whether it's on, how fast and loud it talks, the longest line, and how long each person waits between lines. The default voice is picked in the web UI's Settings. `/setup speech-role` limits speech to a role, plus people with **Manage Server**; the web UI isn't limited by it.
+`/setup speech` sets whether it's on, how fast and loud it talks, the longest line, and how long each person waits between lines. The default voice is picked in the web UI's Settings. `/setup speech-role` limits speech to a role, plus people with **Manage Server**, and that covers reading a channel aloud too. The web UI isn't limited by the role, and counts as one person for the wait.
 
-**Greetings:** with `greet` on, the bot says who joined voice, using the **Greeting** setting with `{name}` for the person. It follows the join sound rules: the same cooldown, nothing for moving channels, and someone with a join sound hears that instead.
+**Greetings:** with `greet` on, the bot says who joined voice, using the **Greeting** setting with `{name}` for the person. It follows the join sound rules: the same cooldown, nothing for moving channels, the bot won't leave another channel for one, and someone with a join sound hears that instead.
 
 **Announcements:** `night_reminders` says game night reminders in the night's voice channel, and `hop_on` says hop-on pings in the channel they're about, where people are and the bot isn't busy elsewhere.
 

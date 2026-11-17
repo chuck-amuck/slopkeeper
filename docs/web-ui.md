@@ -16,7 +16,7 @@ Everything updates live, whoever changed it and wherever, and a change waits whi
 
 ## Tabs
 
-**Soundboard:** **Play** has the volumes, a box to say something (with saved lines and a preview in headphones), a search, and the sounds as big buttons in their groups. **/** or typing jumps to the search and **Enter** plays the first match. The star adds a sound to **Favourites**. **Manage** is where sounds are added, from files, folders or [a link](soundboard.md#adding-a-sound-from-a-link), and renamed, grouped, trimmed, turned up or down, downloaded, deleted and put on Discord's soundboard. **Cut another** makes a new sound from another part of the same video or sound. **Recently deleted** brings sounds back. Drag the handle at the start of a row to move a sound, or use Space and the arrow keys. **Post panel** posts a `/sound panel`.
+**Soundboard:** **Play** has the volumes, a box to say something (with saved lines and a preview in headphones), a search, and the sounds as big buttons in their groups. **/** (or, on a wide screen, just typing) jumps to the search and **Enter** plays the first match. The star adds a sound to **Favourites**. **Manage** is where sounds are added, from files, folders or [a link](soundboard.md#adding-a-sound-from-a-link), and renamed, grouped, trimmed, turned up or down, downloaded, deleted and put on Discord's soundboard. **Cut another** makes a new sound from another part of the same video or sound. **Recently deleted** brings sounds back. Drag the handle at the start of a row to move a sound, or use Space and the arrow keys. **Post panel** posts a `/sound panel`.
 
 **Music:** what's playing, Spotify search and the queue. See [Music](music.md).
 
