@@ -156,7 +156,8 @@ test('the voices export, and an import says what it would do before doing it', a
   assert.match(res.headers.get('content-disposition')!, /slopkeeper-voices\.json/);
   const file = await res.json();
   assert.equal(file.format, 'slopkeeper-voices');
-  assert.deepEqual(file.voices[0], { id: 'narrator', name: 'Narrator', group: 'Characters', model: FILE, volume: -2 });
+  // Given a loudness, it's set by hand, and an export always says so, as an entry without it would be measured
+  assert.deepEqual(file.voices[0], { id: 'narrator', name: 'Narrator', group: 'Characters', model: FILE, volume: -2, tune: 'manual' });
 
   const importing = (json: unknown) => ok(`/guilds/${GUILD}/voices/import`, { method: 'POST', json });
   assert.deepEqual(await importing({ voices: file.voices }), { added: [], changed: [], unchanged: ['Narrator', 'Pirate'], removed: [], skipped: [] });

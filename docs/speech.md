@@ -35,7 +35,9 @@ Neither the accents nor the styles imitate a known person. In Discord, `voice` i
 The web UI's Settings has a **Voices** card for adding any [Piper](https://github.com/OHF-Voice/piper1-gpl) model, such as ones on [Hugging Face](https://huggingface.co/models?other=piper). Added voices are for every server on the bot, and anyone who can open the web UI can change them.
 
 - **Add a voice:** paste the link to the model's `.onnx` file (a Hugging Face page's link works too), name it and pick Characters or Accents. The voice container downloads it, up to 500 MB, and it shows in the voice lists once it's ready.
+- **Measuring:** once it's downloaded, the bot times how the voice stretches at five speeds to pick its speed curve, and finds the loudness that makes it as loud as the default voices. It takes a minute or two, one voice at a time, and waits while lines are being said. The card shows "measuring" meanwhile. A voice added without a loudness or curve uses what's measured, and it's measured again when its link, speaker or steadiness changes.
 - **Edit** changes the name, group and link, and once it's downloaded:
+  - **Measured** shows the curve and loudness found. Changing the loudness or curve yourself keeps yours; **Use measured** goes back to the measured values, and **Measure again** starts over. A loose fit (over 5% off every curve) is worth checking by ear.
   - **Speaker**, for a model with several.
   - **Loudness**, in dB, to match the other voices. Levelling squeezes loud speech, so a cut lowers it by about half as much.
   - **Pace**: above 1 is slower. 1.1 is 10% slower.
@@ -45,4 +47,4 @@ The web UI's Settings has a **Voices** card for adding any [Piper](https://githu
 - **Remove** deletes it, and servers that picked it go back to their default voice.
 - **Export** saves every added voice as `slopkeeper-voices.json`. **Import** takes that file, matches voices by id or name, and shows what it would add, change and skip before it does. **Replace all** removes added voices the file doesn't have.
 
-An export entry has `name` and `model`, and only what differs from the defaults: `id`, `group` (`Characters` or `Accents`), `config` (the settings' address, by default the model's with `.json` added), `sha256` and `configSha256` (checked when given), `speaker`, `volume` (dB, -20 to 20), `pace` (0.5 to 2), `noise` (Piper's `noise_scale` and `noise_w_scale`, from 0 to 2) and `curve` (`character`, `default`, `middle` or `low`).
+An export entry has `name` and `model`, and only what differs from the defaults: `id`, `group` (`Characters` or `Accents`), `config` (the settings' address, by default the model's with `.json` added), `sha256` and `configSha256` (checked when given), `speaker`, `volume` (dB, -20 to 20), `pace` (0.5 to 2), `noise` (Piper's `noise_scale` and `noise_w_scale`, from 0 to 2), `curve` (`character`, `default`, `middle` or `low`) and `tune`. Exports always write `tune`: `auto` takes the measured curve and loudness, `manual` keeps the entry's own. An entry without `tune` is `auto` if it gives neither `volume` nor `curve`.

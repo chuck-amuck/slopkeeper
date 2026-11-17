@@ -31,12 +31,34 @@ db.exec(`
     changed_at INTEGER NOT NULL
   );
 `);
+// Added later. tune: 'auto' takes the measured speed curve and loudness, 'manual' keeps what someone set. Voices from
+// before measuring keep theirs. measured: the last measurement, as JSON (see Measured)
+for (const [column, type] of [
+  ['tune', "TEXT NOT NULL DEFAULT 'manual'"],
+  ['measured', 'TEXT'],
+] as const) {
+  if (!db.prepare('SELECT 1 FROM pragma_table_info(?) WHERE name = ?').get('voices', column)) db.exec(`ALTER TABLE voices ADD COLUMN ${column} ${type}`);
+}
 
 export const GROUPS = ['Characters', 'Accents'] as const;
 export type VoiceGroup = (typeof GROUPS)[number];
 /** Which measured speed curve a voice follows (see the Stretches in say.ts). Character suits most community models */
 export const CURVES = ['character', 'default', 'middle', 'low'] as const;
 export type Curve = (typeof CURVES)[number];
+export const TUNES = ['auto', 'manual'] as const;
+export type Tune = (typeof TUNES)[number];
+
+/** What measuring a voice found (see voiceTuning.ts) */
+export interface Measured {
+  /** The model file, speaker and noise it was measured with: a change to any of them measures it again */
+  key: string;
+  curve: Curve;
+  /** How far the voice's stretching is from the curve's, on average: 0.02 is 2% */
+  fit: number;
+  /** dB that make it as loud as the default model's voices */
+  volume: number;
+  at: number;
+}
 
 export interface AddedVoice {
   id: string;
@@ -53,6 +75,8 @@ export interface AddedVoice {
   pace: number;
   noise: [number, number] | null;
   curve: Curve;
+  tune: Tune;
+  measured: Measured | null;
   addedBy: string;
   addedAt: number;
   changedAt: number;
@@ -82,6 +106,8 @@ interface Row {
   noise: number | null;
   noise_w: number | null;
   curve: string;
+  tune: string;
+  measured: string | null;
   added_by: string;
   added_at: number;
   changed_at: number;
@@ -100,10 +126,22 @@ const fromRow = (r: Row): AddedVoice => ({
   pace: r.pace,
   noise: r.noise === null || r.noise_w === null ? null : [r.noise, r.noise_w],
   curve: (CURVES as readonly string[]).includes(r.curve) ? (r.curve as Curve) : 'character',
+  tune: r.tune === 'auto' ? 'auto' : 'manual',
+  measured: readMeasured(r.measured),
   addedBy: r.added_by,
   addedAt: r.added_at,
   changedAt: r.changed_at,
 });
+
+function readMeasured(text: string | null): Measured | null {
+  if (!text) return null;
+  try {
+    const m = JSON.parse(text) as Measured;
+    return typeof m.key === 'string' && (CURVES as readonly string[]).includes(m.curve) && Number.isFinite(m.volume) && Number.isFinite(m.fit) ? m : null;
+  } catch {
+    return null;
+  }
+}
 
 let cached: AddedVoice[] | null = null;
 
@@ -134,8 +172,16 @@ let generation = 0;
 /** Goes up with every change to what's offered, for anything that keeps a list built from them */
 export const voicesGeneration = () => generation;
 
+const listeners: (() => void)[] = [];
+
 function changed() {
   generation++;
+  for (const listener of listeners) listener();
+}
+
+/** Called after any change to the voices or what the container has of them */
+export function onVoicesChanged(listener: () => void) {
+  listeners.push(listener);
 }
 
 export function voiceState(id: string): VoiceState {
@@ -242,25 +288,25 @@ export function voiceContainerHas(version: unknown) {
 }
 
 /** What a voice is set to, as the web UI and an import give it, already checked */
-export type VoiceFields = Omit<AddedVoice, 'id' | 'addedBy' | 'addedAt' | 'changedAt'>;
+export type VoiceFields = Omit<AddedVoice, 'id' | 'measured' | 'addedBy' | 'addedAt' | 'changedAt'>;
 
 function bump() {
   cached = null;
   setKv(VERSION_KEY, randomUUID());
 }
 
-const columns = (f: VoiceFields) => [f.name, f.group, f.model, f.config, f.sha256, f.configSha256, f.speaker, f.volume, f.pace, f.noise?.[0] ?? null, f.noise?.[1] ?? null, f.curve];
+const columns = (f: VoiceFields) => [f.name, f.group, f.model, f.config, f.sha256, f.configSha256, f.speaker, f.volume, f.pace, f.noise?.[0] ?? null, f.noise?.[1] ?? null, f.curve, f.tune];
 
 function insert(id: string, fields: VoiceFields, who: string, now: number) {
   db.prepare(
-    `INSERT INTO voices (id, name, grp, model_url, config_url, sha256, config_sha256, speaker, volume, pace, noise, noise_w, curve, added_by, added_at, changed_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO voices (id, name, grp, model_url, config_url, sha256, config_sha256, speaker, volume, pace, noise, noise_w, curve, tune, added_by, added_at, changed_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(id, ...columns(fields), who, now, now);
 }
 
 function update(id: string, fields: VoiceFields, now: number) {
   db.prepare(
-    `UPDATE voices SET name = ?, grp = ?, model_url = ?, config_url = ?, sha256 = ?, config_sha256 = ?, speaker = ?, volume = ?, pace = ?, noise = ?, noise_w = ?, curve = ?, changed_at = ?
+    `UPDATE voices SET name = ?, grp = ?, model_url = ?, config_url = ?, sha256 = ?, config_sha256 = ?, speaker = ?, volume = ?, pace = ?, noise = ?, noise_w = ?, curve = ?, tune = ?, changed_at = ?
      WHERE id = ?`,
   ).run(...columns(fields), now, id);
 }
@@ -289,9 +335,17 @@ export function addVoice(id: string, fields: VoiceFields, who: string) {
   after();
 }
 
-export function editVoice(id: string, fields: VoiceFields) {
+/** The measured curve and loudness put in, for a voice set to take them, if what it was measured with hasn't changed */
+function tuned(before: AddedVoice, fields: VoiceFields): VoiceFields {
+  const m = before.measured;
+  const sameInputs = sameModel(before, fields) && before.speaker === fields.speaker && JSON.stringify(before.noise) === JSON.stringify(fields.noise);
+  return fields.tune === 'auto' && m && sameInputs ? { ...fields, curve: m.curve, volume: m.volume } : fields;
+}
+
+export function editVoice(id: string, given: VoiceFields) {
   const before = addedVoices().find((v) => v.id === id);
   if (!before) return;
+  const fields = tuned(before, given);
   transaction(() => {
     update(id, fields, Date.now());
     bump();
@@ -318,7 +372,7 @@ export function importVoices(add: { id: string; fields: VoiceFields }[], change:
   const before = new Map(addedVoices().map((v) => [v.id, v]));
   const picks = transaction(() => {
     for (const { id, fields } of add) insert(id, fields, who, now);
-    for (const { id, fields } of change) update(id, fields, now);
+    for (const { id, fields } of change) update(id, tuned(before.get(id)!, fields), now);
     for (const id of remove) db.prepare('DELETE FROM voices WHERE id = ?').run(id);
     bump();
     return forgetPicks(remove);
@@ -328,6 +382,18 @@ export function importVoices(add: { id: string; fields: VoiceFields }[], change:
   for (const id of remove) delete states[id];
   after();
   return picks;
+}
+
+/** Keeps what measuring a voice found, and for one set to `auto`, uses its curve and loudness */
+export function setMeasured(id: string, measured: Measured | null) {
+  const voice = addedVoices().find((v) => v.id === id);
+  if (!voice) return;
+  transaction(() => {
+    db.prepare('UPDATE voices SET measured = ? WHERE id = ?').run(measured && JSON.stringify(measured), id);
+    if (measured && voice.tune === 'auto') db.prepare('UPDATE voices SET curve = ?, volume = ?, changed_at = ? WHERE id = ?').run(measured.curve, measured.volume, Date.now(), id);
+  });
+  cached = null;
+  changed();
 }
 
 /** For tests: forgets what the container said */
@@ -384,7 +450,7 @@ const given = (value: unknown) => value !== undefined && value !== null && value
  * mustn't take, lower case. Returns why it can't be used instead, in words for the web UI
  */
 export function voiceFields(input: Record<string, unknown>, names: ReadonlySet<string>): VoiceFields | string {
-  const { name, group, model, config: settings, sha256, configSha256, speaker, volume, pace, noise, curve } = input;
+  const { name, group, model, config: settings, sha256, configSha256, speaker, volume, pace, noise, curve, tune } = input;
   if (typeof name !== 'string' || !name.trim() || name.trim().length > LONGEST_NAME) return `A voice’s name needs 1 to ${LONGEST_NAME} characters.`;
   const trimmed = name.trim().replace(/\s+/g, ' ');
   if (names.has(trimmed.toLowerCase())) return `There’s already a voice called ${trimmed}.`;
@@ -400,6 +466,7 @@ export function voiceFields(input: Record<string, unknown>, names: ReadonlySet<s
   if (given(pace) && !between(pace, 0.5, 2)) return `${trimmed}’s pace is from 0.5 to 2.`;
   if (given(noise) && !(Array.isArray(noise) && noise.length === 2 && noise.every((n) => between(n, 0, 2)))) return `${trimmed}’s noise is two numbers from 0 to 2.`;
   if (given(curve) && !(CURVES as readonly unknown[]).includes(curve)) return `${trimmed}’s speed curve is one of ${CURVES.join(', ')}.`;
+  if (given(tune) && !(TUNES as readonly unknown[]).includes(tune)) return `${trimmed}’s tune is auto or manual.`;
   return {
     name: trimmed,
     group: given(group) ? (group as VoiceGroup) : 'Characters',
@@ -412,6 +479,8 @@ export function voiceFields(input: Record<string, unknown>, names: ReadonlySet<s
     pace: given(pace) ? Math.round((pace as number) * 100) / 100 : 1,
     noise: given(noise) ? [(noise as number[])[0], (noise as number[])[1]] : null,
     curve: given(curve) ? (curve as Curve) : 'character',
+    // Measured, unless someone said how loud or which curve
+    tune: given(tune) ? (tune as Tune) : given(volume) || given(curve) ? 'manual' : 'auto',
   };
 }
 
@@ -420,7 +489,7 @@ export function takenNames(fixed: readonly Named[], except?: string): Set<string
   return new Set([...fixed, ...addedVoices().filter((v) => v.id !== except)].map((v) => v.name.toLowerCase()));
 }
 
-const FIELD_KEYS = ['name', 'group', 'model', 'config', 'sha256', 'configSha256', 'speaker', 'volume', 'pace', 'noise', 'curve'] as const;
+const FIELD_KEYS = ['name', 'group', 'model', 'config', 'sha256', 'configSha256', 'speaker', 'volume', 'pace', 'noise', 'curve', 'tune'] as const;
 
 const sameFields = (a: VoiceFields, b: VoiceFields) => FIELD_KEYS.every((key) => JSON.stringify(a[key]) === JSON.stringify(b[key]));
 
@@ -439,6 +508,8 @@ export function exported(v: AddedVoice) {
     ...(v.pace !== 1 && { pace: v.pace }),
     ...(v.noise && { noise: v.noise }),
     ...(v.curve !== 'character' && { curve: v.curve }),
+    // Always, as an entry without loudness or curve would otherwise be measured
+    tune: v.tune,
   };
 }
 
@@ -480,7 +551,8 @@ export function planImport(list: unknown, fixed: readonly Named[], replace: bool
       matched.add(same.id);
     }
     const others = new Set([...fixedNames, ...claimed, ...added.filter((v) => v.id !== same?.id && !(replace && willGo(v))).map((v) => v.name.toLowerCase())]);
-    const fields = voiceFields(e, others);
+    // An entry that doesn't say leaves a voice it matches as it was: files from before measuring don't have it
+    const fields = voiceFields(same && !('tune' in e) ? { ...e, tune: same.tune } : e, others);
     if (typeof fields === 'string') return void plan.skipped.push({ what, why: fields });
     claimed.add(fields.name.toLowerCase());
     if (same) {

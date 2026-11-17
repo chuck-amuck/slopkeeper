@@ -20,6 +20,7 @@ import { loopSpeechProblem } from '../src/features/loopRoom.ts';
 import { playJoinSound, setJoinSound } from '../src/features/joinSounds.ts';
 import { saveUpload } from '../src/features/soundLibrary.ts';
 import { soundboard } from '../src/features/soundboard.ts';
+import { stopTuning } from '../src/features/voiceTuning.ts';
 import { setSetting, storedSetting } from '../src/settings.ts';
 
 const hasFfmpeg = spawnSync('ffmpeg', ['-version']).status === 0;
@@ -79,6 +80,8 @@ function fakeVoice(t: TestContext, answer?: (text: string, signal: AbortSignal) 
 const leftovers = () => readdirSync(tmpdir()).filter((f) => f.startsWith('slopkeeper-say-')).flatMap((f) => readdirSync(path.join(tmpdir(), f)));
 
 speak.setup!({ on() {} } as never);
+// Measuring added voices has its own tests (voiceTuning.test.ts), and would ask the fake voice container for more here
+stopTuning();
 beforeEach(() => {
   config.voiceUrl = 'http://voice.test';
   // Each test counts what the voice container is asked for

@@ -19,6 +19,7 @@ import {
   voiceState,
 } from '../features/voices.ts';
 import { plural } from '../features/gamestats.ts';
+import { measureAgain, voiceTuning } from '../features/voiceTuning.ts';
 import { type Ask, Refused, by, readJson, whoDid } from './common.ts';
 
 // The management API for the voices added in the web UI, which every server on the bot shares
@@ -27,7 +28,18 @@ const LONGEST_PREVIEW = 300;
 
 function listed(ask: Ask, v: AddedVoice) {
   const state = voiceState(v.id);
-  return { ...exported(v), state: state.state, percent: state.percent, error: state.error, speakers: state.speakers ?? [], addedBy: whoDid(ask.guild, v.addedBy), addedAt: v.addedAt };
+  const measured = v.measured && { curve: v.measured.curve, fit: v.measured.fit, volume: v.measured.volume, at: v.measured.at };
+  return {
+    ...exported(v),
+    state: state.state,
+    percent: state.percent,
+    error: state.error,
+    speakers: state.speakers ?? [],
+    tuning: voiceTuning(v.id),
+    measured,
+    addedBy: whoDid(ask.guild, v.addedBy),
+    addedAt: v.addedAt,
+  };
 }
 
 const find = (id: string | undefined) => {
@@ -36,9 +48,14 @@ const find = (id: string | undefined) => {
   return voice;
 };
 
-/** The voice's settings with the ones given put over them, checked */
+/**
+ * The voice's settings with the ones given put over them, checked. Setting the loudness or curve to something else
+ * makes it `manual`, unless the change says otherwise
+ */
 function merged(voice: AddedVoice, changes: Record<string, unknown>) {
-  const fields = voiceFields({ ...exported(voice), ...changes }, takenNames(FIXED_VOICES, voice.id));
+  const set = (key: 'volume' | 'curve', fallback: number | string) => key in changes && (changes[key] ?? fallback) !== voice[key];
+  const tune = !('tune' in changes) && (set('volume', 0) || set('curve', 'character')) ? { tune: 'manual' } : {};
+  const fields = voiceFields({ ...exported(voice), volume: voice.volume, curve: voice.curve, ...changes, ...tune }, takenNames(FIXED_VOICES, voice.id));
   if (typeof fields === 'string') throw new Refused(400, fields);
   return fields;
 }
@@ -104,6 +121,13 @@ export async function voiceRoutes(ask: Ask) {
     const picks = removeVoice(id);
     logActivity(guild.id, by(), `Removed the voice ${voice.name}${picks ? `, and ${picks === 1 ? '1 server’s pick' : `${picks} servers’ picks`} of it` : ''}`);
     return { picks };
+  }
+
+  if (id && action === 'measure' && !rest[2] && req.method === 'POST') {
+    const voice = find(id);
+    if (voiceState(id).state !== 'ready') throw new Refused(409, `${voice.name} isn’t downloaded yet.`);
+    measureAgain(id);
+    return { voice: listed(ask, find(id)) };
   }
 
   if (id && action === 'preview' && !rest[2] && req.method === 'POST') {

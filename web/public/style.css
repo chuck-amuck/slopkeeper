@@ -2558,6 +2558,14 @@ dialog textarea {
   color: var(--bad);
 }
 
+/* What measuring a voice found, with its buttons on the same lines */
+.form-note.measured {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2, 0.5rem);
+}
+
 textarea {
   resize: vertical;
 }

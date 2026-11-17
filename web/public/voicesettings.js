@@ -39,7 +39,12 @@ function stateText(v) {
 }
 
 // A voice the container hasn't said anything about isn't asked about again and again: the bot does that
-const settled = (v) => v.state !== 'waiting' && v.state !== 'downloading';
+const settled = (v) => v.state !== 'waiting' && v.state !== 'downloading' && !v.tuning;
+
+const curveName = (curve) => CURVES.find(([id]) => id === curve)?.[1] ?? curve;
+const dB = (volume) => `${volume > 0 ? '+' : ''}${volume} dB`;
+/** Off by more than this, no curve fits it closely (the rule for the built-in voices is about 5%) */
+const LOOSE_FIT = 0.05;
 
 /** Plays a voice saying a line with the settings given, just for whoever pressed it. Pressing again stops it */
 async function preview(voice, settings, line, button) {
@@ -85,7 +90,7 @@ export function voicesCard(main, onChange) {
     return el(
       'div',
       { className: 'field voice-row' },
-      el('div', {}, el('div', { className: 'series-name' }, v.name), el('p', { className: `hint${v.state === 'failed' ? ' bad-text' : ''}` }, `${v.group} · ${stateText(v)}`)),
+      el('div', {}, el('div', { className: 'series-name' }, v.name), el('p', { className: `hint${v.state === 'failed' ? ' bad-text' : ''}` }, `${v.group} · ${stateText(v)}${v.tuning ? ', measuring its speed and loudness' : ''}`)),
       el(
         'div',
         { className: 'control' },
@@ -185,6 +190,38 @@ export function voicesCard(main, onChange) {
     };
     const line = el('input', { placeholder: PREVIEW_TEXT, maxLength: 300, ariaLabel: 'What the preview says', autocomplete: 'off' });
     const problem = formProblem();
+    // Use measured puts the measured values in the form and saves the voice as auto, so a new measurement applies too
+    let tune;
+    const measuredNote = (() => {
+      if (v.state !== 'ready') return null;
+      if (v.tuning) return el('p', { className: 'form-note' }, 'Measuring its speed curve and loudness…');
+      const again = el('button', { type: 'button' }, 'Measure again');
+      again.onclick = () =>
+        void attempt(async () => {
+          await request(api(`/voices/${encodeURIComponent(v.id)}/measure`), { method: 'POST' });
+          toast(`Measuring ${v.name} again.`);
+          node.close();
+          await load();
+        });
+      if (!v.measured) return el('div', { className: 'form-note measured' }, 'Not measured yet. ', again);
+      const m = v.measured;
+      const use = el('button', { type: 'button' }, 'Use measured');
+      use.onclick = () => {
+        fields.volume.value = String(m.volume);
+        fields.curve.value = m.curve;
+        tune = 'auto';
+        use.disabled = true;
+      };
+      const loose = m.fit > LOOSE_FIT ? ` No curve fits it closely (${Math.round(m.fit * 100)}% off), so check how it sounds.` : '';
+      const how = v.tune === 'auto' ? ' It uses these, until you change its loudness or curve.' : '';
+      return el(
+        'div',
+        { className: 'form-note measured' },
+        `Measured: ${curveName(m.curve)}, ${dB(m.volume)}.${loose}${how} `,
+        v.tune === 'auto' ? null : use,
+        again,
+      );
+    })();
     const settings = () => ({
       // Only once the model's speakers are known: before that, the speaker it has stays
       ...(fields.speaker && { speaker: fields.speaker.value !== '' ? Number(fields.speaker.value) : null }),
@@ -193,6 +230,16 @@ export function voicesCard(main, onChange) {
       noise: fields.noise.value === 'as-is' ? v.noise : (STEADINESS.find(([id]) => id === fields.noise.value)?.[2] ?? null),
       curve: fields.curve.value,
     });
+    /**
+     * The settings to save. Loudness and curve go only if they were changed here, so a measurement that finished while
+     * the dialog was open isn't saved over, and Use measured holds only while they're still what was measured
+     */
+    const tuning = () => {
+      const { volume, curve, ...rest } = settings();
+      const m = v.measured;
+      if (tune === 'auto' && m && volume === m.volume && curve === m.curve) return { ...rest, tune: 'auto' };
+      return { ...rest, ...(volume !== (v.volume ?? 0) && { volume }), ...(curve !== (v.curve ?? 'character') && { curve }) };
+    };
     const hear = el('button', { type: 'button', disabled: v.state !== 'ready', title: v.state === 'ready' ? 'Hear it with these settings, just for you' : 'Once it’s downloaded' }, 'Preview');
     hear.onclick = () =>
       void attempt(async () => {
@@ -213,6 +260,7 @@ export function voicesCard(main, onChange) {
         row('Group', fields.group),
         row('Link to the model', fields.model, 'A new link downloads it again.'),
         fields.speaker ? row('Speaker', fields.speaker) : v.state === 'ready' ? null : el('p', { className: 'form-note' }, 'If the model has several speakers, they can be picked once it’s downloaded.'),
+        measuredNote,
         row('Loudness', fields.volume, 'In dB, to match the other voices, usually between -10 and 5.'),
         row('Pace', fields.pace, 'Above 1 is slower, for a voice that sounds rushed: 1.1 is 10% slower.'),
         row('Steadiness', fields.noise, 'Steadier evens out a voice that wobbles in long lines.'),
@@ -231,7 +279,7 @@ export function voicesCard(main, onChange) {
           try {
             await request(api(`/voices/${encodeURIComponent(v.id)}`), {
               method: 'PUT',
-              json: { name: fields.name.value, group: fields.group.value, model: fields.model.value.trim(), ...settings() },
+              json: { name: fields.name.value, group: fields.group.value, model: fields.model.value.trim(), ...tuning() },
             });
             toast(`Saved ${fields.name.value.trim()}.`);
             node.close();

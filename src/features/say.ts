@@ -30,9 +30,10 @@ import { onPlaybackStop, play } from './voiceAudio.ts';
 import { setGreeter } from './joinSounds.ts';
 import { setLoopSpeaker } from './loopRoom.ts';
 import { type AddedVoice, addedVoices, type Curve, syncVoices, voicesGeneration, voiceState } from './voices.ts';
+import { startTuning } from './voiceTuning.ts';
 
 /** How much longer speech gets, paired with the length_scale that gives it, from fastest to slowest */
-type Stretches = readonly (readonly [number, number])[];
+export type Stretches = readonly (readonly [number, number])[];
 
 /**
  * How much longer speech takes at each of Piper's length_scale values, measured across the default model's voices. It's far
@@ -259,7 +260,7 @@ const BUILT_IN: readonly Voice[] = [
 ];
 
 /** The measured curve each added voice can follow */
-const CURVE_STRETCHES: Record<Curve, Stretches> = { character: CHARACTER_STRETCHES, default: STRETCHES, middle: MIDDLE_STRETCHES, low: LOW_STRETCHES };
+export const CURVE_STRETCHES: Record<Curve, Stretches> = { character: CHARACTER_STRETCHES, default: STRETCHES, middle: MIDDLE_STRETCHES, low: LOW_STRETCHES };
 
 /** An added voice as it speaks: its model in the voice container, with its settings */
 export function asVoice(v: AddedVoice, file: string): Voice {
@@ -472,6 +473,9 @@ const spoken = new Map<string, { audio: Buffer; at: number }>();
 let spokenBytes = 0;
 /** Lines being made right now, so asking for one twice at once makes it once */
 const making = new Map<string, Promise<Buffer>>();
+
+/** Whether a line is being made or said anywhere, which measuring a voice waits for */
+const speechBusy = () => making.size > 0 || [...queues.values()].some((q) => q.running);
 
 /** The voice container didn't answer, as opposed to the levelling after it failing */
 class VoiceDown extends Error {}
@@ -857,8 +861,9 @@ export const speak: Feature = {
     },
   ],
   setup(client) {
-    // The voice container keeps the added voices' models, from the list it's sent
+    // The voice container keeps the added voices' models, from the list it's sent, and each is measured once it's there
     void syncVoices();
+    startTuning({ curves: CURVE_STRETCHES, busy: speechBusy });
     onPlaybackStop(stopLines);
     setGreeter(greetingFor, sayOut);
     setLoopSpeaker(speakToFile, (guild, id) => serverVoice(guild.id, id));

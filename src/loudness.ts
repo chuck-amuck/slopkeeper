@@ -30,6 +30,15 @@ export async function levelSpeech(input: string, output: string, effects?: strin
   await exec('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-y', '-i', input, '-af', effects ? `${effects},${SPEECH_FILTER}` : SPEECH_FILTER, output]);
 }
 
+/** How loud spoken audio comes out once it's levelled as a line is, after turning it up or down by `volume` dB first */
+export async function levelledLoudness(file: string, volume: number): Promise<number> {
+  const { stderr } = await exec('ffmpeg', ['-hide_banner', '-nostats', '-i', file, '-af', `volume=${volume}dB,${SPEECH_FILTER},ebur128`, '-f', 'null', '-']);
+  // The summary at the end, not a running reading
+  const lufs = [...stderr.matchAll(/\bI:\s+(-?[\d.]+) LUFS/g)].at(-1)?.[1];
+  if (lufs === undefined) throw new Error('ffmpeg gave no loudness reading');
+  return Number(lufs);
+}
+
 /** Reads a file's loudness and works out its gain. Takes about a second for a sound of a few minutes */
 export async function measureGain(file: string): Promise<number> {
   const seconds = await durationOf(file);

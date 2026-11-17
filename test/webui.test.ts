@@ -54,7 +54,7 @@ const PAGES: [string, string, Record<string, string>?, string?, string?][] = [
     'settings',
     'Settings: Edit a voice',
     {},
-    `(() => { const d = document.querySelector('dialog[open]'); return !!d && /Edit Narrator/.test(d.textContent) && d.querySelectorAll('select').length === 4 && /Downloading, 40%/.test(document.body.innerText) && /Couldn’t download/.test(document.body.innerText); })()`,
+    `(() => { const d = document.querySelector('dialog[open]'); return !!d && /Edit Narrator/.test(d.textContent) && d.querySelectorAll('select').length === 4 && /Measured: Middle, -2.5 dB/.test(d.textContent) && [...d.querySelectorAll('button')].some((b) => b.textContent === 'Use measured') && /Downloading, 40%/.test(document.body.innerText) && /Couldn’t download/.test(document.body.innerText); })()`,
     `[...document.querySelectorAll('#settings-voices .voice-row')].find((r) => r.textContent.startsWith('Narrator')).querySelector('button:nth-child(2)').click()`,
   ],
   // An import, from a file picked, says what it would do first
@@ -204,6 +204,8 @@ function seed() {
       ...Object.values(fields).slice(1),
     );
   }
+  // The narrator has been measured, and is set by hand, so its Edit dialog offers what was measured
+  db.prepare("UPDATE voices SET tune = 'manual', measured = ? WHERE id = 'narrator'").run(JSON.stringify({ key: 'x', curve: 'middle', fit: 0.012, volume: -2.5, at: now }));
 }
 
 const VOICE_URL = 'http://voice.test';

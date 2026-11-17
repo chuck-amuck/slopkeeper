@@ -67,9 +67,10 @@ It applies the same rules as `/sound` and `/setup`, and every request needs an `
 | `POST /guilds/:id/say` | Reads out `text` in `channelId`, with an optional `voice`. Answers once the line starts |
 | `POST /guilds/:id/phrases` | Saves `text`, and answers with the `phrases` |
 | `DELETE /guilds/:id/phrases/:id` | Removes a saved line, and answers with the `phrases` |
-| `GET /guilds/:id/voices` | The voices added in the web UI, for every server, each with its settings and download `state`, and `most`, how many there can be. 409 without `VOICE_URL`, as for the routes below |
+| `GET /guilds/:id/voices` | The voices added in the web UI, for every server, each with its settings and download `state`, whether it's being measured (`tuning`), the last measurement (`measured`: `curve`, `fit`, `volume`, `at`, or null) and `tune`, and `most`, how many there can be. 409 without `VOICE_URL`, as for the routes below |
 | `POST /guilds/:id/voices` | Adds a voice: `{ "name": "...", "model": "<.onnx link>" }`, plus any of the fields in an [export entry](speech.md#adding-voices). The voice container downloads it |
-| `PUT /guilds/:id/voices/:voice` | Changes a voice, with only the fields given |
+| `PUT /guilds/:id/voices/:voice` | Changes a voice, with only the fields given. A new `volume` or `curve` makes it `manual` unless `tune` is given too; `"tune": "auto"` puts the measured values back |
+| `POST /guilds/:id/voices/:voice/measure` | Forgets a voice's measurement and measures it again. 409 until it's downloaded |
 | `DELETE /guilds/:id/voices/:voice` | Removes a voice and its model. Returns `picks`, how many servers' picks of it went back to their default |
 | `POST /guilds/:id/voices/:voice/preview` | The voice saying `text` (or a sample) as a WAV file, with any changed settings given beside it, before they're saved. 409 until it's downloaded |
 | `GET /guilds/:id/voices/export` | Every added voice as `slopkeeper-voices.json` |
