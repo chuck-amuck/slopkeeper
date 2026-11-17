@@ -241,6 +241,26 @@ test('a voice that says nothing isn’t measured over and over', { skip: !hasFfm
   assert.equal(container.synthesized.length, asked, 'it waits before trying again');
 });
 
+test('a voice container that isn’t up yet holds measuring back, rather than counting against the voice', { skip: !hasFfmpeg && 'needs ffmpeg' }, async (t) => {
+  const container = fakeContainer(t, new Set(['narrator']));
+  const answering = globalThis.fetch;
+  let up = false;
+  t.mock.method(globalThis, 'fetch', (url: string, init?: RequestInit) => (up || !String(url).endsWith('/synthesize') ? answering(url, init) : Promise.reject(new TypeError('fetch failed'))));
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const errors = t.mock.method(console, 'error', () => {});
+  startTuning({ curves: CURVE_STRETCHES, busy: () => false });
+  await ok(`/guilds/${GUILD}/voices`, { method: 'POST', json: { name: 'Narrator', model: FILE } });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(errors.mock.callCount(), 0, 'not logged as the voice’s failure');
+  assert.equal((await list())[0].tuning, true, 'still waiting to be measured');
+  up = true;
+  t.mock.timers.tick(30_000);
+  t.mock.timers.reset();
+  const [voice] = await measured();
+  assert.equal(voice.measured.curve, 'middle');
+  assert.ok(container.synthesized.length > 0);
+});
+
 test('an import that doesn’t say how a voice is tuned leaves it as it was', async (t) => {
   fakeContainer(t, new Set());
   await ok(`/guilds/${GUILD}/voices`, { method: 'POST', json: { name: 'Narrator', model: FILE, volume: 0, curve: 'character' } });

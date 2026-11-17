@@ -32,6 +32,8 @@ const LOUDNESS_TRIES = 4;
 const VOLUME_RANGE = [-20, 20] as const;
 /** A voice that couldn't be measured is tried again after this */
 const RETRY_MS = 10 * 60_000;
+/** How soon to try again when the voice container isn't answering, as when it starts after the bot */
+const UNREACHABLE_RETRY_MS = 30_000;
 /** How long measuring waits for speech to finish before going ahead anyway */
 const LONGEST_WAIT_MS = 5 * 60_000;
 const RENDER_TIMEOUT_MS = 60_000;
@@ -114,13 +116,21 @@ const failed = new Map<string, { key: string; at: number }>();
 const asked = new Map<string, number>();
 const retries = new Set<NodeJS.Timeout>();
 
+/** The voice container couldn't be reached at all: no fault of the voice being measured */
+class Unreachable extends Error {}
+
+/** The try again soon after the container didn't answer, apart from failures' longer waits */
+let soon: NodeJS.Timeout | null = null;
+
 /** Tries again once a failure's wait is over */
-function retryLater() {
+function retryLater(ms = RETRY_MS + 1000) {
   const timer = setTimeout(() => {
     retries.delete(timer);
+    if (timer === soon) soon = null;
     void tuneAll();
-  }, RETRY_MS + 1000).unref();
+  }, ms).unref();
   retries.add(timer);
+  return timer;
 }
 
 /** The voice's model file, if the container has it and it hasn't been measured with what it has now */
@@ -154,6 +164,9 @@ async function render(voice: string | undefined, speaker: number | null | undefi
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ text: PASSAGE, voice, speaker_id: speaker ?? undefined, length_scale: scale, noise_scale: noise?.[0], noise_w_scale: noise?.[1] }),
     signal: AbortSignal.timeout(RENDER_TIMEOUT_MS),
+  }).catch((err: unknown) => {
+    // A rendering that takes too long is the voice's; a refused connection is the container's
+    throw err instanceof Error && err.name === 'TimeoutError' ? err : new Unreachable('The voice container isn’t answering');
   });
   if (!res.ok) throw new Error(`The voice container said HTTP ${res.status}`);
   return Buffer.from(await res.arrayBuffer());
@@ -215,6 +228,10 @@ async function tuneAll() {
         const now = addedVoices().find((v) => v.id === voice.id);
         if (now && voiceState(now.id).file === file && measureKey(now, file) === measured.key && (asked.get(voice.id) ?? 0) === round) setMeasured(voice.id, measured);
       } catch (err) {
+        if (err instanceof Unreachable) {
+          soon ??= retryLater(UNREACHABLE_RETRY_MS);
+          break;
+        }
         console.error(`Couldn’t measure the voice ${voice.name}:`, err instanceof Error ? err.message : err);
         failed.set(voice.id, { key: measureKey(voice, file), at: Date.now() });
         retryLater();
@@ -248,6 +265,7 @@ export function measureAgain(id: string) {
 export function stopTuning() {
   for (const timer of retries) clearTimeout(timer);
   retries.clear();
+  soon = null;
   curves = null;
   target = null;
   failed.clear();
