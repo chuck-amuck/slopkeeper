@@ -4,7 +4,8 @@ import { spawnSync } from 'node:child_process';
 import { afterEach, beforeEach, test, type TestContext } from 'node:test';
 import { config } from '../src/config.ts';
 import { db } from '../src/db.ts';
-import { CURVE_STRETCHES } from '../src/features/say.ts';
+import { CURVE_STRETCHES, type Effect, type Voice } from '../src/features/say.ts';
+import { effectGain, forgetEffectGains, gainMeasured, keepGainsFor, setEffectGain, soundKey } from '../src/features/effectGains.ts';
 import { forgetVoiceStates, voiceFields } from '../src/features/voices.ts';
 import { nearestCurve, SCALES, speechSeconds, startTuning, stopTuning, stretchAt, volumeFor } from '../src/features/voiceTuning.ts';
 import { CURVES } from '../src/features/voices.ts';
@@ -157,7 +158,7 @@ test('an added voice is measured once it’s downloaded, takes what was found, a
   const ready = new Set(['narrator']);
   const container = fakeContainer(t, ready);
   let busy = true;
-  startTuning({ curves: CURVE_STRETCHES, busy: () => busy });
+  startTuning({ voices: () => [], effects: [], curves: CURVE_STRETCHES, busy: () => busy });
   await ok(`/guilds/${GUILD}/voices`, { method: 'POST', json: { name: 'Narrator', model: FILE } });
 
   await new Promise((resolve) => setTimeout(resolve, 100));
@@ -202,7 +203,7 @@ test('an added voice is measured once it’s downloaded, takes what was found, a
 
 test('a voice given its loudness by hand is measured too, but keeps its own', { skip: !hasFfmpeg && 'needs ffmpeg' }, async (t) => {
   fakeContainer(t, new Set(['quiet-one']));
-  startTuning({ curves: CURVE_STRETCHES, busy: () => false });
+  startTuning({ voices: () => [], effects: [], curves: CURVE_STRETCHES, busy: () => false });
   await ok(`/guilds/${GUILD}/voices`, { method: 'POST', json: { name: 'Quiet one', model: FILE, volume: -4, curve: 'low' } });
   const [voice] = await measured();
   assert.equal(voice.tune, 'manual');
@@ -218,7 +219,7 @@ test('Measure again during a measurement measures it again, rather than keeping 
   const container = fakeContainer(t, new Set(['narrator']), (body) => {
     if (body.voice && !paused) busy = paused = true;
   });
-  startTuning({ curves: CURVE_STRETCHES, busy: () => busy });
+  startTuning({ voices: () => [], effects: [], curves: CURVE_STRETCHES, busy: () => busy });
   await ok(`/guilds/${GUILD}/voices`, { method: 'POST', json: { name: 'Narrator', model: FILE } });
   while (!paused) await new Promise((resolve) => setTimeout(resolve, 20));
   await ok(`/guilds/${GUILD}/voices/narrator/measure`, { method: 'POST' });
@@ -232,7 +233,7 @@ test('Measure again during a measurement measures it again, rather than keeping 
 test('a voice that says nothing isn’t measured over and over', { skip: !hasFfmpeg && 'needs ffmpeg' }, async (t) => {
   const container = fakeContainer(t, new Set(['narrator']), undefined, true);
   t.mock.method(console, 'error', () => {});
-  startTuning({ curves: CURVE_STRETCHES, busy: () => false });
+  startTuning({ voices: () => [], effects: [], curves: CURVE_STRETCHES, busy: () => false });
   await ok(`/guilds/${GUILD}/voices`, { method: 'POST', json: { name: 'Narrator', model: FILE } });
   const [voice] = await measured();
   assert.equal(voice.measured, null);
@@ -248,7 +249,7 @@ test('a voice container that isn’t up yet holds measuring back, rather than co
   t.mock.method(globalThis, 'fetch', (url: string, init?: RequestInit) => (up || !String(url).endsWith('/synthesize') ? answering(url, init) : Promise.reject(new TypeError('fetch failed'))));
   t.mock.timers.enable({ apis: ['setTimeout'] });
   const errors = t.mock.method(console, 'error', () => {});
-  startTuning({ curves: CURVE_STRETCHES, busy: () => false });
+  startTuning({ voices: () => [], effects: [], curves: CURVE_STRETCHES, busy: () => false });
   await ok(`/guilds/${GUILD}/voices`, { method: 'POST', json: { name: 'Narrator', model: FILE } });
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(errors.mock.callCount(), 0, 'not logged as the voice’s failure');
@@ -277,4 +278,46 @@ test('measuring again needs the voice downloaded first', async (t) => {
   await ok(`/guilds/${GUILD}/voices`, { method: 'POST', json: { name: 'Narrator', model: FILE } });
   const res = await call(`/guilds/${GUILD}/voices/narrator/measure`, { method: 'POST' });
   assert.equal(res.status, 409);
+});
+
+test('each effect is measured on each voice, to be as loud as that voice without it, from one rendering', { skip: !hasFfmpeg && 'needs ffmpeg' }, async (t) => {
+  forgetEffectGains();
+  t.after(forgetEffectGains);
+  const container = fakeContainer(t, new Set());
+  // Turned up by its own 3 dB, which the effects' gains are measured on top of
+  const voice: Voice = { id: 'plain', name: 'Plain', model: 'plain-model', effects: 'volume=3dB' };
+  const quieter: Effect = { id: 'quieter', name: 'Quieter', speaker: 0, effects: 'volume=-6dB', typical: 0 };
+  const louder: Effect = { id: 'louder', name: 'Louder', speaker: 0, effects: 'volume=4dB', typical: 0 };
+  let list = [voice];
+  startTuning({ curves: CURVE_STRETCHES, busy: () => false, voices: () => list, effects: [quieter, louder] });
+  const until = Date.now() + 30_000;
+  while (![quieter, louder].every((e) => gainMeasured(soundKey(voice), e.id, e.effects))) {
+    assert.ok(Date.now() < until, 'measuring never finished');
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  // The tone is quiet enough that levelling's limiter leaves it be, so each effect's change is undone exactly
+  assert.ok(Math.abs(effectGain(voice, quieter) - 6) <= 0.5, `${effectGain(voice, quieter)} dB`);
+  assert.ok(Math.abs(effectGain(voice, louder) + 4) <= 0.5, `${effectGain(voice, louder)} dB`);
+  assert.equal(container.synthesized.filter((s) => s.voice === 'plain-model').length, 1);
+  // A voice that's gone, or changed, has its measurements forgotten
+  list = [];
+  startTuning({ curves: CURVE_STRETCHES, busy: () => false, voices: () => list, effects: [quieter, louder] });
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  assert.equal((db.prepare('SELECT COUNT(*) AS n FROM effect_gains').get() as { n: number }).n, 0);
+});
+
+test('measurements are forgotten when their voice changes or goes, but not while it’s only briefly unavailable', (t) => {
+  forgetEffectGains();
+  t.after(forgetEffectGains);
+  const before = JSON.stringify(['narrator', 'voice-narrator-1', null, 0]);
+  const measuredFor = (key: string) => gainMeasured(key, 'robot', 'chain');
+  setEffectGain(before, 'robot', 'chain', 2);
+  keepGainsFor([], new Set(['narrator']));
+  assert.ok(measuredFor(before), 'still an added voice, downloading again or with its container restarting');
+  const after = JSON.stringify(['narrator', 'voice-narrator-1', null, -3]);
+  keepGainsFor([after], new Set(['narrator']));
+  assert.ok(!measuredFor(before), 'turned down since, so it’s measured again');
+  setEffectGain(after, 'robot', 'chain', 2);
+  keepGainsFor([], new Set());
+  assert.ok(!measuredFor(after), 'removed');
 });

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { db } from '../src/db.ts';
 import { setSetting } from '../src/settings.ts';
+import { moveEffectVoices } from '../src/features/say.ts';
 
 // Stats → Sounds & music, and the Overview's calendar of days in voice
 
@@ -13,7 +14,8 @@ const DAY = 24 * HOUR;
 const sound = (user: string, name: string, at: number) => db.prepare('INSERT INTO sound_plays (guild_id, user_id, name, played_at) VALUES (?, ?, ?, ?)').run(GUILD, user, name, at);
 const song = (title: string, artist: string, addedBy: string, at: number, playedMs: number, skipped = 0, source = 'youtube') =>
   db.prepare('INSERT INTO music_plays (guild_id, at, uri, title, artist, source, duration_ms, added_by, played_ms, skipped) VALUES (?, ?, ?, ?, ?, ?, 200000, ?, ?, ?)').run(GUILD, at, `uri:${title}`, title, artist, source, addedBy, playedMs, skipped);
-const line = (user: string | null, voice: string, kind: string, at: number) => db.prepare('INSERT INTO speech_lines (guild_id, at, user_id, voice, characters, kind) VALUES (?, ?, ?, ?, 20, ?)').run(GUILD, at, user, voice, kind);
+const line = (user: string | null, voice: string, kind: string, at: number, effect: string | null = null) =>
+  db.prepare('INSERT INTO speech_lines (guild_id, at, user_id, voice, characters, kind, effect) VALUES (?, ?, ?, ?, 20, ?, ?)').run(GUILD, at, user, voice, kind, effect);
 
 test('sounds, songs and lines are counted with who and what most, members only, and never what was said', async () => {
   const now = Date.now();
@@ -26,9 +28,12 @@ test('sounds, songs and lines are counted with who and what most, members only, 
   song('Song B', 'Other', 'gone', now - 3 * HOUR, 10_000, 1, 'file');
   line('u2', 'scottish', 'say', now - HOUR);
   line('u2', 'scottish', 'message', now - 2 * HOUR);
-  line(null, 'irish', 'announcement', now - 3 * HOUR);
+  line(null, 'irish', 'announcement', now - 3 * HOUR, 'robot');
+  // From when Demon was a voice, moved when the bot starts to the voice it was made on, through the effect
+  line(null, 'demon', 'announcement', now - 4 * HOUR);
+  moveEffectVoices();
   const data = await ok(`/guilds/${GUILD}/stats/sounds?period=week`);
-  assert.deepEqual(data.totals, { sounds: 4, songs: 3, listenedMs: 390_000, skipped: 1, lines: 3 });
+  assert.deepEqual(data.totals, { sounds: 4, songs: 3, listenedMs: 390_000, skipped: 1, lines: 4 });
   assert.deepEqual(data.sounds, [
     { name: 'airhorn', plays: 2 },
     { name: 'bruh', plays: 2 },
@@ -48,10 +53,15 @@ test('sounds, songs and lines are counted with who and what most, members only, 
   ]);
   assert.deepEqual(data.voices, [
     { voice: 'scottish', name: 'Scottish', lines: 2 },
+    { voice: 'american-deep', name: 'Deep American man', lines: 1 },
     { voice: 'irish', name: 'Irish (Jenny)', lines: 1 },
   ]);
+  assert.deepEqual(data.effects, [
+    { effect: 'demon', name: 'Demon', lines: 1 },
+    { effect: 'robot', name: 'Robot', lines: 1 },
+  ]);
   assert.deepEqual(data.speakers, [{ id: 'u2', name: 'Ben', lines: 2 }]);
-  assert.deepEqual(data.kinds, { say: 1, message: 1, announcement: 1 });
+  assert.deepEqual(data.kinds, { say: 1, message: 1, announcement: 2 });
   assert.equal(data.activity.sounds.reduce((a: number, b: number) => a + b, 0), 4);
   assert.doesNotMatch(JSON.stringify(data), /"text"|"words"/);
 });

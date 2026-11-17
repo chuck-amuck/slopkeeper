@@ -158,7 +158,12 @@ test('text to speech settings take a known voice, a role and sensible limits', (
   const guild = { channels: { cache: new Map() }, roles: { cache: new Map([['talkers', { id: 'talkers' }]]) } } as never;
   assert.equal(setting('speech', 'tts'), true);
   assert.equal(setting('speech', 'ttsVoice'), 'southern-man');
-  assert.deepEqual(checkSetting(guild, 'ttsVoice', 'demon'), { value: 'demon' });
+  assert.deepEqual(checkSetting(guild, 'ttsVoice', 'american-deep'), { value: 'american-deep' });
+  assert.deepEqual(checkSetting(guild, 'ttsVoice', 'demon'), { error: 'Pick a voice from the list.' }, 'an effect now, picked on its own');
+  assert.equal(setting('speech', 'ttsEffect'), 'none');
+  assert.deepEqual(checkSetting(guild, 'ttsEffect', 'demon'), { value: 'demon' });
+  assert.deepEqual(checkSetting(guild, 'ttsEffect', 'none'), { value: 'none' });
+  assert.deepEqual(checkSetting(guild, 'ttsEffect', 'scottish'), { error: 'Pick an effect from the list.' });
   assert.deepEqual(checkSetting(guild, 'ttsVoice', '5'), { error: 'Pick a voice from the list.' }, 'the numbered voices are gone');
   assert.deepEqual(checkSetting(guild, 'ttsVoice', '3'), { error: 'Pick a voice from the list.' });
   assert.deepEqual(checkSetting(guild, 'ttsRole', 'talkers'), { value: 'talkers' });
@@ -284,7 +289,9 @@ test('looping speech takes up to 500 characters, a voice of its own, and its own
   assert.deepEqual(checkSetting(guild, 'loopText', '  stay a while  '), { value: 'stay a while' });
   assert.match((checkSetting(guild, 'loopText', '   ') as { error: string }).error, /Type something/);
   assert.match((checkSetting(guild, 'loopText', 'a'.repeat(501)) as { error: string }).error, /up to 500/);
-  assert.deepEqual(checkSetting(guild, 'loopVoice', 'demon'), { value: 'demon' });
+  assert.deepEqual(checkSetting(guild, 'loopVoice', 'scottish'), { value: 'scottish' });
+  assert.deepEqual(checkSetting(guild, 'loopEffect', 'ghost'), { value: 'ghost' });
+  assert.match((checkSetting(guild, 'loopEffect', 'nope') as { error: string }).error, /Pick an effect/);
   assert.match((checkSetting(guild, 'loopVoice', '7') as { error: string }).error, /Pick a voice/);
   assert.deepEqual(checkSetting(guild, 'loopTextEvery', 2.5), { value: 2.5 });
   await run('loop-speech', 'loop-room', { channel: { id: 'therapy', type: ChannelType.GuildVoice, joinable: true, guild: { members: { me: {} } }, permissionsFor: () => ({ has: () => true }) } });

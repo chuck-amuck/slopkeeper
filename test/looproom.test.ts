@@ -243,7 +243,7 @@ test('a gap set layers fresh copies that often, rather than looping without one'
 test('looping speech plays alongside the sound, or alone, at the loop volume, with its own gap', { skip: !hasFfmpeg }, async (t) => {
   const { id, guild, therapy, enter, loops, turnOn } = await server(t);
   const made: string[] = [];
-  setLoopSpeaker(async (_guild, text, _voice, file) => {
+  setLoopSpeaker(async (_guild, text, _voice, _effect, file) => {
     made.push(text);
     execFileSync('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', 'sine=frequency=300:duration=0.3', file]);
   }, (_guild, voice) => voice);
@@ -273,7 +273,7 @@ test('looping speech is made again when its voice is retuned, not only when it�
   let tuning = 'first';
   const made: string[] = [];
   setLoopSpeaker(
-    async (_guild, _text, _voice, file) => {
+    async (_guild, _text, _voice, _effect, file) => {
       made.push(tuning);
       execFileSync('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', 'sine=frequency=300:duration=0.3', file]);
     },
@@ -449,7 +449,7 @@ test('renaming the intro’s sound keeps it, and removing it turns the intro off
 
 test('the speech has its own volume, apart from the sound’s', { skip: !hasFfmpeg }, async (t) => {
   const { id, guild, therapy, enter, loops, turnOn } = await server(t);
-  setLoopSpeaker(async (_guild, _text, _voice, file) => {
+  setLoopSpeaker(async (_guild, _text, _voice, _effect, file) => {
     execFileSync('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', 'sine=frequency=300:duration=0.3', file]);
   }, (_guild, voice) => voice);
   t.after(() => setLoopSpeaker(undefined as never, undefined as never));
@@ -466,7 +466,7 @@ test('the speech has its own volume, apart from the sound’s', { skip: !hasFfmp
 
 test('the sound and the speech each wait their own delay after the intro', { skip: !hasFfmpeg }, async (t) => {
   const { id, guild, therapy, enter, loops, intros, finish } = await withIntro(t);
-  setLoopSpeaker(async (_guild, _text, _voice, file) => {
+  setLoopSpeaker(async (_guild, _text, _voice, _effect, file) => {
     execFileSync('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', 'sine=frequency=300:duration=0.3', file]);
   }, (_guild, voice) => voice);
   t.after(() => setLoopSpeaker(undefined as never, undefined as never));
@@ -598,7 +598,7 @@ test('with a loop bot, someone coming in starts a new run when there’s an intr
 test('with a loop bot, the speech goes as a part of its own', { skip: !hasFfmpeg }, async (t) => {
   const { id, guild, therapy, enter } = await server(t);
   const { sent } = await fakeLoopBot(t);
-  setLoopSpeaker(async (_guild, _text, _voice, file) => {
+  setLoopSpeaker(async (_guild, _text, _voice, _effect, file) => {
     execFileSync('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', 'sine=frequency=300:duration=0.3', file]);
   }, (_guild, voice) => voice);
   t.after(() => setLoopSpeaker(undefined as never, undefined as never));

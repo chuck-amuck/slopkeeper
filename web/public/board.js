@@ -1,6 +1,6 @@
 import { api, attempt, el, forget, icon, needsVoice, pageSignal, recall, remember, request, state, toast, undoToast } from './lib.js';
 import { foldHead, searchKeys, soundGrid } from './soundgrid.js';
-import { previewButton, sayField, showPicked, voiceOptions } from './speech.js';
+import { previewButton, sayField, speechPickers } from './speech.js';
 import { voiceBar } from './voice.js';
 
 // Whether Speech is folded away, on this device
@@ -12,14 +12,14 @@ const SPEECH_FOLDED = 'speechFolded';
  */
 function sayBox(voice) {
   const guildId = state.guildId;
-  const voiceKey = `voice:${guildId}`;
   const text = sayField();
-  const picker = el('select', { ariaLabel: 'Voice', className: 'say-voice', onchange: () => remember(voiceKey, picker.value) });
+  const pickers = speechPickers(guildId);
+  const { voice: picker, effect } = pickers;
   const send = el('button', { className: 'primary say-send' }, 'Say');
   let saying = false;
-  const preview = previewButton(picker, text);
+  const preview = previewButton(picker, text, effect);
   // Back from the pop-out, where the voice may have been changed meanwhile
-  addEventListener('focus', () => showPicked(picker, recall(voiceKey)), { signal: pageSignal() });
+  addEventListener('focus', () => pickers.showPicks(), { signal: pageSignal() });
   const chips = el('div', { className: 'phrase-list' });
   const saveLine = el('button', { type: 'button', className: 'icon save-line', ariaLabel: 'Save this line', title: 'Save this line, to say it again with one tap', hidden: true, onclick: () => saveTyped() }, icon('plus'));
   const editLines = el('button', { type: 'button', className: 'quiet', ariaPressed: 'false', hidden: true, onclick: () => setEditing(!editing) }, 'Edit');
@@ -63,7 +63,7 @@ function sayBox(voice) {
   const sayPhrase = (button, phrase) => {
     if (button.ariaBusy) return;
     button.ariaBusy = 'true';
-    void attempt(() => voice.say(phrase.text, picker.value)).finally(() => (button.ariaBusy = null));
+    void attempt(() => voice.say(phrase.text, picker.value, effect.value)).finally(() => (button.ariaBusy = null));
   };
   const paintPhrases = () => {
     chips.replaceChildren(
@@ -127,7 +127,7 @@ function sayBox(voice) {
         saveLine.hidden = true;
         paint();
         const sent = await attempt(async () => {
-          await voice.say(line, picker.value);
+          await voice.say(line, picker.value, effect.value);
           return true;
         });
         // Back in the box to try again, unless something new was typed meanwhile
@@ -141,20 +141,20 @@ function sayBox(voice) {
       },
     },
     el('div', { className: 'say-text' }, text, saveLine),
-    // The voice is a choice for the line being sent, so it sits with Say
-    el('div', { className: 'say-voices' }, picker, preview),
+    // The voice and effect are choices for the line being sent, so they sit with Say
+    el('div', { className: 'say-voices' }, picker, effect, preview),
     send,
   );
   const body = el('div', { className: 'say-body' }, form, row);
   const head = foldHead('Speech', recall(SPEECH_FOLDED) !== '1', body, (open) => (open ? forget(SPEECH_FOLDED) : remember(SPEECH_FOLDED, '1')));
   const node = el('div', { className: 'say-box', hidden: true }, head, body);
   void attempt(async () => {
-    const { on, voices, voice: serverDefault, longest, phrases: saved } = await request(api('/say'));
+    const offered = await request(api('/say'));
+    const { on, longest, phrases: saved } = offered;
     if (guildId !== state.guildId) return;
     text.maxLength = longest;
-    // The voice last used on this device, while the bot still offers it
-    const mine = recall(voiceKey);
-    picker.replaceChildren(...voiceOptions(voices, voices.some((v) => v.id === mine) ? mine : serverDefault));
+    // The voice and effect last used on this device, while the bot still offers them
+    pickers.fill(offered);
     node.hidden = !on;
     remembered(saved);
   });

@@ -114,6 +114,7 @@ Each setting goes by the name `/setup show` and `/setup reset` use. A few are se
 | Loop every | `loop-room` | `LOOP_EVERY` | 0 seconds, looping without a gap |
 | Looping speech | `loop-room` | | off |
 | Looping speech voice | web UI only | | the default voice |
+| Looping speech effect | web UI only | | the default effect |
 | Speech every | `loop-room` | `LOOP_TEXT_EVERY` | 0 seconds, saying it again straight away |
 | Intro sound | `loop-room` | | off |
 | Intro delay | `loop-room` | `LOOP_INTRO_DELAY_MS` | 250 ms |
@@ -124,7 +125,8 @@ Each setting goes by the name `/setup show` and `/setup reset` use. A few are se
 | Autoplay | `music`, or `/music autoplay` | `MUSIC_AUTOPLAY` | off |
 | Who can control music | `music` | | everyone |
 | Text to speech | `speech` | `TTS` (`false` to turn off) | on |
-| Default voice | web UI only | `TTS_VOICE` (a voice's id, such as `scottish`, `demon` or one added in the web UI) | `southern-man` |
+| Default voice | web UI only | `TTS_VOICE` (a voice's id, such as `scottish`, `american-deep` or one added in the web UI) | `southern-man` |
+| Default effect | web UI only | `TTS_EFFECT` (an effect's id, such as `robot`, or `none`) | `none` |
 | Speech speed | `speech` | `TTS_SPEED` | 85% of the voice's natural speed |
 | Speech volume | `speech` | `TTS_VOLUME` | 100%, about as loud as a sound with even volume on |
 | Longest spoken line | `speech` | `TTS_MAX_CHARS` (up to 6000) | 4000 characters |

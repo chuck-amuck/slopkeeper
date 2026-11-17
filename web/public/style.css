@@ -533,10 +533,10 @@ button.volume-fab[aria-expanded='true'] {
   font-size: var(--text-lg);
 }
 
-/* The line across the top, then its voice, the preview and Say */
+/* The line across the top, then its voice and effect, the preview and Say */
 .sounds-say {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto auto;
   gap: var(--space-2);
 }
 
@@ -545,7 +545,8 @@ button.volume-fab[aria-expanded='true'] {
   min-width: 0;
 }
 
-.sounds-say .say-voice {
+.sounds-say .say-voice,
+.sounds-say .say-effect {
   max-width: none;
 }
 
@@ -1295,6 +1296,12 @@ button.fold-toggle[aria-expanded='false'] .ico {
 .say-voice {
   flex: 0 1 auto;
   max-width: 16em;
+  min-width: 0;
+}
+
+.say-effect {
+  flex: 0 1 auto;
+  max-width: 12em;
   min-width: 0;
 }
 
@@ -2081,6 +2088,11 @@ dialog input {
 
   .board-side .say-voices select {
     flex: 1 1 auto;
+  }
+
+  /* The effects' names are short, so the voice gets the rest of the narrow column */
+  .board-side .say-voices .say-effect {
+    flex: 0 1 auto;
   }
 }
 
@@ -3467,10 +3479,16 @@ header.tabs-below nav button {
     grid-area: send;
   }
 
+  /* The voice and effect share the row under the line, each as wide as it can be */
   .say-voices {
     grid-area: voice;
-    justify-self: end;
+    justify-self: stretch;
     max-width: 100%;
+  }
+
+  .say-voices select {
+    flex: 1 1 0;
+    max-width: none;
   }
 
   /* Upload is its arrow alone, leaving the box room for what's typed */

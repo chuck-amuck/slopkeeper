@@ -149,9 +149,10 @@ const loopSpeechDir = () => path.join(config.dataDir, 'loop-speech');
 async function loopSpeechFile(guild: Guild): Promise<string> {
   const text = setting(guild.id, 'loopText') ?? '';
   const voice = setting(guild.id, 'loopVoice') || setting(guild.id, 'ttsVoice');
-  // Keyed on how the voice is made as well as its name, so a voice that's been retuned or removed is made again
+  const effect = setting(guild.id, 'loopEffect');
+  // Keyed on how the voice and effect are made as well as their names, so a voice that's been retuned or removed is made again
   const made = createHash('sha256')
-    .update(JSON.stringify([text, voice, loopVoiceDetails?.(guild, voice), setting(guild.id, 'ttsSpeed')]))
+    .update(JSON.stringify([text, voice, effect, loopVoiceDetails?.(guild, voice, effect), setting(guild.id, 'ttsSpeed')]))
     .digest('hex')
     .slice(0, 16);
   const file = path.join(loopSpeechDir(), `${guild.id}-${made}.wav`);
@@ -159,7 +160,7 @@ async function loopSpeechFile(guild: Guild): Promise<string> {
   mkdirSync(loopSpeechDir(), { recursive: true });
   const making = `${file}.${randomUUID()}.new.wav`;
   try {
-    await loopSpeaker!(guild, text, voice, making);
+    await loopSpeaker!(guild, text, voice, effect, making);
     renameSync(making, file);
   } finally {
     rmSync(making, { force: true });
@@ -204,7 +205,7 @@ async function loopable(guildId: string, file: string): Promise<string> {
 }
 
 /** Whether a setting changes what the looping room plays: its own, or the speech voice and speed its speech can follow */
-export const affectsLoopRoom = (key: string) => key.startsWith('loop') || key === 'ttsVoice' || key === 'ttsSpeed' || (!!config.loopBotUrl && key === 'soundVolume');
+export const affectsLoopRoom = (key: string) => key.startsWith('loop') || key === 'ttsVoice' || key === 'ttsEffect' || key === 'ttsSpeed' || (!!config.loopBotUrl && key === 'soundVolume');
 
 /** After the looping settings change: stops the loop as it was, then starts it again if it should be playing */
 export function refreshLoopRoom(guild: Guild) {
@@ -343,13 +344,15 @@ export async function loopBotStatus(guildId: string): Promise<{ ok: boolean; not
   }
 }
 
-let loopSpeaker: ((guild: Guild, text: string, voiceId: string, file: string) => Promise<void>) | undefined;
+/** Makes the speech into `file`. A null effect is the server's default one */
+type LoopSpeaker = (guild: Guild, text: string, voiceId: string, effectId: string | null, file: string) => Promise<void>;
+let loopSpeaker: LoopSpeaker | undefined;
 
-/** How a voice is made, which changes when it's retuned */
-let loopVoiceDetails: ((guild: Guild, voiceId: string) => unknown) | undefined;
+/** How a voice and effect are made, which changes when the voice is retuned or the pair measured */
+let loopVoiceDetails: ((guild: Guild, voiceId: string, effectId: string | null) => unknown) | undefined;
 
 /** How text to speech makes the looping room's speech, handed over like the greeter */
-export function setLoopSpeaker(speak: (guild: Guild, text: string, voiceId: string, file: string) => Promise<void>, voiceDetails: (guild: Guild, voiceId: string) => unknown) {
+export function setLoopSpeaker(speak: LoopSpeaker, voiceDetails: (guild: Guild, voiceId: string, effectId: string | null) => unknown) {
   loopSpeaker = speak;
   loopVoiceDetails = voiceDetails;
 }

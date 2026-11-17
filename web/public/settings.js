@@ -41,6 +41,7 @@ const FIELDS = {
   soundManagerRole: { kind: 'role', none: 'Everyone', hint: 'Who can change sounds in Discord, along with people with Manage Server. Anyone can still play them. This page isn’t limited by it: it only asks for the password.' },
   tts: { kind: 'boolean', hint: 'Lets people have the bot read out what they type, with /say or on the Soundboard tab.' },
   ttsVoice: { kind: 'speaker', hint: 'Used when nobody picks one.' },
+  ttsEffect: { kind: 'effect', hint: 'Said through when nobody picks one: messages read out, greetings and announcements too. Each effect is matched to each voice’s loudness.' },
   ttsSpeed: { kind: 'number', unit: '%', hint: 'How fast it talks. 100 is the voice’s natural speed, and lower is slower.' },
   ttsVolume: { kind: 'number', unit: '%', hint: 'How loud it talks. 100 is about as loud as a sound with even volume on. The Speech slider on the Soundboard tab and the Volume button change this too.' },
   ttsChannel: { kind: 'channel', none: 'Off', hint: 'The bot reads out what people type here, in the voice channel they’re in, or else where the bot is or where most people are.' },
@@ -57,6 +58,7 @@ const FIELDS = {
   loopTextDelayMs: { kind: 'number', unit: 'ms', hint: 'How long the looping speech waits after the intro ends, or after the loop starts with no intro. 1000 is a second.' },
   loopText: { hint: 'Words said over and over in the room, on top of the sound, up to 500 characters. Leave it empty for none.' },
   loopVoice: { kind: 'speaker', none: 'Same as the default voice', hint: 'Who says the looping speech.' },
+  loopEffect: { kind: 'effect', none: 'Same as the default effect', hint: 'What the looping speech is said through.' },
   loopTextEvery: { kind: 'number', unit: 'seconds', hint: 'Starts the speech again this often, layered over the last if it’s still talking. 0 says it again straight away.' },
   loopIntro: { kind: 'sound', none: 'Off', hint: 'Played once, at its own level, before the loop starts. Someone else coming in stops the loop and starts again from the intro.' },
   loopIntroDelayMs: { kind: 'number', unit: 'ms', hint: 'How long after someone comes in the intro plays. 250 is a quarter of a second.' },
@@ -99,6 +101,8 @@ function describe(spec, value, data) {
       return named(data.voiceChannels, value) ?? 'deleted channel';
     case 'speaker':
       return named(data.voices, value) ?? value;
+    case 'effect':
+      return value === 'none' ? 'No effect' : (named(data.effects ?? [], value) ?? value);
     case 'choice':
       return spec.options.find(([id]) => id === value)?.[1] ?? value;
     case 'day':
@@ -205,6 +209,8 @@ export function renderSettings(main) {
         const missing = value && !data.voices.some((v) => v.id === value) ? [[value, `${value} (not available)`]] : [];
         return select([...(spec.none ? [['', spec.none]] : []), ...missing, ...data.voices.map((v) => [v.id, v.name])]);
       }
+      case 'effect':
+        return select([...(spec.none ? [['', spec.none]] : []), ['none', 'No effect'], ...(data.effects ?? []).map((e) => [e.id, e.name])]);
       case 'choice':
         return select(spec.options);
       case 'day':
@@ -336,7 +342,7 @@ export function renderSettings(main) {
       // What the last save said, if anything, and otherwise what's wrong with it now
       if (fromSave) say(fromSave.text, fromSave.bad);
       else say((fresh.problems ?? []).filter((p) => p.key === next.key).map(problemText).join(' ') || null);
-      const choices = { channel: fresh.channels, role: fresh.roles, voice: fresh.voiceChannels, sound: fresh.sounds, speaker: fresh.voices }[spec.kind];
+      const choices = { channel: fresh.channels, role: fresh.roles, voice: fresh.voiceChannels, sound: fresh.sounds, speaker: fresh.voices, effect: fresh.effects }[spec.kind];
       const from = JSON.stringify([current.value, current.limits, choices]);
       // A field someone is in keeps its control, so what they're typing or picking isn't thrown away
       if (from !== drawn && !(drawn && box.contains(document.activeElement))) {

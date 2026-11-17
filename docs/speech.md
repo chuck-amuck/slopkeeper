@@ -2,7 +2,7 @@
 
 The bot reads out what people type, in a voice they pick. It needs the host's [voice container](self-hosting.md#the-voice-container).
 
-`/say text [voice]` reads a line in your voice channel, joining it first if it has to. The web UI's Soundboard has a **Say something** box too, where **Save** keeps a line as a one-click button (up to 25 per server); `/say saved:` says one from Discord.
+`/say text [voice] [effect]` reads a line in your voice channel, joining it first if it has to. The web UI's Soundboard has a **Say something** box too, where **Save** keeps a line as a one-click button (up to 25 per server); `/say saved:` says one from Discord.
 
 **Say this aloud:** right-click a message, or press and hold it on a phone, then **Apps → Say this aloud** to have it read out, starting with whose message it is.
 
@@ -10,19 +10,26 @@ The bot reads out what people type, in a voice they pick. It needs the host's [v
 - Mentions are read as names, custom emoji by name, and links as "link". Spoilers and code blocks are skipped when reading a message.
 - A line can be up to 4,000 characters by default (about 5 minutes), and 6,000 at most. A long line takes a few seconds to start.
 - Every line goes in the Activity tab with who said it, cut to its first 200 characters.
-- A line said again within half an hour, in the same voice and speed, plays straight away.
+- A line said again within half an hour, in the same voice, effect and speed, plays straight away.
 
 ## Voices
 
-- **Accents:** **Scottish**, **Northern English**, **Southern English** (a woman, and a man, who's the default), **Irish (Jenny)** and **Australian** (a man and a woman) are English voices. **Russian**, **Spanish** and **German** read English with that accent, and **State broadcast** is a Korean announcer over an old loudspeaker. Russian in Cyrillic and Korean in Hangul are read in their own language.
-- **Effect styles:** **Demon**, **Helium**, **Giant**, **Robot**, **Alien**, **Walkie-talkie**, **Phone call**, **Megaphone**, **Stadium PA**, **Newsreel**, **Cathedral**, **Underwater**, **Ghost** and **Trailer narrator**.
+- **Accents:** **American** (a man, a woman and a deep man), **Scottish**, **Northern English**, **Southern English** (a woman, and a man, who's the default), **Irish (Jenny)** and **Australian** (a man and a woman) are English voices. **Russian**, **Spanish** and **German** read English with that accent, and **State broadcast** is a Korean announcer over an old loudspeaker. Russian in Cyrillic and Korean in Hangul are read in their own language.
 - **Characters**, and any other Piper voice, are [added in the web UI](#adding-voices).
 
-Neither the accents nor the styles imitate a known person. In Discord, `voice` is searched as you type. If a server's default voice is removed or still downloading, it talks in the bot's default voice, and Settings says so.
+Neither the accents nor the effects imitate a known person. In Discord, `voice` and `effect` are searched as you type. If a server's default voice is removed or still downloading, it talks in the bot's default voice, and Settings says so.
+
+## Effects
+
+Any voice can be said through an effect, picked beside the voice: **Demon**, **Helium**, **Giant**, **Robot**, **Alien**, **Walkie-talkie**, **Phone call**, **Megaphone**, **Stadium PA**, **Newsreel**, **Cathedral**, **Underwater**, **Ghost**, **Trailer narrator** and **Old loudspeaker**. Pitch effects change the pace too: Helium is quicker, and Giant and Demon slower.
+
+- An effect changes some voices' loudness far more than others', so each voice and effect pair is measured once, in the background, to be as loud as the voice is without it. Until then a pair uses the effect's usual correction.
+- The server's **Default effect**, in Settings, is used when nobody picks one, including for messages read out, greetings and announcements. **No effect** is a pick of its own.
+- The effects used to be voices, on three American voices. A server, the looping room or a device that had picked one now has the American voice it was made on, with that effect.
 
 ## Settings
 
-`/setup speech` sets whether it's on, how fast and loud it talks, the longest line, and how long each person waits between lines. The default voice is picked in the web UI's Settings. `/setup speech-role` limits speech to a role, plus people with **Manage Server**, and that covers reading a channel aloud too. The web UI isn't limited by the role, and counts as one person for the wait.
+`/setup speech` sets whether it's on, how fast and loud it talks, the longest line, and how long each person waits between lines. The default voice and effect are picked in the web UI's Settings. `/setup speech-role` limits speech to a role, plus people with **Manage Server**, and that covers reading a channel aloud too. The web UI isn't limited by the role, and counts as one person for the wait.
 
 **Greetings:** with `greet` on, the bot says who joined voice, using the **Greeting** setting with `{name}` for the person. It follows the join sound rules: the same cooldown, nothing for moving channels, the bot won't leave another channel for one, and someone with a join sound hears that instead.
 
@@ -43,7 +50,7 @@ The web UI's Settings has a **Voices** card for adding any [Piper](https://githu
   - **Pace**: above 1 is slower. 1.1 is 10% slower.
   - **Steadiness**: steadier timing and sound for a voice that wobbles in long lines.
   - **Speed curve**: how it follows the speed setting. Character suits most community models.
-  - **Preview** plays it with these settings, just for you.
+  - **Preview** plays it with these settings, just for you, through the **Preview effect** if one is picked.
 - **Remove** deletes it, and servers that picked it go back to their default voice.
 - **Export** saves every added voice as `slopkeeper-voices.json`. **Import** takes that file, matches voices by id or name, and shows what it would add, change and skip before it does. **Replace all** removes added voices the file doesn't have.
 

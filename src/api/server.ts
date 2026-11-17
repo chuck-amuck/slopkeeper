@@ -2,7 +2,7 @@ import { ChannelType, type Guild, type VoiceChannel } from 'discord.js';
 import { type IncomingMessage } from 'node:http';
 import { config } from '../config.ts';
 import { linkWebUser, logActivity, recentActivity, webUser, webUserFor } from '../activity.ts';
-import { voices } from '../features/say.ts';
+import { effects, voices } from '../features/say.ts';
 import { canGiveRole } from '../util.ts';
 import { checkSetting, GROUPS, LABELS, LIMITS, POSTING_CHANNELS, settingProblems, show, source, STEPS } from '../features/setup.ts';
 import { afterSettingsChanged } from '../features/soundboard.ts';
@@ -45,6 +45,7 @@ function settingList(guild: Guild) {
     problems: settingProblems(guild),
     postChannels: POSTING_CHANNELS,
     voices: voices().map(({ id, name }) => ({ id, name })),
+    effects: effects().map(({ id, name }) => ({ id, name })),
     // Whether there's a voice container, without which there are no voices to add
     speech: Boolean(config.voiceUrl),
   };
@@ -106,7 +107,7 @@ export async function handleSettings(guild: Guild, req: IncomingMessage, key?: s
   logActivity(guild.id, by(), `Set ${LABELS[settingKey]} to ${show(settingKey, setting(guild.id, settingKey))}`);
   await settled();
   // The speech is made now, so a voice container that's down shows here rather than as silence in the room
-  const speechProblem = settingKey === 'loopText' || settingKey === 'loopVoice' ? await loopSpeechProblem(guild) : null;
+  const speechProblem = settingKey === 'loopText' || settingKey === 'loopVoice' || settingKey === 'loopEffect' ? await loopSpeechProblem(guild) : null;
   return { warning: (checked.warning && plain(guild, checked.warning)) || speechProblem || undefined };
 }
 

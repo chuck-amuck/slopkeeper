@@ -763,6 +763,7 @@ function soundsAndMusic(main, address) {
         data.djs.length > 0 && card('Who puts music on', ranked(data.djs.map((p) => ({ label: p.name, ...counted(p.songs, 'song') })))),
         data.voices.length > 0 &&
           card('Voices', ranked(data.voices.map((v) => ({ label: v.name, ...counted(v.lines, 'line') }))), ways && el('p', { className: 'hint' }, `${ways[0].toUpperCase()}${ways.slice(1)}. What was said isn’t kept.`)),
+        data.effects?.length > 0 && card('Effects', ranked(data.effects.map((e) => ({ label: e.name, ...counted(e.lines, 'line') })))),
         data.speakers.length > 0 && card('Who says the most', ranked(data.speakers.map((p) => ({ label: p.name, ...counted(p.lines, 'line') })))),
         el('p', { className: 'hint' }, 'Only people still in the server are listed. Drag across the chart with a mouse to look closer.'),
       ].filter(Boolean),

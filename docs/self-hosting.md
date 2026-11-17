@@ -77,7 +77,7 @@ voice:
 
 Set `VOICE_URL=http://voice:5000` on the bot, and don't publish the port. On first start it downloads eleven models (about 750 MB) into its volume, and after that it needs no internet. Voices [added in the web UI](speech.md#adding-voices) download into the same volume when they're added. A model that can't be fetched leaves its voice talking with the first model until the container restarts:
 
-- `en_US-libritts_r-medium` (79 MB, CC BY 4.0) holds 904 voices. The effect styles are built on three of them, with ffmpeg effects added by the bot.
+- `en_US-libritts_r-medium` (79 MB, CC BY 4.0) holds 904 voices. Three of them are the American voices, and the effects are ffmpeg filters the bot runs on any voice.
 - The English accents are Piper models trained on English readers, 61 to 74 MB each.
   - Scottish is [`en_GB-alba-medium`](https://huggingface.co/rhasspy/piper-voices/tree/main/en/en_GB/alba/medium) (CC BY 4.0).
   - Northern English is [`en_GB-northern_english_male-medium`](https://huggingface.co/rhasspy/piper-voices/tree/main/en/en_GB/northern_english_male/medium) and the Southern English woman [`en_GB-southern_english_female-low`](https://huggingface.co/rhasspy/piper-voices/tree/main/en/en_GB/southern_english_female/low) (both CC BY-SA 4.0). The woman is only made in low quality.

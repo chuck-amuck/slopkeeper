@@ -65,6 +65,8 @@ export const DEFAULTS = {
   loopText: null as string | null,
   // Unset uses the server's default voice
   loopVoice: null as string | null,
+  // Unset uses the server's default effect, and 'none' none
+  loopEffect: null as string | null,
   // Seconds between fresh copies of the speech, layered like the sound's. 0 says it again straight away
   loopTextEvery: num('LOOP_TEXT_EVERY', 0),
   // The speech's own volume, apart from the sound's loopVolume
@@ -85,6 +87,8 @@ export const DEFAULTS = {
   ttsMaxChars: num('TTS_MAX_CHARS', 4000),
   ttsCooldownSec: num('TTS_COOLDOWN_SEC', 5),
   ttsVoice: process.env.TTS_VOICE || 'southern-man',
+  // An effect lines are said through when nobody picks one, or 'none'
+  ttsEffect: process.env.TTS_EFFECT || 'none',
   // The voices run a little fast at their natural speed
   ttsSpeed: num('TTS_SPEED', 85),
   // 100 is about as loud as a sound with Even volume on
@@ -146,6 +150,7 @@ export const DEFAULT_ENV: Partial<Record<SettingKey, string>> = {
   ttsMaxChars: 'TTS_MAX_CHARS',
   ttsCooldownSec: 'TTS_COOLDOWN_SEC',
   ttsVoice: 'TTS_VOICE',
+  ttsEffect: 'TTS_EFFECT',
   ttsSpeed: 'TTS_SPEED',
   ttsVolume: 'TTS_VOLUME',
   ttsChannelWho: 'TTS_CHANNEL_WHO',

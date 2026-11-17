@@ -1,6 +1,6 @@
 import { api, attempt, el, forget, needsVoice, recall, remember, request, state } from './lib.js';
 import { foldHead, soundGrid } from './soundgrid.js';
-import { previewButton, sayField, showPicked, voiceOptions } from './speech.js';
+import { previewButton, sayField, speechPickers } from './speech.js';
 import { voiceBar } from './voice.js';
 import { volumeSliders } from './volumes.js';
 
@@ -18,7 +18,6 @@ const VOLUMES_KEY = 'soundsVolumesOpen';
  */
 export function soundsBody(openBoard, { slash = false, volumes = ['sounds', 'speech', 'music'] } = {}) {
   const guildId = state.guildId;
-  const voiceKey = `voice:${guildId}`;
   const voice = voiceBar(paint, { sliders: false });
   const grid = soundGrid({
     voice,
@@ -31,7 +30,8 @@ export function soundsBody(openBoard, { slash = false, volumes = ['sounds', 'spe
   // One line to say, in the voice picked here, which is the one the Soundboard has on this device too
   let saying = false;
   const text = sayField();
-  const picker = el('select', { ariaLabel: 'Voice', className: 'say-voice', onchange: () => remember(voiceKey, picker.value) });
+  const pickers = speechPickers(guildId);
+  const { voice: picker, effect } = pickers;
   const send = el('button', { className: 'primary say-send' }, 'Say');
   const say = el(
     'form',
@@ -48,7 +48,7 @@ export function soundsBody(openBoard, { slash = false, volumes = ['sounds', 'spe
         text.value = '';
         paint();
         const sent = await attempt(async () => {
-          await voice.say(line, picker.value);
+          await voice.say(line, picker.value, effect.value);
           return true;
         });
         if (!sent && !text.value) text.value = line;
@@ -59,13 +59,14 @@ export function soundsBody(openBoard, { slash = false, volumes = ['sounds', 'spe
     },
     text,
     picker,
-    previewButton(picker, text),
+    effect,
+    previewButton(picker, text, effect),
     send,
   );
 
   function paint() {
     // Picked on the Soundboard since, or in the pop-out
-    showPicked(picker, recall(voiceKey));
+    pickers.showPicks();
     const channel = voice.channel();
     send.disabled = saying;
     needsVoice(send, channel);
@@ -74,11 +75,11 @@ export function soundsBody(openBoard, { slash = false, volumes = ['sounds', 'spe
   }
 
   void attempt(async () => {
-    const { on, voices, voice: serverVoice, longest } = await request(api('/say'));
+    const offered = await request(api('/say'));
+    const { on, longest } = offered;
     if (guildId !== state.guildId || !search.isConnected) return;
-    // The voice last picked on this device, while the bot still offers it
-    const mine = recall(voiceKey);
-    picker.replaceChildren(...voiceOptions(voices, voices.some((v) => v.id === mine) ? mine : serverVoice));
+    // The voice and effect last picked on this device, while the bot still offers them
+    pickers.fill(offered);
     text.maxLength = longest;
     say.hidden = !on;
     paint();

@@ -1183,15 +1183,25 @@ test('tells the page what text to speech offers', async () => {
   try {
     const data = await ok(`/guilds/${GUILD}/say`);
     assert.deepEqual(data.voices.map((v: { name: string }) => v.name), [
-      ...['Scottish', 'Northern English', 'Southern English woman'],
+      ...['American man', 'American woman', 'Deep American man', 'Scottish', 'Northern English', 'Southern English woman'],
       ...['Southern English man', 'Irish (Jenny)', 'Australian man', 'Australian woman', 'State broadcast', 'Russian', 'Spanish', 'German'],
-      ...['Demon', 'Helium', 'Giant', 'Robot', 'Alien', 'Walkie-talkie', 'Phone call', 'Megaphone', 'Stadium PA', 'Newsreel'],
-      ...['Cathedral', 'Underwater', 'Ghost', 'Trailer narrator'],
     ]);
     assert.deepEqual(Object.keys(data.voices[0]), ['id', 'name', 'group']);
     const group = (id: string) => data.voices.find((v: { id: string }) => v.id === id).group;
-    assert.deepEqual([group('scottish'), group('russian'), group('demon')], ['Accents', 'Accents', 'Effects']);
+    assert.deepEqual([group('scottish'), group('russian'), group('american-deep')], ['Accents', 'Accents', 'Accents']);
     assert.deepEqual([data.on, data.voice, data.longest], [true, 'southern-man', 4000]);
+    // The effects, picked beside a voice, and what a device's pick of one from when they were voices becomes
+    assert.deepEqual(data.effects.map((e: { name: string }) => e.name), [
+      ...['Demon', 'Helium', 'Giant', 'Robot', 'Alien', 'Walkie-talkie', 'Phone call', 'Megaphone', 'Stadium PA', 'Newsreel'],
+      ...['Cathedral', 'Underwater', 'Ghost', 'Trailer narrator', 'Old loudspeaker'],
+    ]);
+    assert.deepEqual(Object.keys(data.effects[0]), ['id', 'name']);
+    assert.equal(data.effect, 'none');
+    assert.deepEqual(data.oldVoices.demon, { voice: 'american-deep', effect: 'demon' });
+    assert.equal(Object.keys(data.oldVoices).length, 14);
+    setSetting(GUILD, 'ttsEffect', 'ghost');
+    assert.equal((await ok(`/guilds/${GUILD}/say`)).effect, 'ghost');
+    setSetting(GUILD, 'ttsEffect', undefined);
     setSetting(GUILD, 'tts', false);
     assert.equal((await ok(`/guilds/${GUILD}/say`)).on, false);
   } finally {
@@ -1210,7 +1220,7 @@ test('previews a voice for the browser only, a few at a time', async (t) => {
   assert.equal(await refused(409, preview), 'Text to speech is off for this server.', 'no voice container set up');
   config.voiceUrl = 'http://voice.test';
   const real = fetch;
-  const asked: { text: string }[] = [];
+  const asked: { text: string; length_scale: number }[] = [];
   t.mock.method(globalThis, 'fetch', async (target: URL | string, init?: RequestInit) => {
     if (String(target).startsWith(base)) return real(target, init);
     asked.push(JSON.parse(init!.body as string));
@@ -1221,6 +1231,7 @@ test('previews a voice for the browser only, a few at a time', async (t) => {
   assert.equal(res.headers.get('content-type'), 'audio/wav');
   assert.equal(new TextDecoder().decode((await res.arrayBuffer()).slice(0, 4)), 'RIFF');
   assert.equal(asked[0].text, 'hello there');
+  assert.equal(asked[0].length_scale, Math.round(lengthFor(85) * 1.1 * 100) / 100, 'the voice Demon was, at its pace');
   assert.equal(await refused(429, preview), 'Wait a moment before the next preview.');
   assert.deepEqual(recentActivity(GUILD, 50).filter((r) => /preview/i.test(r.action)), [], 'it isn’t said in voice, so it isn’t logged');
   setSetting(GUILD, 'tts', false);
@@ -1237,6 +1248,7 @@ test('the page’s limits on text to speech', async () => {
     assert.equal(await post({ channelId: '702', text: 'x'.repeat(4001) }), 'That’s 4001 characters, and the limit here is 4000.');
     assert.equal(await post({ channelId: '702', text: '🎉' }), 'There’s nothing in that to read out.');
     assert.equal(await post({ channelId: '702', text: 'hello', voice: 'nope' }), 'Pick a voice from the list.');
+    assert.equal(await post({ channelId: '702', text: 'hello', voice: 'scottish', effect: 'nope' }), 'Pick an effect from the list.');
   } finally {
     config.voiceUrl = url;
   }
@@ -1256,6 +1268,11 @@ test('the page’s lines go through the voice container and show as coming from 
   t.mock.method(console, 'error', () => {});
   await refused(400, `/guilds/${GUILD}/say`, { method: 'POST', json: { channelId: '702', text: 'hello <@123>', voice: 'alien' } });
   assert.deepEqual(asked, { text: 'hello someone', speaker_id: 0, length_scale: lengthFor(85) });
+  // An effect picked beside the voice, which Giant says 20% slower. Straight after, so without the wait between lines
+  setSetting(GUILD, 'ttsCooldownSec', 0);
+  t.after(() => setSetting(GUILD, 'ttsCooldownSec', undefined));
+  await refused(400, `/guilds/${GUILD}/say`, { method: 'POST', json: { channelId: '702', text: 'big', voice: 'american-man', effect: 'giant' } });
+  assert.deepEqual(asked, { text: 'big', speaker_id: 400, length_scale: Math.round(lengthFor(85) * 1.2 * 100) / 100 });
 });
 
 test('the page saves lines and removes them', async () => {

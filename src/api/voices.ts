@@ -1,6 +1,6 @@
 import { logActivity } from '../activity.ts';
 import { config } from '../config.ts';
-import { asVoice, FIXED_VOICES, previewSpeech, TooSoon } from '../features/say.ts';
+import { asVoice, effects, FIXED_VOICES, NO_EFFECT, previewSpeech, TooSoon } from '../features/say.ts';
 import {
   type AddedVoice,
   addedVoices,
@@ -68,7 +68,8 @@ export async function voiceRoutes(ask: Ask) {
   if (!id && req.method === 'GET') {
     // Only asked while one is on its way, so a list that's settled answers at once
     if (addedVoices().some((v) => !['ready', 'failed'].includes(voiceState(v.id).state))) await refreshVoiceStates();
-    return { voices: addedVoices().map((v) => listed(ask, v)), most: MOST_VOICES };
+    // The effects too, for hearing a voice through one in its preview
+    return { voices: addedVoices().map((v) => listed(ask, v)), most: MOST_VOICES, effects: effects().map(({ id, name }) => ({ id, name })) };
   }
 
   if (!id && req.method === 'POST') {
@@ -134,11 +135,11 @@ export async function voiceRoutes(ask: Ask) {
     const voice = find(id);
     const state = voiceState(id);
     if (state.state !== 'ready' || !state.file) throw new Refused(409, `${voice.name} isn’t downloaded yet.`);
-    const { text, ...changes } = await readJson(req);
+    const { text, effect, ...changes } = await readJson(req);
     const fields = merged(voice, changes);
     const typed = typeof text === 'string' ? text.slice(0, LONGEST_PREVIEW) : '';
     // A changed link isn't downloaded yet, so a preview is of the model that's there, with the settings given
-    const audio = await previewSpeech(guild, typed, asVoice({ ...voice, ...fields }, state.file)).catch((err: unknown) => {
+    const audio = await previewSpeech(guild, typed, asVoice({ ...voice, ...fields }, state.file), typeof effect === 'string' ? effect : NO_EFFECT).catch((err: unknown) => {
       if (err instanceof TooSoon) throw new Refused(429, err.message);
       if (err instanceof Error && err.message.startsWith('There’s nothing')) throw new Refused(400, err.message);
       console.error(`Web UI: a preview of the added voice ${voice.name} failed:`, err);

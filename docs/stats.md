@@ -45,7 +45,7 @@ Launchers and helpers like `steamwebhelper`, and Moonlight, aren't counted. Anyt
 
 ### Voice, music and speech history
 
-Since November 2026, the bot also notes when people join and leave voice, so Stats can show when in the week people are on. For Stats → **Sounds & music**, it notes each song played (who added it and how far it got) and each line said aloud (who, in which voice and how long). The words of a line are never kept.
+Since November 2026, the bot also notes when people join and leave voice, so Stats can show when in the week people are on. For Stats → **Sounds & music**, it notes each song played (who added it and how far it got) and each line said aloud (who, in which voice and effect, and how long). The words of a line are never kept.
 
 ## Comparing two people
 

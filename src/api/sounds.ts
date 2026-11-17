@@ -8,7 +8,7 @@ import { config } from '../config.ts';
 import { db } from '../db.ts';
 import * as discordBoard from '../discordSounds.ts';
 import { musicState } from '../features/music.ts';
-import { phrases, previewSpeech, removePhrase, savePhrase, say, serverVoice, TooSoon, voiceGroup, voices } from '../features/say.ts';
+import { effects, NO_EFFECT, oldEffectVoice, phrases, previewSpeech, removePhrase, savePhrase, say, serverEffect, serverVoice, TooSoon, voiceGroup, voices } from '../features/say.ts';
 import { addGroup, addSound, addToDiscord, BIN_DAYS, changeEmoji, deleteGroup, fillGroup, moveGroup, placeSound, renameGroup, soundGroups, deletedSounds, eraseDeleted, expiresAt, favourites, findSound, listSounds, parseEmoji, playCounts, removeSound, renameSound, restoreDeleted, restoreSound, saveFromDiscord, setFavourite, setSoundVolume, type Sound, soundLevels, soundVolumes, swapOnDiscord, syncToDiscord, takeOffDiscord, trimmedSounds, trimProblem, trimSound, untaken, untrimmedFile, placeBeside, uploadProblem, volumeProblem } from '../features/soundLibrary.ts';
 import { joinSounds, setJoinSound } from '../features/joinSounds.ts';
 import { playDiscordSound, playFromWeb, playingNow, stopPlayback, stopPlayingOne } from '../features/voiceAudio.ts';
@@ -471,11 +471,21 @@ export async function soundRoutes({ client, guild, req, res, url, section, rest 
     return {};
   }
   if (section === 'say' && !rest.length && req.method === 'GET') {
-    return { on: Boolean(config.voiceUrl) && setting(guild.id, 'tts'), voices: voices().map((v) => ({ id: v.id, name: v.name, group: voiceGroup(v) })), voice: serverVoice(guild.id).id, longest: setting(guild.id, 'ttsMaxChars'), phrases: phrases(guild.id) };
+    return {
+      on: Boolean(config.voiceUrl) && setting(guild.id, 'tts'),
+      voices: voices().map((v) => ({ id: v.id, name: v.name, group: voiceGroup(v) })),
+      voice: serverVoice(guild.id).id,
+      effects: effects().map((e) => ({ id: e.id, name: e.name })),
+      effect: serverEffect(guild.id)?.id ?? NO_EFFECT,
+      // The effects were voices once, so a pick of one remembered on a device becomes the voice it was made on and the effect
+      oldVoices: Object.fromEntries(effects().flatMap((e) => (oldEffectVoice(e.id) ? [[e.id, oldEffectVoice(e.id)]] : []))),
+      longest: setting(guild.id, 'ttsMaxChars'),
+      phrases: phrases(guild.id),
+    };
   }
   if (section === 'say' && rest.length === 1 && rest[0] === 'preview' && req.method === 'GET') {
     if (!config.voiceUrl || !setting(guild.id, 'tts')) throw new Refused(409, 'Text to speech is off for this server.');
-    const audio = await previewSpeech(guild, (url.searchParams.get('text') ?? '').slice(0, 2000), url.searchParams.get('voice') ?? '').catch((err: unknown) => {
+    const audio = await previewSpeech(guild, (url.searchParams.get('text') ?? '').slice(0, 2000), url.searchParams.get('voice') ?? '', url.searchParams.get('effect') ?? undefined).catch((err: unknown) => {
       if (err instanceof TooSoon) throw new Refused(429, err.message);
       if (err instanceof Error && err.message.startsWith('There’s nothing')) throw new Refused(400, err.message);
       console.error(`Web UI: a voice preview in ${guild.name} failed:`, err);
@@ -487,9 +497,9 @@ export async function soundRoutes({ client, guild, req, res, url, section, rest 
     return null;
   }
   if (section === 'say' && !rest.length && req.method === 'POST') {
-    const { channelId, text, voice } = await readJson(req);
+    const { channelId, text, voice, effect } = await readJson(req);
     if (typeof text !== 'string') throw new Refused(400, 'Type something to say.');
-    refuse(guild, await say(voiceChannelFor(guild, channelId), text, typeof voice === 'string' ? voice : undefined, by()));
+    refuse(guild, await say(voiceChannelFor(guild, channelId), text, typeof voice === 'string' ? voice : undefined, by(), typeof effect === 'string' ? effect : undefined));
     return {};
   }
   if (section === 'phrases' && !rest.length && req.method === 'POST') {

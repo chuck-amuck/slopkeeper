@@ -13,7 +13,7 @@ import { logActivity } from '../activity.ts';
 import { DEFAULT_ENV, DEFAULTS, idSetting, setSetting, setting, storedSetting, type SettingKey } from '../settings.ts';
 import type { Feature } from '../types.ts';
 import { canGiveRole, isTimeZone, pingWarning } from '../util.ts';
-import { missingVoice, serverVoice, voiceName, voices } from './say.ts';
+import { effectName, effects, missingVoice, NO_EFFECT, serverVoice, voiceName, voices } from './say.ts';
 import { afterSettingsChanged } from './soundboard.ts';
 import { cantJoin } from './voiceAudio.ts';
 import { findSound, listSounds } from './soundLibrary.ts';
@@ -111,6 +111,7 @@ export const LABELS: Record<SettingKey, string> = {
   ttsMaxChars: 'Longest spoken line',
   ttsCooldownSec: 'Wait between spoken lines',
   ttsVoice: 'Default voice',
+  ttsEffect: 'Default effect',
   ttsSpeed: 'Speech speed',
   ttsVolume: 'Speech volume',
   soundVolume: 'Soundboard volume',
@@ -120,6 +121,7 @@ export const LABELS: Record<SettingKey, string> = {
   loopEvery: 'Loop every',
   loopText: 'Looping speech',
   loopVoice: 'Looping speech voice',
+  loopEffect: 'Looping speech effect',
   loopTextEvery: 'Speech every',
   loopIntro: 'Intro sound',
   loopIntroDelayMs: 'Intro delay',
@@ -204,6 +206,10 @@ export function show(key: SettingKey, value: unknown): string {
       return value ? `“${String(value)}”` : 'off';
     case 'loopVoice':
       return value ? (voiceName(String(value)) ?? String(value)) : 'the default voice';
+    case 'loopEffect':
+      return value ? (effectName(String(value)) ?? String(value)) : 'the default effect';
+    case 'ttsEffect':
+      return effectName(String(value)) ?? String(value);
     case 'loopSound':
       return value ? String(value) : 'not set';
     case 'loopIntro':
@@ -274,8 +280,8 @@ export const GROUPS: [string, SettingKey[]][] = [
   ['Free games', ['freeGames', 'freeGamesChannel', 'freeGamesMinRating', 'freeGamesTaste', 'freeGamesMultiplayer', 'freeGamesUnlisted']],
   ['Soundboard', ['soundVolume', 'evenVolume', 'joinSounds', 'joinSoundDelayMs', 'joinSoundCooldownMin', 'soundManagerRole']],
   ['Music', ['musicVolume', 'musicAutoplay', 'musicDjRole']],
-  ['Looping sound room', ['loopRoom', 'loopSound', 'loopVolume', 'loopEvery', 'loopText', 'loopVoice', 'loopTextVolume', 'loopTextEvery', 'loopIntro', 'loopIntroDelayMs', 'loopSoundDelayMs', 'loopTextDelayMs']],
-  ['Text to speech', ['tts', 'ttsVoice', 'ttsSpeed', 'ttsVolume', 'ttsChannel', 'ttsChannelWho', 'ttsGreet', 'ttsGreeting', 'ttsNightReminders', 'ttsHopOn', 'ttsRole', 'ttsMaxChars', 'ttsCooldownSec']],
+  ['Looping sound room', ['loopRoom', 'loopSound', 'loopVolume', 'loopEvery', 'loopText', 'loopVoice', 'loopEffect', 'loopTextVolume', 'loopTextEvery', 'loopIntro', 'loopIntroDelayMs', 'loopSoundDelayMs', 'loopTextDelayMs']],
+  ['Text to speech', ['tts', 'ttsVoice', 'ttsEffect', 'ttsSpeed', 'ttsVolume', 'ttsChannel', 'ttsChannelWho', 'ttsGreet', 'ttsGreeting', 'ttsNightReminders', 'ttsHopOn', 'ttsRole', 'ttsMaxChars', 'ttsCooldownSec']],
 ];
 
 /** Something that stops the bot doing what its settings ask, and the setting to change, if one will fix it */
@@ -488,6 +494,9 @@ export function checkSetting(guild: Guild, key: SettingKey, value: unknown): Che
     case 'ttsVoice':
     case 'loopVoice':
       return voices().some((v) => v.id === value) ? { value: String(value) } : { error: 'Pick a voice from the list.' };
+    case 'ttsEffect':
+    case 'loopEffect':
+      return value === NO_EFFECT || effects().some((e) => e.id === value) ? { value: String(value) } : { error: 'Pick an effect from the list.' };
     case 'loopText': {
       const text = String(value).trim();
       if (!text) return { error: 'Type something to say.' };

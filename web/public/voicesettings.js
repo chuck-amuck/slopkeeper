@@ -1,4 +1,5 @@
 import { api, attempt, confirmButton, el, fetchAudio, formProblem, notice, openDialog, player, request, RequestError, toast } from './lib.js';
+import { effectOptions, NO_EFFECT } from './speech.js';
 
 // Settings' Voices card: the voices added here for every server on the bot, with export and import
 
@@ -66,6 +67,7 @@ export function voicesCard(main, onChange) {
   let voices = [];
   let timer = null;
   let most = 50;
+  let effects = [];
 
   const say = (text, bad = false) => {
     message.hidden = !text;
@@ -79,6 +81,7 @@ export function voicesCard(main, onChange) {
     const before = JSON.stringify(voices.map((v) => [v.id, v.state]));
     voices = data.voices;
     most = data.most;
+    effects = data.effects ?? [];
     paint();
     // Every picker on the page lists the voices that are ready
     if (before !== JSON.stringify(voices.map((v) => [v.id, v.state]))) onChange?.();
@@ -240,12 +243,13 @@ export function voicesCard(main, onChange) {
       if (tune === 'auto' && m && volume === m.volume && curve === m.curve) return { ...rest, tune: 'auto' };
       return { ...rest, ...(volume !== (v.volume ?? 0) && { volume }), ...(curve !== (v.curve ?? 'character') && { curve }) };
     };
+    const effect = el('select', { id: 'voice-effect' }, effectOptions(effects, NO_EFFECT));
     const hear = el('button', { type: 'button', disabled: v.state !== 'ready', title: v.state === 'ready' ? 'Hear it with these settings, just for you' : 'Once it’s downloaded' }, 'Preview');
     hear.onclick = () =>
       void attempt(async () => {
         problem.hidden = true;
         try {
-          await preview(v, settings(), line.value, hear);
+          await preview(v, { ...settings(), effect: effect.value }, line.value, hear);
         } catch (err) {
           if (!(err instanceof RequestError)) throw err;
           problem.textContent = err.message;
@@ -266,6 +270,7 @@ export function voicesCard(main, onChange) {
         row('Steadiness', fields.noise, 'Steadier evens out a voice that wobbles in long lines.'),
         row('Speed curve', fields.curve, 'How its speed follows the speed setting. Character suits most.'),
         row('Preview line', line),
+        row('Preview effect', effect, 'Only for hearing it: effects are picked beside the voice when something’s said.'),
         problem,
       ],
       start: [hear],

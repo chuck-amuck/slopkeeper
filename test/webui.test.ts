@@ -20,6 +20,13 @@ const STALE = { sounds: [{ name: 'deleted since', plays: 3 }], groups: [] };
 // A page's address, its name, what it remembers, what must be true of it once it's shown, and what to do on it first
 const PAGES: [string, string, Record<string, string>?, string?, string?][] = [
   ['board', 'Soundboard'],
+  // An effect picked beside the voice. A pick remembered from when the effects were voices becomes the voice and effect
+  [
+    'board',
+    'Soundboard: an old effect voice remembered',
+    { [`voice:${GUILD}`]: 'demon' },
+    `(() => { const v = document.querySelector('.say-voice'); const e = document.querySelector('.say-effect'); return !!v && !!e && v.value === 'american-deep' && e.value === 'demon' && e.options.length === 16 && localStorage.getItem('effect:${GUILD}') === 'demon'; })()`,
+  ],
   // Drawn at once from what was seen last, and the server remembered, so its parts are asked for as the page starts. Then
   // what's since changed: a sound deleted and the server renamed
   [
@@ -54,7 +61,7 @@ const PAGES: [string, string, Record<string, string>?, string?, string?][] = [
     'settings',
     'Settings: Edit a voice',
     {},
-    `(() => { const d = document.querySelector('dialog[open]'); return !!d && /Edit Narrator/.test(d.textContent) && d.querySelectorAll('select').length === 4 && /Measured: Middle, -2.5 dB/.test(d.textContent) && [...d.querySelectorAll('button')].some((b) => b.textContent === 'Use measured') && /Downloading, 40%/.test(document.body.innerText) && /Couldn’t download/.test(document.body.innerText); })()`,
+    `(() => { const d = document.querySelector('dialog[open]'); return !!d && /Edit Narrator/.test(d.textContent) && d.querySelectorAll('select').length === 5 && d.querySelector('#voice-effect').options.length === 16 && /Measured: Middle, -2.5 dB/.test(d.textContent) && [...d.querySelectorAll('button')].some((b) => b.textContent === 'Use measured') && /Downloading, 40%/.test(document.body.innerText) && /Couldn’t download/.test(document.body.innerText); })()`,
     `[...document.querySelectorAll('#settings-voices .voice-row')].find((r) => r.textContent.startsWith('Narrator')).querySelector('button:nth-child(2)').click()`,
   ],
   // An import, from a file picked, says what it would do first

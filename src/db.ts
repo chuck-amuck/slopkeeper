@@ -634,6 +634,25 @@ transaction(() => {
   db.exec('DELETE FROM sound_favourites');
 });
 
+// The effect a line was said with, besides its voice: null for none, and for lines from before effects were their own pick
+if (!db.prepare("SELECT 1 FROM pragma_table_info('speech_lines') WHERE name = 'effect'").get()) {
+  db.exec('ALTER TABLE speech_lines ADD COLUMN effect TEXT');
+}
+
+db.exec(`
+  -- How much each effect is turned up or down on each voice, so it's as loud as that voice without it. Measured for each
+  -- pair, as an effect changes some voices' loudness far more than others'. voice_key is what the voice sounds by (its
+  -- model, speaker and settings) and chain the effect's ffmpeg filters, so a change to either measures it again
+  CREATE TABLE IF NOT EXISTS effect_gains (
+    voice_key TEXT NOT NULL,
+    effect TEXT NOT NULL,
+    chain TEXT NOT NULL,
+    gain REAL NOT NULL,
+    at INTEGER NOT NULL,
+    PRIMARY KEY (voice_key, effect)
+  );
+`);
+
 export function getKv(key: string): string | undefined {
   const row = db.prepare('SELECT value FROM kv WHERE key = ?').get(key) as { value: string } | undefined;
   return row?.value;

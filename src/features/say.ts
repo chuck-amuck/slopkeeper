@@ -19,17 +19,18 @@ import {
 } from 'discord.js';
 import { logActivity } from '../activity.ts';
 import { config } from '../config.ts';
-import { db } from '../db.ts';
+import { db, transaction } from '../db.ts';
 import { levelSpeech } from '../loudness.ts';
 import * as perf from '../perf.ts';
-import { DEFAULTS, idSetting, setting } from '../settings.ts';
+import { DEFAULTS, idSetting, setSetting, setting, storedSetting } from '../settings.ts';
 import type { Feature } from '../types.ts';
 import { canSee, humansIn } from '../util.ts';
 import { plural } from './gamestats.ts';
 import { onPlaybackStop, play } from './voiceAudio.ts';
 import { setGreeter } from './joinSounds.ts';
-import { setLoopSpeaker } from './loopRoom.ts';
+import { isLooping, refreshLoopRoom, setLoopSpeaker } from './loopRoom.ts';
 import { type AddedVoice, addedVoices, type Curve, syncVoices, voicesGeneration, voiceState } from './voices.ts';
+import { effectGain, onGainMeasured, soundKey } from './effectGains.ts';
 import { startTuning } from './voiceTuning.ts';
 
 /** How much longer speech gets, paired with the length_scale that gives it, from fastest to slowest */
@@ -140,13 +141,30 @@ const DEEP = 499;
 const MAN = 400;
 const WOMAN = 0;
 
-/**
- * Styles made with ffmpeg effects on one of the default model's speakers, each turned up or down at the end to match that
- * speaker without them
- */
-const STYLES: readonly Voice[] = [
+/** An ffmpeg effect any voice can be said through, picked beside the voice */
+export interface Effect {
+  id: string;
+  name: string;
+  /** The default model's speaker it was a voice on, before effects were picked apart from voices. A new one has none */
+  speaker?: number;
+  /** Multiplies the voice's length_scale, as a pitch change makes speech sound rushed or dragged */
+  pace?: number;
+  /** ffmpeg filters, run after the voice's own and before levelling. The volume at the end matches that speaker without them */
+  effects: string;
+  /**
+   * dB that makes it as loud as most voices are without it, used until it's measured on the voice it's said in. It
+   * changes some voices' loudness far more than others', by up to 14 dB, so each pair is measured (voiceTuning.ts)
+   */
+  typical: number;
+}
+
+/** What a setting or a pick holds for no effect */
+export const NO_EFFECT = 'none';
+
+/** The effects, which were once voices of their own on the default model's speakers, and keep those voices' ids */
+const EFFECTS: readonly Effect[] = [
   {
-    id: 'demon',
+    id: 'demon', typical: 1.5,
     name: 'Demon',
     speaker: DEEP,
     pace: 1.1,
@@ -155,23 +173,23 @@ const STYLES: readonly Voice[] = [
       'asplit=2[a][b];[a]rubberband=pitch=0.5[a2];[b]rubberband=pitch=0.7[b2];[a2][b2]amix=inputs=2:weights=1 0.7:normalize=0,lowshelf=f=150:g=4,asoftclip=type=tanh,aecho=0.8:0.6:40|90:0.35|0.2,volume=3dB',
   },
   // Chipmunk style: the pitch goes up and the voice shrinks with it
-  { id: 'helium', name: 'Helium', speaker: MAN, pace: 0.9, effects: 'rubberband=pitch=1.8' },
-  { id: 'giant', name: 'Giant', speaker: DEEP, pace: 1.2, effects: 'rubberband=pitch=0.7,lowshelf=f=150:g=5,aecho=0.8:0.7:90|180:0.35|0.2,volume=1.6dB' },
+  { id: 'helium', typical: 0.5, name: 'Helium', speaker: MAN, pace: 0.9, effects: 'rubberband=pitch=1.8' },
+  { id: 'giant', typical: 2, name: 'Giant', speaker: DEEP, pace: 1.2, effects: 'rubberband=pitch=0.7,lowshelf=f=150:g=5,aecho=0.8:0.7:90|180:0.35|0.2,volume=1.6dB' },
   {
-    id: 'robot',
+    id: 'robot', typical: -1,
     name: 'Robot',
     speaker: MAN,
     // Every frequency's phase flattened, which turns speech into a monotone buzz, then a metal ring
     effects: "afftfilt=real='hypot(re,im)*sin(0)':imag='hypot(re,im)*cos(0)':win_size=512:overlap=0.75,aecho=0.8:0.8:8:0.4,volume=16dB",
   },
   {
-    id: 'alien',
+    id: 'alien', typical: 1.5,
     name: 'Alien',
     speaker: WOMAN,
     effects: "rubberband=pitch=1.25,flanger=delay=3:depth=6:speed=0.6:regen=50,vibrato=f=7:d=0.35,aeval='val(0)*(0.65+0.35*sin(2*PI*90*t))',volume=7dB",
   },
   {
-    id: 'radio',
+    id: 'radio', typical: -1,
     name: 'Walkie-talkie',
     speaker: MAN,
     pace: 0.95,
@@ -180,20 +198,20 @@ const STYLES: readonly Voice[] = [
       "highpass=f=500,lowpass=f=2800,volume=12dB,asoftclip=type=hard,volume=-12dB,acompressor=threshold=0.05:ratio=8:attack=2:release=60:makeup=4,aeval='val(0)+0.012*(random(0)*2-1)',volume=1.3dB",
   },
   {
-    id: 'phone',
+    id: 'phone', typical: 0.5,
     name: 'Phone call',
     speaker: WOMAN,
     effects: 'highpass=f=300,lowpass=f=3400,aresample=8000,aresample=22050,equalizer=f=1500:t=q:w=1:g=4,acompressor=threshold=0.1:ratio=4:makeup=2',
   },
   {
-    id: 'megaphone',
+    id: 'megaphone', typical: -1,
     name: 'Megaphone',
     speaker: MAN,
     pace: 0.95,
     effects: 'highpass=f=600,lowpass=f=4000,equalizer=f=1500:t=q:w=1:g=8,volume=10dB,asoftclip=type=atan,volume=-10dB,aecho=0.8:0.3:30:0.3,volume=18dB',
   },
   {
-    id: 'stadium',
+    id: 'stadium', typical: -0.5,
     name: 'Stadium PA',
     speaker: MAN,
     pace: 1.1,
@@ -201,7 +219,7 @@ const STYLES: readonly Voice[] = [
     effects: 'highpass=f=250,lowpass=f=6000,equalizer=f=2000:t=q:w=1:g=4,aecho=0.8:0.6:180|360|540:0.4|0.25|0.15,aecho=0.8:0.85:60|117|173:0.3|0.25|0.2,volume=8dB',
   },
   {
-    id: 'newsreel',
+    id: 'newsreel', typical: -1,
     name: 'Newsreel',
     speaker: MAN,
     pace: 0.88,
@@ -209,16 +227,16 @@ const STYLES: readonly Voice[] = [
     effects:
       "highpass=f=250,lowpass=f=4500,equalizer=f=1500:t=q:w=1:g=4,acompressor=threshold=0.08:ratio=6:makeup=3,vibrato=f=0.7:d=0.03,aeval='val(0)+if(lt(random(0),0.0008),0.25*(random(1)*2-1),0)+0.006*(random(2)*2-1)',volume=0.8dB",
   },
-  { id: 'cathedral', name: 'Cathedral', speaker: MAN, pace: 1.15, effects: 'aecho=0.8:0.9:120|240|370|510|660|820:0.5|0.4|0.32|0.25|0.18|0.12' },
+  { id: 'cathedral', typical: -0.5, name: 'Cathedral', speaker: MAN, pace: 1.15, effects: 'aecho=0.8:0.9:120|240|370|510|660|820:0.5|0.4|0.32|0.25|0.18|0.12' },
   {
-    id: 'underwater',
+    id: 'underwater', typical: 1,
     name: 'Underwater',
     speaker: MAN,
     pace: 1.1,
     effects: 'lowpass=f=800,rubberband=pitch=0.92,vibrato=f=5:d=0.5,chorus=0.6:0.9:50|60:0.4|0.32:0.25|0.4:2|1.3,volume=2.3dB',
   },
   {
-    id: 'ghost',
+    id: 'ghost', typical: -0.5,
     name: 'Ghost',
     speaker: WOMAN,
     pace: 1.25,
@@ -226,12 +244,14 @@ const STYLES: readonly Voice[] = [
     effects: 'highpass=f=200,rubberband=pitch=1.08,areverse,aecho=0.8:0.9:80|160|260|400:0.45|0.35|0.25|0.15,areverse,tremolo=f=5:d=0.3,aecho=0.8:0.7:300:0.3,volume=8dB',
   },
   {
-    id: 'trailer',
+    id: 'trailer', typical: 1,
     name: 'Trailer narrator',
     speaker: DEEP,
     pace: 1.15,
     effects: 'rubberband=pitch=0.85,lowshelf=f=120:g=6,acompressor=threshold=0.1:ratio=4:makeup=2,aecho=0.8:0.6:80|160:0.3|0.2,volume=3.6dB',
   },
+  // The old loudspeaker State broadcast is said through, for any voice
+  { id: 'loudspeaker', name: 'Old loudspeaker', effects: BROADCAST_EFFECTS, typical: 0.5 },
 ];
 
 /**
@@ -240,6 +260,10 @@ const STYLES: readonly Voice[] = [
  * default model's voices once levelled, which the limiter in levelling squeezes, so a cut of several dB lowers it far less
  */
 const BUILT_IN: readonly Voice[] = [
+  // The default model's speakers the effects were first made on, as they sound without them
+  { id: 'american-man', name: 'American man', speaker: MAN },
+  { id: 'american-woman', name: 'American woman', speaker: WOMAN },
+  { id: 'american-deep', name: 'Deep American man', speaker: DEEP },
   // English models with British, Irish and Australian accents
   { id: 'scottish', name: 'Scottish', model: 'alba', stretches: CHARACTER_STRETCHES, effects: 'volume=-2dB' },
   { id: 'northern', name: 'Northern English', model: 'northern', stretches: MIDDLE_STRETCHES, effects: 'volume=4dB' },
@@ -278,32 +302,50 @@ export function asVoice(v: AddedVoice, file: string): Voice {
   };
 }
 
-/** The voices in the code, which ids and names of added voices can't take */
-export const FIXED_VOICES: readonly Voice[] = [...BUILT_IN, ...STYLES];
+/** The voices and effects in the code, whose ids and names added voices can't take, as an effect's were a voice's */
+export const FIXED_VOICES: readonly { id: string; name: string }[] = [...BUILT_IN, ...EFFECTS];
+
+/** Every effect on offer */
+export const effects = (): readonly Effect[] => EFFECTS;
+
+/** An effect by its id, or its name as someone might type it into /say */
+const effectCalled = (typed: string) => EFFECTS.find((e) => e.id === typed) ?? EFFECTS.find((e) => e.name.toLowerCase() === typed.trim().toLowerCase());
+
+/** An effect's name, or undefined for one that's gone */
+export const effectName = (id: string) => (id === NO_EFFECT ? 'No effect' : EFFECTS.find((e) => e.id === id)?.name);
+
+/**
+ * A pick from before effects were apart from voices, by the voice's id or name: the voice it was made on, and the
+ * effect. Settings are moved over when the bot starts, but a device's last pick, an old tab or TTS_VOICE can still say one
+ */
+export function oldEffectVoice(typed: string | null | undefined): { voice: string; effect: string } | null {
+  const effect = typed ? effectCalled(typed) : undefined;
+  return effect?.speaker !== undefined ? { voice: BUILT_IN.find((v) => v.model === undefined && v.speaker === effect.speaker)!.id, effect: effect.id } : null;
+}
 
 let built: { generation: number; list: readonly Voice[] } | null = null;
 
-/** Every voice on offer: the built-in ones, the added ones whose models the voice container has, and the styles */
+/** Every voice on offer: the built-in ones and the added ones whose models the voice container has */
 export function voices(): readonly Voice[] {
   if (built?.generation !== voicesGeneration()) {
     const added = addedVoices().flatMap((v) => {
       const state = voiceState(v.id);
       return state.state === 'ready' && state.file ? [asVoice(v, state.file)] : [];
     });
-    built = { generation: voicesGeneration(), list: [...BUILT_IN, ...added, ...STYLES] };
+    built = { generation: voicesGeneration(), list: [...BUILT_IN, ...added] };
   }
   return built.list;
 }
 
 /** How the web UI groups the voices: the built-in ones are all accents, and an added one is in the group it was given */
-export const voiceGroup = (voice: Voice) => (STYLES.includes(voice) ? 'Effects' : BUILT_IN.includes(voice) ? 'Accents' : (voice.group ?? 'Characters'));
+export const voiceGroup = (voice: Voice) => (BUILT_IN.includes(voice) ? 'Accents' : (voice.group ?? 'Characters'));
 
 /** A voice's name, even one that's still downloading, or undefined for one that's gone */
 export const voiceName = (id: string) => voices().find((v) => v.id === id)?.name ?? addedVoices().find((v) => v.id === id)?.name;
 
 /** Why a voice someone picked isn't on offer, or null if it is */
 export function missingVoice(id: string): string | null {
-  if (!id || voices().some((v) => v.id === id)) return null;
+  if (!id || oldEffectVoice(id) || voices().some((v) => v.id === id)) return null;
   const added = addedVoices().find((v) => v.id === id);
   if (!added) return `${id} isn’t a voice any more`;
   const { state } = voiceState(id);
@@ -319,12 +361,32 @@ const FALLBACK_VOICE = BUILT_IN.find((v) => v.id === 'southern-man')!;
  * falls back to the server's default, then the bot's, then Southern English man
  */
 export function serverVoice(guildId: string, id: string | null = setting(guildId, 'ttsVoice')): Voice {
-  const find = (wanted: string | null) => voices().find((v) => v.id === wanted);
+  const find = (wanted: string | null) => {
+    const id = oldEffectVoice(wanted)?.voice ?? wanted;
+    return voices().find((v) => v.id === id);
+  };
   return find(id) ?? find(setting(guildId, 'ttsVoice')) ?? find(DEFAULTS.ttsVoice) ?? FALLBACK_VOICE;
 }
 
+/**
+ * The effect to say a line through, or null for none. `id` is one picked with it, NO_EFFECT for none on purpose, and
+ * undefined for the server's default. An old effect voice picked as `voiceId` brings its effect when none is picked
+ */
+export function serverEffect(guildId: string, id?: string | null, voiceId?: string | null): Effect | null {
+  if (id === NO_EFFECT) return null;
+  const picked = id ? EFFECTS.find((e) => e.id === id) : undefined;
+  if (picked) return picked;
+  // The server's voice can still be an old one only when nothing, not even TTS_EFFECT, has picked an effect
+  const old = oldEffectVoice(voiceId) ?? (storedSetting(guildId, 'ttsEffect') === undefined && setting(guildId, 'ttsEffect') === NO_EFFECT ? oldEffectVoice(setting(guildId, 'ttsVoice')) : null);
+  if (old) return EFFECTS.find((e) => e.id === old.effect)!;
+  return EFFECTS.find((e) => e.id === setting(guildId, 'ttsEffect')) ?? null;
+}
+
 /** A voice by its id, or by its name as someone might type it into /say instead of picking it */
-const voiceCalled = (typed: string) => voices().find((v) => v.id === typed) ?? voices().find((v) => v.name.toLowerCase() === typed.trim().toLowerCase());
+const voiceCalled = (typed: string) => {
+  const id = oldEffectVoice(typed)?.voice ?? typed;
+  return voices().find((v) => v.id === id) ?? voices().find((v) => v.name.toLowerCase() === typed.trim().toLowerCase());
+};
 
 const SPEAK_TIMEOUT_MS = 15_000;
 // And this much more for each character, as a long paragraph takes a while: 3,350 characters took about 8 s
@@ -355,6 +417,7 @@ interface Line {
   channel: VoiceBasedChannel;
   text: string;
   voice: Voice;
+  effect: Effect | null;
   /** Runs once the line starts playing, or with why it never will */
   started: (problem: string | null) => void;
   /** From being asked for to being heard */
@@ -367,7 +430,7 @@ interface Line {
 /** How a line came to be said: someone saying it, a message read out, or an announcement */
 type LineKind = 'say' | 'message' | 'announcement';
 
-const insertLine = db.prepare('INSERT INTO speech_lines (guild_id, at, user_id, voice, characters, kind) VALUES (?, ?, ?, ?, ?, ?)');
+const insertLine = db.prepare('INSERT INTO speech_lines (guild_id, at, user_id, voice, characters, kind, effect) VALUES (?, ?, ?, ?, ?, ?, ?)');
 
 interface Queue {
   lines: Line[];
@@ -407,13 +470,17 @@ export function speechFor(guild: Guild, typed: string) {
     .trim();
 }
 
-/** Says a line into a WAV file, levelled like any other speech, for the looping room to play over and over. Throws why it couldn't, for the user */
-async function speakToFile(guild: Guild, typed: string, voiceId: string, file: string) {
+/**
+ * Says a line into a WAV file, levelled like any other speech, for the looping room to play over and over. A null
+ * effect is the server's default one. Throws why it couldn't, for the user
+ */
+async function speakToFile(guild: Guild, typed: string, voiceId: string, effectId: string | null, file: string) {
   if (!config.voiceUrl) throw new Error('Text to speech isn’t set up on this bot. It needs VOICE_URL.');
   const text = speechFor(guild, typed);
   if (!hasWords(text)) throw new Error('There’s nothing in that to say.');
   const voice = serverVoice(guild.id, voiceId);
-  const made = await lineAudio(text, voice, setting(guild.id, 'ttsSpeed'), new AbortController().signal).catch((err: unknown) => {
+  const effect = serverEffect(guild.id, effectId, voiceId);
+  const made = await lineAudio(text, voice, effect, setting(guild.id, 'ttsSpeed'), new AbortController().signal).catch((err: unknown) => {
     // Anything else, like ffmpeg failing, says what it is
     throw err instanceof VoiceDown ? new Error('The voice container isn’t answering, so the looping speech can’t be made.') : err;
   });
@@ -430,7 +497,7 @@ export function lengthFor(speed: number, stretches = STRETCHES) {
   return Math.round((fromLength + ((toLength - fromLength) * (stretch - fromStretch)) / (toStretch - fromStretch)) * 100) / 100;
 }
 
-async function speech(text: string, voice: Voice, speed: number, signal: AbortSignal, trace?: perf.Trace) {
+async function speech(text: string, voice: Voice, effect: Effect | null, speed: number, signal: AbortSignal, trace?: perf.Trace) {
   const asked = performance.now();
   // A model the container doesn't have gets its default one instead, with no error, so voice/start.sh fetches every model named here
   const res = await fetch(`${config.voiceUrl}/synthesize`, {
@@ -440,7 +507,7 @@ async function speech(text: string, voice: Voice, speed: number, signal: AbortSi
       text,
       voice: voice.model,
       speaker_id: voice.speaker,
-      length_scale: Math.round(lengthFor(speed, voice.stretches) * (voice.pace ?? 1) * 100) / 100,
+      length_scale: Math.round(lengthFor(speed, voice.stretches) * (voice.pace ?? 1) * (effect?.pace ?? 1) * 100) / 100,
       noise_scale: voice.noise?.[0],
       noise_w_scale: voice.noise?.[1],
     }),
@@ -498,17 +565,20 @@ function keepLine(key: string, audio: Buffer) {
   }
 }
 
-async function makeLine(text: string, voice: Voice, speed: number, trace?: perf.Trace): Promise<Buffer> {
+/** The ffmpeg filters a line goes through before levelling: the voice's own, then the effect's, turned up or down for this voice */
+const filtersFor = (voice: Voice, effect: Effect | null, gain: number) => [voice.effects, effect && `${effect.effects},volume=${gain}dB`].filter(Boolean).join(',') || undefined;
+
+async function makeLine(text: string, voice: Voice, effect: Effect | null, gain: number, speed: number, trace?: perf.Trace): Promise<Buffer> {
   folder ??= mkdtempSync(path.join(tmpdir(), 'slopkeeper-say-'));
   const file = path.join(folder, `made-${randomUUID()}.wav`);
   const unlevelled = `${file}.raw.wav`;
   try {
-    const raw = await speech(text, voice, speed, new AbortController().signal, trace).catch((err: unknown) => {
+    const raw = await speech(text, voice, effect, speed, new AbortController().signal, trace).catch((err: unknown) => {
       throw new VoiceDown(err instanceof Error ? err.message : String(err));
     });
     writeFileSync(unlevelled, raw);
     const levelling = performance.now();
-    await levelSpeech(unlevelled, file, voice.effects);
+    await levelSpeech(unlevelled, file, filtersFor(voice, effect, gain));
     trace?.part('levelling and effects', (performance.now() - levelling) / 1000, 'making');
     return readFileSync(file);
   } finally {
@@ -521,9 +591,11 @@ async function makeLine(text: string, voice: Voice, speed: number, trace?: perf.
  * A line levelled and ready to play, made again only if it isn't one of the lines lately made or being made. `trace`
  * hears how it was made, if this is the ask that makes it
  */
-async function lineAudio(text: string, voice: Voice, speed: number, signal: AbortSignal, trace?: perf.Trace): Promise<Buffer> {
+async function lineAudio(text: string, voice: Voice, effect: Effect | null, speed: number, signal: AbortSignal, trace?: perf.Trace): Promise<Buffer> {
+  // The effect's correction too, which changes once the pair is measured
+  const gain = effect ? effectGain(voice, effect) : 0;
   // An added voice's settings too, as they can change, and a preview can try ones not saved yet
-  const key = JSON.stringify([voice.key ?? voice.id, speed, text]);
+  const key = JSON.stringify([voice.key ?? voice.id, effect?.id ?? null, gain, speed, text]);
   const kept = spoken.get(key);
   if (kept && Date.now() - kept.at < KEEP_SPOKEN_MS) {
     // To the newest end, so lines said often are the last to go
@@ -541,7 +613,7 @@ async function lineAudio(text: string, voice: Voice, speed: number, signal: Abor
     // Made for whoever asks for it meanwhile, so one caller's Stop doesn't fail the others. A stopped line is still
     // finished and kept, as it's often said again straight after
     const from = performance.now();
-    made = makeLine(text, voice, speed, trace).then((audio) => {
+    made = makeLine(text, voice, effect, gain, speed, trace).then((audio) => {
       perf.time('speech_make_seconds', (performance.now() - from) / 1000, { length: text.length > SHORT_LINE ? 'long' : 'short' });
       keepLine(key, audio);
       return audio;
@@ -568,18 +640,20 @@ const previewsAt = new Map<string, number[]>();
 
 /**
  * A line in a voice, as a WAV file, for the web UI to play in the browser so someone can hear a voice before the
- * whole call does. A blank line gets the voice saying its name. Throws a TooSoon when a server asks too often
+ * whole call does. A blank line gets the voice saying its name. `effectId` is as for serverEffect. Throws a TooSoon when
+ * a server asks too often
  */
-export async function previewSpeech(guild: Guild, typed: string, chosen: string | Voice): Promise<Buffer> {
+export async function previewSpeech(guild: Guild, typed: string, chosen: string | Voice, effectId?: string): Promise<Buffer> {
   if (!config.voiceUrl) throw new Error('Text to speech isn’t set up on this bot.');
   const voice = typeof chosen === 'string' ? serverVoice(guild.id, chosen) : chosen;
+  const effect = serverEffect(guild.id, effectId, typeof chosen === 'string' ? chosen : undefined);
   const now = Date.now();
   const recent = (previewsAt.get(guild.id) ?? []).filter((at) => now - at < 60_000);
   if (recent.length >= PREVIEWS_PER_MINUTE || now - (recent.at(-1) ?? 0) < PREVIEW_EVERY_MS) throw new TooSoon();
   previewsAt.set(guild.id, [...recent, now]);
   const text = typed.trim() ? previewPart(speechFor(guild, typed).slice(0, setting(guild.id, 'ttsMaxChars'))) : `Hi, this is ${voice.name}.`;
   if (!hasWords(text)) throw new Error('There’s nothing in that to say.');
-  return lineAudio(text, voice, setting(guild.id, 'ttsSpeed'), new AbortController().signal);
+  return lineAudio(text, voice, effect, setting(guild.id, 'ttsSpeed'), new AbortController().signal);
 }
 
 /** The start of a long line, up to the end of a sentence or else a word */
@@ -599,7 +673,7 @@ export class TooSoon extends Error {
   }
 }
 
-async function sayLine(queue: Queue, { channel, text, voice, started, trace, who, kind }: Line) {
+async function sayLine(queue: Queue, { channel, text, voice, effect, started, trace, who, kind }: Line) {
   const guildId = channel.guild.id;
   const cancel = (queue.cancel = new AbortController());
   trace.step(perf.WAITING);
@@ -607,7 +681,7 @@ async function sayLine(queue: Queue, { channel, text, voice, started, trace, who
   // Each line has its own file, as the mixer takes a file it's already playing to be a restart
   const file = path.join(folder, `${randomUUID()}.wav`);
   try {
-    writeFileSync(file, await lineAudio(text, voice, setting(guildId, 'ttsSpeed'), cancel.signal, trace));
+    writeFileSync(file, await lineAudio(text, voice, effect, setting(guildId, 'ttsSpeed'), cancel.signal, trace));
     cancel.signal.throwIfAborted();
     trace.step('making');
     const heard = () => {
@@ -623,7 +697,7 @@ async function sayLine(queue: Queue, { channel, text, voice, started, trace, who
           else {
             // Only for Stats: a line that's playing carries on if it can't be written down
             try {
-              insertLine.run(guildId, Date.now(), who, voice.id, text.length, kind);
+              insertLine.run(guildId, Date.now(), who, voice.id, text.length, kind, effect?.id ?? null);
             } catch (err) {
               console.error('Couldn’t note a line for Stats:', err);
             }
@@ -671,29 +745,35 @@ function sayProblem(guild: Guild, text: string, who: string): string | null {
   return queueFor(guild.id).lines.length >= MOST_WAITING ? `There are already ${MOST_WAITING} lines waiting. Try again in a moment.` : null;
 }
 
-/** Says something in a channel, after any lines ahead of it. Returns null once it's started, or why it couldn't. `who` is a user id, or who on the web UI (see activity.ts) */
-export async function say(channel: VoiceBasedChannel, typed: string, voiceId: string | undefined, who: string): Promise<string | null> {
+/**
+ * Says something in a channel, after any lines ahead of it. Returns null once it's started, or why it couldn't. `who` is
+ * a user id, or who on the web UI (see activity.ts). An effect not given is the server's default, or NO_EFFECT for none
+ */
+export async function say(channel: VoiceBasedChannel, typed: string, voiceId: string | undefined, who: string, effectId?: string): Promise<string | null> {
   const { guild } = channel;
   const voice = voiceId === undefined ? serverVoice(guild.id) : voiceCalled(voiceId);
   if (!voice) return 'Pick a voice from the list.';
+  const named = effectId === undefined || effectId === NO_EFFECT ? effectId : effectCalled(effectId)?.id;
+  if (effectId !== undefined && !named) return 'Pick an effect from the list.';
+  const effect = serverEffect(guild.id, named, voiceId);
   const text = speechFor(guild, typed);
   const problem = sayProblem(guild, text, who);
   if (problem) return problem;
   lastLine.set(`${guild.id}:${who}`, Date.now());
 
-  const failed = await queueLine(channel, text, voice, who, 'say');
+  const failed = await queueLine(channel, text, voice, effect, who, 'say');
   if (!failed) logActivity(guild.id, who, `Said “${text.length > LOGGED_CHARS ? `${text.slice(0, LOGGED_CHARS).trimEnd()}…` : text}” in <#${channel.id}>`);
   return failed;
 }
 
-/** Says a line nobody typed, in the server's voice. Returns null once it's started, or why it couldn't */
+/** Says a line nobody typed, in the server's voice and effect. Returns null once it's started, or why it couldn't */
 export function sayOut(channel: VoiceBasedChannel, line: string): Promise<string | null> {
   const { guild } = channel;
   const text = speechFor(guild, line);
   const voice = serverVoice(guild.id);
   if (!config.voiceUrl || !setting(guild.id, 'tts') || !hasWords(text)) return Promise.resolve('Nothing to say.');
   if (queueFor(guild.id).lines.length >= MOST_WAITING) return Promise.resolve('Too many lines waiting.');
-  return queueLine(channel, text, voice, null, 'announcement');
+  return queueLine(channel, text, voice, serverEffect(guild.id), null, 'announcement');
 }
 
 /** Says an announcement to the people in a channel, unless that means leaving people in another */
@@ -739,13 +819,13 @@ export function savePhrase(guild: Guild, typed: string): string | null {
 
 export const removePhrase = (guildId: string, id: number) => db.prepare('DELETE FROM saved_phrases WHERE guild_id = ? AND id = ?').run(guildId, id).changes > 0;
 
-function queueLine(channel: VoiceBasedChannel, text: string, voice: Voice, who: string | null, kind: LineKind) {
+function queueLine(channel: VoiceBasedChannel, text: string, voice: Voice, effect: Effect | null, who: string | null, kind: LineKind) {
   const queue = queueFor(channel.guild.id);
   const { promise, resolve } = Promise.withResolvers<string | null>();
   // The voice and how long it is, never the words
   const trace = new perf.Trace('speech_seconds', 'Speech', channel.guild.id, SLOW_SPEECH_S + (text.length / 1000) * SLOW_SPEECH_PER_1000_CHARS_S);
-  Object.assign(trace.detail, { voice: voice.id, characters: text.length, waitingAhead: queue.lines.length + (queue.running ? 1 : 0) });
-  queue.lines.push({ channel, text, voice, started: resolve, trace, who, kind });
+  Object.assign(trace.detail, { voice: voice.id, effect: effect?.id ?? null, characters: text.length, waitingAhead: queue.lines.length + (queue.running ? 1 : 0) });
+  queue.lines.push({ channel, text, voice, effect, started: resolve, trace, who, kind });
   void run(queue);
   return promise;
 }
@@ -781,12 +861,39 @@ export async function readMessage(message: Message) {
   const last = lastReader.get(guild.id);
   const sameSpeaker = last?.id === author.id && Date.now() - last.at < SAME_SPEAKER_MS;
   lastReader.set(guild.id, { id: author.id, at: Date.now() });
-  const problem = await queueLine(channel, sameSpeaker ? text : `${speechFor(guild, member?.displayName ?? author.displayName)} says, ${text}`, voice, author.id, 'message');
+  const problem = await queueLine(channel, sameSpeaker ? text : `${speechFor(guild, member?.displayName ?? author.displayName)} says, ${text}`, voice, serverEffect(guild.id), author.id, 'message');
   if (problem && problem !== STOPPED) console.error(`Couldn’t read a message out in server ${guild.id}: ${problem}`);
 }
 
 /** A message's text without what shouldn't be read out: saying a spoiler would ruin it, and nobody wants to hear code */
 const sayable = (content: string) => content.replace(/\|\|[\s\S]*?\|\|/g, ' ').replace(/```[\s\S]*?```/g, ' ');
+
+/**
+ * Moves servers' picks of the old effect voices to the voice each was made on and the effect, which become their own
+ * settings, and the lines said in them. An effect already picked is left as it is
+ */
+export function moveEffectVoices() {
+  for (const [voiceKey, effectKey] of [
+    ['ttsVoice', 'ttsEffect'],
+    ['loopVoice', 'loopEffect'],
+  ] as const) {
+    const rows = db.prepare('SELECT guild_id, value FROM guild_settings WHERE key = ?').all(voiceKey) as { guild_id: string; value: string }[];
+    for (const { guild_id: guildId, value } of rows) {
+      const old = oldEffectVoice(value);
+      if (!old || EFFECTS.every((e) => e.id !== value)) continue;
+      setSetting(guildId, voiceKey, old.voice);
+      if (storedSetting(guildId, effectKey) === undefined) setSetting(guildId, effectKey, old.effect);
+    }
+  }
+  // And lines said in them, for Stats
+  const moveLines = db.prepare('UPDATE speech_lines SET voice = ?, effect = ? WHERE voice = ? AND effect IS NULL');
+  transaction(() => {
+    for (const effect of EFFECTS) {
+      const old = oldEffectVoice(effect.id);
+      if (old) moveLines.run(old.voice, old.effect, effect.id);
+    }
+  });
+}
 
 /** With a role set, using this takes that role or Manage Server */
 function canSay(i: { guildId: string; memberPermissions: Readonly<PermissionsBitField>; member: GuildMember }) {
@@ -808,6 +915,7 @@ export const speak: Feature = {
             .setDescription('Which voice (default: this server’s)')
             .setAutocomplete(true),
         )
+        .addStringOption((o) => o.setName('effect').setDescription('An effect to say it through (default: this server’s)').setAutocomplete(true))
         .addStringOption((o) => o.setName('saved').setDescription('A saved line, instead of typing one').setAutocomplete(true)),
       async run(i) {
         if (!i.inCachedGuild()) return i.reply({ content: 'Use this in a server.', flags: MessageFlags.Ephemeral });
@@ -822,7 +930,7 @@ export const speak: Feature = {
         const text = typed ?? phrase?.text;
         if (!text) return i.reply({ content: saved ? 'Pick a saved line from the list.' : 'Type something to say, or pick a saved line.', flags: MessageFlags.Ephemeral });
         await i.deferReply({ flags: MessageFlags.Ephemeral });
-        const problem = await say(channel, text, i.options.getString('voice') ?? undefined, i.user.id);
+        const problem = await say(channel, text, i.options.getString('voice') ?? undefined, i.user.id, i.options.getString('effect') ?? undefined);
         return i.editReply(problem ?? 'Said it.');
       },
       async autocomplete(i) {
@@ -832,6 +940,10 @@ export const speak: Feature = {
         if (focused.name === 'voice') {
           const matches = voices().filter((v) => v.name.toLowerCase().includes(search) || v.id.includes(search));
           return i.respond(matches.slice(0, 25).map((v) => ({ name: v.name, value: v.id })));
+        }
+        if (focused.name === 'effect') {
+          const choices = [{ name: 'No effect', value: NO_EFFECT }, ...EFFECTS.map((e) => ({ name: e.name, value: e.id }))];
+          return i.respond(choices.filter((c) => c.name.toLowerCase().includes(search) || c.value.includes(search)).slice(0, 25));
         }
         const matches = i.guildId ? phrases(i.guildId).filter((p) => p.text.toLowerCase().includes(search)) : [];
         return i.respond(matches.slice(0, 25).map((p) => ({ name: p.text.slice(0, 100), value: String(p.id) })));
@@ -863,10 +975,24 @@ export const speak: Feature = {
   setup(client) {
     // The voice container keeps the added voices' models, from the list it's sent, and each is measured once it's there
     void syncVoices();
-    startTuning({ curves: CURVE_STRETCHES, busy: speechBusy });
+    moveEffectVoices();
+    startTuning({ curves: CURVE_STRETCHES, busy: speechBusy, voices, effects: EFFECTS });
     onPlaybackStop(stopLines);
     setGreeter(greetingFor, sayOut);
-    setLoopSpeaker(speakToFile, (guild, id) => serverVoice(guild.id, id));
+    // Looping speech made with an effect's typical correction is made again once the pair is measured
+    onGainMeasured((voiceKey, effectId) => {
+      for (const guild of client.guilds.cache.values()) {
+        if (!isLooping(guild.id) || !setting(guild.id, 'loopText')) continue;
+        const voiceId = setting(guild.id, 'loopVoice') || setting(guild.id, 'ttsVoice');
+        const effect = serverEffect(guild.id, setting(guild.id, 'loopEffect'), voiceId);
+        if (effect?.id === effectId && soundKey(serverVoice(guild.id, voiceId)) === voiceKey) void refreshLoopRoom(guild).catch(console.error);
+      }
+    });
+    setLoopSpeaker(speakToFile, (guild, voiceId, effectId) => {
+      const voice = serverVoice(guild.id, voiceId);
+      const effect = serverEffect(guild.id, effectId, voiceId);
+      return [voice, effect?.id ?? null, effect && effectGain(voice, effect)];
+    });
     client.on(Events.MessageCreate, (message) => void readMessage(message).catch(console.error));
   },
 };

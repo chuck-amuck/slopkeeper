@@ -6,7 +6,7 @@ import type { Guild } from 'discord.js';
 import { db } from '../db.ts';
 import { AUTOPLAY } from './music.ts';
 import { countIn, stepsOf } from './overview.ts';
-import { voiceName } from './say.ts';
+import { effectName, voiceName } from './say.ts';
 
 const TOP = 10;
 
@@ -36,11 +36,12 @@ const songRows = (guildId: string, since: number, until: number) =>
   }[];
 
 const lineRows = (guildId: string, since: number, until: number) =>
-  db.prepare('SELECT at, user_id AS userId, voice, kind FROM speech_lines WHERE guild_id = ? AND at >= ? AND at < ?').all(guildId, since, until) as {
+  db.prepare('SELECT at, user_id AS userId, voice, kind, effect FROM speech_lines WHERE guild_id = ? AND at >= ? AND at < ?').all(guildId, since, until) as {
     at: number;
     userId: string | null;
     voice: string;
     kind: 'say' | 'message' | 'announcement';
+    effect: string | null;
   }[];
 
 /** When each kind of record starts, or null with none yet */
@@ -133,6 +134,7 @@ export function soundStats(guild: Guild, { since, until, before: startBefore }: 
     djs: tally(here.songs, (s) => (s.addedBy === AUTOPLAY || isMember(s.addedBy) ? s.addedBy : null)).map(([id, songs]) => ({ id, name: id === AUTOPLAY ? 'Autoplay' : nameOf(id), songs })),
     sources: tally(here.songs, (s) => s.source ?? 'unknown').map(([source, songs]) => ({ source, songs })),
     voices: tally(here.lines, (l) => l.voice).map(([voice, lines]) => ({ voice, name: voiceName(voice) ?? voice, lines })),
+    effects: tally(here.lines, (l) => l.effect).map(([effect, lines]) => ({ effect, name: effectName(effect) ?? effect, lines })),
     speakers: tally(here.lines, (l) => (isMember(l.userId) ? l.userId : null)).map(([id, lines]) => ({ id, name: nameOf(id), lines })),
     kinds: {
       say: here.lines.filter((l) => l.kind === 'say').length,

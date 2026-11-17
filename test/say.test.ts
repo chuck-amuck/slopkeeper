@@ -13,7 +13,8 @@ import { recentActivity } from '../src/activity.ts';
 import { config } from '../src/config.ts';
 import { Mixer } from '../src/mixer.ts';
 import * as perf from '../src/perf.ts';
-import { announceAloud, forgetSpoken, lengthFor, phrases, previewPart, readMessage, removePhrase, savePhrase, say, sayOut, missingVoice, serverVoice, speak, speechFor, voiceGroup, voices } from '../src/features/say.ts';
+import { announceAloud, CURVE_STRETCHES, effects, forgetSpoken, lengthFor, moveEffectVoices, NO_EFFECT, oldEffectVoice, phrases, previewPart, readMessage, removePhrase, savePhrase, say, sayOut, missingVoice, serverEffect, serverVoice, speak, speechFor, voiceGroup, voices } from '../src/features/say.ts';
+import { effectGain, forgetEffectGains, setEffectGain, soundKey } from '../src/features/effectGains.ts';
 import { addVoice, removeVoice, syncVoices, voiceFields, voicesVersion } from '../src/features/voices.ts';
 import { applySpeechVolume, stopPlayback } from '../src/features/voiceAudio.ts';
 import { loopSpeechProblem } from '../src/features/loopRoom.ts';
@@ -79,7 +80,7 @@ function fakeVoice(t: TestContext, answer?: (text: string, signal: AbortSignal) 
 
 const leftovers = () => readdirSync(tmpdir()).filter((f) => f.startsWith('slopkeeper-say-')).flatMap((f) => readdirSync(path.join(tmpdir(), f)));
 
-speak.setup!({ on() {} } as never);
+speak.setup!({ on() {}, guilds: { cache: new Map() } } as never);
 // Measuring added voices has its own tests (voiceTuning.test.ts), and would ask the fake voice container for more here
 stopTuning();
 beforeEach(() => {
@@ -98,6 +99,7 @@ test('reads out a line in the server’s voice, or the one asked for, and logs w
   const voice = channel();
   assert.equal(await say(voice, 'hello there', undefined, 'ana'), null);
   await sleep(300);
+  // Robot was a voice before effects were picked apart from voices: it's the voice it was made on, through the effect
   assert.equal(await say(voice, 'and again', 'robot', 'ben'), null);
   await sleep(300);
   assert.deepEqual(asked, [
@@ -110,13 +112,13 @@ test('reads out a line in the server’s voice, or the one asked for, and logs w
   // For Stats: who, the voice and how long, never the words
   const kept = db.prepare('SELECT * FROM speech_lines WHERE guild_id = ? ORDER BY at').all(voice.guild.id) as any[];
   assert.deepEqual(
-    kept.map(({ user_id, voice, characters, kind }) => ({ user_id, voice, characters, kind })),
+    kept.map(({ user_id, voice, characters, kind, effect }) => ({ user_id, voice, characters, kind, effect })),
     [
-      { user_id: 'ana', voice: 'southern-man', characters: 11, kind: 'say' },
-      { user_id: 'ben', voice: 'robot', characters: 9, kind: 'say' },
+      { user_id: 'ana', voice: 'southern-man', characters: 11, kind: 'say', effect: null },
+      { user_id: 'ben', voice: 'american-man', characters: 9, kind: 'say', effect: 'robot' },
     ],
   );
-  assert.deepEqual(Object.keys(kept[0]).sort(), ['at', 'characters', 'guild_id', 'kind', 'user_id', 'voice']);
+  assert.deepEqual(Object.keys(kept[0]).sort(), ['at', 'characters', 'effect', 'guild_id', 'kind', 'user_id', 'voice']);
 });
 
 test('a slow line keeps how long each step took, with its voice and length but never its words', { skip: !hasFfmpeg }, async (t) => {
@@ -136,7 +138,7 @@ test('a slow line keeps how long each step took, with its voice and length but n
   await sleep(300);
   const { slow } = perf.take(true);
   assert.equal(slow.length, 1);
-  assert.deepEqual([slow[0].what, slow[0].guildId, slow[0].detail], ['Speech', voice.guild.id, { voice: 'scottish', characters: 12, waitingAhead: 0, kept: false }]);
+  assert.deepEqual([slow[0].what, slow[0].guildId, slow[0].detail], ['Speech', voice.guild.id, { voice: 'scottish', effect: null, characters: 12, waitingAhead: 0, kept: false }]);
   assert.deepEqual(
     slow[0].steps.map(([name, , of]) => (of ? `${of} > ${name}` : name)),
     ['waiting', 'making > voice container', 'voice container > saying it', 'making > levelling and effects', 'making', 'starting'],
@@ -216,9 +218,101 @@ test('every voice’s model is one the voice container fetches, and the English 
   const fetched = new Set([...readFileSync(path.join(import.meta.dirname, '../voice/start.sh'), 'utf8').matchAll(/^fetch (\S+) /gm)].map((m) => m[1]));
   for (const voice of voices()) if (voice.model) assert.ok(fetched.has(voice.model), `${voice.name} needs voice/start.sh to fetch ${voice.model}`);
   const group = (id: string) => voiceGroup(voices().find((v) => v.id === id)!);
-  assert.deepEqual(['scottish', 'irish', 'australian-man', 'russian', 'trailer'].map(group), ['Accents', 'Accents', 'Accents', 'Accents', 'Effects']);
+  assert.deepEqual(['scottish', 'irish', 'australian-man', 'russian', 'american-deep'].map(group), ['Accents', 'Accents', 'Accents', 'Accents', 'Accents']);
+  // Effects are picked beside a voice, and aren't voices
+  assert.ok(!voices().some((v) => effects().some((e) => e.id === v.id)));
   // Characters are added in the web UI, so the public image carries none
   assert.ok(!voices().some((v) => voiceGroup(v) === 'Characters'));
+});
+
+test('an effect goes with any voice, at its own pace, and a line is made again when only its effect changes', { skip: !hasFfmpeg }, async (t) => {
+  const asked = fakeVoice(t);
+  const voice = channel();
+  const said = async (effect?: string) => {
+    const problem = await say(voice, 'hi there', 'scottish', 'cy', effect);
+    await sleep(300);
+    return problem;
+  };
+  assert.equal(await said('helium'), null);
+  assert.equal(await said('Walkie-talkie'), null, 'by name, as typed into /say');
+  assert.equal(await said(NO_EFFECT), null);
+  assert.equal(await said(NO_EFFECT), null);
+  assert.equal(await said('sparkles'), 'Pick an effect from the list.');
+  // Helium is 10% quicker and the walkie-talkie 5%, on top of the voice's own curve. The same line without one is kept
+  const scottish = lengthFor(85, CURVE_STRETCHES.character);
+  assert.deepEqual(
+    asked.map((a) => [a.model, a.length]),
+    [
+      ['alba', Math.round(scottish * 0.9 * 100) / 100],
+      ['alba', Math.round(scottish * 0.95 * 100) / 100],
+      ['alba', scottish],
+    ],
+  );
+  const lines = db.prepare('SELECT effect FROM speech_lines WHERE guild_id = ? ORDER BY at').all(voice.guild.id) as { effect: string | null }[];
+  assert.deepEqual(lines.map((l) => l.effect), ['helium', 'radio', null, null]);
+});
+
+test('the server’s default effect is used when nobody picks one, and no effect is a pick of its own', { skip: !hasFfmpeg }, async (t) => {
+  const asked = fakeVoice(t);
+  const voice = channel();
+  setSetting(voice.guild.id, 'ttsEffect', 'giant');
+  assert.equal(serverEffect(voice.guild.id)?.id, 'giant');
+  assert.equal(await say(voice, 'one', 'scottish', 'cy'), null);
+  await sleep(300);
+  assert.equal(await say(voice, 'two', 'scottish', 'cy', NO_EFFECT), null);
+  await sleep(300);
+  assert.equal(await sayOut(voice, 'three'), null);
+  await sleep(300);
+  const scottish = lengthFor(85, CURVE_STRETCHES.character);
+  assert.deepEqual(asked.map((a) => a.length), [Math.round(scottish * 1.2 * 100) / 100, scottish, 1.5]);
+  const lines = db.prepare('SELECT effect, kind FROM speech_lines WHERE guild_id = ? ORDER BY at').all(voice.guild.id) as { effect: string | null; kind: string }[];
+  assert.deepEqual(lines.map((l) => [l.kind, l.effect]), [['say', 'giant'], ['say', null], ['announcement', 'giant']]);
+});
+
+test('picks of the old effect voices move to the voice each was made on and the effect', () => {
+  setSetting('moving-1', 'ttsVoice', 'demon');
+  setSetting('moving-1', 'loopVoice', 'ghost');
+  setSetting('moving-1', 'loopEffect', NO_EFFECT);
+  setSetting('moving-2', 'ttsVoice', 'scottish');
+  moveEffectVoices();
+  assert.deepEqual(['ttsVoice', 'ttsEffect', 'loopVoice', 'loopEffect'].map((k) => storedSetting('moving-1', k as never)), ['american-deep', 'demon', 'american-woman', NO_EFFECT], 'an effect already picked stays');
+  assert.deepEqual([storedSetting('moving-2', 'ttsVoice'), storedSetting('moving-2', 'ttsEffect')], ['scottish', undefined]);
+  // One still named somewhere, as TTS_VOICE or a device's last pick might, brings its effect unless one is picked
+  assert.deepEqual(oldEffectVoice('Trailer narrator'), { voice: 'american-deep', effect: 'trailer' });
+  assert.equal(oldEffectVoice('scottish'), null);
+  assert.equal(oldEffectVoice('loudspeaker'), null, 'new as an effect, so never a voice');
+  setSetting('moving-3', 'ttsVoice', 'helium');
+  assert.deepEqual([serverVoice('moving-3').id, serverEffect('moving-3')?.id], ['american-man', 'helium']);
+  assert.equal(missingVoice('helium'), null, 'not a problem to show in Settings');
+  setSetting('moving-3', 'ttsEffect', NO_EFFECT);
+  assert.equal(serverEffect('moving-3'), null);
+  assert.equal(serverEffect('moving-3', undefined, 'radio')?.id, 'radio', 'a voice picked as the old one brings it');
+  assert.equal(serverEffect('moving-3', NO_EFFECT, 'radio'), null, 'unless no effect is picked with it');
+  // Lines said in them are moved too, for Stats
+  db.prepare("INSERT INTO speech_lines (guild_id, at, user_id, voice, characters, kind) VALUES ('moving-1', 1, NULL, 'ghost', 5, 'say')").run();
+  moveEffectVoices();
+  assert.deepEqual({ ...(db.prepare("SELECT voice, effect FROM speech_lines WHERE guild_id = 'moving-1'").get() as object) }, { voice: 'american-woman', effect: 'ghost' });
+});
+
+test('an effect is turned up or down by what was measured on that voice, or its typical amount until then', { skip: !hasFfmpeg }, async (t) => {
+  forgetEffectGains();
+  t.after(forgetEffectGains);
+  const scottish = voices().find((v) => v.id === 'scottish')!;
+  const underwater = effects().find((e) => e.id === 'underwater')!;
+  assert.equal(effectGain(scottish, underwater), underwater.typical);
+  setEffectGain(soundKey(scottish), 'underwater', underwater.effects, 4.5);
+  assert.equal(effectGain(scottish, underwater), 4.5);
+  setEffectGain(soundKey(scottish), 'underwater', 'an older chain', 4.5);
+  assert.equal(effectGain(scottish, underwater), underwater.typical, 'measured with the effect as it was, so not any more');
+  // Once it's measured, a line said before is made again at the new loudness
+  const asked = fakeVoice(t);
+  const voice = channel();
+  for (const gain of [null, null, 3]) {
+    if (gain !== null) setEffectGain(soundKey(scottish), 'underwater', underwater.effects, gain);
+    assert.equal(await say(voice, 'deep down', 'scottish', 'cy', 'underwater'), null);
+    await sleep(300);
+  }
+  assert.equal(asked.length, 2);
 });
 
 const MODEL = 'https://huggingface.co/someone/voice/resolve/main/voice.onnx';
@@ -950,12 +1044,17 @@ test('/say suggests saved lines and voices as you type', async () => {
   assert.equal((await suggest('gotta'))[0].value, String(phrases(voice.guild.id)[1].id));
   assert.deepEqual(await suggest('good', null), []);
   // Voices are searched, as there are more than Discord's 25 choices would allow to grow
-  assert.deepEqual(await suggest('RO', voice.guild.id, 'voice'), [
-    { name: 'State broadcast', value: 'broadcast' },
-    { name: 'Robot', value: 'robot' },
+  assert.deepEqual(await suggest('RO', voice.guild.id, 'voice'), [{ name: 'State broadcast', value: 'broadcast' }]);
+  assert.equal((await suggest('', voice.guild.id, 'voice')).length, voices().length);
+  assert.deepEqual(await suggest('alba', voice.guild.id, 'voice'), [], 'not by model');
+  assert.deepEqual(await suggest('irish', voice.guild.id, 'voice'), [{ name: 'Irish (Jenny)', value: 'irish' }], 'and by id');
+  // Effects too, with none first
+  assert.deepEqual((await suggest('', voice.guild.id, 'effect')).slice(0, 2), [
+    { name: 'No effect', value: 'none' },
+    { name: 'Demon', value: 'demon' },
   ]);
-  assert.equal((await suggest('', voice.guild.id, 'voice')).length, 25, 'Discord’s most');
-  assert.deepEqual(await suggest('radio', voice.guild.id, 'voice'), [{ name: 'Walkie-talkie', value: 'radio' }], 'and by id');
+  assert.equal((await suggest('', voice.guild.id, 'effect')).length, effects().length + 1);
+  assert.deepEqual(await suggest('radio', voice.guild.id, 'effect'), [{ name: 'Walkie-talkie', value: 'radio' }], 'by id as well');
 });
 
 test('the looping room’s speech is made once in its own voice, and remade when the line, voice or speed changes', { skip: !hasFfmpeg }, async (t) => {

@@ -1,9 +1,11 @@
-import { api, attempt, el, fetchAudio, icon, player } from './lib.js';
+import { api, attempt, el, fetchAudio, icon, player, recall, remember } from './lib.js';
 
 /** The speech voices, as the Soundboard, the Sounds panel and the pop-out offer them */
 
 // Voices in this order, and any the bot adds later after them
-const VOICE_GROUPS = ['Characters', 'Accents', 'Effects'];
+const VOICE_GROUPS = ['Characters', 'Accents'];
+/** What the bot takes for no effect */
+export const NO_EFFECT = 'none';
 const PREVIEW_TEXT = 'Hello, this is how I sound.';
 
 /**
@@ -44,8 +46,45 @@ export function voiceOptions(voices, chosen) {
     .map(([group, list]) => el('optgroup', { label: group }, list.map(option)));
 }
 
-/** Plays `picker`'s voice saying what's typed in `text`, or a hello, just for whoever pressed it. Again stops it */
-export function previewButton(picker, text) {
+/** The effects as a picker's options, no effect first */
+export function effectOptions(effects, chosen) {
+  return [{ id: NO_EFFECT, name: 'No effect' }, ...effects].map((e) => el('option', { value: e.id, selected: e.id === chosen }, e.name));
+}
+
+/**
+ * The voice and effect pickers beside Say, which remember this device's picks for the server. The effects were voices
+ * once, so a pick of one remembered from then becomes the voice it was made on and the effect
+ */
+export function speechPickers(guildId) {
+  const voiceKey = `voice:${guildId}`;
+  const effectKey = `effect:${guildId}`;
+  const voice = el('select', { ariaLabel: 'Voice', className: 'say-voice', onchange: () => remember(voiceKey, voice.value) });
+  const effect = el('select', { ariaLabel: 'Effect', className: 'say-effect', onchange: () => remember(effectKey, effect.value) });
+  return {
+    voice,
+    effect,
+    /** Fills them from GET /say: this device's picks while the bot still offers them, or the server's defaults */
+    fill({ voices, voice: serverVoice, effects = [], effect: serverEffect = NO_EFFECT, oldVoices = {} }) {
+      const old = oldVoices[recall(voiceKey)];
+      if (old) {
+        remember(voiceKey, old.voice);
+        remember(effectKey, old.effect);
+      }
+      const mine = recall(voiceKey);
+      const myEffect = recall(effectKey);
+      voice.replaceChildren(...voiceOptions(voices, voices.some((v) => v.id === mine) ? mine : serverVoice));
+      effect.replaceChildren(...effectOptions(effects, myEffect === NO_EFFECT || effects.some((e) => e.id === myEffect) ? myEffect : serverEffect));
+    },
+    /** Shows picks made since on another page or the pop-out */
+    showPicks() {
+      showPicked(voice, recall(voiceKey));
+      showPicked(effect, recall(effectKey));
+    },
+  };
+}
+
+/** Plays `picker`'s voice, through `effect`'s effect if given, saying what's typed in `text`, or a hello, just for whoever pressed it. Again stops it */
+export function previewButton(picker, text, effect) {
   const preview = el(
     'button',
     {
@@ -58,12 +97,13 @@ export function previewButton(picker, text) {
           // Still fetching the last one
           if (preview.ariaBusy) return;
           const line = text.value.trim() || PREVIEW_TEXT;
-          const name = `preview:${picker.value}:${line}`;
+          const name = `preview:${picker.value}:${effect?.value ?? ''}:${line}`;
           // Pressed again while it plays: stop it
           if (player.name === name) return player.stop();
           preview.ariaBusy = 'true';
           try {
-            const url = await fetchAudio(api(`/say/preview?voice=${encodeURIComponent(picker.value)}&text=${encodeURIComponent(line)}`));
+            const through = effect ? `&effect=${encodeURIComponent(effect.value)}` : '';
+            const url = await fetchAudio(api(`/say/preview?voice=${encodeURIComponent(picker.value)}${through}&text=${encodeURIComponent(line)}`));
             await player.toggle(url, name);
           } finally {
             preview.ariaBusy = null;
