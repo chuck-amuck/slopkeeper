@@ -15,6 +15,7 @@ import { musicRoutes } from './api/music.ts';
 import { serverRoutes } from './api/server.ts';
 import { followVoice, liveRoutes } from './api/live.ts';
 import { healthRoutes } from './api/health.ts';
+import { voiceRoutes } from './api/voices.ts';
 
 /** Which area of the API answers each section of a path */
 const AREAS = new Map<string, (ask: Ask) => Promise<unknown>>([
@@ -25,6 +26,7 @@ const AREAS = new Map<string, (ask: Ask) => Promise<unknown>>([
   ...['settings', 'me', 'activity'].map((s) => [s, serverRoutes] as const),
   ...['voice', 'volumes', 'updates'].map((s) => [s, liveRoutes] as const),
   ...['health'].map((s) => [s, healthRoutes] as const),
+  ...['voices'].map((s) => [s, voiceRoutes] as const),
 ]);
 
 async function handle(client: Client<true>, req: IncomingMessage, res: ServerResponse) {

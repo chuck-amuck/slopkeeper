@@ -451,7 +451,7 @@ The web UI's Soundboard tab, under **Manage**, also shows everything on Discord'
   - **Accents:** **Scottish**, **Northern English**, **Southern English** (a woman and a man), **Irish (Jenny)** and **Australian** (a man and a woman) are English voices with those accents. **Russian**, **Spanish** and **German** read English with that accent, and **State broadcast** is a Korean announcer over an old loudspeaker. Russian typed in Cyrillic and Korean in Hangul are read in their own language. Spanish and German read everything as English.
   - **Effect styles:** **Demon**, **Helium**, **Giant**, **Robot**, **Alien**, **Walkie-talkie**, **Phone call**, **Megaphone**, **Stadium PA**, **Newsreel** (a 1940s film reel), **Cathedral**, **Underwater**, **Ghost** and **Trailer narrator**.
 
-  The accents are ordinary Piper voices and the styles are made with effects: neither imitates a known person. A deployment can add [its own voices](#your-own-voices). Each voice talks at the server's speed, a few a little slower or quicker than that so they sound right. In Discord, `voice` is searched as you type. A server whose default voice has been removed talks in the bot's default voice.
+  The accents are ordinary Piper voices and the styles are made with effects: neither imitates a known person. More can be [added in the web UI](#adding-voices). Each voice talks at the server's speed, a few a little slower or quicker than that so they sound right. In Discord, `voice` is searched as you type. A server whose default voice has been removed, or is still downloading, talks in the bot's default voice, and Settings says so.
 - `/setup speech` sets whether it's on, how fast and how loud it talks, the longest line and how long each person waits between lines. The default voice is picked in the web UI's Settings. `/setup speech-role` limits it to a role, plus people with **Manage Server**. The web UI isn't limited by the role, and counts as one person for the wait.
 
 It needs the [voice container](#the-voice-container).
@@ -664,7 +664,7 @@ Each setting goes by the name `/setup show` and `/setup reset` use. A few are se
 | Autoplay | `music`, or `/music autoplay` | `MUSIC_AUTOPLAY` | off |
 | Who can control music | `music` | | everyone |
 | Text to speech | `speech` | `TTS` (`false` to turn off) | on |
-| Default voice | web UI only | `TTS_VOICE` (a voice's id from `VOICES` in `src/features/say.ts`, like `glados` or `demon`) | `tiktok` |
+| Default voice | web UI only | `TTS_VOICE` (a voice's id, such as `glados`, `demon` or one added in the web UI) | `tiktok` |
 | Speech speed | `speech` | `TTS_SPEED` | 85% of the voice's natural speed |
 | Speech volume | `speech` | `TTS_VOLUME` | 100%, about as loud as a sound with even volume on |
 | Longest spoken line | `speech` | `TTS_MAX_CHARS` (up to 6000) | 4000 characters |
@@ -771,7 +771,6 @@ Set in `.env` (see `.env.example`).
 | `API_PORT` | 8787 | Port for the management API |
 | `DATA_DIR` | `./data`, `/data` in the image | Where the database, sounds and backups are kept |
 | `VOICE_URL` | off | Where the [voice container](#the-voice-container) is. Unset turns `/say` off |
-| `CUSTOM_VOICES` | none | [Your own voices](#your-own-voices), as JSON. Set it on the voice container too |
 | `MUSIC_URL` | off | Where the [music container](#the-music-container) is. Unset turns music off |
 | `LOOP_BOT_URL` | off | Where the [loop bot](#the-loop-bot) is. Unset plays the looping room on this bot |
 | `LOOP_TOKEN` | none | Same value as the loop bot's `LOOP_TOKEN` |
@@ -1021,30 +1020,26 @@ Set `VOICE_URL=http://voice:5000` on the bot, and don't publish the port. On fir
   - Spanish is [`es_ES-davefx-medium`](https://huggingface.co/rhasspy/piper-voices/tree/main/es/es_ES/davefx/medium) (CC0).
   - German is the neutral speaker of [`de_DE-thorsten_emotional-medium`](https://huggingface.co/rhasspy/piper-voices/tree/main/de/de_DE/thorsten_emotional/medium) (CC0), which also has amused, angry, disgusted, drunk, sleepy, surprised and whispering speakers.
 
-`VOICES` in `src/features/say.ts` lists the built-in voices. Each model loads the first time it's used, and a model other than the first one that hasn't spoken for 30 minutes is let go again, so the next line in that voice takes about a second longer. `VOICE_IDLE_MINUTES` in the container's `environment` changes the 30 minutes, and `0` keeps every model loaded. At most ten models besides the first stay loaded: past that, the one that spoke longest ago is let go. `VOICE_MAX_MODELS` changes the ten, and `0` takes the limit off. With eleven loaded it uses about 1.3 GB, and a long line at the slowest speed briefly takes it near 1.7 GB; with only the first one it's about 200 MB. A larger custom model takes more, so with several of those lower `VOICE_MAX_MODELS` or raise the memory limit. It makes a short line in about a second on two CPU cores.
+`BUILT_IN` and `STYLES` in `src/features/say.ts` list the built-in voices. Each model loads the first time it's used, and a model other than the first one that hasn't spoken for 30 minutes is let go again, so the next line in that voice takes about a second longer. `VOICE_IDLE_MINUTES` in the container's `environment` changes the 30 minutes, and `0` keeps every model loaded. At most ten models besides the first stay loaded: past that, the one that spoke longest ago is let go. `VOICE_MAX_MODELS` changes the ten, and `0` takes the limit off. With eleven loaded it uses about 1.3 GB, and a long line at the slowest speed briefly takes it near 1.7 GB; with only the first one it's about 200 MB. A larger added model takes more, so with several of those lower `VOICE_MAX_MODELS` or raise the memory limit. It makes a short line in about a second on two CPU cores.
 
-#### Your own voices
+#### Adding voices
 
-`CUSTOM_VOICES` adds voices from any [Piper](https://github.com/OHF-Voice/piper1-gpl) model without changing the code, such as ones from [Hugging Face](https://huggingface.co/models?other=piper). It's a JSON list on one line, set on the bot in `.env` and on the voice container (the reference `docker-compose.yml` passes it on from `.env`):
+Settings in the web UI has a **Voices** card, under Text to speech, for adding voices from any [Piper](https://github.com/OHF-Voice/piper1-gpl) model without changing the code, such as ones on [Hugging Face](https://huggingface.co/models?other=piper). Added voices are for every server on the bot, and anyone who can open the web UI can add, change and remove them.
 
-```sh
-CUSTOM_VOICES=[{"id":"narrator","name":"Narrator","model":"https://huggingface.co/<owner>/<repo>/resolve/<commit>/<file>.onnx"}]
-```
+- **Add a voice:** paste the link to the model's `.onnx` file, give it a name and pick Characters or Accents. A Hugging Face page's link works too. Its settings are the same address with `.json` added. The voice container downloads it (500 MB at most), and it shows in the voice lists once it's ready. The card shows how far along a download is, or why it failed.
+- **Edit:** the name, group and link (a new link downloads it again), and once it's downloaded:
+  - **Speaker**, for a model with several, by the names its settings give them.
+  - **Loudness**, in dB, to make it as loud as the other voices. Levelling squeezes loud speech, so a cut lowers it by about half as much.
+  - **Pace**: above 1 is slower, for a voice that sounds rushed. 1.1 is 10% slower.
+  - **Steadiness**: the model's own, or steadier timing and sound for one that wobbles in long lines.
+  - **Speed curve**: how its speed follows the speed setting. Character suits most community models.
+  - **Preview** plays it with these settings, saved or not, just for you.
+- **Remove** deletes its model, and servers that picked it go back to their default voice.
+- **Export** saves every added voice as `slopkeeper-voices.json`. **Import** takes that file, or a list in the same shape, matching voices by id or name, and says what it would add, change, leave and skip, with why, before it does it. **Replace all** removes the added voices the file doesn't have.
 
-| Field | Meaning |
-| --- | --- |
-| `id` | Required. 1 to 32 lowercase letters, digits, `-` or `_`, and not a built-in voice's id |
-| `name` | Required. Up to 40 characters, as the voice lists show it |
-| `model` | Required. The `https://` address of the model's `.onnx` file. A Hugging Face download link works; with a commit in place of `main` it always gets the same file |
-| `config` | The model's settings. By default, the model's address with `.json` added |
-| `sha256`, `configSha256` | The files' hashes, checked when given. Without them, the voice container logs the hashes it got, ready to paste in |
-| `group` | `Characters` (the default) or `Accents` |
-| `speaker` | For a model with several speakers, which one, from 0 |
-| `volume` | dB from -20 to 20, to make it as loud as the other voices. Levelling squeezes loud speech, so a cut lowers it by about half as much |
-| `pace` | 0.5 to 2. Multiplies how long it takes to talk, for a voice that sounds rushed: 1.1 is 10% slower |
-| `noise` | Two numbers from 0 to 2, Piper's `noise_scale` and `noise_w_scale`. Lower ones give a steadier voice and timing |
+Each export entry has `name` and `model`, and only what's changed from the defaults of the rest: `id`, `group` (`Characters` or `Accents`), `config` (the settings' address), `sha256` and `configSha256` (checked when given), `speaker`, `volume` (dB, -20 to 20), `pace` (0.5 to 2), `noise` (Piper's `noise_scale` and `noise_w_scale`, two numbers from 0 to 2) and `curve` (`character`, `default`, `middle` or `low`).
 
-The voice container downloads each model when it starts, once, and again only when its address changes, and deletes one that's no longer listed. A voice whose model couldn't be fetched talks with the first model, and an entry that can't be used is skipped, with the reason in the logs of the bot and the voice container. A server whose voice was removed from the list goes back to its default voice.
+The voice container keeps the added voices' models and their list in its volume, and gets the list again from the bot if it loses it.
 
 ### The music container
 

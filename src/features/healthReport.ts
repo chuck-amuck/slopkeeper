@@ -1,7 +1,7 @@
 import { db } from '../db.ts';
 import * as perf from '../perf.ts';
 import { MINUTES_KEPT_MS, POLL_MS, ROLLUP_MS, ROLLUPS_KEPT_MS, SAMPLE_MS } from './health.ts';
-import { VOICES } from './say.ts';
+import { voiceName } from './say.ts';
 
 /**
  * The Health view's numbers: how the bot and its containers did over the last hour, day, week or month, from what
@@ -233,7 +233,7 @@ export function slowList(guildId: string, start: number, end = Number.MAX_SAFE_I
     const steps = JSON.parse(r.steps) as perf.Step[];
     const detail = JSON.parse(r.detail) as SlowItem['detail'];
     // Voices by their names, as the web UI shows them
-    if (typeof detail.voice === 'string') detail.voice = VOICES.find((v) => v.id === detail.voice)?.name ?? detail.voice;
+    if (typeof detail.voice === 'string') detail.voice = voiceName(detail.voice) ?? detail.voice;
     return { at: r.at, what: r.what, seconds: r.seconds, own: rounded(perf.ownTime(r.seconds, steps), 4)!, steps, detail };
   });
   const listed = new Set([...items.slice(0, SLOW_LISTED), ...[...items].sort((a, b) => b.own - a.own).slice(0, SLOW_LISTED)]);

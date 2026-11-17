@@ -103,9 +103,5 @@ fetch thorsten rhasspy/piper-voices ae9d8352b73c1b1750748843e753a504b00e05b0 \
   de/de_DE/thorsten_emotional/medium/de_DE-thorsten_emotional-medium.onnx c1764e652266cd6dcebf1b95c61973df5970a5f5272e94b655ff1ddf9a99d1ff \
   de/de_DE/thorsten_emotional/medium/de_DE-thorsten_emotional-medium.onnx.json 92895b9e99f7cfc13f4a9879da615c3d6e0baa4d660e26d7b685abdd27a6d1d3
 
-# The deployment's own voices, from CUSTOM_VOICES, fetched alongside the server so a slow download doesn't hold up the
-# other voices. Until one is fetched, it talks with the default model
-(python3 /custom.py || echo "Couldn't fetch the custom voices. They'll use the default model until the next start" >&2) &
-
 # serve.py is piper.http_server with less memory kept between lines
 exec python3 /serve.py --host 0.0.0.0 --port 5000 --data-dir /voices -m "$MODEL"

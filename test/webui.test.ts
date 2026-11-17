@@ -49,6 +49,29 @@ const PAGES: [string, string, Record<string, string>?, string?, string?][] = [
   ['stats/health', 'Stats: Health'],
   ['activity', 'Activity'],
   ['settings', 'Settings'],
+  // Added voices: one ready with speakers, one downloading and one that failed, and the ready one's settings
+  [
+    'settings',
+    'Settings: Edit a voice',
+    {},
+    `(() => { const d = document.querySelector('dialog[open]'); return !!d && /Edit Narrator/.test(d.textContent) && d.querySelectorAll('select').length === 4 && /Downloading, 40%/.test(document.body.innerText) && /Couldn’t download/.test(document.body.innerText); })()`,
+    `[...document.querySelectorAll('#settings-voices .voice-row')].find((r) => r.textContent.startsWith('Narrator')).querySelector('button:nth-child(2)').click()`,
+  ],
+  // An import, from a file picked, says what it would do first
+  [
+    'settings',
+    'Settings: Import voices',
+    {},
+    `(() => { const d = document.querySelector('dialog[open]'); return !!d && /Added \\(1\\)/.test(d.textContent) && /Skipped \\(1\\)/.test(d.textContent) && /Already the same \\(1\\)/.test(d.textContent); })()`,
+    `(() => {
+      const input = document.querySelector('#settings-voices input[type=file]');
+      const list = [{ name: 'Narrator', model: 'https://example.com/narrator.onnx' }, { name: 'A pirate with a long name to wrap', model: 'https://example.com/pirate.onnx' }, { name: 'GLaDOS', model: 'https://example.com/g.onnx' }];
+      const files = new DataTransfer();
+      files.items.add(new File([JSON.stringify(list)], 'voices.json', { type: 'application/json' }));
+      input.files = files.files;
+      input.dispatchEvent(new Event('change'));
+    })()`,
+  ],
 ];
 const SCREENS = [
   { name: 'computer', width: 1280, height: 900, mobile: false },
@@ -169,13 +192,41 @@ function seed() {
     games: [{ title: 'The Elder Scrolls V: Skyrim Special Edition', appid: 489830, where: 'in the $12.00 tier', wanted: null, like: 'Like Valheim (Open World, Survival, Crafting, Exploration)' }],
   };
   setKv(`deal_bundles:${GUILD}`, JSON.stringify({ at: now - 2 * HOUR, value: [bundle] }));
+  // Added voices, which the fake voice container below says are in each state
+  config.voiceUrl = VOICE_URL;
+  const fields = { group: 'Characters', config_url: null, sha256: null, config_sha256: null, speaker: null, volume: 0, pace: 1, noise: null, noise_w: null, curve: 'character', added_by: 'u1', added_at: now, changed_at: now };
+  for (const [id, name] of [['narrator', 'Narrator'], ['robot-butler', 'Robot butler'], ['broken', 'A voice whose link is wrong']]) {
+    db.prepare('INSERT INTO voices (id, name, grp, model_url, config_url, sha256, config_sha256, speaker, volume, pace, noise, noise_w, curve, added_by, added_at, changed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(
+      id,
+      name,
+      fields.group,
+      `https://example.com/${id}.onnx`,
+      ...Object.values(fields).slice(1),
+    );
+  }
 }
+
+const VOICE_URL = 'http://voice.test';
+let containerVersion = '';
+/** The voice container's answer: the narrator downloaded, with speakers, the butler on its way, and the last one failed */
+const containerReport = () => ({
+  version: containerVersion,
+  voices: {
+    narrator: { state: 'ready', file: 'voice-narrator-0123456789ab', speakers: [{ id: 0, name: 'calm' }, { id: 1, name: 'an excitable speaker with a long name' }] },
+    'robot-butler': { state: 'downloading', percent: 40 },
+    broken: { state: 'failed', error: 'Its settings file isn’t a Piper voice’s. Check the link is to the model’s .onnx file.' },
+  },
+});
 
 // The bot's own calls out, to Steam and GamerPower, get empty answers, so no page waits on the internet
 const realFetch = fetch;
 mock.method(globalThis, 'fetch', async (input: string | URL | Request, init?: RequestInit) => {
   const url = new URL(input instanceof Request ? input.url : input);
   if (url.hostname === '127.0.0.1' || url.hostname === 'localhost') return realFetch(input, init);
+  if (url.hostname === 'voice.test' && url.pathname === '/models') {
+    if (init?.method === 'POST') containerVersion = JSON.parse(String(init.body)).version;
+    return Response.json(containerReport());
+  }
   if (url.hostname.endsWith('gamerpower.com')) return new Response('[]');
   if (url.pathname === '/api/storesearch/') return new Response('{"items":[]}');
   return new Response('{}');

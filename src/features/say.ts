@@ -29,6 +29,7 @@ import { plural } from './gamestats.ts';
 import { onPlaybackStop, play } from './voiceAudio.ts';
 import { setGreeter } from './joinSounds.ts';
 import { setLoopSpeaker } from './loopRoom.ts';
+import { type AddedVoice, addedVoices, type Curve, syncVoices, voicesGeneration, voiceState } from './voices.ts';
 
 /** How much longer speech gets, paired with the length_scale that gives it, from fastest to slowest */
 type Stretches = readonly (readonly [number, number])[];
@@ -109,7 +110,7 @@ const LOW_STRETCHES: Stretches = [
 
 type Group = 'Characters' | 'Accents';
 
-interface Voice {
+export interface Voice {
   id: string;
   name: string;
   /** A model the voice container keeps besides its default one (see voice/start.sh) */
@@ -123,8 +124,10 @@ interface Voice {
   pace?: number;
   /** ffmpeg filters for a voice that's a style built on a model, run before the speech is levelled */
   effects?: string;
-  /** Where the web UI lists a custom voice. The built-in ones' groups are below */
+  /** Where the web UI lists an added voice. The built-in ones' groups are below */
   group?: Group;
+  /** What a line made in it is kept by, for an added voice, whose settings can change. A built-in voice's is its id */
+  key?: string;
 }
 
 /** An old state TV sound: narrowed, pushed forward, squeezed and with a hall's echo, turned up to match the others */
@@ -272,99 +275,73 @@ const BUILT_IN: readonly Voice[] = [
   { id: 'german', name: 'German', model: 'thorsten', speaker: 4, stretches: CHARACTER_STRETCHES, effects: 'volume=4.5dB' },
 ];
 
-const CUSTOM_ID = /^[a-z0-9][a-z0-9_-]{0,31}$/;
-const LONGEST_NAME = 40;
+/** The measured curve each added voice can follow */
+const CURVE_STRETCHES: Record<Curve, Stretches> = { character: CHARACTER_STRETCHES, default: STRETCHES, middle: MIDDLE_STRETCHES, low: LOW_STRETCHES };
 
-/**
- * The deployment's own voices, from CUSTOM_VOICES: a JSON list of {id, name, model} with optional group, speaker, volume (dB),
- * pace and noise. voice/custom.py fetches their models from the same list. Each one that can't be used is skipped, with a
- * reason, rather than stopping the bot
- */
-export function customVoices(raw: string | undefined, taken: readonly Pick<Voice, 'id' | 'name'>[]): { voices: Voice[]; skipped: string[] } {
-  const voices: Voice[] = [];
-  const skipped: string[] = [];
-  if (!raw?.trim()) return { voices, skipped };
-  let listed: unknown;
-  try {
-    listed = JSON.parse(raw);
-  } catch (err) {
-    return { voices, skipped: [`CUSTOM_VOICES isn't valid JSON (${(err as Error).message})`] };
-  }
-  if (!Array.isArray(listed)) return { voices, skipped: ["CUSTOM_VOICES isn't a list"] };
-  const ids = new Set(taken.map((v) => v.id));
-  const names = new Set(taken.map((v) => v.name.toLowerCase()));
-  const between = (value: unknown, low: number, high: number) => typeof value === 'number' && value >= low && value <= high;
-  listed.forEach((entry: Record<string, unknown> | null, i) => {
-    const problem = (() => {
-      if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) return `entry ${i + 1} isn't an object`;
-      const { id, name, model, config: settings, sha256, configSha256, group, speaker, volume, pace, noise } = entry;
-      if (typeof id !== 'string' || !CUSTOM_ID.test(id)) return `entry ${i + 1}'s id isn't 1 to 32 lowercase letters, digits, - or _`;
-      if (ids.has(id)) return `${id} is already a voice's id`;
-      // Taken even if the rest is wrong, as voice/custom.py does, so a later entry with the same id is skipped by both
-      ids.add(id);
-      if (typeof name !== 'string' || !name.trim() || name.trim().length > LONGEST_NAME) return `${id}'s name needs 1 to ${LONGEST_NAME} characters`;
-      if (names.has(name.trim().toLowerCase())) return `${id}'s name is already a voice's name`;
-      if (![model, settings || 'https://'].every((url) => typeof url === 'string' && url.startsWith('https://'))) return `${id}'s model and config need https:// addresses`;
-      // voice/custom.py checks the hashes, and skips a voice whose aren't hashes
-      if (![sha256, configSha256].every((sha) => sha === undefined || sha === null || (typeof sha === 'string' && /^[0-9a-f]{64}$/i.test(sha)))) return `${id}'s sha256 and configSha256 need to be 64 hex digits`;
-      if (group !== undefined && group !== 'Characters' && group !== 'Accents') return `${id}'s group is Characters or Accents`;
-      if (speaker !== undefined && !(Number.isInteger(speaker) && between(speaker, 0, 9999))) return `${id}'s speaker is a whole number from 0`;
-      if (volume !== undefined && !between(volume, -20, 20)) return `${id}'s volume is a number of dB from -20 to 20`;
-      if (pace !== undefined && !between(pace, 0.5, 2)) return `${id}'s pace is from 0.5 to 2`;
-      if (noise !== undefined && !(Array.isArray(noise) && noise.length === 2 && noise.every((n) => between(n, 0, 2)))) return `${id}'s noise is two numbers from 0 to 2`;
-      names.add(name.trim().toLowerCase());
-      voices.push({
-        id,
-        name: name.trim(),
-        model: `custom-${id}`,
-        group: (group as Group | undefined) ?? 'Characters',
-        speaker: speaker as number | undefined,
-        pace: pace as number | undefined,
-        noise: noise as [number, number] | undefined,
-        stretches: CHARACTER_STRETCHES,
-        effects: volume ? `volume=${volume}dB` : undefined,
-      });
-      return null;
-    })();
-    if (problem) skipped.push(problem);
-  });
-  return { voices, skipped };
+/** An added voice as it speaks: its model in the voice container, with its settings */
+export function asVoice(v: AddedVoice, file: string): Voice {
+  return {
+    id: v.id,
+    name: v.name,
+    model: file,
+    group: v.group,
+    speaker: v.speaker ?? undefined,
+    pace: v.pace === 1 ? undefined : v.pace,
+    noise: v.noise ?? undefined,
+    stretches: CURVE_STRETCHES[v.curve],
+    effects: v.volume ? `volume=${v.volume}dB` : undefined,
+    key: JSON.stringify([v.id, file, v.speaker, v.volume, v.pace, v.noise, v.curve]),
+  };
 }
 
-const custom = customVoices(process.env.CUSTOM_VOICES, [...BUILT_IN, ...STYLES]);
-for (const reason of custom.skipped) console.warn(`Skipped a custom voice: ${reason}`);
+/** The voices in the code, which ids and names of added voices can't take */
+export const FIXED_VOICES: readonly Voice[] = [...BUILT_IN, ...STYLES];
 
-export const VOICES: readonly Voice[] = [...BUILT_IN, ...custom.voices, ...STYLES];
+let built: { generation: number; list: readonly Voice[] } | null = null;
+
+/** Every voice on offer: the built-in ones, the added ones whose models the voice container has, and the styles */
+export function voices(): readonly Voice[] {
+  if (built?.generation !== voicesGeneration()) {
+    const added = addedVoices().flatMap((v) => {
+      const state = voiceState(v.id);
+      return state.state === 'ready' && state.file ? [asVoice(v, state.file)] : [];
+    });
+    built = { generation: voicesGeneration(), list: [...BUILT_IN, ...added, ...STYLES] };
+  }
+  return built.list;
+}
 
 const ACCENTS = new Set(['broadcast', 'russian', 'spanish', 'german', 'scottish', 'northern', 'southern-woman', 'southern-man', 'irish', 'australian-man', 'australian-woman']);
 /** How the web UI groups the voices */
 export const voiceGroup = (voice: Voice) => (STYLES.includes(voice) ? 'Effects' : (voice.group ?? (ACCENTS.has(voice.id) ? 'Accents' : 'Characters')));
 
+/** A voice's name, even one that's still downloading, or undefined for one that's gone */
+export const voiceName = (id: string) => voices().find((v) => v.id === id)?.name ?? addedVoices().find((v) => v.id === id)?.name;
+
+/** Why a voice someone picked isn't on offer, or null if it is */
+export function missingVoice(id: string): string | null {
+  if (!id || voices().some((v) => v.id === id)) return null;
+  const added = addedVoices().find((v) => v.id === id);
+  if (!added) return `${id} isn’t a voice any more`;
+  const { state } = voiceState(id);
+  if (state === 'failed') return `${added.name} couldn’t be downloaded`;
+  return `${added.name} is still downloading`;
+}
+
+/** The voice anything falls back to when the ones asked for aren't there */
+const FALLBACK_VOICE = BUILT_IN.find((v) => v.id === 'southern-man')!;
+
 /**
- * The voice a server uses when nobody picks one, or the one given. One that's since been removed falls back to the server's
- * default, then the bot's, then TikTok
+ * The voice a server uses when nobody picks one, or the one given. One that isn't on offer, removed or still downloading,
+ * falls back to the server's default, then the bot's, then Southern English man
  */
 export function serverVoice(guildId: string, id: string | null = setting(guildId, 'ttsVoice')): Voice {
-  const find = (wanted: string | null) => VOICES.find((v) => v.id === wanted);
-  return find(id) ?? find(setting(guildId, 'ttsVoice')) ?? find(DEFAULTS.ttsVoice) ?? find('tiktok')!;
+  const find = (wanted: string | null) => voices().find((v) => v.id === wanted);
+  return find(id) ?? find(setting(guildId, 'ttsVoice')) ?? find(DEFAULTS.ttsVoice) ?? FALLBACK_VOICE;
 }
 
 /** A voice by its id, or by its name as someone might type it into /say instead of picking it */
-const voiceCalled = (typed: string) => VOICES.find((v) => v.id === typed) ?? VOICES.find((v) => v.name.toLowerCase() === typed.trim().toLowerCase());
-
-/**
- * Clears servers' picks of voices that have since been removed, so Settings shows the voice they really get. Returns how many.
- * Not while CUSTOM_VOICES has a problem: a typo there would otherwise forget every pick of the custom voices for good
- */
-export function forgetRemovedVoices(customProblems: readonly string[] = custom.skipped): number {
-  if (customProblems.length) return 0;
-  const ids = VOICES.map((v) => v.id);
-  return Number(
-    db
-      .prepare(`DELETE FROM guild_settings WHERE key IN ('ttsVoice', 'loopVoice') AND value != '' AND value NOT IN (${ids.map(() => '?').join(', ')})`)
-      .run(...ids).changes,
-  );
-}
+const voiceCalled = (typed: string) => voices().find((v) => v.id === typed) ?? voices().find((v) => v.name.toLowerCase() === typed.trim().toLowerCase());
 
 const SPEAK_TIMEOUT_MS = 15_000;
 // And this much more for each character, as a long paragraph takes a while: 3,350 characters took about 8 s
@@ -559,7 +536,8 @@ async function makeLine(text: string, voice: Voice, speed: number, trace?: perf.
  * hears how it was made, if this is the ask that makes it
  */
 async function lineAudio(text: string, voice: Voice, speed: number, signal: AbortSignal, trace?: perf.Trace): Promise<Buffer> {
-  const key = JSON.stringify([voice.id, speed, text]);
+  // An added voice's settings too, as they can change, and a preview can try ones not saved yet
+  const key = JSON.stringify([voice.key ?? voice.id, speed, text]);
   const kept = spoken.get(key);
   if (kept && Date.now() - kept.at < KEEP_SPOKEN_MS) {
     // To the newest end, so lines said often are the last to go
@@ -606,9 +584,9 @@ const previewsAt = new Map<string, number[]>();
  * A line in a voice, as a WAV file, for the web UI to play in the browser so someone can hear a voice before the
  * whole call does. A blank line gets the voice saying its name. Throws a TooSoon when a server asks too often
  */
-export async function previewSpeech(guild: Guild, typed: string, voiceId: string): Promise<Buffer> {
+export async function previewSpeech(guild: Guild, typed: string, chosen: string | Voice): Promise<Buffer> {
   if (!config.voiceUrl) throw new Error('Text to speech isn’t set up on this bot.');
-  const voice = serverVoice(guild.id, voiceId);
+  const voice = typeof chosen === 'string' ? serverVoice(guild.id, chosen) : chosen;
   const now = Date.now();
   const recent = (previewsAt.get(guild.id) ?? []).filter((at) => now - at < 60_000);
   if (recent.length >= PREVIEWS_PER_MINUTE || now - (recent.at(-1) ?? 0) < PREVIEW_EVERY_MS) throw new TooSoon();
@@ -866,7 +844,7 @@ export const speak: Feature = {
         const search = focused.value.toLowerCase();
         // Searched rather than a fixed list, as Discord shows at most 25 choices
         if (focused.name === 'voice') {
-          const matches = VOICES.filter((v) => v.name.toLowerCase().includes(search) || v.id.includes(search));
+          const matches = voices().filter((v) => v.name.toLowerCase().includes(search) || v.id.includes(search));
           return i.respond(matches.slice(0, 25).map((v) => ({ name: v.name, value: v.id })));
         }
         const matches = i.guildId ? phrases(i.guildId).filter((p) => p.text.toLowerCase().includes(search)) : [];
@@ -897,8 +875,8 @@ export const speak: Feature = {
     },
   ],
   setup(client) {
-    const forgotten = forgetRemovedVoices();
-    if (forgotten) console.log(`Text to speech: ${plural(forgotten, 'server voice pick')} of removed voices went back to the default`);
+    // The voice container keeps the added voices' models, from the list it's sent
+    void syncVoices();
     onPlaybackStop(stopLines);
     setGreeter(greetingFor, sayOut);
     setLoopSpeaker(speakToFile, (guild, id) => serverVoice(guild.id, id));

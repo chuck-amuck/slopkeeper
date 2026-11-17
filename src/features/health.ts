@@ -8,6 +8,7 @@ import { machineChange, readMachine, type MachineReading } from '../machine.ts';
 import * as perf from '../perf.ts';
 import { LOOP_VOICE_COUNTS, type LoopVoice } from '../voiceJoin.ts';
 import type { Feature } from '../types.ts';
+import { voiceContainerHas } from './voices.ts';
 
 /**
  * Keeps an eye on how the bot and its containers are doing: samples the bot every 15 seconds, asks the voice, music
@@ -281,6 +282,8 @@ export async function poll() {
         if (!usage) throw new Error(`answered ${res.status}`);
         containerSeen(container, usage);
         if (container === 'voice' && isCount(body?.modelsLoaded)) perf.gauge('voice_models_loaded', body.modelsLoaded);
+        // An older voice container has no list of added voices to say
+        if (container === 'voice' && body && typeof body === 'object' && 'modelsVersion' in body) voiceContainerHas(body.modelsVersion);
         if (container === 'loop') loopVoice(body?.voice);
       } catch {
         perf.gauge('container_up', 0, { container });

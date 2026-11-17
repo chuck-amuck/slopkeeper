@@ -4,7 +4,7 @@ FROM python:3.12-slim-bookworm
 COPY requirements.txt /tmp/requirements.txt
 RUN pip install --no-cache-dir --root-user-action=ignore --require-hashes --no-deps -r /tmp/requirements.txt && rm /tmp/requirements.txt
 
-COPY start.sh serve.py accent.py custom.py /
+COPY start.sh serve.py accent.py models.py /
 
 # Named volumes inherit this ownership on first creation, so this user can write to them
 RUN useradd --create-home piper && mkdir /voices && chown piper:piper /voices

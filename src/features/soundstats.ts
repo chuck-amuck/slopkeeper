@@ -6,7 +6,7 @@ import type { Guild } from 'discord.js';
 import { db } from '../db.ts';
 import { AUTOPLAY } from './music.ts';
 import { countIn, stepsOf } from './overview.ts';
-import { VOICES } from './say.ts';
+import { voiceName } from './say.ts';
 
 const TOP = 10;
 
@@ -103,7 +103,6 @@ export function soundStats(guild: Guild, { since, until, before: startBefore }: 
   // Charts start at the first record, so the weeks before show as nothing rather than as quiet
   const first = recordsFrom === null ? since || until : Math.max(since, Math.min(recordsFrom, until));
   const steps = stepsOf(first, until, timeZone);
-  const voiceName = new Map(VOICES.map((v) => [v.id, v.name]));
   const songKey = (s: { title: string; artist: string }) => `${s.title}\u0000${s.artist}`;
   const listened = new Map<string, number>();
   for (const s of here.songs) listened.set(songKey(s), (listened.get(songKey(s)) ?? 0) + (s.playedMs ?? 0));
@@ -133,7 +132,7 @@ export function soundStats(guild: Guild, { since, until, before: startBefore }: 
     // Who put the songs on: people, and Autoplay when the queue ran out
     djs: tally(here.songs, (s) => (s.addedBy === AUTOPLAY || isMember(s.addedBy) ? s.addedBy : null)).map(([id, songs]) => ({ id, name: id === AUTOPLAY ? 'Autoplay' : nameOf(id), songs })),
     sources: tally(here.songs, (s) => s.source ?? 'unknown').map(([source, songs]) => ({ source, songs })),
-    voices: tally(here.lines, (l) => l.voice).map(([voice, lines]) => ({ voice, name: voiceName.get(voice) ?? voice, lines })),
+    voices: tally(here.lines, (l) => l.voice).map(([voice, lines]) => ({ voice, name: voiceName(voice) ?? voice, lines })),
     speakers: tally(here.lines, (l) => (isMember(l.userId) ? l.userId : null)).map(([id, lines]) => ({ id, name: nameOf(id), lines })),
     kinds: {
       say: here.lines.filter((l) => l.kind === 'say').length,

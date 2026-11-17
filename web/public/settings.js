@@ -1,4 +1,5 @@
 import { ago, api, attempt, confirmButton, devicePref, el, formProblem, icon, notice, openDialog, postDialog, request, RequestError, state, toast, undoToast } from './lib.js';
+import { voicesCard } from './voicesettings.js';
 
 const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
@@ -198,9 +199,12 @@ export function renderSettings(main) {
         return select([['', spec.none], ...data.voiceChannels.map((c) => [c.id, `🔊 ${c.name}`])]);
       case 'sound':
         return select([['', spec.none], ...data.sounds.map((name) => [name, name])]);
-      case 'speaker':
-        // The bot's list, so a voice added or removed there shows here without a change to this page
-        return select([...(spec.none ? [['', spec.none]] : []), ...data.voices.map((v) => [v.id, v.name])]);
+      case 'speaker': {
+        // The bot's list, so a voice added or removed there shows here without a change to this page. One picked that isn't
+        // on offer, gone or still downloading, stays shown, with why under it, rather than looking like another was picked
+        const missing = value && !data.voices.some((v) => v.id === value) ? [[value, `${value} (not available)`]] : [];
+        return select([...(spec.none ? [['', spec.none]] : []), ...missing, ...data.voices.map((v) => [v.id, v.name])]);
+      }
       case 'choice':
         return select(spec.options);
       case 'day':
@@ -643,7 +647,7 @@ export function renderSettings(main) {
           card = el('details', { className: 'card fold', id: slug(title) }, el('summary', {}, el('h2', {}, title), value), ...parts);
         } else card = el('section', { className: 'card', id: slug(title) }, el('h2', {}, title), ...parts);
         // Built only for its own group: the previews share one body each
-        const extra = { 'Hop-on pings': () => gamePingCard(gamePings), 'Sale alerts': salesCard, 'Free games': freeGamesCard }[title]?.();
+        const extra = { 'Hop-on pings': () => gamePingCard(gamePings), 'Sale alerts': salesCard, 'Free games': freeGamesCard, 'Text to speech': () => data.speech && voicesCard(main, refreshFields) }[title]?.();
         return extra ? [card, extra] : [card];
       });
       const joinCard = joinSoundCard(joinSounds);
@@ -699,7 +703,7 @@ export function renderSettings(main) {
         },
         el('option', { value: '' }, 'Jump to…'),
         el('option', { value: 'settings-on-this-device' }, 'On this device'),
-        groups.map(([title]) => el('option', { value: slug(title) }, title)),
+        groups.flatMap(([title]) => [el('option', { value: slug(title) }, title), title === 'Text to speech' && data.speech && el('option', { value: 'settings-voices' }, 'Voices')].filter(Boolean)),
         el('option', { value: 'settings-join-sounds' }, 'Join sounds'),
       );
       main.replaceChildren(

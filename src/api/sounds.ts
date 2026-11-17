@@ -8,7 +8,7 @@ import { config } from '../config.ts';
 import { db } from '../db.ts';
 import * as discordBoard from '../discordSounds.ts';
 import { musicState } from '../features/music.ts';
-import { phrases, previewSpeech, removePhrase, savePhrase, say, serverVoice, TooSoon, voiceGroup, VOICES } from '../features/say.ts';
+import { phrases, previewSpeech, removePhrase, savePhrase, say, serverVoice, TooSoon, voiceGroup, voices } from '../features/say.ts';
 import { addGroup, addSound, addToDiscord, BIN_DAYS, changeEmoji, deleteGroup, fillGroup, moveGroup, placeSound, renameGroup, soundGroups, deletedSounds, eraseDeleted, expiresAt, favourites, findSound, listSounds, parseEmoji, playCounts, removeSound, renameSound, restoreDeleted, restoreSound, saveFromDiscord, setFavourite, setSoundVolume, type Sound, soundLevels, soundVolumes, swapOnDiscord, syncToDiscord, takeOffDiscord, trimmedSounds, trimProblem, trimSound, untaken, untrimmedFile, placeBeside, uploadProblem, volumeProblem } from '../features/soundLibrary.ts';
 import { joinSounds, setJoinSound } from '../features/joinSounds.ts';
 import { playDiscordSound, playFromWeb, playingNow, stopPlayback, stopPlayingOne } from '../features/voiceAudio.ts';
@@ -471,7 +471,7 @@ export async function soundRoutes({ client, guild, req, res, url, section, rest 
     return {};
   }
   if (section === 'say' && !rest.length && req.method === 'GET') {
-    return { on: Boolean(config.voiceUrl) && setting(guild.id, 'tts'), voices: VOICES.map((v) => ({ id: v.id, name: v.name, group: voiceGroup(v) })), voice: serverVoice(guild.id).id, longest: setting(guild.id, 'ttsMaxChars'), phrases: phrases(guild.id) };
+    return { on: Boolean(config.voiceUrl) && setting(guild.id, 'tts'), voices: voices().map((v) => ({ id: v.id, name: v.name, group: voiceGroup(v) })), voice: serverVoice(guild.id).id, longest: setting(guild.id, 'ttsMaxChars'), phrases: phrases(guild.id) };
   }
   if (section === 'say' && rest.length === 1 && rest[0] === 'preview' && req.method === 'GET') {
     if (!config.voiceUrl || !setting(guild.id, 'tts')) throw new Refused(409, 'Text to speech is off for this server.');

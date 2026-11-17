@@ -14,6 +14,9 @@ default, 0 for no limit), the one that spoke longest ago is let go too.
 Some community models' settings list speakers the model doesn't take. Piper would pass it a speaker and fail, so such a model is
 treated as having one speaker.
 
+The voices added in the web UI are kept by models.py: the bot sends their list to POST /models, and GET /models says how each
+one's download is going. /stats carries the list's version, so the bot sends it again if the container lost it.
+
 For the bot's health numbers, each line's answer says in a Server-Timing header how long went on loading a model, turning the words
 into sounds and saying them, and GET /stats says how much memory and CPU the container uses and how many models it holds.
 """
@@ -24,6 +27,7 @@ import logging
 import os
 import resource
 import runpy
+import sys
 import threading
 import time
 
@@ -32,6 +36,7 @@ import onnxruntime
 from piper import PiperVoice
 
 import accent
+import models
 
 _Session = onnxruntime.InferenceSession
 
@@ -245,17 +250,41 @@ def _container_usage():
         return {"memoryBytes": usage.ru_maxrss * 1024, "memoryLimitBytes": None, "cpuSeconds": usage.ru_utime + usage.ru_stime}
 
 
+def _data_dir(argv):
+    """Where Piper looks for models, which is where the added voices go too"""
+    for i, arg in enumerate(argv):
+        if arg == "--data-dir" and i + 1 < len(argv):
+            return argv[i + 1]
+        if arg.startswith("--data-dir="):
+            return arg.split("=", 1)[1]
+    return "/voices"
+
+
+_models = models.Models(_data_dir(sys.argv[1:]), log=lambda text: print(text, flush=True))
+
+
 def _stats():
     # A snapshot, as a model may be loading meanwhile
     loaded = sum(1 for voice in list(_by_path.values()) if voice.session is not None)
-    return {**_container_usage(), "modelsLoaded": loaded}
+    return {**_container_usage(), "modelsLoaded": loaded, "modelsVersion": _models.report()["version"]}
+
+
+def _models_route():
+    if flask.request.method == "POST":
+        body = flask.request.get_json(silent=True) or {}
+        if not isinstance(body, dict):
+            return {"error": "Send {version, voices}."}, 400
+        return _models.set(body.get("voices"), body.get("version"))
+    return _models.report()
 
 
 class _QuietStats(logging.Filter):
-    """The bot asks for /stats every 30 seconds, which would bury everything else in the log"""
+    """The bot asks for /stats every 30 seconds, and the web UI for /models while a voice downloads, which would bury everything
+    else in the log"""
 
     def filter(self, record):
-        return " /stats " not in record.getMessage()
+        message = record.getMessage()
+        return " /stats " not in message and "GET /models " not in message
 
 
 _run = flask.Flask.run
@@ -279,6 +308,7 @@ def _run_measured(self, *args, **kwargs):
         return response
 
     self.add_url_rule("/stats", "stats", _stats)
+    self.add_url_rule("/models", "models", _models_route, methods=["GET", "POST"])
     logging.getLogger("werkzeug").addFilter(_QuietStats())
     return _run(self, *args, **kwargs)
 
@@ -290,4 +320,5 @@ PiperVoice.phoneme_ids_to_audio = _to_audio_tracked
 flask.Flask.run = _run_measured
 if IDLE_S > 0:
     threading.Thread(target=_let_go_of_idle, daemon=True).start()
+_models.start()
 runpy.run_module("piper.http_server", run_name="__main__", alter_sys=True)

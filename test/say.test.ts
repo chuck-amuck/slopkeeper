@@ -13,7 +13,8 @@ import { recentActivity } from '../src/activity.ts';
 import { config } from '../src/config.ts';
 import { Mixer } from '../src/mixer.ts';
 import * as perf from '../src/perf.ts';
-import { announceAloud, customVoices, forgetRemovedVoices, forgetSpoken, lengthFor, phrases, previewPart, readMessage, removePhrase, savePhrase, say, sayOut, serverVoice, speak, speechFor, voiceGroup, VOICES } from '../src/features/say.ts';
+import { announceAloud, forgetSpoken, lengthFor, phrases, previewPart, readMessage, removePhrase, savePhrase, say, sayOut, missingVoice, serverVoice, speak, speechFor, voiceGroup, voices } from '../src/features/say.ts';
+import { addVoice, removeVoice, syncVoices, voiceFields, voicesVersion } from '../src/features/voices.ts';
 import { applySpeechVolume, stopPlayback } from '../src/features/voiceAudio.ts';
 import { loopSpeechProblem } from '../src/features/loopRoom.ts';
 import { playJoinSound, setJoinSound } from '../src/features/joinSounds.ts';
@@ -217,60 +218,42 @@ test('the character voices ask for their own model, delivery and speed', { skip:
 
 test('every voice’s model is one the voice container fetches, and the English accents are grouped as accents', () => {
   const fetched = new Set([...readFileSync(path.join(import.meta.dirname, '../voice/start.sh'), 'utf8').matchAll(/^fetch (\S+) /gm)].map((m) => m[1]));
-  for (const voice of VOICES) if (voice.model) assert.ok(fetched.has(voice.model), `${voice.name} needs voice/start.sh to fetch ${voice.model}`);
-  const group = (id: string) => voiceGroup(VOICES.find((v) => v.id === id)!);
+  for (const voice of voices()) if (voice.model) assert.ok(fetched.has(voice.model), `${voice.name} needs voice/start.sh to fetch ${voice.model}`);
+  const group = (id: string) => voiceGroup(voices().find((v) => v.id === id)!);
   assert.deepEqual(['jarvis', 'announcer', 'irish', 'australian-man', 'russian', 'trailer'].map(group), ['Characters', 'Characters', 'Accents', 'Accents', 'Accents', 'Effects']);
 });
 
 const MODEL = 'https://huggingface.co/someone/voice/resolve/main/voice.onnx';
 
-test('custom voices from CUSTOM_VOICES speak their own model, with what was given and the character curve', () => {
-  const raw = JSON.stringify([
-    { id: 'narrator', name: ' Narrator ', model: MODEL },
-    { id: 'aussie', name: 'Aussie', model: MODEL, config: `${MODEL}.json`, sha256: 'A'.repeat(64), group: 'Accents', speaker: 3, volume: -2.5, pace: 1.1, noise: [0.5, 0.3] },
-  ]);
-  const { voices, skipped } = customVoices(raw, [{ id: 'glados', name: 'GLaDOS' }]);
-  assert.deepEqual(skipped, []);
-  assert.deepEqual(
-    voices.map(({ stretches, ...v }) => ({ ...v, curve: lengthFor(85, stretches) })),
-    [
-      { id: 'narrator', name: 'Narrator', model: 'custom-narrator', group: 'Characters', speaker: undefined, pace: undefined, noise: undefined, effects: undefined, curve: 1.25 },
-      { id: 'aussie', name: 'Aussie', model: 'custom-aussie', group: 'Accents', speaker: 3, pace: 1.1, noise: [0.5, 0.3], effects: 'volume=-2.5dB', curve: 1.25 },
-    ],
-  );
-  assert.equal(voiceGroup(voices[1]), 'Accents');
-});
-
-test('a custom voice that can’t be used is skipped with the reason, and the rest kept', () => {
-  assert.deepEqual(customVoices(undefined, []), { voices: [], skipped: [] });
-  assert.deepEqual(customVoices(' ', []), { voices: [], skipped: [] });
-  assert.match(customVoices('[{', []).skipped[0], /isn't valid JSON/);
-  assert.match(customVoices('{"id": "x"}', []).skipped[0], /isn't a list/);
-  const bad = [
-    'text',
-    { id: 'Has Space', name: 'X', model: MODEL },
-    { id: 'glados', name: 'Mine', model: MODEL },
-    { id: 'blank', name: ' ', model: MODEL },
-    { id: 'plain', name: 'X', model: 'http://example.com/v.onnx' },
-    { id: 'conf', name: 'X', model: MODEL, config: 'ftp://example.com/v.json' },
-    { id: 'hash', name: 'X', model: MODEL, sha256: 'abc' },
-    { id: 'grp', name: 'X', model: MODEL, group: 'Effects' },
-    { id: 'spk', name: 'X', model: MODEL, speaker: 1.5 },
-    { id: 'vol', name: 'X', model: MODEL, volume: 30 },
-    { id: 'pace', name: 'X', model: MODEL, pace: 3 },
-    { id: 'noise', name: 'X', model: MODEL, noise: [0.5] },
-    { id: 'named', name: 'glados', model: MODEL },
-    { id: 'good', name: 'Good', model: MODEL, config: '' },
-    { id: 'good', name: 'Again', model: MODEL },
-    // The first entry with an id is the one, even when it can't be used, as the voice container takes the first too
-    { id: 'blank', name: 'Fixed', model: MODEL },
-  ];
-  const { voices, skipped } = customVoices(JSON.stringify(bad), [{ id: 'glados', name: 'GLaDOS' }]);
-  assert.deepEqual(voices.map((v) => v.id), ['good']);
-  assert.equal(skipped.length, bad.length - 1);
-  assert.match(skipped[2], /already a voice's id/);
-  assert.match(skipped[12], /name is already a voice's name/);
-  assert.match(skipped.at(-1)!, /blank is already/);
+test('an added voice speaks its own model once the voice container has it, with its settings, and not before', { skip: !hasFfmpeg }, async (t) => {
+  const asked: { text: string; model?: string; speaker?: number; length: number; noise?: number }[] = [];
+  let ready = false;
+  t.mock.method(globalThis, 'fetch', async (url: string, init?: RequestInit) => {
+    if (url === 'http://voice.test/models') {
+      const file = 'voice-narrator-0123456789ab';
+      return Response.json({ version: voicesVersion(), voices: { narrator: ready ? { state: 'ready', file, speakers: [] } : { state: 'downloading', percent: 40 } } });
+    }
+    const body = JSON.parse(init!.body as string) as { text: string; voice?: string; speaker_id?: number; length_scale: number; noise_scale?: number };
+    asked.push({ text: body.text, model: body.voice, speaker: body.speaker_id, length: body.length_scale, noise: body.noise_scale });
+    return new Response(readFileSync(speechFile));
+  });
+  const fields = voiceFields({ name: 'Narrator', model: MODEL, group: 'Accents', speaker: 3, volume: -2.5, pace: 1.1, noise: [0.5, 0.3], curve: 'middle' }, new Set());
+  assert.ok(typeof fields !== 'string');
+  addVoice('narrator', fields, 'a');
+  t.after(() => removeVoice('narrator'));
+  await syncVoices();
+  assert.equal(voices().find((v) => v.id === 'narrator'), undefined, 'not while it downloads');
+  const voice = channel();
+  setSetting(voice.guild.id, 'ttsVoice', 'narrator');
+  assert.match(missingVoice('narrator')!, /Narrator is still downloading/);
+  ready = true;
+  await syncVoices();
+  const narrator = voices().find((v) => v.id === 'narrator')!;
+  assert.equal(voiceGroup(narrator), 'Accents');
+  assert.equal(missingVoice('narrator'), null);
+  assert.equal(await say(voice, 'once upon a time', undefined, 'a'), null);
+  await sleep(300);
+  assert.deepEqual(asked, [{ text: 'once upon a time', model: 'voice-narrator-0123456789ab', speaker: 3, length: Math.round(lengthFor(85, narrator.stretches) * 1.1 * 100) / 100, noise: 0.5 }]);
 });
 
 test('a server whose voice was removed talks in the default voice, but asking for an unknown one is refused', { skip: !hasFfmpeg }, async (t) => {
@@ -285,24 +268,14 @@ test('a server whose voice was removed talks in the default voice, but asking fo
   assert.deepEqual(asked.map((a) => [a.text, a.model]), [['still here', 'tiktok'], ['and here', 'tiktok']]);
 });
 
-test('picks of removed voices are cleared at startup, and a removed one falls back to the server’s own default', () => {
+test('a pick of a voice that’s gone is kept, and falls back to the server’s own default, then the bot’s', () => {
   setSetting('old-numbered', 'ttsVoice', '5');
   setSetting('old-loop', 'ttsVoice', 'glados');
   setSetting('old-loop', 'loopVoice', '9');
-  setSetting('same-as-default', 'loopVoice', null);
-  setSetting('kept', 'ttsVoice', 'demon');
   assert.equal(serverVoice('old-loop', '9').id, 'glados', 'the server’s default, not the bot’s');
-  // At least these two, plus any an earlier test left behind
-  assert.ok(forgetRemovedVoices() >= 2);
-  assert.equal(forgetRemovedVoices(), 0, 'nothing left the second time');
-  setSetting('custom', 'ttsVoice', 'narrator');
-  assert.equal(forgetRemovedVoices(["CUSTOM_VOICES isn't valid JSON"]), 0, 'kept while the custom voices can’t be read');
-  assert.equal(storedSetting('custom', 'ttsVoice'), 'narrator');
-  assert.deepEqual(
-    [storedSetting('old-numbered', 'ttsVoice'), storedSetting('old-loop', 'loopVoice'), storedSetting('same-as-default', 'loopVoice'), storedSetting('kept', 'ttsVoice')],
-    [undefined, undefined, '', 'demon'],
-  );
   assert.equal(serverVoice('old-numbered').id, 'tiktok');
+  assert.equal(storedSetting('old-numbered', 'ttsVoice'), '5', 'kept, in case it comes back');
+  assert.match(missingVoice('5')!, /5 isn’t a voice any more/);
 });
 
 test('a voice typed by its name instead of picked from the list still works', { skip: !hasFfmpeg }, async (t) => {

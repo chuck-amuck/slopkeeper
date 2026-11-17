@@ -341,11 +341,14 @@ export async function request(url, { json, body, method = 'GET', signal } = {}) 
   return data;
 }
 
-/** Fetches audio to play in this browser only, such as a voice preview: a URL for it, or the bot's reason why not */
-export async function fetchAudio(url) {
+/**
+ * Fetches audio to play in this browser only, such as a voice preview: a URL for it, or the bot's reason why not. With
+ * `json`, it's sent as a POST
+ */
+export async function fetchAudio(url, json) {
   let res;
   try {
-    res = await fetch(url);
+    res = await fetch(url, json === undefined ? undefined : { method: 'POST', headers: { 'x-slopkeeper': '1', 'content-type': 'application/json' }, body: JSON.stringify(json) });
   } catch {
     throw new RequestError('Couldn’t reach the web UI. Check your connection.');
   }

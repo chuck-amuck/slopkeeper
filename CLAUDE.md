@@ -67,8 +67,9 @@ same static ffmpeg as the image and CI. Without ffmpeg the audio tests skip sile
 - This repo and three of its images are public. Keep LAN addresses, hostnames, deployment IDs, server names,
   emails and personal details out of code, tests, docs and commits.
 - Never publish or proxy the management API port. Identity headers count only with a matching `PROXY_SECRET`.
-- Offer only the voices in `VOICES` (src/features/say.ts), which adds the deployment's `CUSTOM_VOICES`. Speech speed
-  follows a measured curve, not a proportional one: measure a new model's and pick the nearest curve, within about 5%.
+- Offer only the voices from `voices()` (src/features/say.ts): the built-in ones and those added in the web UI
+  (src/features/voices.ts, downloaded by voice/models.py). Speech speed follows a measured curve, not a proportional
+  one: measure a new model's and pick the nearest curve, within about 5%.
 - The voices' effects run through the Dockerfile's pinned static ffmpeg. Before changing its version, render every
   voice with both and compare them: rubberband and other filters can change between versions.
 - Music resumes at the same second after a restart if people are still in the channel and it was under 10 minutes

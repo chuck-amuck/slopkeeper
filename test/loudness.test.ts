@@ -4,7 +4,7 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdtempSync } from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
-import { VOICES } from '../src/features/say.ts';
+import { voices } from '../src/features/say.ts';
 import { levelGain, levelSpeech, measureGain } from '../src/loudness.ts';
 
 const hasFfmpeg = spawnSync('ffmpeg', ['-version']).status === 0;
@@ -74,7 +74,7 @@ test('every voice’s effects run in ffmpeg and give sound', { skip: !hasFfmpeg 
   const input = path.join(dir, 'voice.wav');
   const output = path.join(dir, 'voiced.wav');
   execFileSync('ffmpeg', ['-loglevel', 'error', '-y', '-f', 'lavfi', '-i', "aevalsrc='(0.1*sin(2*PI*440*t)+0.06*sin(2*PI*1200*t))*abs(sin(2*PI*3*t))':d=3:s=22050", input]);
-  const styled = VOICES.filter((v) => v.effects);
+  const styled = voices().filter((v) => v.effects);
   assert.ok(styled.length >= 2);
   for (const voice of styled) {
     await levelSpeech(input, output, voice.effects);

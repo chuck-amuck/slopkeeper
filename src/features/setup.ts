@@ -13,7 +13,7 @@ import { logActivity } from '../activity.ts';
 import { DEFAULT_ENV, DEFAULTS, idSetting, setSetting, setting, storedSetting, type SettingKey } from '../settings.ts';
 import type { Feature } from '../types.ts';
 import { canGiveRole, isTimeZone, pingWarning } from '../util.ts';
-import { serverVoice, VOICES } from './say.ts';
+import { missingVoice, serverVoice, voiceName, voices } from './say.ts';
 import { afterSettingsChanged } from './soundboard.ts';
 import { cantJoin } from './voiceAudio.ts';
 import { findSound, listSounds } from './soundLibrary.ts';
@@ -203,7 +203,7 @@ export function show(key: SettingKey, value: unknown): string {
     case 'loopText':
       return value ? `“${String(value)}”` : 'off';
     case 'loopVoice':
-      return VOICES.find((v) => v.id === value)?.name ?? 'the default voice';
+      return value ? (voiceName(String(value)) ?? String(value)) : 'the default voice';
     case 'loopSound':
       return value ? String(value) : 'not set';
     case 'loopIntro':
@@ -353,6 +353,16 @@ export function settingProblems(guild: Guild): SettingProblem[] {
     }
   }
 
+  // A voice that's gone or still downloading speaks as another, which Settings would otherwise hide
+  for (const [key, what] of [
+    ['ttsVoice', 'The default voice'],
+    ['loopVoice', 'The looping speech’s voice'],
+  ] as const) {
+    const why = missingVoice(String(setting(guild.id, key) ?? ''));
+    const instead = key === 'ttsVoice' ? serverVoice(guild.id) : serverVoice(guild.id, null);
+    if (why) problems.push({ key, text: `${what}: ${why}, so it’s **${instead.name}** for now.${why.endsWith('downloading') ? '' : ' Pick another.'}` });
+  }
+
   const { id: loopId, channel: loopChannel } = channelOf('loopRoom');
   if (loopId && !loopChannel) problems.push({ key: 'loopRoom', text: 'The looping room’s channel is gone. Pick another one.' });
   // The loop bot has its own permissions, and its own note in the room's settings
@@ -477,7 +487,7 @@ export function checkSetting(guild: Guild, key: SettingKey, value: unknown): Che
       return Object.hasOwn(PATCH_MODES, String(value)) ? { value: String(value) } : { error: 'Patch notes are off, each one posted, or a weekly digest.' };
     case 'ttsVoice':
     case 'loopVoice':
-      return VOICES.some((v) => v.id === value) ? { value: String(value) } : { error: 'Pick a voice from the list.' };
+      return voices().some((v) => v.id === value) ? { value: String(value) } : { error: 'Pick a voice from the list.' };
     case 'loopText': {
       const text = String(value).trim();
       if (!text) return { error: 'Type something to say.' };

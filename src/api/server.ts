@@ -1,7 +1,8 @@
 import { ChannelType, type Guild, type VoiceChannel } from 'discord.js';
 import { type IncomingMessage } from 'node:http';
+import { config } from '../config.ts';
 import { linkWebUser, logActivity, recentActivity, webUser, webUserFor } from '../activity.ts';
-import { VOICES } from '../features/say.ts';
+import { voices } from '../features/say.ts';
 import { canGiveRole } from '../util.ts';
 import { checkSetting, GROUPS, LABELS, LIMITS, POSTING_CHANNELS, settingProblems, show, source, STEPS } from '../features/setup.ts';
 import { afterSettingsChanged } from '../features/soundboard.ts';
@@ -43,7 +44,9 @@ function settingList(guild: Guild) {
     timeZones: TIME_ZONES,
     problems: settingProblems(guild),
     postChannels: POSTING_CHANNELS,
-    voices: VOICES.map(({ id, name }) => ({ id, name })),
+    voices: voices().map(({ id, name }) => ({ id, name })),
+    // Whether there's a voice container, without which there are no voices to add
+    speech: Boolean(config.voiceUrl),
   };
 }
 

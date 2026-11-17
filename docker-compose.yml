@@ -32,10 +32,8 @@ services:
     image: ghcr.io/chuck-amuck/slopkeeper-voice:latest # text to speech, optional. Needs VOICE_URL=http://voice:5000 in .env
     restart: unless-stopped
     init: true
-    environment:
-      CUSTOM_VOICES: ${CUSTOM_VOICES:-} # your own voices, from .env, which the bot reads there too
     volumes:
-      - slopkeeper-voice:/voices
+      - slopkeeper-voice:/voices # the models, including the ones added in the web UI
     deploy:
       resources:
         limits:
