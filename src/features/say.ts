@@ -253,10 +253,10 @@ const BUILT_IN: readonly Voice[] = [
   // Models in other languages reading English with an accent (voice/accent.py), turned up or down to match the others.
   // State broadcast reads Korean as it is, goes 15% slower, as an announcer reads, and has a style's effects
   { id: 'broadcast', name: 'State broadcast', model: 'kss', pace: 1.15, stretches: CHARACTER_STRETCHES, effects: BROADCAST_EFFECTS },
-  { id: 'russian', name: 'Russian', model: 'dmitri', stretches: MIDDLE_STRETCHES, effects: 'volume=2dB' },
+  { id: 'russian', name: 'Russian', model: 'dmitri', stretches: MIDDLE_STRETCHES, effects: 'volume=-1dB' },
   { id: 'spanish', name: 'Spanish', model: 'davefx', stretches: CHARACTER_STRETCHES, effects: 'volume=-3dB' },
   // The emotional model's neutral speaker, which leaves its drunk, whispering and other speakers free to add
-  { id: 'german', name: 'German', model: 'thorsten', speaker: 4, stretches: CHARACTER_STRETCHES, effects: 'volume=4.5dB' },
+  { id: 'german', name: 'German', model: 'thorsten', speaker: 4, stretches: CHARACTER_STRETCHES, effects: 'volume=-0.5dB' },
 ];
 
 /** The measured curve each added voice can follow */
