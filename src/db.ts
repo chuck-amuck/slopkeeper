@@ -358,6 +358,14 @@ db.exec(`
     percent INTEGER NOT NULL DEFAULT 100,
     PRIMARY KEY (guild_id, name)
   );
+  -- How long each sound file is, as measured when it last changed, so a restart doesn't measure every sound again
+  CREATE TABLE IF NOT EXISTS sound_lengths (
+    file TEXT PRIMARY KEY,
+    guild_id TEXT NOT NULL,
+    mtime_ms REAL NOT NULL,
+    seconds REAL NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS sound_lengths_by_guild ON sound_lengths (guild_id);
   -- The video or track a sound was cut from, and the part picked, so another part can be picked later
   CREATE TABLE IF NOT EXISTS sound_links (
     guild_id TEXT NOT NULL,

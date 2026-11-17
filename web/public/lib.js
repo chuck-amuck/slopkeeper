@@ -271,7 +271,43 @@ function checkVersion(res) {
   toast('There’s a new version of this page.', false, { label: 'Reload', run: () => location.reload() }, true);
 }
 
+// When the session ends, as the web UI says with each answer, so the page knows whether it may draw from what it kept
+export const SESSION_KEY = 'sessionUntil';
+let sessionUntil = null;
+function noteSession(res) {
+  const until = res.headers.get('x-slopkeeper-session-until');
+  if (!until || until === sessionUntil) return;
+  sessionUntil = until;
+  remember(SESSION_KEY, until);
+}
+
+/** Whether this browser's session is good for a while yet, going by the last answer */
+export const sessionLasts = () => Number(recall(SESSION_KEY)) > Date.now() + 60_000;
+
+/** Answers asked for as the page starts, before the page that wants them is drawn, by address */
+const early = new Map();
+// Older than this, an answer asked for early is asked for again
+const EARLY_MS = 10_000;
+
+/**
+ * Asks for what a page will want while the rest of the web UI is still starting, so it doesn't wait a round trip
+ * more. The page's own request() for the same address takes this answer instead of asking again
+ */
+export function askEarly(url) {
+  if (early.has(url)) return;
+  const answer = request(url);
+  const entry = { at: performance.now(), answer };
+  // A failure is the page's to show, when it asks. Not kept past that, so asking again, as after logging in, asks afresh
+  answer.catch(() => early.get(url) === entry && early.delete(url));
+  early.set(url, entry);
+}
+
 export async function request(url, { json, body, method = 'GET', signal } = {}) {
+  const ahead = method === 'GET' && body === undefined && early.get(url);
+  if (ahead) {
+    early.delete(url);
+    if (performance.now() - ahead.at < EARLY_MS) return ahead.answer;
+  }
   let res;
   // Timed for how fast the web UI feels: not the live updates, which wait on purpose, or uploads, which take as long as the file
   const timed = url.startsWith('/api/guilds/') && !url.includes('/updates?') && body === undefined;
@@ -288,6 +324,7 @@ export async function request(url, { json, body, method = 'GET', signal } = {}) 
   }
   const answered = performance.now();
   checkVersion(res);
+  noteSession(res);
   if (res.status === 401 && url.startsWith('/api/')) {
     session.onExpired();
     throw new RequestError('Log in again.', 401);

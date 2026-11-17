@@ -1,4 +1,5 @@
 import { spawn, type ChildProcess } from 'node:child_process';
+import { statSync } from 'node:fs';
 import path from 'node:path';
 import { Readable } from 'node:stream';
 import * as perf from './perf.ts';
@@ -77,6 +78,51 @@ interface Source {
 /** `byItself` is whether a sound played to the end; `failed` whether it ended because ffmpeg couldn't play the file */
 export type OnEnd = (byItself: boolean, failed?: boolean) => void;
 
+// The decoded audio of sounds played lately, so a sound played again starts without waiting for ffmpeg. Each is kept by
+// its file as it was, so a replaced file is decoded afresh, and the least lately played go first past the limit
+const DECODED_LIMIT_BYTES = 24 * 1024 * 1024;
+// A soundboard sound is a few seconds; a longer file isn't kept
+const DECODED_MOST_BYTES = (48_000 * 2 * 2 * 10_000) / 1000;
+const decoded = new Map<string, Buffer>();
+let decodedBytes = 0;
+
+/** What a file's decoded audio is kept under, which changes when the file does. Null if it can't be read */
+function decodedKey(file: string): string | null {
+  try {
+    const { mtimeMs, size } = statSync(file);
+    return `${file}\u0000${mtimeMs}\u0000${size}`;
+  } catch {
+    return null;
+  }
+}
+
+function keepDecoded(key: string, pcm: Buffer) {
+  if (pcm.length > DECODED_MOST_BYTES || decoded.has(key)) return;
+  decoded.set(key, pcm);
+  decodedBytes += pcm.length;
+  for (const [old, oldPcm] of decoded) {
+    if (decodedBytes <= DECODED_LIMIT_BYTES) break;
+    decoded.delete(old);
+    decodedBytes -= oldPcm.length;
+  }
+}
+
+/** A file's decoded audio, if it's kept, which now counts as played most lately */
+function decodedOf(key: string): Buffer | undefined {
+  const pcm = decoded.get(key);
+  if (pcm) {
+    decoded.delete(key);
+    decoded.set(key, pcm);
+  }
+  return pcm;
+}
+
+/** Forgets every decoded sound, for tests */
+export function forgetDecoded() {
+  decoded.clear();
+  decodedBytes = 0;
+}
+
 /** One playing sound, decoded to raw PCM by its own ffmpeg process */
 class Voice implements Source {
   readonly proc: ChildProcess;
@@ -91,8 +137,11 @@ class Voice implements Source {
   replaces: Source[] = [];
   private stopped = false;
   private onEnd: OnEnd | undefined;
+  /** Its decoded audio so far, to keep once it's played to the end, and what to keep it under */
+  private decoding: { key: string; chunks: Buffer[]; bytes: number } | null;
 
-  constructor(file: string, gain: number, onEnd?: OnEnd, options: VoiceOptions = {}) {
+  constructor(file: string, gain: number, onEnd?: OnEnd, options: VoiceOptions = {}, keepAs: string | null = null) {
+    this.decoding = keepAs ? { key: keepAs, chunks: [], bytes: 0 } : null;
     this.file = file;
     this.gain = gain;
     this.onEnd = onEnd;
@@ -127,6 +176,8 @@ class Voice implements Source {
   /** `byItself` is whether it played to the end, rather than being stopped or failing */
   private finish(byItself: boolean, failed = false) {
     this.ended = true;
+    if (this.decoding && byItself && !this.stopped && this.decoding.bytes > 0) keepDecoded(this.decoding.key, Buffer.concat(this.decoding.chunks));
+    this.decoding = null;
     this.onEnd?.(byItself, failed && !this.stopped);
     this.onEnd = undefined;
   }
@@ -140,7 +191,13 @@ class Voice implements Source {
   }
 
   read(): Buffer | null {
-    return this.pcm.read(FRAME_BYTES) as Buffer | null;
+    const chunk = this.pcm.read(FRAME_BYTES) as Buffer | null;
+    if (chunk && this.decoding) {
+      this.decoding.bytes += chunk.length;
+      if (this.decoding.bytes > DECODED_MOST_BYTES) this.decoding = null;
+      else this.decoding.chunks.push(chunk);
+    }
+    return chunk;
   }
 
   stop() {
@@ -149,6 +206,55 @@ class Voice implements Source {
     // ffmpeg ignores SIGTERM while it's blocked writing to a full pipe, so close the pipe and SIGKILL it
     this.pcm.destroy();
     this.proc.kill('SIGKILL');
+  }
+}
+
+/** A sound played from its decoded audio, kept from an earlier play, so it starts at once */
+class DecodedVoice implements Source {
+  readonly file: string;
+  readonly gain: number;
+  readonly loop = false;
+  readonly lasting = false;
+  readonly group: string;
+  ended = false;
+  heard = false;
+  replaces: Source[] = [];
+  private at = 0;
+  private onEnd: OnEnd | undefined;
+  private readonly pcm: Buffer;
+
+  constructor(file: string, pcm: Buffer, gain: number, onEnd?: OnEnd, options: VoiceOptions = {}) {
+    this.file = file;
+    this.pcm = pcm;
+    this.gain = gain;
+    this.onEnd = onEnd;
+    this.group = options.group ?? 'sound';
+  }
+
+  ready() {
+    return true;
+  }
+
+  /** The next frame, then once it's all been read, nothing, and it's over, as with ffmpeg closing after its last bytes */
+  read(): Buffer | null {
+    if (this.at >= this.pcm.length) {
+      this.finish(true);
+      return null;
+    }
+    const chunk = this.pcm.subarray(this.at, this.at + FRAME_BYTES);
+    this.at += chunk.length;
+    return chunk;
+  }
+
+  private finish(byItself: boolean) {
+    if (this.ended) return;
+    this.ended = true;
+    this.onEnd?.(byItself, false);
+    this.onEnd = undefined;
+  }
+
+  stop() {
+    this.finish(false);
   }
 }
 
@@ -276,7 +382,15 @@ export class Mixer extends Readable {
       onEnd?.(byItself, failed);
       if (shown) this.emit('playing');
     };
-    const voice = options.loop && options.everyMs ? new LayeredVoice(file, gain, options.everyMs, ended, options) : new Voice(file, gain, ended, options);
+    // A library sound played whole is kept decoded: not music, a loop, a resume, or speech, which is a new file each time
+    const keepAs = !options.loop && !options.lasting && !options.startMs && !options.spoken && (options.group ?? 'sound') === 'sound' ? decodedKey(file) : null;
+    const pcm = keepAs ? decodedOf(keepAs) : undefined;
+    const voice =
+      options.loop && options.everyMs
+        ? new LayeredVoice(file, gain, options.everyMs, ended, options)
+        : pcm
+          ? new DecodedVoice(file, pcm, gain, ended, options)
+          : new Voice(file, gain, ended, options, keepAs);
     if (options.onHeard) this.hearing.set(voice, options.onHeard);
     this.labels.set(voice, { id: ++playingIds, name: options.label ?? path.parse(file).name, startedAt: Date.now(), loop: options.loop ?? false, spoken: options.spoken ?? options.group === 'speech' });
     // A restart keeps the playing copy going until the new one has audio, so spamming leaves no gap while ffmpeg starts.

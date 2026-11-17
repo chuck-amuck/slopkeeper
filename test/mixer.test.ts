@@ -1,11 +1,11 @@
 import './helpers.ts';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { Mixer } from '../src/mixer.ts';
+import { forgetDecoded, Mixer } from '../src/mixer.ts';
 import * as perf from '../src/perf.ts';
 
 const hasFfmpeg = spawnSync('ffmpeg', ['-version']).status === 0;
@@ -48,6 +48,60 @@ test('spamming a sound restarts it with no gap, and doesn’t stack', { skip: !h
   assert.ok(heard.length * 20 > 1250, `restarted rather than finishing at 1 s (${heard.length * 20} ms)`);
   // The crossfade between two copies is never louder than one copy, however many restarts land
   assert.equal(heard.filter((p) => p > level * 1.2).length, 0, 'copies never stack');
+});
+
+test('a sound played to the end plays from memory next time, until its file changes', { skip: !hasFfmpeg }, async () => {
+  forgetDecoded();
+  const file = tone('kept.wav', 440, 0.5);
+  // A whole second, which setting it again gives exactly
+  const when = new Date(Math.floor(Date.now() / 1000) * 1000);
+  utimesSync(file, when, when);
+  const playOnce = async (options = {}) => {
+    const mixer = new Mixer(0.5, 12);
+    const played = record(mixer);
+    let byItself: boolean | undefined;
+    mixer.add(file, 1, (b) => (byItself = b), options);
+    await played.done;
+    return { peaks: played.peaks, byItself };
+  };
+  const first = await playOnce();
+  // Junk of the same size, marked as unchanged: ffmpeg couldn't play it, so what plays is what was kept
+  const { size, mtime } = statSync(file);
+  writeFileSync(file, Buffer.alloc(size, 7));
+  utimesSync(file, mtime, mtime);
+  const again = await playOnce();
+  assert.deepEqual(again.peaks, first.peaks);
+  assert.equal(again.byItself, true, 'says it played to the end, like ffmpeg');
+  // A resume or a loop isn't taken from memory
+  assert.equal((await playOnce({ startMs: 100 })).peaks.filter((p) => p > 0).length, 0);
+  // A changed file is decoded afresh
+  const later = new Date(mtime.getTime() + 60_000);
+  execFileSync('ffmpeg', ['-loglevel', 'error', '-y', '-f', 'lavfi', '-i', 'sine=frequency=440:duration=0.3', file]);
+  utimesSync(file, later, later);
+  const changed = await playOnce();
+  assert.ok(Math.abs(changed.peaks.filter((p) => p > 0).length - 15) <= 1, `${changed.peaks.filter((p) => p > 0).length} frames`);
+});
+
+test('a sound stopped partway isn’t kept', { skip: !hasFfmpeg }, async () => {
+  forgetDecoded();
+  const file = tone('cut.wav', 440, 1);
+  const when = new Date(Math.floor(Date.now() / 1000) * 1000);
+  utimesSync(file, when, when);
+  const mixer = new Mixer(0.5, 12);
+  const played = record(mixer);
+  const stop = mixer.add(file);
+  await sleep(200);
+  stop();
+  await played.done;
+  const { size, mtime } = statSync(file);
+  writeFileSync(file, Buffer.alloc(size, 7));
+  utimesSync(file, mtime, mtime);
+  const second = new Mixer(0.5, 12);
+  const again = record(second);
+  let failed: boolean | undefined;
+  second.add(file, 1, (_, f) => (failed = f));
+  await again.done;
+  assert.equal(failed, true, 'went to ffmpeg, which couldn’t play the junk');
 });
 
 test('different sounds layer', { skip: !hasFfmpeg }, async () => {

@@ -45,6 +45,8 @@ const FILES: [path: string, file: string, type: keyof typeof CONTENT_TYPES][] = 
   ['/icon-512.png', 'icon-512.png', 'png'],
 ];
 const sources = new Map(FILES.map(([path, file]) => [path, read(file)]));
+// Kept for a day without asking: the header shows the icon a few times on every page, and a changed one can wait
+const DAILY = new Set(['/icon.svg', '/manifest.webmanifest', '/apple-touch-icon.png', '/icon-192.png', '/icon-512.png']);
 const hash = (...parts: Buffer[]) => parts.reduce((h, part) => h.update(part), createHash('sha256')).digest('base64url').slice(0, 16);
 
 /** Changes with any file, so a page left open can tell it's out of date from any answer and offer a reload */
@@ -300,7 +302,12 @@ export function createWeb({ password, apiToken, botUrl, proxySecret }: WebOption
       return json(res, 502, { error: 'The bot isn’t answering. It may be restarting.' });
     }
     // The bot's part of the wait, so the page can tell it from the network's
-    const headers: Record<string, string> = { ...HEADERS, 'server-timing': `bot;dur=${(performance.now() - asked).toFixed(1)}` };
+    const headers: Record<string, string> = {
+      ...HEADERS,
+      'server-timing': `bot;dur=${(performance.now() - asked).toFixed(1)}`,
+      // So the page knows not to draw from what it kept once the session's over, before it's asked anything
+      'x-slopkeeper-session-until': (cookieValue(req) ?? '').split('.')[0],
+    };
     for (const name of ['content-type', 'content-length', 'cache-control']) {
       const value = answer.headers.get(name);
       if (value) headers[name] = value;
@@ -369,7 +376,7 @@ export function createWeb({ password, apiToken, botUrl, proxySecret }: WebOption
       // gets today's file, which is why scripts loaded later, on a click, import nothing (a test checks): one that did
       // would bring today's lib.js in beside the tab's own. The tab offers Reload as soon as it sees the new version
       const current = versions.has(path) && new URLSearchParams(req.url!.split('?')[1] ?? '').get('v') === versions.get(path);
-      const cache = { 'cache-control': current ? 'public, max-age=31536000, immutable' : 'no-cache', etag, vary: 'accept-encoding' };
+      const cache = { 'cache-control': current ? 'public, max-age=31536000, immutable' : DAILY.has(path) ? 'private, max-age=86400' : 'no-cache', etag, vary: 'accept-encoding' };
       if (header(req, 'if-none-match')?.split(',').some((tag) => tag.trim().replace(/^W\//, '') === etag)) return res.writeHead(304, { ...HEADERS, ...cache }).end();
       const body = encoded ? found[encoded]! : found.plain;
       res.writeHead(200, { ...HEADERS, ...cache, 'content-type': found.type, 'content-length': body.length, ...(encoded && { 'content-encoding': encoded }) });

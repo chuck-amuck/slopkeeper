@@ -5,6 +5,7 @@ import path from 'node:path';
 import { logActivity } from '../activity.ts';
 import { feeds } from '../changes.ts';
 import { config } from '../config.ts';
+import { db } from '../db.ts';
 import * as discordBoard from '../discordSounds.ts';
 import { musicState } from '../features/music.ts';
 import { phrases, previewSpeech, removePhrase, savePhrase, say, serverVoice, TooSoon, voiceGroup, VOICES } from '../features/say.ts';
@@ -28,15 +29,51 @@ const AUDIO_TYPES: Record<string, string> = {
   '.flac': 'audio/flac',
 };
 
-// ffprobe per sound is slow, and a sound only changes by being replaced
-const durations = new Map<string, { mtimeMs: number; seconds: number | null }>();
+// Measuring a sound takes ffprobe, and a sound only changes by being replaced, so each file is measured once each time
+// it changes and kept in sound_lengths. Measurements under way, so two lists asked for at once share them
+const measuring = new Map<string, Promise<number | null>>();
+// Files ffprobe couldn't read, until a restart: it may have been a one-off, so that isn't kept for good
+const unreadable = new Set<string>();
 
-async function durationOf(file: string, mtimeMs: number): Promise<number | null> {
-  const known = durations.get(file);
-  if (known?.mtimeMs === mtimeMs) return known.seconds;
-  const seconds = await discordBoard.durationOf(file).catch(() => null);
-  durations.set(file, { mtimeMs, seconds });
+function measure(guildId: string, file: string, mtimeMs: number): Promise<number | null> {
+  const key = `${file}\u0000${mtimeMs}`;
+  if (unreadable.has(key)) return Promise.resolve(null);
+  let seconds = measuring.get(key);
+  if (!seconds) {
+    seconds = discordBoard
+      .durationOf(file)
+      .then((s) => {
+        if (!Number.isFinite(s)) throw new Error('no length');
+        db.prepare('INSERT INTO sound_lengths (file, guild_id, mtime_ms, seconds) VALUES (?, ?, ?, ?) ON CONFLICT(file) DO UPDATE SET guild_id = excluded.guild_id, mtime_ms = excluded.mtime_ms, seconds = excluded.seconds').run(file, guildId, mtimeMs, s);
+        return s;
+      })
+      .catch(() => {
+        unreadable.add(key);
+        return null;
+      })
+      .finally(() => measuring.delete(key));
+    measuring.set(key, seconds);
+  }
   return seconds;
+}
+
+/** How long each of a server's sound files is, in seconds, or null where ffprobe couldn't tell. Forgets files gone since */
+async function lengthsOf(guildId: string, files: { file: string; mtimeMs: number }[]): Promise<(number | null)[]> {
+  const rows = db.prepare('SELECT file, mtime_ms AS mtimeMs, seconds FROM sound_lengths WHERE guild_id = ?').all(guildId) as { file: string; mtimeMs: number; seconds: number | null }[];
+  const known = new Map(rows.map((r) => [r.file, r]));
+  const listed = new Set(files.map((f) => f.file));
+  const gone = rows.filter((r) => !listed.has(r.file));
+  if (gone.length) {
+    const forget = db.prepare('DELETE FROM sound_lengths WHERE file = ?');
+    for (const r of gone) forget.run(r.file);
+  }
+  const lengths = files.map((f) => (known.get(f.file)?.mtimeMs === f.mtimeMs ? known.get(f.file)!.seconds : undefined));
+  // ffprobe is the slow part, so a few run at once
+  const missing = [...lengths.keys()].filter((n) => lengths[n] === undefined);
+  for (let n = 0; n < missing.length; n += 8) {
+    await Promise.all(missing.slice(n, n + 8).map(async (i) => (lengths[i] = await measure(guildId, files[i].file, files[i].mtimeMs))));
+  }
+  return lengths as (number | null)[];
 }
 
 export async function soundList(guild: Guild) {
@@ -49,12 +86,8 @@ export async function soundList(guild: Guild) {
   const trimmed = trimmedSounds(guild.id);
   const links = soundLinks(guild.id);
   const listed = listSounds(guild.id);
-  // ffprobe is the slow part, so a few run at once
   const stats = listed.map((s) => statSync(s.file));
-  const lengths: (number | null)[] = [];
-  for (let n = 0; n < listed.length; n += 8) {
-    lengths.push(...(await Promise.all(listed.slice(n, n + 8).map((s, k) => durationOf(s.file, stats[n + k].mtimeMs)))));
-  }
+  const lengths = await lengthsOf(guild.id, listed.map((s, n) => ({ file: s.file, mtimeMs: stats[n].mtimeMs })));
   for (const [n, sound] of listed.entries()) {
     const { size } = stats[n];
     const seconds = lengths[n];

@@ -8,6 +8,18 @@ export const EVERYTHING_ELSE = 'Everything else';
 const FAVOURITES = 'favourites';
 // Which groups are folded away, on this device, for each server: `g<id>`, or `rest` for Everything else
 const foldedKey = (guildId) => `foldedGroups:${guildId}`;
+// Each server's sounds and groups as last seen on this device, to draw the tiles from before the bot has answered
+export const SHOWN_PREFIX = 'soundsShown:';
+
+/** The sounds and groups last seen for a server, or null */
+function lastSeen(guildId) {
+  try {
+    const kept = JSON.parse(recall(SHOWN_PREFIX + guildId) ?? 'null');
+    return Array.isArray(kept?.sounds) && Array.isArray(kept.groups) ? kept : null;
+  } catch {
+    return null;
+  }
+}
 
 /**
  * A section's heading, which folds `body` away and back where it is. `count` shows while it's folded, so nothing looks
@@ -152,6 +164,7 @@ export function soundGrid({ voice, empty, stars = false, slash = false }) {
           button.classList.remove('hit');
           void button.offsetWidth;
           button.classList.add('hit');
+          tapped = true;
           void attempt(() => voice.play(sound.name));
         },
       },
@@ -262,25 +275,48 @@ export function soundGrid({ voice, empty, stars = false, slash = false }) {
   // What's shown comes from the first load and from changes made anywhere: other tabs, Discord and the bot itself.
   // Whichever arrives first is used, and nothing older than what's shown
   let version = '';
+  // Drawn from what this device saw last, until the bot answers, which is usually the same
+  let fromLastSeen = false;
+  // Whether a tile's been tapped, after which nothing may reshuffle
+  let tapped = false;
   function useData(fresh) {
     if (guildId !== state.guildId || !node.isConnected || older(fresh.version, version)) return false;
+    // Nothing new, as when the first load and the live updates both answer with the same
+    if (fresh.version && fresh.version === version && sounds) return false;
+    const before = fromLastSeen && JSON.stringify([sounds, groups]);
     version = fresh.version;
-    if (sounds) useSounds(fresh.sounds);
-    else sounds = fresh.sounds.sort(byUse);
+    // What was last seen is only a stand-in: the bot's answer replaces it, in its own order, unless someone's started tapping
+    if (sounds && !(fromLastSeen && !tapped)) useSounds(fresh.sounds);
+    else sounds = [...fresh.sounds].sort(byUse);
     useGroups(fresh.groups ?? []);
+    const shown = JSON.stringify({ sounds: fresh.sounds, groups: fresh.groups ?? [] });
+    if (shown !== recall(SHOWN_PREFIX + guildId)) remember(SHOWN_PREFIX + guildId, shown);
+    if (fromLastSeen) {
+      fromLastSeen = false;
+      // The same as already shown: not drawn again
+      if (before === JSON.stringify([sounds, groups])) return false;
+    }
     return true;
   }
   // A change waits while a tile is held down, so nothing moves under the finger
   followWhenIdle('sounds', node, () => [node], (fresh) => useData(fresh) && render());
 
+  const seen = lastSeen(guildId);
+  if (seen) {
+    fromLastSeen = true;
+    sounds = [...seen.sounds].sort(byUse);
+    useGroups(seen.groups);
+    render();
+  }
+
   void attempt(async () => {
     try {
       const fresh = await request(api('/sounds'));
       if (guildId !== state.guildId || !node.isConnected) return;
-      useData(fresh);
-      render();
+      if (useData(fresh)) render();
     } catch (err) {
-      node.replaceChildren(notice('error', err.message));
+      // What was last seen stays, and tapping still works if the bot does
+      if (!sounds) node.replaceChildren(notice('error', err.message));
       throw err;
     }
   });

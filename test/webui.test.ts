@@ -15,8 +15,19 @@ import { db, setKv } from '../src/db.ts';
 import { createWeb } from '../web/src/server.ts';
 
 const PASSWORD = 'browser-test';
-const PAGES = [
+// A sound this device saw last time, that's since been deleted
+const STALE = { sounds: [{ name: 'deleted since', plays: 3 }], groups: [] };
+// A page's address, its name, what it remembers, and what must be true of it once it's shown
+const PAGES: [string, string, Record<string, string>?, string?][] = [
   ['board', 'Soundboard'],
+  // Drawn at once from what was seen last, and the server remembered, so its parts are asked for as the page starts. Then
+  // what's since changed: a sound deleted and the server renamed
+  [
+    'board',
+    'Soundboard: from the last visit',
+    { guild: GUILD, sessionUntil: String(Date.now() + 86_400_000), [`soundsShown:${GUILD}`]: JSON.stringify(STALE), lastStart: JSON.stringify({ guildId: GUILD, guilds: [{ id: GUILD, name: 'Old server name', icon: null }], me: null }) },
+    `![...document.querySelectorAll('.tile-name')].some((n) => n.textContent === 'deleted since') && !document.body.innerText.includes('Old server name')`,
+  ],
   ['board', 'Soundboard: Manage', { soundboardView: 'manage' }],
   ['music', 'Music'],
   ['games', 'Games'],
@@ -30,7 +41,7 @@ const PAGES = [
   ['stats/health', 'Stats: Health'],
   ['activity', 'Activity'],
   ['settings', 'Settings'],
-] as const;
+];
 const SCREENS = [
   { name: 'computer', width: 1280, height: 900, mobile: false },
   { name: 'phone', width: 390, height: 844, mobile: true },
@@ -207,7 +218,7 @@ test('every page of the web UI opens cleanly, on a computer and a phone', { skip
   const failures: string[] = [];
   for (const screen of SCREENS) {
     await page.send('Emulation.setDeviceMetricsOverride', { width: screen.width, height: screen.height, deviceScaleFactor: 1, mobile: screen.mobile });
-    for (const [hash, label, stored = {}] of PAGES) {
+    for (const [hash, label, stored = {}, expect] of PAGES) {
       // A fresh page each time, with what it remembers set first
       await page.send('Page.navigate', { url: `${site}/#${hash}` });
       await page.evaluate(`localStorage.clear(); ${Object.entries(stored).map(([k, v]) => `localStorage.setItem(${JSON.stringify(k)}, ${JSON.stringify(v)});`).join('')} true`);
@@ -263,6 +274,7 @@ test('every page of the web UI opens cleanly, on a computer and a phone', { skip
         writeFileSync(path.join(process.env.SHOTS, `${label.replace(/\W+/g, '-')}-${screen.name}.png`), Buffer.from(data, 'base64'));
       }
       if (!shown) failures.push(`${where}: still loading after 10 seconds`);
+      if (expect && !(await page.evaluate<boolean>(expect))) failures.push(`${where}: isn't so: ${expect}`);
       if (look.text < 20) failures.push(`${where}: next to nothing on the page`);
       for (const error of look.errors) failures.push(`${where}: shows "${error}"`);
       if (Math.max(look.wide, look.width) > screen.width + 1) failures.push(`${where}: scrolls sideways (${look.wide} px wide on a ${screen.width} px screen): ${look.past.join('; ')}`);

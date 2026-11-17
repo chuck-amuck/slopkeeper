@@ -3,7 +3,7 @@ import { joinVoiceChannel, VoiceConnectionStatus } from '@discordjs/voice';
 import { DiscordAPIError, PermissionFlagsBits, RESTJSONErrorCodes } from 'discord.js';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { request } from 'node:http';
 import { mock, test, type TestContext } from 'node:test';
@@ -38,6 +38,25 @@ test('uploads a sound, copies it to Discord and updates the posted panels', asyn
   assert.ok(Math.abs(sound.seconds - 0.2) < 0.05);
   assert.equal(discordSounds.size, 1);
   assert.equal(panelEdits.length, 1);
+});
+
+test('a sound’s length is measured once each time its file changes, and kept over a restart', async () => {
+  await upload('horn');
+  await sounds();
+  const file = path.join(soundFolder, readdirSync(soundFolder).find((f) => f.startsWith('horn.'))!);
+  const row = () => db.prepare('SELECT seconds FROM sound_lengths WHERE file = ?').get(file) as { seconds: number } | undefined;
+  assert.ok(Math.abs(row()!.seconds - 0.2) < 0.05);
+  // What's kept is used without measuring again, as after a restart
+  db.prepare('UPDATE sound_lengths SET seconds = 7 WHERE file = ?').run(file);
+  assert.equal((await sounds())[0].seconds, 7);
+  // A file that's changed is measured again
+  const later = new Date(Date.now() + 60_000);
+  utimesSync(file, later, later);
+  assert.ok(Math.abs((await sounds())[0].seconds - 0.2) < 0.05);
+  // And one that's gone is forgotten
+  await ok(`/guilds/${GUILD}/sounds/horn`, { method: 'DELETE' });
+  await sounds();
+  assert.equal(row(), undefined);
 });
 
 test('replacing has to be asked for, and puts the old sound in Recently deleted', async () => {

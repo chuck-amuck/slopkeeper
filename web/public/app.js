@@ -1,7 +1,7 @@
 import { renderActivity } from './activity.js';
 import { renderDeals } from './deals.js';
 import { renderGames } from './games.js';
-import { api, attempt, el, formProblem, icon, newPage, notice, openDialog, player, recall, remember, request, RequestError, session, state, toast } from './lib.js';
+import { api, askEarly, attempt, el, formProblem, icon, newPage, notice, openDialog, player, recall, remember, request, RequestError, session, SESSION_KEY, sessionLasts, state, toast } from './lib.js';
 import { musicPlayer, noMusicPlayer } from './miniplayer.js';
 import { renderMusic } from './music.js';
 import { renderNights } from './nights.js';
@@ -14,6 +14,7 @@ import { stopWatchingUpdates, watchUpdates } from './updates.js';
 import { playInPicker } from './voice.js';
 import { renderSettings } from './settings.js';
 import { renderSoundboard, VIEW_KEY } from './soundboard.js';
+import { SHOWN_PREFIX } from './soundgrid.js';
 import { renderStats } from './stats.js';
 import { startSpeed, stopSpeed } from './speed.js';
 
@@ -103,16 +104,58 @@ function showLogin() {
 
 session.onExpired = showLogin;
 
-async function start() {
+// The servers, the one picked and who you are there, as the page was last drawn on this device, to draw it from at once
+const LAST_START = 'lastStart';
+const startNow = () => JSON.stringify({ guildId: state.guildId, guilds: state.guilds, me: state.me });
+
+/** What the page was last drawn with, if it was for `guildId` */
+function lastStart(guildId) {
+  try {
+    const kept = JSON.parse(recall(LAST_START) ?? 'null');
+    return kept?.guildId === guildId && Array.isArray(kept.guilds) && kept.guilds.some((g) => g.id === guildId) ? kept : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Draws the page. `fromKept` draws it at once from what it was last time, while the session lasts, then catches up */
+async function start(fromKept = true) {
   const saved = recall('guild');
   // Asked for alongside the server list rather than after it, as it's almost always the server picked last time
   const savedMe = saved ? request(`/api/guilds/${saved}/me`).catch(() => null) : null;
+  // Likewise what the Soundboard shows first, as it's the page people open most
+  if (saved && tab === 'board') {
+    askEarly(`/api/guilds/${saved}/sounds`);
+    if (recall(VIEW_KEY) !== 'manage') askEarly(`/api/guilds/${saved}/say`);
+    // And what it keeps up with: who's in voice for Play in, what's playing, the volumes and the sounds
+    watchUpdates(saved, ['playing', 'music', 'voice', 'sounds', 'volumes']);
+  }
+  // Drawn straight away as it was last time, then again below only if the bot says otherwise
+  // Not on a retry while the bot's unreachable, which would flash the page between tries
+  const kept = fromKept && saved && sessionLasts() && lastStart(saved);
+  let drawn = null;
+  if (kept) {
+    state.guilds = kept.guilds;
+    state.guildId = kept.guildId;
+    state.me = kept.me ?? null;
+    renderFrame();
+    startSpeed();
+    drawn = startNow();
+  }
   const { guilds } = await request('/api/guilds');
+  // Another server picked meanwhile has drawn its own page
+  if (drawn && state.guildId !== saved) {
+    state.guilds = guilds;
+    return;
+  }
   state.guilds = guilds;
   state.guildId = guilds.find((g) => g.id === saved)?.id ?? guilds[0]?.id ?? null;
+  // So the next visit can ask for its server's parts alongside the list
+  if (state.guildId) remember('guild', state.guildId);
   const early = state.guildId === saved ? await savedMe : null;
   if (early) state.me = early.me;
   else await loadMe();
+  if (drawn === startNow()) return;
   renderFrame();
   startSpeed();
 }
@@ -204,6 +247,10 @@ function openTab(id) {
 const logOut = () =>
   attempt(async () => {
     await request('/auth/logout', { method: 'POST' });
+    // The sounds kept to draw the Soundboard quickly aren't left on a shared computer
+    try {
+      for (const key of Object.keys(localStorage)) if (key.startsWith(SHOWN_PREFIX) || key === LAST_START || key === SESSION_KEY) localStorage.removeItem(key);
+    } catch {}
     showLogin();
   });
 
@@ -245,6 +292,7 @@ function moreSheet(main) {
 function renderFrame() {
   // The last page's listeners go before this one's parts add theirs
   newPage();
+  if (state.guildId) remember(LAST_START, startNow());
   const main = el('main');
   const guild = state.guilds.find((g) => g.id === state.guildId);
   const guildIcon = guild?.icon ? el('img', { src: guild.icon, alt: '' }) : null;
@@ -346,6 +394,8 @@ function showUnreachable(err, tries = 0) {
     app.replaceChildren(notice('error', err instanceof RequestError ? err.message : 'Something broke on this page. Reload to try again.'));
     return;
   }
+  // Including what the page started following before it knew the bot was down
+  stopWatchingUpdates();
   const waitS = Math.min(30, 2 ** tries * 2);
   let left = waitS;
   const countdown = el('span', {});
@@ -356,7 +406,7 @@ function showUnreachable(err, tries = 0) {
     retryButton.disabled = true;
     countdown.textContent = 'Trying now…';
     // Pressing Retry now doesn't make the next wait longer
-    start().catch((again) => (isLoggedOut(again) ? null : showUnreachable(again, byHand ? tries : tries + 1)));
+    start(false).catch((again) => (isLoggedOut(again) ? null : showUnreachable(again, byHand ? tries : tries + 1)));
   };
   const retryButton = el('button', { className: 'primary', onclick: () => retry(true) }, 'Retry now');
   paintCountdown();

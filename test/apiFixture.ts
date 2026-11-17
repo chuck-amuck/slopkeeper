@@ -207,7 +207,7 @@ beforeEach(() => {
     DELETE FROM sound_favourites; DELETE FROM sound_groups; DELETE FROM sound_places; DELETE FROM game_nights; DELETE FROM game_night_series; DELETE FROM game_plays; DELETE FROM session_members; DELETE FROM sessions;
     DELETE FROM sound_levels; DELETE FROM sound_links; DELETE FROM join_sounds; DELETE FROM activity; DELETE FROM game_aliases; DELETE FROM deleted_sounds; DELETE FROM games;
     DELETE FROM steam_links; DELETE FROM steam_owned; DELETE FROM steam_family; DELETE FROM sale_prices; DELETE FROM game_roles; DELETE FROM hidden_apps; DELETE FROM game_votes; DELETE FROM web_users;
-    DELETE FROM music_plays; DELETE FROM speech_lines`);
+    DELETE FROM music_plays; DELETE FROM speech_lines; DELETE FROM sound_lengths`);
   db.prepare("INSERT INTO sound_panels (message_id, guild_id, channel_id, page) VALUES ('m', ?, '111', 0)").run(GUILD);
   if (existsSync(soundFolder)) for (const f of readdirSync(soundFolder)) execFileSync('rm', ['-r', path.join(soundFolder, f)]);
 });

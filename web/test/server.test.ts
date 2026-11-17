@@ -124,7 +124,9 @@ test('scripts and the stylesheet have addresses with their version, which browse
   assert.ok(app && css);
   for (const path of [app, css]) assert.equal((await fetch(base + path)).headers.get('cache-control'), 'public, max-age=31536000, immutable', path);
   // The page itself, an old version and no version are asked about every time
-  for (const path of ['/', '/app.js', '/app.js?v=old', '/style.css?v=old', '/icon.svg']) assert.equal((await fetch(base + path)).headers.get('cache-control'), 'no-cache', path);
+  for (const path of ['/', '/app.js', '/app.js?v=old', '/style.css?v=old']) assert.equal((await fetch(base + path)).headers.get('cache-control'), 'no-cache', path);
+  // The icon and what a phone's home screen uses are kept for a day
+  for (const path of ['/icon.svg', '/manifest.webmanifest']) assert.equal((await fetch(base + path)).headers.get('cache-control'), 'private, max-age=86400', path);
   // Every script it loads is named with the same versions the page preloads, so the browser uses what it fetched
   const script = await (await fetch(base + app)).text();
   const lib = script.match(/'\.\/lib\.js\?v=([\w-]+)'/)?.[1];
@@ -368,6 +370,13 @@ test('a path that climbs out of the server routes is refused, however it’s wri
 test('says how long the bot took, so the page can tell it from the network', async () => {
   const res = await fetch(`${base}/api/guilds/1/x`, { headers: { cookie: await login() } });
   assert.match(res.headers.get('server-timing') ?? '', /^bot;dur=\d+\.\d$/);
+});
+
+test('says when the session ends, so the page knows whether to draw from what it kept', async () => {
+  const cookie = await login();
+  const res = await fetch(`${base}/api/guilds/1/x`, { headers: { cookie } });
+  assert.equal(res.headers.get('x-slopkeeper-session-until'), cookie.split('=')[1].split('.')[0]);
+  assert.ok(Number(res.headers.get('x-slopkeeper-session-until')) > Date.now() + 86_400_000);
 });
 
 test('a browser’s timings need a login and the header, and stay small', async () => {

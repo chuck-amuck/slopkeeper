@@ -96,15 +96,18 @@ export function followWhenIdle(part, node, areas, listener, alsoBusy = () => fal
   });
 }
 
-/** Lets go of followers whose node has left the page, and of what nobody follows, so following it again starts fresh */
-function prune() {
+/**
+ * Lets go of followers whose node has left the page, and of what nobody follows, so following it again starts fresh.
+ * What the page is expected to follow is kept until it's drawn
+ */
+function prune(me) {
   const now = performance.now();
   for (const [part, entries] of Object.entries(followers)) {
     for (const entry of entries) {
       entry.seen ||= entry.node.isConnected;
       if (!entry.node.isConnected && (entry.seen || now - entry.since > UNSEEN_MS)) entries.delete(entry);
     }
-    if (!entries.size) latest.delete(part);
+    if (!entries.size && !me.expect.has(part)) latest.delete(part);
   }
 }
 
@@ -139,12 +142,18 @@ const pause = (me) =>
     addEventListener('second-window', me.wake, { signal: done.signal });
   });
 
-/** Starts keeping up with the server picked, unless that's already happening */
-export function watchUpdates() {
-  if (run?.alive && run.guildId === state.guildId) return;
+/**
+ * Starts keeping up with a server, unless that's already happening. As the web UI starts, `expect` names the parts
+ * the first page will follow, so they're asked for while it's still starting; the page drawn calls this again
+ */
+export function watchUpdates(guildId = state.guildId, expect = []) {
+  if (run?.alive && run.guildId === guildId) {
+    if (!expect.length) run.expect = new Set();
+    return;
+  }
   stopWatchingUpdates();
   latest = new Map();
-  const me = { guildId: state.guildId, alive: true, asking: new Set(), wake: () => {} };
+  const me = { guildId, alive: true, asking: new Set(), wake: () => {}, expect: new Set(expect) };
   run = me;
   // Once the page drawing now has said what it follows, so the first request asks for all of it
   queueMicrotask(() => void loop(me));
@@ -153,8 +162,8 @@ export function watchUpdates() {
 async function loop(me) {
   let failures = 0;
   while (me.alive) {
-    prune();
-    const parts = Object.keys(followers).filter((part) => followers[part].size);
+    prune(me);
+    const parts = Object.keys(followers).filter((part) => followers[part].size || me.expect.has(part));
     if (!parts.length || !seen()) {
       me.asking = new Set();
       await pause(me);
