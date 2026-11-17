@@ -56,7 +56,7 @@ services:
           memory: 128M
 
   music:
-    image: ghcr.io/chuck-amuck/slopkeeper-music:latest # music from YouTube, optional. See the README's music container section
+    image: ghcr.io/chuck-amuck/slopkeeper-music:latest # music from YouTube, optional. See docs/self-hosting.md, The music container
     restart: unless-stopped
     init: true
     environment:

@@ -2,7 +2,8 @@
 
 A Discord bot for friends' servers (hop-on pings, game picks, sales, stats, a soundboard, text to speech, music and
 a looping room), with a web UI in `web/`, Piper text to speech in `voice/` and yt-dlp playback in `music/`. Node 24
-runs the TypeScript directly, with no build step. README.md is the user guide, grouped by feature.
+runs the TypeScript directly, with no build step. README.md is the short start; the user guide is in `docs/`, a page
+per feature, with server setup, self-hosting and the API on pages of their own.
 
 ## Commands
 
@@ -51,9 +52,9 @@ same static ffmpeg as the image and CI. Without ffmpeg the audio tests skip sile
 - Never bump `SCHEMA_VERSION` in src/db.ts: an older database with a `games` table makes the bot refuse to start.
   Add tables with `CREATE TABLE IF NOT EXISTS` and columns with the `pragma_table_info` + `ALTER TABLE` pattern.
 - Every setting is editable in the web UI. `/setup` (src/features/setup.ts) is optional: the owner is fine with a
-  setting living only in the web UI (the default and looping speech voices do), marked "web UI only" in the README
-  "Settings and defaults" table. A new per-server setting touches src/settings.ts DEFAULTS (an env var only sets the
-  default), web/public/settings.js, `.env.example`, that README table and the tests.
+  setting living only in the web UI (the default and looping speech voices do), marked "web UI only" in the
+  "Settings and defaults" table in docs/server-setup.md. A new per-server setting touches src/settings.ts DEFAULTS
+  (an env var only sets the default), web/public/settings.js, `.env.example`, that table and the tests.
 - Rules live in the bot (src/features, src/api.ts and its areas in src/api/). `web/` stores nothing and proxies to
   the management API.
 - Spotify stays search-only: no `SPOTIFY_REFRESH_TOKEN` in the deployment and no personal playlists. Soloist
@@ -62,7 +63,8 @@ same static ffmpeg as the image and CI. Without ffmpeg the audio tests skip sile
   opens the database.
 - Tests must let the process exit: `.unref()` idle timers, mock timers and stop audio loops in `t.after`. A hung
   file stalls CI.
-- Each user-visible change updates its README section, and `.env.example` for a new variable. Commit subjects read
+- Each user-visible change updates its page in `docs/`, and `.env.example` for a new variable. Links between the
+  pages are checked by test/docs.test.ts. Commit subjects read
   "<Area>: <what people get>".
 - This repo and three of its images are public. Keep LAN addresses, hostnames, deployment IDs, server names,
   emails and personal details out of code, tests, docs and commits.
@@ -79,6 +81,7 @@ same static ffmpeg as the image and CI. Without ffmpeg the audio tests skip sile
 
 ## Where to look
 
-- README.md: "Settings and defaults", "Configuration" (env and management API tables) and "Setup".
+- docs/server-setup.md: "Settings and defaults". docs/self-hosting.md: "Configuration" (the env table) and the
+  containers. docs/api.md: the management API table.
 - `.env.example`: every variable with its default.
 - `docker-compose.yml`: a reference stack with the optional voice, loop and music services.

@@ -67,7 +67,7 @@ export async function handleMusic(guild: Guild, req: IncomingMessage, url: URL, 
     return { tracks };
   }
   if (key === 'GET playlists') {
-    if (!playlistsReady()) return { playlists: [], problem: 'Playlists need the bot signed in to Spotify once, with SPOTIFY_REFRESH_TOKEN. See the README’s music container section.' };
+    if (!playlistsReady()) return { playlists: [], problem: 'Playlists need the bot signed in to Spotify once, with SPOTIFY_REFRESH_TOKEN. See The music container in docs/self-hosting.md.' };
     return { playlists: await myPlaylists().catch(spotifyRefused), problem: null };
   }
   if (key === 'POST queue') {
