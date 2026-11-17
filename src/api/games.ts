@@ -17,7 +17,7 @@ import { countAsGame, gameKey, gameName, gameSpellings, markNotAGame, mergeGames
 import { CALENDAR_DAYS, countIn, dayStart, nightTimes, peopleIn, recordsFrom, sessionTime, soundTimes, spread, stepsOf, voiceByDay, voiceFrom, voiceStints, whenOn } from '../features/overview.ts';
 import { checkpointVoice, voiceTotals } from '../features/sessions.ts';
 import { idSetting, setting } from '../settings.ts';
-import { humansIn, pingWarning, zonedParts, zonedTimeToUtc } from '../util.ts';
+import { humansIn, notAllowed, pingWarning, zonedParts, zonedTimeToUtc } from '../util.ts';
 import { type Ask, Refused, by, cantPost, datesWindow, memberIn, memberList, nameOf, plain, postingChannel, readJson, refuse, textChannels, voiceChannelFor } from './common.ts';
 import { voiceList } from './live.ts';
 
@@ -584,8 +584,10 @@ export async function handlePings(guild: Guild, req: IncomingMessage, userId: st
   const { roleId, on } = await readJson(req);
   const choice = choices.find((c) => c.id === roleId);
   if (!choice || typeof on !== 'boolean') throw new Refused(400, 'Pick a ping to change.');
-  await (on ? member.roles.add(choice.id, 'Set on the web UI') : member.roles.remove(choice.id, 'Set on the web UI')).catch(() => {
-    throw new Refused(409, `I couldn’t change their roles. My role needs Manage Roles and has to be above @${guild.roles.cache.get(choice.id)?.name}.`);
+  await (on ? member.roles.add(choice.id, 'Set on the web UI') : member.roles.remove(choice.id, 'Set on the web UI')).catch((err) => {
+    // A server needn't let the bot manage roles. Anything else, like Discord being down, is an error as usual
+    if (!notAllowed(err)) throw err;
+    throw new Refused(409, `The bot can’t hand out roles in this server, so a server admin will have to ${on ? 'give' : 'take'} @${guild.roles.cache.get(choice.id)?.name} ${on ? 'to' : 'off'} ${member.displayName} in Discord.`);
   });
   logActivity(guild.id, by(), `Turned ${choice.label} ${on ? 'on' : 'off'} for ${member.displayName}`);
   return {};

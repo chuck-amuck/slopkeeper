@@ -193,7 +193,7 @@ export function renderSettings(main) {
       }
       case 'role':
         // Only the hop-on role is handed out, so only it has to be below the bot's
-        return select([['', spec.none], ...data.roles.map((r) => [r.id, setting.key === 'hopOnRole' && r.canGive === false ? `@${r.name} (above my role)` : `@${r.name}`])]);
+        return select([['', spec.none], ...data.roles.map((r) => [r.id, setting.key === 'hopOnRole' && r.canGive === false ? `@${r.name} (an admin hands it out)` : `@${r.name}`])]);
       case 'voice':
         return select([['', spec.none], ...data.voiceChannels.map((c) => [c.id, `🔊 ${c.name}`])]);
       case 'sound':

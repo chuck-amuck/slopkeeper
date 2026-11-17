@@ -39,7 +39,8 @@ test('the speech channel only has to be seen, and roles that are gone or out of 
   setSetting(GUILD, 'hopOnRole', '333');
   setSetting(GUILD, 'musicDjRole', 'deleted-role');
   const found = problems();
-  assert.ok(found.some(([key, text]) => key === 'hopOnRole' && /drag my role/.test(text)), 'above the bot’s role');
+  // A server needn't let the bot hand out roles: /notify sends people to an admin
+  assert.ok(!found.some(([key]) => key === 'hopOnRole'), 'above the bot’s role');
   assert.ok(found.some(([key, text]) => key === 'musicDjRole' && /Controlling music: the role it needs is gone/.test(text)));
   assert.ok(roles.has('333'));
 });

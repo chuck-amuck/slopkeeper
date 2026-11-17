@@ -59,18 +59,35 @@ test('On my way adds and takes off names on the hop-on post', () => {
   assert.equal(onTheWay(onTheWay(two, '1'), '2'), post);
 });
 
-test('/notify explains a role the bot can’t hand out', async () => {
+test('/notify sends people to an admin when the bot can’t hand out the role, without trying', async () => {
   setSetting('notify', 'hopOnRole', 'r');
   const denied = new DiscordAPIError({ code: 50013, message: 'Missing Permissions' }, 50013, 403, 'PUT', '/x', {} as never);
-  let reply: string | undefined;
-  await hopOn.commands![0].run({
-    inCachedGuild: () => true,
-    guildId: 'notify',
-    member: { roles: { cache: new Map(), add: async () => { throw denied; } } },
-    deferReply: async () => {},
-    editReply: async (r: string) => (reply = r),
-  } as never);
-  assert.match(reply!, /Manage Roles/);
+  const said: string[] = [];
+  let tried = 0;
+  const notify = (manageRoles: boolean, has = false) =>
+    hopOn.commands![0].run({
+      inCachedGuild: () => true,
+      guildId: 'notify',
+      guild: {
+        members: { me: { permissions: { has: () => manageRoles }, roles: { highest: { position: 5 } } } },
+        roles: { cache: new Map([['r', { position: 1, managed: false }]]) },
+      },
+      member: { roles: { cache: new Map(has ? [['r', {}]] : []), add: async () => (tried++, Promise.reject(denied)), remove: async () => (tried++, Promise.reject(denied)) } },
+      reply: async (r: { content: string }) => void said.push(r.content),
+      deferReply: async () => {},
+      editReply: async (r: { content: string }) => void said.push(r.content),
+    } as never);
+  await notify(false);
+  await notify(false, true);
+  assert.equal(tried, 0);
+  assert.deepEqual(said, [
+    'I can’t hand out roles in this server, so a server admin will have to give you <@&r> (Server Settings → Members).',
+    'I can’t hand out roles in this server, so a server admin will have to take <@&r> off you (Server Settings → Members).',
+  ]);
+  // Discord can still say no, say for a role moved since
+  await notify(true);
+  assert.equal(tried, 1);
+  assert.match(said.at(-1)!, /a server admin will have to give you <@&r>/);
 });
 
 test('/setup show groups the settings as the web UI does, marks changed ones and warns about problems', async () => {

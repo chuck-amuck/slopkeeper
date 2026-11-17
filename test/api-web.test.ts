@@ -81,9 +81,9 @@ test('refuses a channel the bot can’t post in, naming it in plain text', async
   assert.equal(error, 'I can’t post in #first yet. Give my role Send Messages, Embed Links there, then run this again.');
 });
 
-test('warns about a role the bot can’t hand out yet', async () => {
+test('says when people will have to get the hop-on role from an admin', async () => {
   const { warning } = await ok(`/guilds/${GUILD}/settings/hopOnRole`, { method: 'PUT', json: { value: '333' } });
-  assert.match(warning, /above @Mods/);
+  assert.match(warning, /can’t hand out @Mods myself, so .*notify will ask people to get it from an admin/);
   assert.equal(setting(GUILD, 'hopOnRole'), '333');
   assert.equal((await ok(`/guilds/${GUILD}/settings/hopOnRole`, { method: 'PUT', json: { value: 'r1' } })).warning, undefined);
 });

@@ -12,7 +12,7 @@ import {
 import { logActivity } from '../activity.ts';
 import { DEFAULT_ENV, DEFAULTS, idSetting, setSetting, setting, storedSetting, type SettingKey } from '../settings.ts';
 import type { Feature } from '../types.ts';
-import { isTimeZone, pingWarning } from '../util.ts';
+import { canGiveRole, isTimeZone, pingWarning } from '../util.ts';
 import { serverVoice, VOICES } from './say.ts';
 import { afterSettingsChanged } from './soundboard.ts';
 import { cantJoin } from './voiceAudio.ts';
@@ -253,16 +253,13 @@ function cantHandOut(guild: Guild, role: Role): string | null {
   return role.id === guild.id || role.managed ? `${role} can’t be handed out. Make a normal role for hop-on pings.` : null;
 }
 
-/** What has to change before people can opt in to a role */
+/**
+ * What to know about a hop-on role: who hands it out, and whether pinging it reaches anyone. A server needn't let the
+ * bot manage roles; /notify then sends people to an admin, so that isn't a problem, only worth saying when it's picked
+ */
 function roleWarning(guild: Guild, role: Role): string {
-  // Discord only lets a bot give out roles below its own highest role
-  const me = guild.members.me!;
-  const problems: string[] = [];
-  if (!me.permissions.has(PermissionFlagsBits.ManageRoles)) problems.push('my role needs the **Manage Roles** permission');
-  if (role.position >= me.roles.highest.position) {
-    problems.push(`drag my role (**${me.roles.highest.name}**) above ${role} in Server Settings → Roles`);
-  }
-  return `${problems.length ? `\n⚠️ Before /notify works: ${problems.join(', and ')}.` : ''}${pingWarning(role)}`;
+  const admins = canGiveRole(guild, role.id) ? '' : `\nℹ️ I can’t hand out ${role} myself, so ${commandMention(guild.id, 'notify')} will ask people to get it from an admin. To let me, give my role **Manage Roles** and drag it above ${role}.`;
+  return `${admins}${pingWarning(role)}`;
 }
 
 /** The settings in the groups the web UI shows them in, so both read the same way */
@@ -368,10 +365,9 @@ export function settingProblems(guild: Guild): SettingProblem[] {
   const hopOnRole = idSetting(guild.id, 'hopOnRole');
   const role = hopOnRole ? guild.roles.cache.get(hopOnRole) : undefined;
   if (hopOnRole && !role) problems.push({ key: 'hopOnRole', text: 'The hop-on role is gone, so hop-on pings ping nobody.' });
-  if (role) {
-    const warning = roleWarning(guild, role).trim();
-    if (warning) problems.push({ key: 'hopOnRole', text: warning.replace(/^⚠️ /, '') });
-  }
+  // Only a role that pings nobody is a problem
+  const unpingable = role && pingWarning(role).trim();
+  if (unpingable) problems.push({ key: 'hopOnRole', text: unpingable.replace(/^⚠️ /, '') });
   for (const [key, what] of ROLE_GATES) {
     const id = idSetting(guild.id, key as Parameters<typeof idSetting>[1]);
     if (id && !guild.roles.cache.has(id)) problems.push({ key, text: `${what}: the role it needs is gone, so only people who can manage the server can. Pick another, or none.` });

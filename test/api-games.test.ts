@@ -1324,7 +1324,7 @@ test('lists a role used for hop-ons and a game once', async () => {
 test('says so when the bot can’t change someone’s roles', async () => {
   setSetting(GUILD, 'hopOnRole', 'r1');
   setFake({ failRoles: true });
-  assert.match(await refused(409, pings('u1'), { method: 'PUT', json: { roleId: 'r1', on: true } }), /Manage Roles and has to be above @Gamers/);
+  assert.match(await refused(409, pings('u1'), { method: 'PUT', json: { roleId: 'r1', on: true } }), /a server admin will have to give @Gamers to Ana in Discord/);
   assert.deepEqual(activityText().filter((a) => a.startsWith('Turned')), []);
 });
 

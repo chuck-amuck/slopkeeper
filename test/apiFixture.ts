@@ -1,6 +1,6 @@
 // Shared by the api-*.test.ts files: a fake Discord server and client, the API on a free port, and calls to it
 import './helpers.ts';
-import { ChannelType, Collection, PermissionFlagsBits } from 'discord.js';
+import { ChannelType, Collection, DiscordAPIError, PermissionFlagsBits } from 'discord.js';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { existsSync, readdirSync } from 'node:fs';
@@ -86,7 +86,7 @@ export const guild = {
       roles: {
         cache: new Map([...heldRoles].filter((key) => key.startsWith(`${user}:`)).map((key) => [key.split(':')[1], {}])),
         add: async (id: string) => {
-          if (failRoles) throw new Error('Missing Permissions');
+          if (failRoles) throw new DiscordAPIError({ code: 50013, message: 'Missing Permissions' }, 50013, 403, 'PUT', '/roles', { body: undefined, files: undefined });
           heldRoles.add(`${user}:${id}`);
         },
         remove: async (id: string) => void heldRoles.delete(`${user}:${id}`),

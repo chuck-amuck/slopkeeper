@@ -1,4 +1,4 @@
-import { ActivityType, PermissionFlagsBits, type Client, type Guild, type GuildBasedChannel, type GuildMember, type Role, type SendableChannels, type VoiceBasedChannel } from 'discord.js';
+import { ActivityType, DiscordAPIError, PermissionFlagsBits, RESTJSONErrorCodes, type Client, type Guild, type GuildBasedChannel, type GuildMember, type Role, type SendableChannels, type VoiceBasedChannel } from 'discord.js';
 import { idSetting, isAllowed, setting, type IdSettingKey } from './settings.ts';
 import { cleanGameName, isProgramNotGame } from './gameText.ts';
 import { steamGame } from './steamStatus.ts';
@@ -54,6 +54,26 @@ export function paginate(lines: string[], maxChars: number): string[][] {
   }
   return pages;
 }
+
+/**
+ * Whether the bot can give people a role: Discord needs Manage Roles, and the bot's own role above it. While its own
+ * member isn't known yet, just after it joins, it may try, and Discord says
+ */
+export function canGiveRole(guild: Guild, roleId: string): boolean {
+  const me = guild.members.me;
+  const role = guild.roles.cache.get(roleId);
+  if (!role || role.managed) return false;
+  return !me || (me.permissions.has(PermissionFlagsBits.ManageRoles) && role.position < me.roles.highest.position);
+}
+
+/** Whether Discord refused a role change because the bot isn't allowed to make it, rather than being down */
+export const notAllowed = (err: unknown) => err instanceof DiscordAPIError && (err.code === RESTJSONErrorCodes.MissingPermissions || err.code === RESTJSONErrorCodes.MissingAccess);
+
+/**
+ * What to tell someone when the bot can't change their roles. It's fine for a server not to let it, so this points
+ * them to an admin rather than at the bot's permissions. `what` is the change: "give you @Gamers"
+ */
+export const askAnAdmin = (what: string) => `I can’t hand out roles in this server, so a server admin will have to ${what} (Server Settings → Members).`;
 
 /** A warning to add to a reply when mentioning a role won't notify anyone; bots need the role to allow it or Mention Everyone */
 export function pingWarning(role: Role): string {

@@ -61,7 +61,7 @@ When a voice channel reaches 2 people, the bot posts in the announce channel. Th
 
 | Command | What it does |
 | --- | --- |
-| `/notify` | Turns hop-on pings on for you by giving you the hop-on role. Run it again to turn them off. Only you see the reply. |
+| `/notify` | Turns hop-on pings on for you by giving you the hop-on role. Run it again to turn them off. Only you see the reply. If the server doesn't let the bot hand out that role, it says a server admin will have to give it to you (or take it off). |
 
 ### Game pings
 
@@ -1100,7 +1100,7 @@ Voice sessions in progress are saved when the bot stops, without a recap, so a r
 For the server admin. You need the **Manage Server** permission in the server.
 
 1. **Add the bot.** Open the invite link from the host, pick your server, leave every permission ticked and click **Authorize**. If the bot is running, it posts a short hello in your server's system channel.
-   - **Manage Roles** lets `/notify` hand out the hop-on role, and `/gamerole` make and hand out game roles.
+   - **Manage Roles** lets `/notify` hand out the hop-on role, and `/gamerole` make and hand out game roles. Without it, or with the role above the bot's, `/notify`, `/pings` and the web UI tell people a server admin will have to give them the role, and the Settings page marks such roles "an admin hands it out". Nothing else needs it.
    - **Create Expressions** lets the bot copy sounds into the server's soundboard.
    - **Manage Expressions** lets it swap out or take off sounds other people added there. Everything else works without it.
    - **Create Events** lets game nights show up in the server's Events list.
@@ -1108,7 +1108,7 @@ For the server admin. You need the **Manage Server** permission in the server.
    If the bot was added with an older invite link, its role may be missing **Create Events** or **Manage Expressions**. Either open the new link again (it updates the permissions without removing the bot), or tick them on the bot's role in **Server Settings → Roles**.
 2. **Pick the announce channel:** `/setup announce-channel channel:#somewhere`. This is where hop-on pings, session recaps, the weekly leaderboard and sale alerts are posted. If the bot can't post there, it tells you which permission to give its role.
 3. **Make the hop-on role** (optional, for `/notify`).
-   - In **Server Settings → Roles**, create a role such as `hop-on`, and drag the bot's role (**Slopkeeper**) **above** it. Discord only lets a bot hand out roles below its own.
+   - In **Server Settings → Roles**, create a role such as `hop-on`, and drag the bot's role (**Slopkeeper**) **above** it so `/notify` can hand it out: Discord only lets a bot hand out roles below its own. If you'd rather it didn't manage roles, skip that, and `/notify` tells people to ask an admin for the role.
    - Then run `/setup hopon-role role:@hop-on`.
 4. **Set the time zone** if it isn't the host's: `/setup timezone zone:Europe/London`.
    Want free game posts? They're off until you run `/setup free-games enabled:True`, optionally with `channel:#free-games`.

@@ -16,7 +16,7 @@ import { db } from '../db.ts';
 import { gameKey, gameName } from '../gameNames.ts';
 import { idSetting, isAllowed } from '../settings.ts';
 import type { Feature } from '../types.ts';
-import { listNames, pingWarning } from '../util.ts';
+import { askAnAdmin, listNames, notAllowed, pingWarning } from '../util.ts';
 import { allGames } from './games.ts';
 import { commandMention } from '../commandIds.ts';
 
@@ -220,8 +220,9 @@ export const gamePings: Feature = {
         await member.roles.remove(id, 'Picked with /pings');
         held.delete(id);
       }
-    } catch {
-      return i.editReply({ content: 'I couldn’t change your roles. My role needs **Manage Roles** and has to be above those roles.', components: [] });
+    } catch (err) {
+      // Discord being busy or down isn't something an admin fixes
+      return i.editReply({ content: notAllowed(err) ? askAnAdmin('change your pings for you') : 'Discord didn’t take that just now. Try again in a moment.', components: [] });
     }
     return i.editReply(pickerReply(i.guild, held));
   },

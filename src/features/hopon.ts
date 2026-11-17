@@ -2,10 +2,8 @@ import {
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
-  DiscordAPIError,
   Events,
   MessageFlags,
-  RESTJSONErrorCodes,
   SlashCommandBuilder,
   type ButtonInteraction,
   type Client,
@@ -15,7 +13,7 @@ import {
 import { idSetting, isAllowed, setting } from '../settings.ts';
 import type { Feature } from '../types.ts';
 import { gameName } from '../gameNames.ts';
-import { announceChannel, humansIn, listNames, playingGames } from '../util.ts';
+import { announceChannel, askAnAdmin, canGiveRole, notAllowed, humansIn, listNames, playingGames } from '../util.ts';
 import { rolesForGames } from './gameroles.ts';
 import { announceAloud } from './say.ts';
 import { checkSteamStatusOf } from './steam.ts';
@@ -97,19 +95,23 @@ export const hopOn: Feature = {
         if (!roleId) {
           return i.reply({ content: `This server has no hop-on role. A server admin can set one with ${commandMention(i.guildId, 'setup hopon-role')}.`, flags: MessageFlags.Ephemeral });
         }
+        const has = i.member.roles.cache.has(roleId);
+        // A server needn't let the bot manage roles: then an admin hands the role out
+        const ask = askAnAdmin(has ? `take <@&${roleId}> off you` : `give you <@&${roleId}>`);
+        if (!canGiveRole(i.guild, roleId)) return i.reply({ content: ask, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
         // Changing roles can take longer than the 3 s Discord waits for an answer when it's busy
         await i.deferReply({ flags: MessageFlags.Ephemeral });
         const more = `-# More pings, like for each game: ${commandMention(i.guildId, 'pings')}`;
         try {
-          if (i.member.roles.cache.has(roleId)) {
+          if (has) {
             await i.member.roles.remove(roleId);
             return await i.editReply(`🔕 You will no longer be pinged when people hop on.\n${more}`);
           }
           await i.member.roles.add(roleId);
           return await i.editReply(`🔔 You will be pinged when people hop on.\n${more}`);
         } catch (err) {
-          if (!(err instanceof DiscordAPIError && err.code === RESTJSONErrorCodes.MissingPermissions)) throw err;
-          return i.editReply(`I couldn’t change your roles. My role needs **Manage Roles** and has to be above <@&${roleId}>.`);
+          if (!notAllowed(err)) throw err;
+          return i.editReply({ content: ask, allowedMentions: { parse: [] } });
         }
       },
     },

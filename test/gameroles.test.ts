@@ -1,6 +1,7 @@
 import './helpers.ts';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { DiscordAPIError } from 'discord.js';
 import { db } from '../src/db.ts';
 import { gamePings, rolesForGames } from '../src/features/gameroles.ts';
 import { setSetting } from '../src/settings.ts';
@@ -10,14 +11,14 @@ for (const [role, name] of [['r1', 'Valheim'], ['r2', 'Lethal Company'], ['r3', 
 }
 
 /** A select menu click by someone whose real roles are `held`, with discord.js's per-role calls recorded */
-function click(held: string[], chosen: string[], options: { failOn?: string } = {}) {
+function click(held: string[], chosen: string[], options: { failOn?: string; failWith?: Error } = {}) {
   const calls: string[] = [];
   const roles = new Map(['r1', 'r2', 'r3'].map((id) => [id, {}]));
   const fresh = {
     roles: {
       cache: new Map(held.map((id) => [id, {}])),
       add: async (id: string) => {
-        if (id === options.failOn) throw new Error('Missing Permissions');
+        if (id === options.failOn) throw options.failWith ?? new DiscordAPIError({ code: 50013, message: 'Missing Permissions' }, 50013, 403, 'PUT', '/roles', { body: undefined, files: undefined });
         calls.push(`+${id}`);
       },
       remove: async (id: string) => {
@@ -74,7 +75,11 @@ test('/pings offers hop-on pings first, beside the games', async () => {
 test('says so when the bot can’t change roles', async () => {
   const pick = click([], ['r1'], { failOn: 'r1' });
   await pick.run();
-  assert.match(pick.reply().content, /Manage Roles/);
+  assert.match(pick.reply().content, /a server admin will have to change your pings for you/);
+  // Discord being down isn't something an admin fixes
+  const busy = click([], ['r1'], { failOn: 'r1', failWith: new Error('ECONNRESET') });
+  await busy.run();
+  assert.match(busy.reply().content, /Try again in a moment/);
 });
 
 test('matches game names without caring about case', () => {
