@@ -59,6 +59,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - run: python3 -m py_compile voice/*.py
+      - run: python3 -m unittest discover -s voice -p '*_test.py'
       - run: sh -n voice/start.sh
       - run: sh -n voice/smoke.sh
 

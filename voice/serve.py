@@ -6,9 +6,13 @@ one long slow line takes the default model past 500 MB, and three models past 1 
 A Korean, Russian, Spanish or German model reads English as noise or by its own spelling, so accent.py turns English into the nearest
 sounds of that language first (see there).
 
-Piper keeps every model it has loaded for good, about 135 MB each, so after a call that tried every voice it holds about 1.5 GB. A
-model other than the default one that hasn't spoken for VOICE_IDLE_MINUTES (30 by default, 0 to keep them all) is let go, and loaded
-again the next time it's asked for, which adds about a second to that line.
+Piper keeps every model it has loaded for good, about 135 MB each, so a call that tried every voice would hold several GB. A model
+other than the default one that hasn't spoken for VOICE_IDLE_MINUTES (30 by default, 0 to keep them all) is let go, and loaded again
+the next time it's asked for, which adds about a second to that line. Past VOICE_MAX_MODELS loaded besides the default one (10 by
+default, 0 for no limit), the one that spoke longest ago is let go too.
+
+Some community models' settings list speakers the model doesn't take. Piper would pass it a speaker and fail, so such a model is
+treated as having one speaker.
 
 For the bot's health numbers, each line's answer says in a Server-Timing header how long went on loading a model, turning the words
 into sounds and saying them, and GET /stats says how much memory and CPU the container uses and how many models it holds.
@@ -63,16 +67,17 @@ def _phonemize_accented(self, text):
         _took("phonemize", time.monotonic() - started)
 
 
-def _idle_minutes():
+def _number(name, default, kind=float):
     # A typo shouldn't stop every voice, so it falls back to the default
     try:
-        return float(os.environ.get("VOICE_IDLE_MINUTES") or 30)
+        return max(0, kind(os.environ.get(name) or default))
     except ValueError:
-        print("VOICE_IDLE_MINUTES isn't a number, so it's 30", flush=True)
-        return 30.0
+        print(f"{name} isn't a {'whole ' if kind is int else ''}number, so it's {default}", flush=True)
+        return kind(default)
 
 
-IDLE_S = _idle_minutes() * 60
+IDLE_S = _number("VOICE_IDLE_MINUTES", 30) * 60
+MAX_MODELS = _number("VOICE_MAX_MODELS", 10, int)
 _load = PiperVoice.load
 _to_audio = PiperVoice.phoneme_ids_to_audio
 # Guards the counts and the list. Never held while a model loads, so other voices carry on meanwhile
@@ -82,6 +87,47 @@ _loading = threading.Lock()
 _by_path = {}
 # Every model loaded after the default one, which the effect styles all use, so it stays
 _evictable = []
+try:
+    _trim = ctypes.CDLL("libc.so.6").malloc_trim
+except OSError:
+    _trim = None
+
+
+def _name(voice):
+    load_args, load_kwargs = voice._reload
+    return os.path.basename(str(load_args[0] if load_args else load_kwargs.get("model_path"))).removesuffix(".onnx")
+
+
+def _released(names, why):
+    gc.collect()
+    # Freed memory otherwise stays with the process for the next allocation, rather than going back
+    if _trim:
+        _trim(0)
+    print(f"Let go of {why} voice models: {', '.join(names)}", flush=True)
+
+
+def _make_room(keep):
+    """Lets go of the models that spoke longest ago while more than MAX_MODELS are loaded besides the default one, never one speaking"""
+    if MAX_MODELS <= 0:
+        return
+    freed = []
+    with _lock:
+        loaded = sorted((v for v in _evictable if v.session is not None and v is not keep), key=lambda v: v._used)
+        over = len(loaded) + 1 - MAX_MODELS
+        for voice in loaded:
+            if over <= 0:
+                break
+            if voice._users == 0:
+                voice.session = None
+                freed.append(_name(voice))
+                over -= 1
+    if freed:
+        _released(freed, "the least used")
+
+
+def _fix_speakers(voice):
+    if voice.config.num_speakers > 1 and "sid" not in {i.name for i in voice.session.get_inputs()}:
+        voice.config.num_speakers = 1
 
 
 def _load_tracked(*args, **kwargs):
@@ -91,15 +137,19 @@ def _load_tracked(*args, **kwargs):
             return _by_path[path]
         started = time.monotonic()
         voice = _load(*args, **kwargs)
+        _fix_speakers(voice)
         _took("load", time.monotonic() - started)
         voice._reload = (args, kwargs)
         voice._reloading = threading.Lock()
         voice._users = 0
         voice._used = time.monotonic()
         with _lock:
-            if _by_path:
+            evictable = bool(_by_path)
+            if evictable:
                 _evictable.append(voice)
         _by_path[path] = voice
+    if evictable:
+        _make_room(voice)
     return voice
 
 
@@ -117,6 +167,8 @@ def _to_audio_tracked(self, *args, **kwargs):
                     load_args, load_kwargs = self._reload
                     self.session = _load(*load_args, **load_kwargs).session
                     _took("load", time.monotonic() - started)
+                    if any(v is self for v in _evictable):
+                        _make_room(self)
         started = time.monotonic()
         try:
             return _to_audio(self, *args, **kwargs)
@@ -130,10 +182,6 @@ def _to_audio_tracked(self, *args, **kwargs):
 
 
 def _let_go_of_idle():
-    try:
-        trim = ctypes.CDLL("libc.so.6").malloc_trim
-    except OSError:
-        trim = None
     while True:
         time.sleep(min(60, max(1, IDLE_S / 4)))
         now = time.monotonic()
@@ -142,13 +190,9 @@ def _let_go_of_idle():
             for voice in _evictable:
                 if voice.session is not None and voice._users == 0 and now - voice._used > IDLE_S:
                     voice.session = None
-                    freed.append(os.path.basename(str(voice._reload[0][0] if voice._reload[0] else voice._reload[1].get("model_path"))).removesuffix(".onnx"))
+                    freed.append(_name(voice))
         if freed:
-            gc.collect()
-            # Freed memory otherwise stays with the process for the next allocation, rather than going back
-            if trim:
-                trim(0)
-            print(f"Let go of idle voice models: {', '.join(freed)}", flush=True)
+            _released(freed, "idle")
 
 
 def _container_usage():

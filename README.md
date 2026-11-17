@@ -447,11 +447,11 @@ The web UI's Soundboard tab, under **Manage**, also shows everything on Discord'
 - Every line goes in the Activity tab with who said it, a long one cut to its first 200 characters.
 - The bot keeps the lines it made lately (up to 24 MB, until it restarts), so a saved line, a greeting or a line just previewed in the web UI plays straight away when it's said again in the same voice and speed.
 - The voices, all novelty ones:
-  - **Characters:** **GLaDOS**, **HAL 9000**, **Bender**, **Optimus Prime**, **Kronk** and **TikTok** (the TikTok text-to-speech lady, and the default).
-  - **Accents:** **Russian**, **Spanish** and **German** read English with that accent, and **State broadcast** is a Korean announcer over an old loudspeaker. Russian typed in Cyrillic and Korean in Hangul are read in their own language. Spanish and German read everything as English.
+  - **Characters:** **GLaDOS**, **HAL 9000**, **Bender**, **Optimus Prime**, **Kronk**, **TikTok** (the TikTok text-to-speech lady, and the default), **JARVIS**, **Rocket Raccoon**, **Death** (the wolf from *Puss in Boots: The Last Wish*), **BMO**, the **Counter-Strike announcer**, **Bobby**, **Carl** and **Patrick**.
+  - **Accents:** **Scottish**, **Northern English**, **Southern English** (a woman and a man), **Irish (Jenny)** and **Australian** (a man and a woman) are English voices with those accents. **Russian**, **Spanish** and **German** read English with that accent, and **State broadcast** is a Korean announcer over an old loudspeaker. Russian typed in Cyrillic and Korean in Hangul are read in their own language. Spanish and German read everything as English.
   - **Effect styles:** **Demon**, **Helium**, **Giant**, **Robot**, **Alien**, **Walkie-talkie**, **Phone call**, **Megaphone**, **Stadium PA**, **Newsreel** (a 1940s film reel), **Cathedral**, **Underwater**, **Ghost** and **Trailer narrator**.
 
-  The accents and styles are made with effects, not models of a real character or person. Each voice talks at the server's speed, a few a little slower or quicker than that so they sound right. In Discord, `voice` is searched as you type. A server whose default voice has been removed talks in the bot's default voice.
+  The accents are ordinary Piper voices and the styles are made with effects: neither imitates a known person. A deployment can add [its own voices](#your-own-voices). Each voice talks at the server's speed, a few a little slower or quicker than that so they sound right. In Discord, `voice` is searched as you type. A server whose default voice has been removed talks in the bot's default voice.
 - `/setup speech` sets whether it's on, how fast and how loud it talks, the longest line and how long each person waits between lines. The default voice is picked in the web UI's Settings. `/setup speech-role` limits it to a role, plus people with **Manage Server**. The web UI isn't limited by the role, and counts as one person for the wait.
 
 It needs the [voice container](#the-voice-container).
@@ -771,6 +771,7 @@ Set in `.env` (see `.env.example`).
 | `API_PORT` | 8787 | Port for the management API |
 | `DATA_DIR` | `./data`, `/data` in the image | Where the database, sounds and backups are kept |
 | `VOICE_URL` | off | Where the [voice container](#the-voice-container) is. Unset turns `/say` off |
+| `CUSTOM_VOICES` | none | [Your own voices](#your-own-voices), as JSON. Set it on the voice container too |
 | `MUSIC_URL` | off | Where the [music container](#the-music-container) is. Unset turns music off |
 | `LOOP_BOT_URL` | off | Where the [loop bot](#the-loop-bot) is. Unset plays the looping room on this bot |
 | `LOOP_TOKEN` | none | Same value as the loop bot's `LOOP_TOKEN` |
@@ -992,23 +993,58 @@ voice:
     - slopkeeper-voice:/voices
 ```
 
-Set `VOICE_URL=http://voice:5000` on the bot, and don't publish the port. On first start it downloads eleven models into its volume, and after that it needs no internet:
+Set `VOICE_URL=http://voice:5000` on the bot, and don't publish the port. On first start it downloads twenty-five models (about 1.7 GB) into its volume, and after that it needs no internet:
 
 - `en_US-libritts_r-medium` (79 MB, CC BY 4.0) holds 904 voices. The effect styles are built on three of them, with ffmpeg effects added by the bot.
-- The character voices are community models, 64 MB each, fetched at a fixed version and checked against their hashes. If one can't be fetched, its voice talks with the first model until the container restarts.
+- The character voices are community models, 61 to 109 MB each, fetched at a fixed version and checked against their hashes. If one can't be fetched, its voice talks with the first model until the container restarts.
   - [GLaDOS](https://huggingface.co/NullPoExc/piper-glados) (no license given)
   - [HAL 9000](https://huggingface.co/OccultAI/HAL-9000-Piper-TTS) (Apache 2.0)
   - [Bender](https://huggingface.co/Schmalvis/bender-tts-model) (no license given)
   - [Optimus Prime](https://huggingface.co/crazygiscool/optimus-piper-voice) by crazygiscool (CC BY-NC 4.0: non-commercial use only)
   - [Kronk](https://huggingface.co/russdill/kronk) (no license given)
   - TikTok, from cosycove's BeefStew, which is no longer online, via a copy in [fox3000foxy/piper-voices-collection](https://huggingface.co/fox3000foxy/piper-voices-collection) (no license given)
+  - [JARVIS](https://huggingface.co/vishalrao8/piper-jarvis-high) (MIT)
+  - [Rocket Raccoon](https://huggingface.co/AkumaVenom/RocketRacoon-Piper-US-Medium) (no license given)
+  - [Death](https://huggingface.co/drewThomasson/piper_tts_finetune_death_from_puss_and_boots) (MIT)
+  - [BMO](https://huggingface.co/ziadnotme/bmo-tts-piper) (no license given)
+  - [Counter-Strike announcer](https://huggingface.co/RoxasYTB/piper-checkpoints-css-announcer-en) (no license given). Its settings list seven speakers though the model takes none, so the container treats any model like that as having one
+  - Bobby, Carl and Patrick, from simoniz0r's piper-voice-models, which is no longer online, via the same collection (no license given)
+- The English accents are Piper models trained on English readers, 61 to 74 MB each.
+  - Scottish is [`en_GB-alba-medium`](https://huggingface.co/rhasspy/piper-voices/tree/main/en/en_GB/alba/medium) (CC BY 4.0).
+  - Northern English is [`en_GB-northern_english_male-medium`](https://huggingface.co/rhasspy/piper-voices/tree/main/en/en_GB/northern_english_male/medium) and the Southern English woman [`en_GB-southern_english_female-low`](https://huggingface.co/rhasspy/piper-voices/tree/main/en/en_GB/southern_english_female/low) (both CC BY-SA 4.0). The woman is only made in low quality.
+  - The Southern English man is the first speaker of [`en_GB-southern_english_male-medium`](https://huggingface.co/csukuangfj/vits-piper-en_GB-southern_english_male-medium), packaged for sherpa-onnx (Apache 2.0), as Piper's own list has only the woman.
+  - Irish is Jenny (Dioco), [`en_GB-jenny_dioco-medium`](https://huggingface.co/rhasspy/piper-voices/tree/main/en/en_GB/jenny_dioco/medium), whose [recordings' license](https://github.com/dioco-group/jenny-tts-dataset) asks for the voice to be called Jenny.
+  - Australian is two of the ten LibriVox readers in [`en_AU-librivox-medium`](https://huggingface.co/DataCraftsmanAustralia/piper-en_AU-librivox-medium) (CC BY 4.0), the lowest and highest voiced.
 - The accents are official Piper models in other languages, 63 to 77 MB each. A model reads English as noise or by its own spelling, so `voice/accent.py` turns English into the nearest sounds of its language first, with the habits that make the accent.
   - State broadcast is [`ko_KR-kss-medium`](https://huggingface.co/rhasspy/piper-voices/tree/main/ko/ko_KR/kss/medium) (CC BY-NC-SA 4.0: non-commercial use only), with a loudspeaker's narrow, compressed sound and echo added by the bot.
   - Russian is [`ru_RU-dmitri-medium`](https://huggingface.co/rhasspy/piper-voices/tree/main/ru/ru_RU/dmitri/medium) (CC0).
   - Spanish is [`es_ES-davefx-medium`](https://huggingface.co/rhasspy/piper-voices/tree/main/es/es_ES/davefx/medium) (CC0).
   - German is the neutral speaker of [`de_DE-thorsten_emotional-medium`](https://huggingface.co/rhasspy/piper-voices/tree/main/de/de_DE/thorsten_emotional/medium) (CC0), which also has amused, angry, disgusted, drunk, sleepy, surprised and whispering speakers.
 
-`VOICES` in `src/features/say.ts` lists the voices offered. Each model loads the first time it's used, and a model other than the first one that hasn't spoken for 30 minutes is let go again, so the next line in that voice takes about a second longer. `VOICE_IDLE_MINUTES` in the container's `environment` changes the 30 minutes, and `0` keeps every model loaded. With all eleven loaded it uses about 1.5 GB, and a long line at the slowest speed briefly takes it near 1.6 GB; with only the first one it's about 200 MB. It makes a short line in about a second on two CPU cores.
+`VOICES` in `src/features/say.ts` lists the built-in voices. Each model loads the first time it's used, and a model other than the first one that hasn't spoken for 30 minutes is let go again, so the next line in that voice takes about a second longer. `VOICE_IDLE_MINUTES` in the container's `environment` changes the 30 minutes, and `0` keeps every model loaded. At most ten models besides the first stay loaded: past that, the one that spoke longest ago is let go. `VOICE_MAX_MODELS` changes the ten, and `0` takes the limit off. With eleven loaded it uses about 1.3 GB, and a long line at the slowest speed briefly takes it near 1.7 GB; with only the first one it's about 200 MB. A larger custom model takes more, so with several of those lower `VOICE_MAX_MODELS` or raise the memory limit. It makes a short line in about a second on two CPU cores.
+
+#### Your own voices
+
+`CUSTOM_VOICES` adds voices from any [Piper](https://github.com/OHF-Voice/piper1-gpl) model without changing the code, such as ones from [Hugging Face](https://huggingface.co/models?other=piper). It's a JSON list on one line, set on the bot in `.env` and on the voice container (the reference `docker-compose.yml` passes it on from `.env`):
+
+```sh
+CUSTOM_VOICES=[{"id":"narrator","name":"Narrator","model":"https://huggingface.co/<owner>/<repo>/resolve/<commit>/<file>.onnx"}]
+```
+
+| Field | Meaning |
+| --- | --- |
+| `id` | Required. 1 to 32 lowercase letters, digits, `-` or `_`, and not a built-in voice's id |
+| `name` | Required. Up to 40 characters, as the voice lists show it |
+| `model` | Required. The `https://` address of the model's `.onnx` file. A Hugging Face download link works; with a commit in place of `main` it always gets the same file |
+| `config` | The model's settings. By default, the model's address with `.json` added |
+| `sha256`, `configSha256` | The files' hashes, checked when given. Without them, the voice container logs the hashes it got, ready to paste in |
+| `group` | `Characters` (the default) or `Accents` |
+| `speaker` | For a model with several speakers, which one, from 0 |
+| `volume` | dB from -20 to 20, to make it as loud as the other voices. Levelling squeezes loud speech, so a cut lowers it by about half as much |
+| `pace` | 0.5 to 2. Multiplies how long it takes to talk, for a voice that sounds rushed: 1.1 is 10% slower |
+| `noise` | Two numbers from 0 to 2, Piper's `noise_scale` and `noise_w_scale`. Lower ones give a steadier voice and timing |
+
+The voice container downloads each model when it starts, once, and again only when its address changes, and deletes one that's no longer listed. A voice whose model couldn't be fetched talks with the first model, and an entry that can't be used is skipped, with the reason in the logs of the bot and the voice container. A server whose voice was removed from the list goes back to its default voice.
 
 ### The music container
 

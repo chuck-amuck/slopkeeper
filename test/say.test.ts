@@ -13,7 +13,7 @@ import { recentActivity } from '../src/activity.ts';
 import { config } from '../src/config.ts';
 import { Mixer } from '../src/mixer.ts';
 import * as perf from '../src/perf.ts';
-import { announceAloud, forgetRemovedVoices, forgetSpoken, lengthFor, phrases, previewPart, readMessage, removePhrase, savePhrase, say, sayOut, serverVoice, speak, speechFor } from '../src/features/say.ts';
+import { announceAloud, customVoices, forgetRemovedVoices, forgetSpoken, lengthFor, phrases, previewPart, readMessage, removePhrase, savePhrase, say, sayOut, serverVoice, speak, speechFor, voiceGroup, VOICES } from '../src/features/say.ts';
 import { applySpeechVolume, stopPlayback } from '../src/features/voiceAudio.ts';
 import { loopSpeechProblem } from '../src/features/loopRoom.ts';
 import { playJoinSound, setJoinSound } from '../src/features/joinSounds.ts';
@@ -180,7 +180,8 @@ test('the character voices ask for their own model, delivery and speed', { skip:
     return new Response(readFileSync(speechFile));
   });
   const voice = channel();
-  for (const id of ['glados', 'hal', 'bender', 'optimus', 'kronk', 'tiktok', 'broadcast', 'russian', 'spanish', 'german', 'demon', 'giant']) {
+  const ids = ['glados', 'hal', 'bender', 'optimus', 'kronk', 'tiktok', 'jarvis', 'death', 'broadcast', 'russian', 'spanish', 'german'];
+  for (const id of [...ids, 'southern-woman', 'southern-man', 'australian-woman', 'demon', 'giant']) {
     assert.equal(await say(voice, 'good news everyone', id, id), null);
     await sleep(300);
   }
@@ -193,18 +194,83 @@ test('the character voices ask for their own model, delivery and speed', { skip:
     // Kronk stretches like the default model, then 15% slower and with steadier timing
     { text: 'good news everyone', voice: 'kronk', length_scale: 1.56, noise_scale: 0.667, noise_w_scale: 0.333 },
     { text: 'good news everyone', voice: 'tiktok', length_scale: 1.25 },
+    // JARVIS on the middle curve and 10% slower, as its own settings are, and Death on the default model's curve
+    { text: 'good news everyone', voice: 'jarvis', length_scale: 1.44 },
+    { text: 'good news everyone', voice: 'death', length_scale: 1.36 },
     // The accents: KSS 15% slower than the character curve, Dmitri on its own curve, and the German model's neutral speaker
     { text: 'good news everyone', voice: 'kss', length_scale: 1.44 },
     { text: 'good news everyone', voice: 'dmitri', length_scale: 1.31 },
     { text: 'good news everyone', voice: 'davefx', length_scale: 1.25 },
     { text: 'good news everyone', voice: 'thorsten', speaker_id: 4, length_scale: 1.25 },
+    // The low-quality model on its own curve, and the speakers picked from models with several
+    { text: 'good news everyone', voice: 'southern_female', length_scale: 1.29 },
+    { text: 'good news everyone', voice: 'southern_male', speaker_id: 0, length_scale: 1.25 },
+    { text: 'good news everyone', voice: 'australian', speaker_id: 7, length_scale: 1.31 },
     // Effect styles are the default model's speakers, at their own pace
     { text: 'good news everyone', speaker_id: 499, length_scale: 1.5 },
     { text: 'good news everyone', speaker_id: 499, length_scale: 1.63 },
   ]);
-  // Effects take a moment longer to run than the 300 ms above
-  for (let tries = 0; leftovers().length && tries < 30; tries++) await sleep(100);
+  // Effects take a moment longer to run than the 300 ms above, and longer still with the whole suite running
+  for (let tries = 0; leftovers().length && tries < 100; tries++) await sleep(100);
   assert.deepEqual(leftovers(), []);
+});
+
+test('every voice’s model is one the voice container fetches, and the English accents are grouped as accents', () => {
+  const fetched = new Set([...readFileSync(path.join(import.meta.dirname, '../voice/start.sh'), 'utf8').matchAll(/^fetch (\S+) /gm)].map((m) => m[1]));
+  for (const voice of VOICES) if (voice.model) assert.ok(fetched.has(voice.model), `${voice.name} needs voice/start.sh to fetch ${voice.model}`);
+  const group = (id: string) => voiceGroup(VOICES.find((v) => v.id === id)!);
+  assert.deepEqual(['jarvis', 'announcer', 'irish', 'australian-man', 'russian', 'trailer'].map(group), ['Characters', 'Characters', 'Accents', 'Accents', 'Accents', 'Effects']);
+});
+
+const MODEL = 'https://huggingface.co/someone/voice/resolve/main/voice.onnx';
+
+test('custom voices from CUSTOM_VOICES speak their own model, with what was given and the character curve', () => {
+  const raw = JSON.stringify([
+    { id: 'narrator', name: ' Narrator ', model: MODEL },
+    { id: 'aussie', name: 'Aussie', model: MODEL, config: `${MODEL}.json`, sha256: 'A'.repeat(64), group: 'Accents', speaker: 3, volume: -2.5, pace: 1.1, noise: [0.5, 0.3] },
+  ]);
+  const { voices, skipped } = customVoices(raw, [{ id: 'glados', name: 'GLaDOS' }]);
+  assert.deepEqual(skipped, []);
+  assert.deepEqual(
+    voices.map(({ stretches, ...v }) => ({ ...v, curve: lengthFor(85, stretches) })),
+    [
+      { id: 'narrator', name: 'Narrator', model: 'custom-narrator', group: 'Characters', speaker: undefined, pace: undefined, noise: undefined, effects: undefined, curve: 1.25 },
+      { id: 'aussie', name: 'Aussie', model: 'custom-aussie', group: 'Accents', speaker: 3, pace: 1.1, noise: [0.5, 0.3], effects: 'volume=-2.5dB', curve: 1.25 },
+    ],
+  );
+  assert.equal(voiceGroup(voices[1]), 'Accents');
+});
+
+test('a custom voice that can’t be used is skipped with the reason, and the rest kept', () => {
+  assert.deepEqual(customVoices(undefined, []), { voices: [], skipped: [] });
+  assert.deepEqual(customVoices(' ', []), { voices: [], skipped: [] });
+  assert.match(customVoices('[{', []).skipped[0], /isn't valid JSON/);
+  assert.match(customVoices('{"id": "x"}', []).skipped[0], /isn't a list/);
+  const bad = [
+    'text',
+    { id: 'Has Space', name: 'X', model: MODEL },
+    { id: 'glados', name: 'Mine', model: MODEL },
+    { id: 'blank', name: ' ', model: MODEL },
+    { id: 'plain', name: 'X', model: 'http://example.com/v.onnx' },
+    { id: 'conf', name: 'X', model: MODEL, config: 'ftp://example.com/v.json' },
+    { id: 'hash', name: 'X', model: MODEL, sha256: 'abc' },
+    { id: 'grp', name: 'X', model: MODEL, group: 'Effects' },
+    { id: 'spk', name: 'X', model: MODEL, speaker: 1.5 },
+    { id: 'vol', name: 'X', model: MODEL, volume: 30 },
+    { id: 'pace', name: 'X', model: MODEL, pace: 3 },
+    { id: 'noise', name: 'X', model: MODEL, noise: [0.5] },
+    { id: 'named', name: 'glados', model: MODEL },
+    { id: 'good', name: 'Good', model: MODEL, config: '' },
+    { id: 'good', name: 'Again', model: MODEL },
+    // The first entry with an id is the one, even when it can't be used, as the voice container takes the first too
+    { id: 'blank', name: 'Fixed', model: MODEL },
+  ];
+  const { voices, skipped } = customVoices(JSON.stringify(bad), [{ id: 'glados', name: 'GLaDOS' }]);
+  assert.deepEqual(voices.map((v) => v.id), ['good']);
+  assert.equal(skipped.length, bad.length - 1);
+  assert.match(skipped[2], /already a voice's id/);
+  assert.match(skipped[12], /name is already a voice's name/);
+  assert.match(skipped.at(-1)!, /blank is already/);
 });
 
 test('a server whose voice was removed talks in the default voice, but asking for an unknown one is refused', { skip: !hasFfmpeg }, async (t) => {
@@ -229,6 +295,9 @@ test('picks of removed voices are cleared at startup, and a removed one falls ba
   // At least these two, plus any an earlier test left behind
   assert.ok(forgetRemovedVoices() >= 2);
   assert.equal(forgetRemovedVoices(), 0, 'nothing left the second time');
+  setSetting('custom', 'ttsVoice', 'narrator');
+  assert.equal(forgetRemovedVoices(["CUSTOM_VOICES isn't valid JSON"]), 0, 'kept while the custom voices can’t be read');
+  assert.equal(storedSetting('custom', 'ttsVoice'), 'narrator');
   assert.deepEqual(
     [storedSetting('old-numbered', 'ttsVoice'), storedSetting('old-loop', 'loopVoice'), storedSetting('same-as-default', 'loopVoice'), storedSetting('kept', 'ttsVoice')],
     [undefined, undefined, '', 'demon'],
@@ -912,10 +981,11 @@ test('/say suggests saved lines and voices as you type', async () => {
   // Voices are searched, as there are more than Discord's 25 choices would allow to grow
   assert.deepEqual(await suggest('RO', voice.guild.id, 'voice'), [
     { name: 'Kronk', value: 'kronk' },
+    { name: 'Rocket Raccoon', value: 'rocket' },
     { name: 'State broadcast', value: 'broadcast' },
     { name: 'Robot', value: 'robot' },
   ]);
-  assert.equal((await suggest('', voice.guild.id, 'voice')).length, 24);
+  assert.equal((await suggest('', voice.guild.id, 'voice')).length, 25, 'Discord’s most');
   assert.deepEqual(await suggest('radio', voice.guild.id, 'voice'), [{ name: 'Walkie-talkie', value: 'radio' }], 'and by id');
 });
 

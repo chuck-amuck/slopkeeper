@@ -32,12 +32,14 @@ services:
     image: ghcr.io/chuck-amuck/slopkeeper-voice:latest # text to speech, optional. Needs VOICE_URL=http://voice:5000 in .env
     restart: unless-stopped
     init: true
+    environment:
+      CUSTOM_VOICES: ${CUSTOM_VOICES:-} # your own voices, from .env, which the bot reads there too
     volumes:
       - slopkeeper-voice:/voices
     deploy:
       resources:
         limits:
-          memory: 2048M # eleven models loaded take about 1.5 GB, and a long line at the slowest speed briefly near 1.6 GB. Ones unused for 30 minutes are let go (VOICE_IDLE_MINUTES)
+          memory: 2048M # at most eleven models loaded (VOICE_MAX_MODELS) take about 1.3 GB, and a long line at the slowest speed briefly near 1.7 GB. Ones unused for 30 minutes are let go (VOICE_IDLE_MINUTES)
 
   loop:
     build: . # the loop bot, optional: a second bot that plays the looping room. Needs LOOP_BOT_URL=http://loop:8788 and LOOP_TOKEN in .env

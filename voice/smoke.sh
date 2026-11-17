@@ -1,6 +1,6 @@
 #!/bin/sh
-# Starts a built voice image and has it say a line with the default model and with the Spanish accent, checking that
-# real speech comes back. CI runs it before pushing the image: serve.py patches onnxruntime's and Piper's insides, so a
+# Starts a built voice image and has it say a line with the default model, with the Spanish accent and with a model whose
+# settings list speakers it doesn't take, checking that real speech comes back. CI runs it before pushing the image: serve.py patches onnxruntime's and Piper's insides, so a
 # new version of either can break it in ways a syntax check can't see.
 #   sh voice/smoke.sh <image> <models folder, kept between runs>
 set -eu
@@ -26,6 +26,13 @@ for remote, sha, local in ((model, model_sha, f"/voices/{name}.onnx"), (config, 
     if hashlib.sha256(data).hexdigest() != sha:
         sys.exit(f"{remote} isn\x27t the file start.sh checks for")
     open(local, "wb").write(data)
+# The Spanish model again, with settings that say it has speakers, as some community models do
+import json
+settings = json.load(open(f"/voices/{name}.onnx.json"))
+settings.update(num_speakers=7, speaker_id_map={"normal": 0})
+json.dump(settings, open("/voices/smoke-speakers.onnx.json", "w"))
+if not os.path.lexists("/voices/smoke-speakers.onnx"):
+    os.symlink(f"{name}.onnx", "/voices/smoke-speakers.onnx")
 EOF
 ' sh "$2" "$3" "$4" "$5" "$6" "$7" "$8"
 
@@ -57,7 +64,7 @@ for _ in range(60):
 else:
     sys.exit("The voice container never answered")
 
-for label, extra in (("default", {}), ("Spanish accent", {"voice": "davefx"})):
+for label, extra in (("default", {}), ("Spanish accent", {"voice": "davefx"}), ("listed speakers", {"voice": "smoke-speakers", "speaker_id": 0})):
     audio, timing = say(**extra)
     with wave.open(io.BytesIO(audio)) as w:
         seconds = w.getnframes() / w.getframerate()

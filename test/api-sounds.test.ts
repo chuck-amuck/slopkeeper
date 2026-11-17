@@ -1183,7 +1183,9 @@ test('tells the page what text to speech offers', async () => {
   try {
     const data = await ok(`/guilds/${GUILD}/say`);
     assert.deepEqual(data.voices.map((v: { name: string }) => v.name), [
-      ...['GLaDOS', 'HAL 9000', 'Bender', 'Optimus Prime', 'Kronk', 'TikTok', 'State broadcast', 'Russian', 'Spanish', 'German'],
+      ...['GLaDOS', 'HAL 9000', 'Bender', 'Optimus Prime', 'Kronk', 'TikTok', 'JARVIS', 'Rocket Raccoon', 'Death', 'BMO'],
+      ...['Counter-Strike announcer', 'Bobby', 'Carl', 'Patrick', 'Scottish', 'Northern English', 'Southern English woman'],
+      ...['Southern English man', 'Irish (Jenny)', 'Australian man', 'Australian woman', 'State broadcast', 'Russian', 'Spanish', 'German'],
       ...['Demon', 'Helium', 'Giant', 'Robot', 'Alien', 'Walkie-talkie', 'Phone call', 'Megaphone', 'Stadium PA', 'Newsreel'],
       ...['Cathedral', 'Underwater', 'Ghost', 'Trailer narrator'],
     ]);

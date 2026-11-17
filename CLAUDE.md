@@ -16,10 +16,11 @@ same static ffmpeg as the image and CI. Without ffmpeg the audio tests skip sile
   `--test-name-pattern="<name>"` for one test).
 - Web: `cd web && node --test 'test/*.test.ts'` works with the host's node; typecheck with `npx tsc -p .` in the
   container.
-- Music container: `node --test 'music/*.test.mjs'`. `voice/` has syntax checks, which CI runs too:
-  `python3 -m py_compile voice/*.py` and `sh -n voice/start.sh`.
+- Music container: `node --test 'music/*.test.mjs'`. `voice/` has syntax checks and tests, which CI runs too:
+  `python3 -m py_compile voice/*.py`, `python3 -m unittest discover -s voice -p '*_test.py'` and `sh -n voice/start.sh`.
 - Voice image: `docker build -q -t sk-voice-test voice && sh voice/smoke.sh sk-voice-test /tmp/voice-models` makes it
-  say a line with the default and Spanish models (about 140 MB, kept in that folder). CI runs it before pushing.
+  say a line with the default and Spanish models, and with one whose settings list speakers it doesn't take (about
+  140 MB, kept in that folder). CI runs it before pushing.
 - Its Python packages are pinned with hashes in `voice/requirements.txt`, from `voice/requirements.in`. To update them:
   `docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp -v "$PWD/voice":/v -w /v python:3.12-slim-bookworm sh -c 'pip install -q --user uv && /tmp/.local/bin/uv pip compile requirements.in --upgrade --universal --generate-hashes --python-version 3.12 --no-header --no-annotate -o requirements.txt'`,
   then run the smoke test and listen to every voice before shipping it.
@@ -66,8 +67,8 @@ same static ffmpeg as the image and CI. Without ffmpeg the audio tests skip sile
 - This repo and three of its images are public. Keep LAN addresses, hostnames, deployment IDs, server names,
   emails and personal details out of code, tests, docs and commits.
 - Never publish or proxy the management API port. Identity headers count only with a matching `PROXY_SECRET`.
-- Offer only the voices in `VOICES` (src/features/say.ts). Speech speed follows a measured curve, not a
-  proportional one.
+- Offer only the voices in `VOICES` (src/features/say.ts), which adds the deployment's `CUSTOM_VOICES`. Speech speed
+  follows a measured curve, not a proportional one: measure a new model's and pick the nearest curve, within about 5%.
 - The voices' effects run through the Dockerfile's pinned static ffmpeg. Before changing its version, render every
   voice with both and compare them: rubberband and other filters can change between versions.
 - Music resumes at the same second after a restart if people are still in the channel and it was under 10 minutes

@@ -70,8 +70,11 @@ const CHARACTER_STRETCHES: Stretches = [
   [2.19, 2.5],
 ] as const;
 
-/** Measured on the Russian model reading English with its accent, which stretches between the two */
-const RUSSIAN_STRETCHES: Stretches = [
+/**
+ * Measured on the Russian model reading English with its accent, which stretches between the two. JARVIS, Carl, Northern English
+ * and the Australian voices match it within 5%
+ */
+const MIDDLE_STRETCHES: Stretches = [
   [0.66, 0.5],
   [0.78, 0.7],
   [0.88, 0.8],
@@ -87,6 +90,25 @@ const RUSSIAN_STRETCHES: Stretches = [
   [2.09, 2.5],
 ] as const;
 
+/** Measured on the Southern English woman, the one model only made in low quality, which can't go much faster */
+const LOW_STRETCHES: Stretches = [
+  [0.78, 0.5],
+  [0.85, 0.7],
+  [0.9, 0.8],
+  [1, 1],
+  [1.14, 1.2],
+  [1.18, 1.3],
+  [1.24, 1.4],
+  [1.38, 1.5],
+  [1.39, 1.6],
+  [1.46, 1.8],
+  [1.65, 2],
+  [1.77, 2.2],
+  [1.94, 2.5],
+] as const;
+
+type Group = 'Characters' | 'Accents';
+
 interface Voice {
   id: string;
   name: string;
@@ -101,6 +123,8 @@ interface Voice {
   pace?: number;
   /** ffmpeg filters for a voice that's a style built on a model, run before the speech is levelled */
   effects?: string;
+  /** Where the web UI lists a custom voice. The built-in ones' groups are below */
+  group?: Group;
 }
 
 /** An old state TV sound: narrowed, pushed forward, squeezed and with a hall's echo, turned up to match the others */
@@ -206,7 +230,11 @@ const STYLES: readonly Voice[] = [
   },
 ];
 
-export const VOICES: readonly Voice[] = [
+/**
+ * The built-in voices besides the styles. Each is turned up or down to be as loud as the default model's voices once levelled,
+ * which the limiter in levelling squeezes, so a cut of several dB lowers it far less
+ */
+const BUILT_IN: readonly Voice[] = [
   // Calmer than the model's own 0.667 and 0.8, which wobble in longer lines
   { id: 'glados', name: 'GLaDOS', model: 'glados', noise: [0.333, 0.333], stretches: CHARACTER_STRETCHES },
   { id: 'hal', name: 'HAL 9000', model: 'hal', stretches: CHARACTER_STRETCHES },
@@ -215,19 +243,102 @@ export const VOICES: readonly Voice[] = [
   // Kronk stretches like the default model's voices, but sounded rushed: it's 15% slower, with steadier timing
   { id: 'kronk', name: 'Kronk', model: 'kronk', noise: [0.667, 0.333], pace: 1.15 },
   { id: 'tiktok', name: 'TikTok', model: 'tiktok', stretches: CHARACTER_STRETCHES },
+  // Its own settings make it 10% slower, as Bobby's do 15%
+  { id: 'jarvis', name: 'JARVIS', model: 'jarvis', pace: 1.1, stretches: MIDDLE_STRETCHES, effects: 'volume=4dB' },
+  { id: 'rocket', name: 'Rocket Raccoon', model: 'rocket', stretches: CHARACTER_STRETCHES, effects: 'volume=-1.5dB' },
+  // Death stretches like the default model's voices
+  { id: 'death', name: 'Death', model: 'death' },
+  { id: 'bmo', name: 'BMO', model: 'bmo', stretches: CHARACTER_STRETCHES, effects: 'volume=-3.5dB' },
+  { id: 'announcer', name: 'Counter-Strike announcer', model: 'announcer', stretches: CHARACTER_STRETCHES, effects: 'volume=-6dB' },
+  { id: 'bobby', name: 'Bobby', model: 'bobby', pace: 1.15, stretches: CHARACTER_STRETCHES, effects: 'volume=-3.5dB' },
+  { id: 'carl', name: 'Carl', model: 'carl', stretches: MIDDLE_STRETCHES, effects: 'volume=-6.5dB' },
+  { id: 'patrick', name: 'Patrick', model: 'patrick', stretches: CHARACTER_STRETCHES, effects: 'volume=-8.5dB' },
+  // English models with British, Irish and Australian accents
+  { id: 'scottish', name: 'Scottish', model: 'alba', stretches: CHARACTER_STRETCHES, effects: 'volume=-2dB' },
+  { id: 'northern', name: 'Northern English', model: 'northern', stretches: MIDDLE_STRETCHES, effects: 'volume=4dB' },
+  { id: 'southern-woman', name: 'Southern English woman', model: 'southern_female', stretches: LOW_STRETCHES },
+  { id: 'southern-man', name: 'Southern English man', model: 'southern_male', speaker: 0, stretches: CHARACTER_STRETCHES, effects: 'volume=4dB' },
+  // Its recordings' license asks for the voice to be called Jenny
+  { id: 'irish', name: 'Irish (Jenny)', model: 'jenny', stretches: CHARACTER_STRETCHES, effects: 'volume=-6.5dB' },
+  // Two of the model's ten readers, the lowest and highest voiced
+  { id: 'australian-man', name: 'Australian man', model: 'australian', speaker: 6, stretches: MIDDLE_STRETCHES, effects: 'volume=-3.5dB' },
+  { id: 'australian-woman', name: 'Australian woman', model: 'australian', speaker: 7, stretches: MIDDLE_STRETCHES },
   // Models in other languages reading English with an accent (voice/accent.py), turned up or down to match the others.
   // State broadcast reads Korean as it is, goes 15% slower, as an announcer reads, and has a style's effects
   { id: 'broadcast', name: 'State broadcast', model: 'kss', pace: 1.15, stretches: CHARACTER_STRETCHES, effects: BROADCAST_EFFECTS },
-  { id: 'russian', name: 'Russian', model: 'dmitri', stretches: RUSSIAN_STRETCHES, effects: 'volume=2dB' },
+  { id: 'russian', name: 'Russian', model: 'dmitri', stretches: MIDDLE_STRETCHES, effects: 'volume=2dB' },
   { id: 'spanish', name: 'Spanish', model: 'davefx', stretches: CHARACTER_STRETCHES, effects: 'volume=-3dB' },
   // The emotional model's neutral speaker, which leaves its drunk, whispering and other speakers free to add
   { id: 'german', name: 'German', model: 'thorsten', speaker: 4, stretches: CHARACTER_STRETCHES, effects: 'volume=4.5dB' },
-  ...STYLES,
 ];
 
-const ACCENTS = new Set(['broadcast', 'russian', 'spanish', 'german']);
+const CUSTOM_ID = /^[a-z0-9][a-z0-9_-]{0,31}$/;
+const LONGEST_NAME = 40;
+
+/**
+ * The deployment's own voices, from CUSTOM_VOICES: a JSON list of {id, name, model} with optional group, speaker, volume (dB),
+ * pace and noise. voice/custom.py fetches their models from the same list. Each one that can't be used is skipped, with a
+ * reason, rather than stopping the bot
+ */
+export function customVoices(raw: string | undefined, taken: readonly Pick<Voice, 'id' | 'name'>[]): { voices: Voice[]; skipped: string[] } {
+  const voices: Voice[] = [];
+  const skipped: string[] = [];
+  if (!raw?.trim()) return { voices, skipped };
+  let listed: unknown;
+  try {
+    listed = JSON.parse(raw);
+  } catch (err) {
+    return { voices, skipped: [`CUSTOM_VOICES isn't valid JSON (${(err as Error).message})`] };
+  }
+  if (!Array.isArray(listed)) return { voices, skipped: ["CUSTOM_VOICES isn't a list"] };
+  const ids = new Set(taken.map((v) => v.id));
+  const names = new Set(taken.map((v) => v.name.toLowerCase()));
+  const between = (value: unknown, low: number, high: number) => typeof value === 'number' && value >= low && value <= high;
+  listed.forEach((entry: Record<string, unknown> | null, i) => {
+    const problem = (() => {
+      if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) return `entry ${i + 1} isn't an object`;
+      const { id, name, model, config: settings, sha256, configSha256, group, speaker, volume, pace, noise } = entry;
+      if (typeof id !== 'string' || !CUSTOM_ID.test(id)) return `entry ${i + 1}'s id isn't 1 to 32 lowercase letters, digits, - or _`;
+      if (ids.has(id)) return `${id} is already a voice's id`;
+      // Taken even if the rest is wrong, as voice/custom.py does, so a later entry with the same id is skipped by both
+      ids.add(id);
+      if (typeof name !== 'string' || !name.trim() || name.trim().length > LONGEST_NAME) return `${id}'s name needs 1 to ${LONGEST_NAME} characters`;
+      if (names.has(name.trim().toLowerCase())) return `${id}'s name is already a voice's name`;
+      if (![model, settings || 'https://'].every((url) => typeof url === 'string' && url.startsWith('https://'))) return `${id}'s model and config need https:// addresses`;
+      // voice/custom.py checks the hashes, and skips a voice whose aren't hashes
+      if (![sha256, configSha256].every((sha) => sha === undefined || sha === null || (typeof sha === 'string' && /^[0-9a-f]{64}$/i.test(sha)))) return `${id}'s sha256 and configSha256 need to be 64 hex digits`;
+      if (group !== undefined && group !== 'Characters' && group !== 'Accents') return `${id}'s group is Characters or Accents`;
+      if (speaker !== undefined && !(Number.isInteger(speaker) && between(speaker, 0, 9999))) return `${id}'s speaker is a whole number from 0`;
+      if (volume !== undefined && !between(volume, -20, 20)) return `${id}'s volume is a number of dB from -20 to 20`;
+      if (pace !== undefined && !between(pace, 0.5, 2)) return `${id}'s pace is from 0.5 to 2`;
+      if (noise !== undefined && !(Array.isArray(noise) && noise.length === 2 && noise.every((n) => between(n, 0, 2)))) return `${id}'s noise is two numbers from 0 to 2`;
+      names.add(name.trim().toLowerCase());
+      voices.push({
+        id,
+        name: name.trim(),
+        model: `custom-${id}`,
+        group: (group as Group | undefined) ?? 'Characters',
+        speaker: speaker as number | undefined,
+        pace: pace as number | undefined,
+        noise: noise as [number, number] | undefined,
+        stretches: CHARACTER_STRETCHES,
+        effects: volume ? `volume=${volume}dB` : undefined,
+      });
+      return null;
+    })();
+    if (problem) skipped.push(problem);
+  });
+  return { voices, skipped };
+}
+
+const custom = customVoices(process.env.CUSTOM_VOICES, [...BUILT_IN, ...STYLES]);
+for (const reason of custom.skipped) console.warn(`Skipped a custom voice: ${reason}`);
+
+export const VOICES: readonly Voice[] = [...BUILT_IN, ...custom.voices, ...STYLES];
+
+const ACCENTS = new Set(['broadcast', 'russian', 'spanish', 'german', 'scottish', 'northern', 'southern-woman', 'southern-man', 'irish', 'australian-man', 'australian-woman']);
 /** How the web UI groups the voices */
-export const voiceGroup = (voice: Voice) => (STYLES.includes(voice) ? 'Effects' : ACCENTS.has(voice.id) ? 'Accents' : 'Characters');
+export const voiceGroup = (voice: Voice) => (STYLES.includes(voice) ? 'Effects' : (voice.group ?? (ACCENTS.has(voice.id) ? 'Accents' : 'Characters')));
 
 /**
  * The voice a server uses when nobody picks one, or the one given. One that's since been removed falls back to the server's
@@ -241,8 +352,12 @@ export function serverVoice(guildId: string, id: string | null = setting(guildId
 /** A voice by its id, or by its name as someone might type it into /say instead of picking it */
 const voiceCalled = (typed: string) => VOICES.find((v) => v.id === typed) ?? VOICES.find((v) => v.name.toLowerCase() === typed.trim().toLowerCase());
 
-/** Clears servers' picks of voices that have since been removed, so Settings shows the voice they really get. Returns how many */
-export function forgetRemovedVoices(): number {
+/**
+ * Clears servers' picks of voices that have since been removed, so Settings shows the voice they really get. Returns how many.
+ * Not while CUSTOM_VOICES has a problem: a typo there would otherwise forget every pick of the custom voices for good
+ */
+export function forgetRemovedVoices(customProblems: readonly string[] = custom.skipped): number {
+  if (customProblems.length) return 0;
   const ids = VOICES.map((v) => v.id);
   return Number(
     db
