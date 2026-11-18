@@ -122,7 +122,7 @@ export const DEFAULTS = {
   // Insults someone who's rude to it, from their games
   chatRoasts: process.env.CHAT_ROASTS !== 'false',
   // A line in its personality above the bot's automatic posts, written by the chat model
-  chatPostLines: process.env.CHAT_POST_LINES === 'true',
+  chatPostLines: process.env.CHAT_POST_LINES !== 'false',
   // Off until a server turns it on, as not everyone wants every answer read out
   chatVoice: process.env.CHAT_VOICE || 'off',
   // Each answer costs a little, so a busy day stops here

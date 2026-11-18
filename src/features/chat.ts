@@ -9,7 +9,7 @@ import { setting } from '../settings.ts';
 import { artistAlbumsFor, artistRef, findMusic, searchReady, sourceNames } from '../musicSearch.ts';
 import { SpotifyError, type Found } from '../spotify.ts';
 import type { Feature } from '../types.ts';
-import { asksBot, canSee, isAnswer, listNames, playingGames } from '../util.ts';
+import { asksBot, canSee, isAnswer, listNames, playingGames, servedGuilds } from '../util.ts';
 import { canControl, time, musicPlaying, musicState, OUTSIDE_DJ, pauseMusic, queueArtist, queueFrom, queueOf, removeTracks, setAutoplay, shuffleQueue, skipMusic, startMusic, stopMusic } from './music.ts';
 import { busyElsewhere, effects, maySpeak, NO_EFFECT, say, sayOut, voices } from './say.ts';
 import { act, ACTIONS, actionTools } from './chatActions.ts';
@@ -709,6 +709,56 @@ export function strictAtMost(list: Anthropic.ToolUnion[], most = strictBudget): 
   return list.map((tool) => (isStrict(tool) && !chosen.has(tool.name) ? loose(tool) : tool));
 }
 
+/** An organization can have web search turned off: then chat answers without it from now on, and says whether that's why */
+function searchRefused(err: unknown, offered: Anthropic.ToolUnion[]): boolean {
+  if (searchOff || !offered.some(isSearch) || !(err instanceof Anthropic.APIError) || err.status !== 400 || !/web.?search/i.test(err.message)) return false;
+  console.warn(`Chat answers without web search from now on, as the API refused it: ${err.message}`);
+  searchOff = true;
+  return true;
+}
+
+/** The API can refuse the tools as too much to check strictly, and does for all of them: then fewer are strict from now on, and says whether that's why */
+function fewerStrict(err: unknown): boolean {
+  if (strictBudget === 0 || !(err instanceof Anthropic.APIError) || err.status !== 400 || !/grammar/i.test(err.message)) return false;
+  strictBudget = Math.floor(strictBudget / 2);
+  console.warn(`Chat makes at most ${strictBudget} tools strict from now on, as the API refused more: ${err.message}`);
+  return true;
+}
+
+/** After starting, so it doesn't slow the start */
+const WARM_UP_AFTER_MS = 5_000;
+
+/**
+ * The API takes about 20 s to get ready for strict tools it hasn't seen, so the first answer after a deploy that changed
+ * them would keep someone waiting. So each set of tools the servers use is sent once at the start, in a request for one
+ * token, which costs well under a cent. A refusal of the tools lowers how many are strict, before anyone asks. Never throws
+ */
+export async function warmUp(guilds: Iterable<Guild>): Promise<void> {
+  const client = claude();
+  if (!client) return;
+  const done = new Set<string>();
+  for (const guild of guilds) {
+    if (!setting(guild.id, 'chat')) continue;
+    const key = modelKey(guild.id);
+    // Again after each refusal it learns from, while there's something left to try
+    for (let tries = 0; tries < 5; tries++) {
+      const offered = tools(guild);
+      const sent = `${key} ${JSON.stringify(offered)}`;
+      if (done.has(sent)) break;
+      try {
+        const res = await client.messages.create({ model: MODELS[key].id, max_tokens: 1, tools: offered, messages: [{ role: 'user', content: '.' }] }, { timeout: 60_000, maxRetries: 0 });
+        record(guild.id, key, res.usage);
+        done.add(sent);
+        break;
+      } catch (err) {
+        if (searchRefused(err, offered) || fewerStrict(err)) continue;
+        console.warn(`Chat couldn’t get ready for server ${guild.id}: ${err instanceof Anthropic.APIError ? `${err.status} ${err.message}` : (err as Error).message}`);
+        break;
+      }
+    }
+  }
+}
+
 /** The tools for what this bot can do here: music only with the music container, speech only with the voice container and speech on */
 function tools(guild: Guild): Anthropic.ToolUnion[] {
   const list: Anthropic.ToolUnion[] = [];
@@ -1077,19 +1127,10 @@ export async function answer(
         output_config: { effort: 'low' },
       });
     const res = await send().catch((err: unknown) => {
-      // An organization can have web search turned off. Only before anything's been searched, so nothing refers to it
-      if (round === 0 && !searchOff && offered.some(isSearch) && err instanceof Anthropic.APIError && err.status === 400 && /web.?search/i.test(err.message)) {
-        console.warn(`Chat answers without web search from now on, as the API refused it: ${err.message}`);
-        searchOff = true;
+      // Only before anything's been searched, so nothing refers to it
+      if (round === 0 && (searchRefused(err, offered) || fewerStrict(err))) {
         offered = tools(guild);
         instructions = system(guild, botName);
-        return send();
-      }
-      // The API can refuse the tools as too much to check strictly, and does for all of them, so fewer are strict from now on
-      if (round === 0 && strictBudget > 0 && err instanceof Anthropic.APIError && err.status === 400 && /grammar/i.test(err.message)) {
-        strictBudget = Math.floor(strictBudget / 2);
-        console.warn(`Chat makes at most ${strictBudget} tools strict from now on, as the API refused more: ${err.message}`);
-        offered = tools(guild);
         return send();
       }
       // Once something's been done, it's said so, so they don't ask again and have it done twice
@@ -1248,5 +1289,6 @@ export const chat: Feature = {
     moveSayAloud();
     client.on(Events.MessageCreate, (message) => void onMessage(message, client).catch(console.error));
     every('Chat reminders', CHECK_EVERY, () => sendDue(client), { now: true });
+    setTimeout(() => void warmUp(servedGuilds(client)), WARM_UP_AFTER_MS).unref();
   },
 };

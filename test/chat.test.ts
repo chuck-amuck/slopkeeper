@@ -6,7 +6,7 @@ import { commandMention, rememberCommands } from '../src/commandIds.ts';
 import { config } from '../src/config.ts';
 import { db } from '../src/db.ts';
 import { MessageFlags } from 'discord.js';
-import { answer, asksBot, chat, chatNote, chatNotes, chatUsage, COOLDOWN_MS, finished, MODELS, MOST_STRICT_TOOLS, strictAtMost, withoutOffer, noteOf, onMessage, resetChat, sourcesLine, useTool, type Turn } from '../src/features/chat.ts';
+import { answer, asksBot, chat, chatNote, chatNotes, chatUsage, COOLDOWN_MS, finished, MODELS, MOST_STRICT_TOOLS, strictAtMost, warmUp, withoutOffer, noteOf, onMessage, resetChat, sourcesLine, useTool, type Turn } from '../src/features/chat.ts';
 import { clearQueue, queueOf } from '../src/features/music.ts';
 import { checkSetting } from '../src/features/setup.ts';
 import { ACTIONS } from '../src/features/chatActions.ts';
@@ -762,6 +762,32 @@ test('when the API refuses the tools as too much to check strictly, fewer are st
   warned.mock.restore();
 });
 
+test('at the start it sends each set of tools once, for one token, and learns from a refusal before anyone asks', async (t) => {
+  const [one, same, quiet, other] = ['g-warm-1', 'g-warm-2', 'g-warm-3', 'g-warm-4'].map(fakeGuild);
+  setSetting(quiet.id, 'chat', false);
+  setSetting(other.id, 'chatActions', false);
+  t.after(() => [quiet, other].forEach((g) => [setSetting(g.id, 'chat', undefined), setSetting(g.id, 'chatActions', undefined)]));
+  const warned = t.mock.method(console, 'warn', () => {});
+  const grammar = { refused: 'The compiled grammar is too large, which would cause performance issues.' };
+  replies = [grammar, turn('max_tokens', text('.')), turn('max_tokens', text('.'))];
+  await warmUp([one, same, quiet, other] as never);
+  // The first refused and sent again with fewer strict, the same tools not again, a server with chat off not at all, and one with other tools once
+  assert.equal(sent.length, 3);
+  assert.ok(sent.every((s) => (s as unknown as { max_tokens: number }).max_tokens === 1 && !s.system));
+  const strictIn = (n: number) => (sent[n]!.tools as unknown as { strict?: boolean }[]).filter((tool) => tool.strict).length;
+  assert.ok(strictIn(1) < strictIn(0), `${strictIn(0)} then ${strictIn(1)}`);
+  assert.ok(!(sent[2]!.tools as unknown as { name: string }[]).some((tool) => tool.name === 'plan_game_night'));
+  assert.equal(warned.mock.callCount(), 1);
+  assert.equal(replies.length, 0);
+
+  // Nothing goes wrong when the API is down: it's only said
+  resetChat();
+  apiDown = true;
+  await warmUp([one] as never);
+  assert.equal(warned.mock.callCount(), 2);
+  assert.match(String(warned.mock.calls[1]!.arguments[0]), /couldn’t get ready for server g-warm-1: 529/);
+});
+
 test('a long search that pauses is sent back as it is to carry on, and with web search off it isn’t offered', async (t) => {
   const guild = fakeGuild('g-search-more');
   replies = [turn('pause_turn', ...searched('srv_2', 'bonemass tips', 'https://valheim.fandom.com/wiki/Bonemass')), turn('end_turn', text('Bring a mace: Bonemass hates blunt damage.'))];
@@ -903,18 +929,20 @@ function postChannel(guild: ReturnType<typeof fakeGuild>) {
 }
 const LEADERBOARD = { embeds: [{ title: '🏆 This week', description: '1. **Sam**: 12 h\n2. **Alex**: 3 h', footer: { text: 'Monday to Sunday' } }] };
 
-test('lines on automatic posts are off by default, and on, one goes above the post, written from what it says', async (t) => {
+test('lines on automatic posts are on by default, one above the post, written from what it says, until a server turns them off', async (t) => {
   const guild = fakeGuild('g-lines');
   const { channel, posted } = postChannel(guild);
+  setSetting(guild.id, 'chatPostLines', false);
+  t.after(() => setSetting(guild.id, 'chatPostLines', undefined));
   await sendPost('weekly', guild.id, channel, LEADERBOARD);
   assert.deepEqual([posted, sent], [[LEADERBOARD], []]);
+  posted.length = 0;
 
-  setSetting(guild.id, 'chatPostLines', true);
-  t.after(() => setSetting(guild.id, 'chatPostLines', undefined));
+  setSetting(guild.id, 'chatPostLines', undefined);
   // It can't ping or link, and only its first line counts
   replies = [turn('end_turn', text('“Sam, you magnificent <@123> menace! https://example.com @everyone”\nAnd another thing.'))];
   await sendPost('weekly', guild.id, channel, LEADERBOARD);
-  assert.deepEqual(posted[1], { ...LEADERBOARD, content: 'Sam, you magnificent menace! @\u200beveryone' });
+  assert.deepEqual(posted[0], { ...LEADERBOARD, content: 'Sam, you magnificent menace! @\u200beveryone' });
   assert.match(sent[0]!.system as unknown as string, /You are Slopkeeper, a bot in the Discord server “Test Server”\.[\s\S]*a weekly leaderboard/);
   assert.equal(sent[0]!.messages[0]!.content, 'The weekly leaderboard:\n🏆 This week\n1. **Sam**: 12 h\n2. **Alex**: 3 h\nMonday to Sunday');
   assert.equal(sent[0]!.model, MODELS.haiku.id);
@@ -924,12 +952,12 @@ test('lines on automatic posts are off by default, and on, one goes above the po
   replies = [turn('end_turn', text('The gang assembles.'))];
   const hopOn = { content: '<@&300> 🎮 **Sam** and **Alex** are in <#5>. Hop on!', allowedMentions: { roles: ['300'] } };
   await sendPost('hopOn', guild.id, channel, hopOn);
-  assert.deepEqual(posted[2], { ...hopOn, content: `The gang assembles.\n${hopOn.content}` });
+  assert.deepEqual(posted[1], { ...hopOn, content: `The gang assembles.\n${hopOn.content}` });
   assert.match(sent[1]!.messages[0]!.content as string, /^The hop-on ping:\n@DJ 🎮/);
 
   // Later pages of one post don't get one
   await sendPost('patchNotes', guild.id, channel, LEADERBOARD, false);
-  assert.deepEqual([posted[3], sent.length], [LEADERBOARD, 2]);
+  assert.deepEqual([posted[2], sent.length], [LEADERBOARD, 2]);
 
   // Its cost counts toward the month, but not as an answer toward the day's limit
   const used = db.prepare('SELECT SUM(replies) AS replies, SUM(input_tokens) AS input FROM chat_usage WHERE guild_id = ?').get(guild.id) as { replies: number; input: number };
