@@ -29,6 +29,7 @@ if (!process.env.SPOTIFY_CLIENT_ID) console.log('SPOTIFY_CLIENT_ID isn’t set, 
 
 // Nothing plays: the music and voice containers aren't there, so starting music or speech says why
 config.musicUrl = 'http://music.test';
+config.musicToken = 'eval';
 config.voiceUrl = 'http://voice.test';
 
 /** A tool call it should or shouldn't make: by name, or by name and some of what it's given, or any one of several */
@@ -196,6 +197,12 @@ const SCENES: Scene[] = [
   { name: 'answering a night', turns: [{ say: '@bot I’m in for the valheim night', uses: ['game_nights', ['answer_game_night', { answer: 'in' }]] }] },
   { name: 'what’s planned', turns: [{ say: '@bot what game nights are coming up?', uses: ['game_nights'], says: /Valheim/ }] },
   { name: 'someone else’s night', turns: [{ say: '@bot cancel the valheim night', says: /Sam|host|Manage Events/i }] },
+  // Sounds from links, which start downloading and say how it went after
+  {
+    name: 'a sound from a link',
+    turns: [{ say: '@bot make a sound called bonk from https://www.youtube.com/watch?v=abc123 from 0:05 to 0:08', uses: [['make_sound', { name: 'bonk', start: '0:05', end: '0:08' }]], avoids: ['play_sound'] }],
+  },
+  { name: 'a sound from a link, no name', turns: [{ say: '@bot turn this into a soundboard sound https://www.tiktok.com/@someone/video/123', uses: ['make_sound'] }] },
   // Reminders, as Robin has one waiting to check the oven
   { name: 'a reminder', turns: [{ say: '@bot remind me in 20 minutes to take the pizza out', uses: ['set_reminder'], says: /20 minutes|\d:\d\d/ }] },
   { name: 'a reminder for someone', turns: [{ say: '@bot remind Sam friday at 8pm about the raid', uses: ['set_reminder'], says: /Sam/ }] },

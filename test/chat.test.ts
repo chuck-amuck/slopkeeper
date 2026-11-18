@@ -616,9 +616,9 @@ test('it searches the web for a build, and posts the answer whole with its sourc
 });
 
 test('with everything set up, it offers no more strict tools than the API takes', async (t) => {
-  const was = { voiceUrl: config.voiceUrl, steamApiKey: config.steamApiKey };
+  const was = { voiceUrl: config.voiceUrl, steamApiKey: config.steamApiKey, musicUrl: config.musicUrl, musicToken: config.musicToken };
   t.after(() => Object.assign(config, was));
-  Object.assign(config, { voiceUrl: 'http://voice.test', steamApiKey: 'steam-key' });
+  Object.assign(config, { voiceUrl: 'http://voice.test', steamApiKey: 'steam-key', musicUrl: 'http://music.test', musicToken: 'music-token' });
   const guild = fakeGuild('g-strict');
   setSetting(guild.id, 'tts', true);
   t.after(() => setSetting(guild.id, 'tts', undefined));
@@ -630,7 +630,7 @@ test('with everything set up, it offers no more strict tools than the API takes'
   assert.ok(strict.length <= MOST_STRICT_TOOLS, `${strict.length} strict tools: ${strict.join(', ')}`);
   // Those with more than one plain text to give keep it, the last ones too, so none lose it to the limit
   assert.ok(strict.includes('queue_music') && strict.includes('plan_game_night') && !strict.includes('show_queue') && !strict.includes('play_sound'));
-  assert.ok(strict.includes('set_reminder') && strict.includes('cancel_reminder'), `${strict.length} strict tools: ${strict.join(', ')}`);
+  assert.ok(strict.includes('set_reminder') && strict.includes('make_sound'), `${strict.length} strict tools: ${strict.join(', ')}`);
 });
 
 test('past the API’s limit of strict tools, the last ones aren’t strict, and those with no input or one plain text never are', () => {

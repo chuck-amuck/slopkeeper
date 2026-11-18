@@ -217,7 +217,7 @@ test('with actions off, reminders aren’t offered or set, and those set already
     actionTools(guild as never).map((tool) => tool.name),
     ['game_nights'],
   );
-  assert.equal(await set(robin, {}), null);
+  assert.equal(await set(robin, {}), 'Taking actions in chat is turned off on this server. Point them to the command, if there is one.');
   await sendDue(client as never, Date.now() + 21 * MINUTE);
   assert.equal(posted.length, 1);
 });

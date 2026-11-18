@@ -1,4 +1,4 @@
-import { ActionRowBuilder, ButtonBuilder, ButtonStyle, DiscordAPIError, escapeMarkdown, FileUploadBuilder, LabelBuilder, ModalBuilder, PermissionFlagsBits, RESTJSONErrorCodes, StringSelectMenuBuilder, StringSelectMenuOptionBuilder, TextInputBuilder, TextInputStyle, type BaseInteraction, type ButtonInteraction, type Client, type Guild, type GuildTextBasedChannel, type ModalMessageModalSubmitInteraction } from 'discord.js';
+import { ActionRowBuilder, ButtonBuilder, ButtonStyle, DiscordAPIError, escapeMarkdown, FileUploadBuilder, type GuildMember, LabelBuilder, ModalBuilder, PermissionFlagsBits, RESTJSONErrorCodes, StringSelectMenuBuilder, StringSelectMenuOptionBuilder, TextInputBuilder, TextInputStyle, type BaseInteraction, type ButtonInteraction, type Client, type Guild, type GuildTextBasedChannel, type ModalMessageModalSubmitInteraction } from 'discord.js';
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { logActivity } from '../activity.ts';
@@ -174,6 +174,12 @@ function actionButton(action: string, page: number, name: string, label: string,
 export function canChangeSounds(i: BaseInteraction<'cached'>) {
   const role = idSetting(i.guildId, 'soundManagerRole');
   return !role || i.memberPermissions.has(PermissionFlagsBits.ManageGuild) || i.member.roles.cache.has(role);
+}
+
+/** The same, for someone asking in chat */
+export function mayChangeSounds(member: GuildMember) {
+  const role = idSetting(member.guild.id, 'soundManagerRole');
+  return !role || member.permissions.has(PermissionFlagsBits.ManageGuild) || member.roles.cache.has(role);
 }
 
 export const managersOnly = (guildId: string) => `Only <@&${idSetting(guildId, 'soundManagerRole')}> and people with **Manage Server** can change sounds.`;

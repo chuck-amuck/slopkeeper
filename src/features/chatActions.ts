@@ -9,9 +9,13 @@ import { nameOf, object, unquoted } from './chatLookups.ts';
 import { answerFor, cancelNight, describe, editNight, gameNames, type NightEdit, planNight, readWhen, stopSeries, upcomingNight, upcomingNights } from './gamenight.ts';
 import { gamesInVote, postVote } from './gamevote.ts';
 import { remind, reminderTools } from './chatReminders.ts';
+import { findSound, uploadProblem } from './soundLibrary.ts';
+import { downloadLink, linksReady, LONGEST_PART, partProblem, savePart } from './soundLinks.ts';
+import { managersOnly, mayChangeSounds, refreshPanels } from './soundPanel.ts';
+import * as discordBoard from '../discordSounds.ts';
 
 // What chat can do with the bot's other features for the person asking: plan, change and answer game nights, start a
-// vote on what to play, and set reminders (chatReminders.ts). Each runs what the slash command, button or web UI runs, with the permission it checks, and
+// vote on what to play, set reminders (chatReminders.ts), and make soundboard sounds from links. Each runs what the slash command, button or web UI runs, with the permission it checks, and
 // is in Activity under their name. The server's "Take actions" setting turns them off, leaving the list of game nights
 
 /** Game nights listed at once */
@@ -19,9 +23,11 @@ const MOST_NIGHTS = 10;
 const LONGEST_DETAILS = 150;
 const REPEATS = { no: null, weekly: 7, every_2_weeks: 14 } as const;
 const NIGHT_ID = { type: 'integer', description: 'The night’s id from game_nights' };
+/** A sound made from a link with no start or end given is the whole of it, up to this long */
+const WHOLE_UP_TO = 30;
 
 /** The tools that change something, for chat to log and remember */
-export const ACTIONS = new Set(['plan_game_night', 'change_game_night', 'answer_game_night', 'start_vote', 'set_reminder', 'cancel_reminder']);
+export const ACTIONS = new Set(['plan_game_night', 'change_game_night', 'answer_game_night', 'start_vote', 'set_reminder', 'cancel_reminder', 'make_sound']);
 
 export function actionTools(guild: Guild): Anthropic.Tool[] {
   const list: Anthropic.Tool[] = [
@@ -78,12 +84,28 @@ export function actionTools(guild: Guild): Anthropic.Tool[] {
     },
     ...reminderTools(),
   );
+  if (linksReady()) {
+    list.push({
+      name: 'make_sound',
+      description:
+        'Makes a soundboard sound from part of a YouTube video or Short, a TikTok, an Instagram Reel or a SoundCloud track, as the web UI’s Add from a link does: downloads it, cuts it from start to end (3 minutes at most) and adds it to the library. Downloading takes a while, so it answers at once and posts how it went here by itself. Only for people who can change sounds.',
+      strict: true,
+      input_schema: object({
+        link: { type: 'string', description: 'The link, starting https://' },
+        name: { type: 'string', description: 'The sound’s name: lowercase letters, numbers, - and _, up to 32. Make one from what they said if they didn’t give one' },
+        start: { type: 'string', description: 'Where it starts, like “0:05” or “65”, or empty for the beginning' },
+        end: { type: 'string', description: 'Where it ends, like “0:12”, or empty for the end' },
+      }),
+    });
+  }
   return list;
 }
 
 /** Does what an action tool asks, as the person asking, in the channel they asked in. Null if it isn't one of these */
 export async function act(member: GuildMember, name: string, input: Record<string, unknown>, where: GuildTextBasedChannel | null): Promise<string | null> {
   const text = (key: string) => unquoted(String(input[key] ?? ''));
+  // Offered only with the setting on, in case the model asks anyway
+  if (ACTIONS.has(name) && !setting(member.guild.id, 'chatActions')) return 'Taking actions in chat is turned off on this server. Point them to the command, if there is one.';
   switch (name) {
     case 'game_nights':
       return nightsList(member.guild);
@@ -100,9 +122,10 @@ export async function act(member: GuildMember, name: string, input: Record<strin
     }
     case 'start_vote':
       return vote(member, Number(input.minutes), Array.isArray(input.games) ? input.games.map((g) => unquoted(String(g))).filter(Boolean) : [], where);
+    case 'make_sound':
+      return makeSound(member, text('link'), text('name').toLowerCase(), text('start'), text('end'), where);
     default:
-      // Offered only with the rest, in case the model asks anyway
-      return setting(member.guild.id, 'chatActions') ? remind(member, name, input, where, text) : null;
+      return remind(member, name, input, where, text);
   }
 }
 
@@ -216,6 +239,75 @@ async function change(member: GuildMember, id: number, action: string, edit: { g
     default:
       return 'Cancel, stop repeating, or change.';
   }
+}
+
+/** Seconds from “65”, “65s”, “1:05”, “1:05.5” or “1:01:05”; null for empty, undefined if it isn't one */
+export function readSeconds(said: string): number | null | undefined {
+  const text = said.trim().toLowerCase();
+  if (!text) return null;
+  const plain = /^(\d+(?:\.\d+)?)\s*s?$/.exec(text);
+  if (plain) return Number(plain[1]);
+  const clock = /^(?:(\d+):)?(\d+):(\d{2}(?:\.\d+)?)$/.exec(text);
+  return clock ? Number(clock[1] ?? 0) * 3600 + Number(clock[2]) * 60 + Number(clock[3]) : undefined;
+}
+
+const clockOf = (seconds: number) => {
+  const whole = Math.round(seconds);
+  return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, '0')}`;
+};
+
+/** Sounds being made, by server and name, for a second ask not to start another, and for tests to wait on */
+const making = new Map<string, Promise<unknown>>();
+export const soundsMade = () => Promise.all(making.values());
+
+async function makeSound(member: GuildMember, link: string, name: string, startText: string, endText: string, where: GuildTextBasedChannel | null): Promise<string> {
+  const { guild } = member;
+  if (!linksReady()) return 'Sounds from links need the music container, which this bot doesn’t have.';
+  if (!mayChangeSounds(member)) return plain(guild, managersOnly(guild.id));
+  if (!where) return 'There’s nowhere here to post how it went.';
+  if (link.length > 2000 || !/^https:\/\/\S+$/.test(link)) return 'Ask them for the link, starting https://.';
+  const named = uploadProblem(name, '.mp3', 0);
+  if (named) return named;
+  if (findSound(guild.id, name)) return `There’s already a sound called ${name}. Ask for another name; replacing a sound is in the web UI.`;
+  const start = readSeconds(startText);
+  const end = readSeconds(endText);
+  if (start === undefined || end === undefined) return 'Give the start and end like “0:05” or “65”.';
+  if (start !== null && end !== null && end <= start) return 'The end has to come after the start.';
+  if (end !== null && end - (start ?? 0) > LONGEST_PART) return `A sound can be ${LONGEST_PART / 60} minutes at most.`;
+  const key = `${guild.id}:${name}`;
+  if (making.has(key)) return `${name} is being made already.`;
+  making.set(
+    key,
+    finishSound(member, where, link, name, start, end)
+      .catch((err: unknown) => console.error(`Chat couldn’t make the sound ${name} in server ${guild.id}:`, err))
+      .finally(() => making.delete(key)),
+  );
+  return `Started making ${name}. Downloading takes a moment, and how it went is posted here by itself, pinging ${member.displayName}.`;
+}
+
+async function finishSound(member: GuildMember, where: GuildTextBasedChannel, link: string, name: string, start: number | null, end: number | null) {
+  const { guild } = member;
+  const tell = (text: string) => where.send({ content: `<@${member.id}> ${text}`, allowedMentions: { users: [member.id] } });
+  const got = await downloadLink(guild.id, link);
+  if (got.error !== undefined) return tell(`I couldn’t make **${name}**: ${got.error}`);
+  const from = start ?? 0;
+  if (end === null && got.seconds - from > WHOLE_UP_TO) {
+    return tell(`“${got.title}” is ${clockOf(got.seconds)} long, so say which part to make **${name}** from, like “0:05 to 0:12”.`);
+  }
+  if (from >= got.seconds) return tell(`I couldn’t make **${name}**: “${got.title}” is ${clockOf(got.seconds)} long.`);
+  // An end past the end is the end
+  const to = Math.min(end ?? got.seconds, got.seconds);
+  const problem = partProblem(from, to, got.seconds);
+  if (problem) return tell(`I couldn’t make **${name}**: ${problem}`);
+  // Someone may have added one by that name while it downloaded
+  if (findSound(guild.id, name)) return tell(`A sound called **${name}** was added meanwhile, so I didn’t make another.`);
+  // On Discord's own soundboard too, when it's short enough for it
+  const added = await savePart(guild, got.id, name, from, to, discordBoard.fits(to - from));
+  if (typeof added === 'string') return tell(`I couldn’t make **${name}**: ${added}`);
+  logActivity(guild.id, member.id, `Added sound **${name}** from ${(to - from).toFixed(1)} s of “${got.title}”`);
+  await refreshPanels(member.client, guild.id);
+  const discord = !discordBoard.fits(to - from) ? ' It’s too long for Discord’s own soundboard, so it’s only on this one.' : added.problem ? ` It isn’t on Discord’s own soundboard: ${plain(guild, added.problem)}.` : '';
+  return tell(`Added the sound **${name}**: ${clockOf(from)} to ${clockOf(to)} of “${got.title}”.${discord}`);
 }
 
 async function vote(member: GuildMember, minutes: number, games: string[], where: GuildTextBasedChannel | null): Promise<string> {
