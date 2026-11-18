@@ -24,7 +24,7 @@ import { holdSounds, levelSpeech } from '../loudness.ts';
 import * as perf from '../perf.ts';
 import { DEFAULTS, idSetting, setSetting, setting, storedSetting } from '../settings.ts';
 import type { Feature } from '../types.ts';
-import { canSee, humansIn } from '../util.ts';
+import { canSee, humansIn, talksToBot } from '../util.ts';
 import { plural } from './gamestats.ts';
 import { onPlaybackStop, play } from './voiceAudio.ts';
 import { setGreeter } from './joinSounds.ts';
@@ -1019,6 +1019,8 @@ export async function readMessage(message: Message) {
   const { guild, member, author } = message;
   if (!config.voiceUrl || !setting(guild.id, 'tts') || message.channelId !== idSetting(guild.id, 'ttsChannel')) return;
   if (!allowedToSpeak(guild.id, member)) return;
+  // Asking the bot something in chat is talking to it, not to the people in voice
+  if (await talksToBot(message)) return;
 
   const shown = sayable(message.content);
   const text = speechFor(guild, shown);

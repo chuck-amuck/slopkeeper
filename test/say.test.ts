@@ -59,7 +59,7 @@ function channel(options: { missing?: bigint[] } = {}) {
     guild: {
       id,
       name: 'Server',
-      members: { me: {}, cache: new Map() },
+      members: { me: { roles: { botRole: { id: '400' } } }, cache: new Map() },
       roles: { cache: new Map() },
       channels: { cache: new Map() },
       voiceAdapterCreator: () => ({ sendPayload: () => true, destroy() {} }),
@@ -767,6 +767,9 @@ function chat(options: { writerIn?: string | null; rooms?: Record<string, string
       system: false,
       webhookId: null,
       author: { id: 'ana', bot: false, displayName: 'ana' },
+      client: { user: { id: '100' } },
+      mentions: { repliedUser: null },
+      reference: null,
       member: {
         displayName: 'Ana',
         voice: { channel: options.writerIn ? rooms.get(options.writerIn) : null },
@@ -821,6 +824,11 @@ test('skips what can’t or shouldn’t be read', { skip: !hasFfmpeg }, async (t
   await readMessage(message('from a webhook', { webhookId: 'w' }));
   await readMessage(message('joined', { system: true }));
   await readMessage(message('in a DM', { inGuild: () => false }));
+  // Asking the bot something in chat: an @mention, of it or its role, or a reply to one of its answers
+  await readMessage(message('<@100> queue the strokes'));
+  await readMessage(message('<@&400> play the wall'));
+  const answer = { author: { id: '100' }, type: 19 };
+  await readMessage(message('thanks', { mentions: { repliedUser: { id: '100' } }, reference: { messageId: 'a' }, fetchReference: async () => answer }));
   assert.deepEqual(await said(), []);
 });
 

@@ -1,12 +1,12 @@
 import Anthropic from '@anthropic-ai/sdk';
-import { type Client, Events, type Guild, type GuildMember, type Message, MessageType, PermissionFlagsBits, type VoiceBasedChannel } from 'discord.js';
+import { type Client, Events, type Guild, type GuildMember, type Message, PermissionFlagsBits, type VoiceBasedChannel } from 'discord.js';
 import { logActivity } from '../activity.ts';
 import { config } from '../config.ts';
 import { db } from '../db.ts';
 import { setting } from '../settings.ts';
 import { searchFor, searchReady, SpotifyError, type Found } from '../spotify.ts';
 import type { Feature } from '../types.ts';
-import { canSee } from '../util.ts';
+import { asksBot, canSee, isAnswer } from '../util.ts';
 import { canControl, musicPlaying, musicState, OUTSIDE_DJ, pauseMusic, queueArtist, queueFrom, queueOf, setAutoplay, shuffleQueue, skipMusic, startMusic, stopMusic } from './music.ts';
 import { busyElsewhere, effects, maySpeak, NO_EFFECT, say, voices } from './say.ts';
 import { CHAT_MODELS } from './setup.ts';
@@ -97,25 +97,7 @@ export function chatNote(guildId: string) {
   return { ok: true, note: `@mention the bot or reply to it, and it answers. This month: ${replies} answer${replies === 1 ? '' : 's'}, ${dollars}.` };
 }
 
-/**
- * Whether a message might ask the bot something: 'mention' when it @mentions the bot in what it says, or 'reply' when it
- * replies to one of the bot's messages, which only counts if that was an answer (see isAnswer). Discord also counts a
- * reply as mentioning whoever it replies to, so mentions are read from the text
- */
-export function asksBot(message: Message, botId: string): 'mention' | 'reply' | null {
-  if (!message.inGuild() || message.author.bot || message.webhookId || message.system) return null;
-  if (new RegExp(`<@!?${botId}>`).test(message.content)) return 'mention';
-  // Discord's @ list also offers the bot's own role, named after it
-  const role = message.guild.members.me?.roles.botRole?.id;
-  if (role && message.content.includes(`<@&${role}>`)) return 'mention';
-  return message.mentions.repliedUser?.id === botId ? 'reply' : null;
-}
-
-/**
- * Whether a message of the bot's is one of its answers here, which are replies. People reply to its hop-on pings, recaps
- * and alerts to talk to each other, and those aren't asking it anything
- */
-export const isAnswer = (m: Message, botId: string) => m.author.id === botId && m.type === MessageType.Reply;
+export { asksBot, isAnswer };
 
 /** Mentions, channels and custom emoji as names, so a message reads as people see it */
 function readable(guild: Guild, text: string) {

@@ -1,4 +1,4 @@
-import { ActivityType, DiscordAPIError, PermissionFlagsBits, RESTJSONErrorCodes, type Client, type Guild, type GuildBasedChannel, type GuildMember, type Role, type SendableChannels, type VoiceBasedChannel } from 'discord.js';
+import { ActivityType, DiscordAPIError, type Message, MessageType, PermissionFlagsBits, RESTJSONErrorCodes, type Client, type Guild, type GuildBasedChannel, type GuildMember, type Role, type SendableChannels, type VoiceBasedChannel } from 'discord.js';
 import { idSetting, isAllowed, setting, type IdSettingKey } from './settings.ts';
 import { cleanGameName, isProgramNotGame } from './gameText.ts';
 import { steamGame } from './steamStatus.ts';
@@ -176,3 +176,31 @@ export const isTimeZone = (zone: string) => {
     return false;
   }
 };
+
+/**
+ * Whether a message might ask the bot something: 'mention' when it @mentions the bot in what it says, or 'reply' when it
+ * replies to one of the bot's messages, which only counts if that was an answer (see isAnswer). Discord also counts a
+ * reply as mentioning whoever it replies to, so mentions are read from the text
+ */
+export function asksBot(message: Message, botId: string): 'mention' | 'reply' | null {
+  if (!message.inGuild() || message.author.bot || message.webhookId || message.system) return null;
+  if (new RegExp(`<@!?${botId}>`).test(message.content)) return 'mention';
+  // Discord's @ list also offers the bot's own role, named after it
+  const role = message.guild.members.me?.roles.botRole?.id;
+  if (role && message.content.includes(`<@&${role}>`)) return 'mention';
+  return message.mentions.repliedUser?.id === botId ? 'reply' : null;
+}
+
+/**
+ * Whether a message of the bot's is one of its answers here, which are replies. People reply to its hop-on pings, recaps
+ * and alerts to talk to each other, and those aren't asking it anything
+ */
+export const isAnswer = (m: Message, botId: string) => m.author.id === botId && m.type === MessageType.Reply;
+
+/** Whether a message asks the bot something, as chat answers: an @mention, or a reply to one of its answers */
+export async function talksToBot(message: Message): Promise<boolean> {
+  const how = asksBot(message, message.client.user.id);
+  if (how !== 'reply') return how === 'mention';
+  const to = message.reference?.messageId ? await message.fetchReference().catch(() => null) : null;
+  return !!to && isAnswer(to, message.client.user.id);
+}

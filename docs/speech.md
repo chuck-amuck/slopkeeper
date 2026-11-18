@@ -38,7 +38,7 @@ Any voice can be said through an effect, picked beside the voice: **Demon**, **H
 
 **Announcements:** `night_reminders` says game night reminders in the night's voice channel, and `hop_on` says hop-on pings in the channel they're about, where people are and the bot isn't busy elsewhere.
 
-**Reading a channel aloud:** `/setup speech-channel` picks a text channel, and the bot reads out what people type there, starting with who said it. It plays in the writer's voice channel, or else the bot's, or else the busiest, and `who` limits it to people in voice. It skips bots, images, links on their own and anything over the longest line. If 5 lines are already waiting, new ones are skipped so it can't fall behind. These lines aren't logged in Activity.
+**Reading a channel aloud:** `/setup speech-channel` picks a text channel, and the bot reads out what people type there, starting with who said it. It plays in the writer's voice channel, or else the bot's, or else the busiest, and `who` limits it to people in voice. It skips bots, images, links on their own, anything over the longest line, and messages asking the bot something ([chat](chat.md): @mentioning it, or replying to one of its answers). If 5 lines are already waiting, new ones are skipped so it can't fall behind. These lines aren't logged in Activity.
 
 ## Adding voices
 
