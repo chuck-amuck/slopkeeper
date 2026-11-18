@@ -1,5 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk';
-import { type Attachment, type Client, Events, type Guild, type GuildMember, type Message, PermissionFlagsBits, type VoiceBasedChannel } from 'discord.js';
+import { type Attachment, type Client, Events, type Guild, type GuildMember, type Message, MessageFlags, PermissionFlagsBits, type VoiceBasedChannel } from 'discord.js';
 import { logActivity } from '../activity.ts';
 import { clickableCommands, commandList } from '../commandIds.ts';
 import { config } from '../config.ts';
@@ -25,6 +25,18 @@ export const MODELS: Record<keyof typeof CHAT_MODELS, { id: string; input: numbe
   sonnet: { id: 'claude-sonnet-5-5', input: 2, cacheRead: 0.1, output: 10 },
   opus: { id: 'claude-opus-5-5', input: 4, cacheRead: 0.2, output: 20 },
 };
+/** What a web search costs, in dollars, besides the tokens of what it found */
+export const SEARCH_COST = 0.01;
+/**
+ * Web searches an answer can make: the basic search, as the one that filters results costs Haiku twice as much for no
+ * better answers. The API counts them by call and takes no fewer than 1, so a call after these allows 1 more
+ */
+const MOST_SEARCHES = 2;
+/** Times a long run of searches can stop partway and carry on, besides the rounds of tools */
+const MOST_PAUSES = 2;
+/** The sources linked under an answer that searched the web, and the longest link worth posting */
+const MOST_SOURCES = 3;
+const LONGEST_SOURCE = 300;
 /** Messages before the one asking, so it knows what's being talked about */
 const CONTEXT_MESSAGES = 20;
 const LONGEST_CONTEXT_MESSAGE = 500;
@@ -61,6 +73,9 @@ const MOST_IMAGE_SIDE = 8000;
 const IMAGE_TIMEOUT_MS = 10_000;
 
 let api: Anthropic | null = null;
+/** Set once the API says web search isn't on for this key's organization, so answers go on without it */
+let searchOff = false;
+const searchable = (guildId: string) => setting(guildId, 'chatWebSearch') && !searchOff;
 /** The API client, made the first time it's needed, or null without a key. Fetch is looked up each call, so tests can stand in for it */
 function claude(): Anthropic | null {
   if (!config.anthropicKey) return null;
@@ -95,6 +110,7 @@ export function resetChat() {
   lastQueued.clear();
   shuffledRows.clear();
   api = null;
+  searchOff = false;
 }
 
 /** The server's model, or Haiku for one that's gone */
@@ -102,13 +118,26 @@ const modelKey = (guildId: string) => (Object.hasOwn(MODELS, setting(guildId, 'c
 
 const today = (guildId: string, at = Date.now()) => new Intl.DateTimeFormat('en-CA', { timeZone: setting(guildId, 'timezone') }).format(at);
 
-/** Adds an answer's tokens, and with `replies` 1, the answer itself, to the day's count */
-function record(guildId: string, model: string, usage: Pick<Anthropic.Usage, 'input_tokens' | 'output_tokens' | 'cache_creation_input_tokens' | 'cache_read_input_tokens'>, replies = 0) {
+type Used = Pick<Anthropic.Usage, 'input_tokens' | 'output_tokens' | 'cache_creation_input_tokens' | 'cache_read_input_tokens'> & { server_tool_use?: Anthropic.ServerToolUsage | null };
+
+/** Adds an answer's tokens and web searches, and with `replies` 1, the answer itself, to the day's count */
+function record(guildId: string, model: string, usage: Used, replies = 0) {
   db.prepare(
-    `INSERT INTO chat_usage (guild_id, day, model, replies, input_tokens, cache_write_tokens, cache_read_tokens, output_tokens) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `INSERT INTO chat_usage (guild_id, day, model, replies, input_tokens, cache_write_tokens, cache_read_tokens, output_tokens, web_searches) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT (guild_id, day, model) DO UPDATE SET replies = replies + excluded.replies, input_tokens = input_tokens + excluded.input_tokens,
-       cache_write_tokens = cache_write_tokens + excluded.cache_write_tokens, cache_read_tokens = cache_read_tokens + excluded.cache_read_tokens, output_tokens = output_tokens + excluded.output_tokens`,
-  ).run(guildId, today(guildId), model, replies, usage.input_tokens, usage.cache_creation_input_tokens ?? 0, usage.cache_read_input_tokens ?? 0, usage.output_tokens);
+       cache_write_tokens = cache_write_tokens + excluded.cache_write_tokens, cache_read_tokens = cache_read_tokens + excluded.cache_read_tokens, output_tokens = output_tokens + excluded.output_tokens,
+       web_searches = web_searches + excluded.web_searches`,
+  ).run(
+    guildId,
+    today(guildId),
+    model,
+    replies,
+    usage.input_tokens,
+    usage.cache_creation_input_tokens ?? 0,
+    usage.cache_read_input_tokens ?? 0,
+    usage.output_tokens,
+    usage.server_tool_use?.web_search_requests ?? 0,
+  );
 }
 
 const answeredToday = (guildId: string) =>
@@ -117,12 +146,14 @@ const answeredToday = (guildId: string) =>
 /** This month's answers and what they cost, roughly, in dollars */
 export function chatUsage(guildId: string, at = Date.now()) {
   const rows = db
-    .prepare('SELECT model, SUM(replies) AS replies, SUM(input_tokens) AS input, SUM(cache_write_tokens) AS write, SUM(cache_read_tokens) AS read, SUM(output_tokens) AS output FROM chat_usage WHERE guild_id = ? AND day LIKE ? GROUP BY model')
-    .all(guildId, `${today(guildId, at).slice(0, 7)}-%`) as { model: string; replies: number; input: number; write: number; read: number; output: number }[];
+    .prepare(
+      'SELECT model, SUM(replies) AS replies, SUM(input_tokens) AS input, SUM(cache_write_tokens) AS write, SUM(cache_read_tokens) AS read, SUM(output_tokens) AS output, SUM(web_searches) AS searches FROM chat_usage WHERE guild_id = ? AND day LIKE ? GROUP BY model',
+    )
+    .all(guildId, `${today(guildId, at).slice(0, 7)}-%`) as { model: string; replies: number; input: number; write: number; read: number; output: number; searches: number }[];
   let cost = 0;
   for (const r of rows) {
     const price = MODELS[r.model as keyof typeof MODELS];
-    if (price) cost += ((r.input + r.write * 1.25) * price.input + r.read * price.cacheRead + r.output * price.output) / 1e6;
+    if (price) cost += ((r.input + r.write * 1.25) * price.input + r.read * price.cacheRead + r.output * price.output) / 1e6 + r.searches * SEARCH_COST;
   }
   return { replies: rows.reduce((n, r) => n + r.replies, 0), cost };
 }
@@ -218,19 +249,43 @@ export function withoutOffer(text: string): string {
 }
 
 /**
- * The answer as it's posted: @names as pings and commands clickable, within Discord's limit once they're made. Cut
- * before they're made, so a mention isn't cut in half, and shorter again if a long answer full of them passes it
+ * The answer as it's posted (`post`, with `tail`, its sources, after it) and said (`reply`): @names as pings and
+ * commands clickable, within Discord's limit once they're made. Cut before they're made, so a mention isn't cut in
+ * half, and shorter again if a long answer full of them passes it
  */
-export function finished(guildId: string, text: string, people: Map<string, string>): { reply: string; users: string[] } {
-  for (let room = LONGEST_ANSWER; ; ) {
+export function finished(guildId: string, text: string, people: Map<string, string>, tail = ''): { reply: string; post: string; users: string[] } {
+  const limit = DISCORD_LIMIT - tail.length;
+  for (let room = Math.min(LONGEST_ANSWER, limit); ; ) {
     const pinged = withPings(text.length > room ? `${text.slice(0, room - 1)}…` : text, people);
     const clickable = clickableCommands(guildId, pinged.text);
     // Plain commands before a shorter answer
-    const reply = clickable.length <= DISCORD_LIMIT ? clickable : pinged.text;
-    if (reply.length <= DISCORD_LIMIT) return { reply, users: pinged.users };
+    const reply = clickable.length <= limit ? clickable : pinged.text;
+    if (reply.length <= limit) return { reply, post: reply + tail, users: pinged.users };
     // In proportion to how much the mentions grew it, from what was sent, which may be shorter than the room it had
-    room = Math.max(1, Math.floor((Math.min(room, text.length) * DISCORD_LIMIT) / reply.length));
+    room = Math.max(1, Math.floor((Math.min(room, text.length) * limit) / reply.length));
   }
+}
+
+/** A link's site, like thegamer.com, if it's a web page short enough to post */
+function siteOf(url: string): string | null {
+  if (url.length > LONGEST_SOURCE) return null;
+  try {
+    const u = new URL(url);
+    return /^https?:$/.test(u.protocol) ? u.hostname.replace(/^www\./, '') : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The pages an answer drew on, each site once, as a line of small text under it */
+export function sourcesLine(urls: string[]): string {
+  const sites = new Map<string, string>();
+  for (const url of urls) {
+    const site = siteOf(url);
+    if (site && !sites.has(site) && sites.size < MOST_SOURCES) sites.set(site, url.replace(/\(/g, '%28').replace(/\)/g, '%29'));
+  }
+  if (!sites.size) return '';
+  return `\n-# ${sites.size === 1 ? 'Source' : 'Sources'}: ${[...sites].map(([site, url]) => `[${site}](${url})`).join(' · ')}`;
 }
 
 /** Mentions, channels and custom emoji as names, so a message reads as people see it */
@@ -425,6 +480,7 @@ async function asked(
 
 function system(guild: Guild, botName: string) {
   const commands = commandList(guild.id);
+  const searches = searchable(guild.id);
   return [
     `You are ${botName}, a bot in the Discord server “${guild.name}”, answering someone who @mentioned you or replied to you.`,
     `Your personality: ${setting(guild.id, 'chatPersonality')}`,
@@ -435,8 +491,13 @@ function system(guild: Guild, botName: string) {
     '- Vary how you start and how you address people: don’t open every answer with a greeting or their name.',
     '- Don’t assume anyone’s gender: no “sir” or “madam”, unless they’ve asked to be called that.',
     '- Act only when they ask you to do something. A question gets an answer, not an action: “do you know X?” isn’t “play X”. Looking things up to answer is fine (find_music, artist_albums, show_queue), and better than guessing.',
-    '- What you can do is what your tools do: music, soundboard sounds, speech, remembering things about the person asking, and looking up the server’s games, play stats, deals, songs played before, patch notes and achievements. You can’t edit or delete messages, change settings, or see more than this channel’s recent messages, so don’t offer to. For the bot’s other features, point them to its command (see below).',
+    `- What you can do is what your tools do: music, soundboard sounds, speech, remembering things about the person asking, and looking up the server’s games, play stats, deals, songs played before, patch notes and achievements${searches ? ', and searching the web' : ''}. You can’t edit or delete messages, change settings, or see more than this channel’s recent messages, so don’t offer to. For the bot’s other features, point them to its command (see below).`,
     '- When they ask about games, stats, deals or what was played, look it up rather than guessing or sending them to a command, and answer from what you found: pick out what answers them, as a short list at most, not everything. If a lookup says a name matches more than one person or game, ask which.',
+    ...(searches
+      ? [
+          '- For a game’s strategy, builds, guides, tips, walkthroughs, mods or wiki facts, and for news or anything else that may have changed since what you know (releases, updates, results, events), search the web with web_search rather than answering from memory: games change after what you know. Not for chat, jokes or opinions, nor for the server’s own games, stats, deals, patch notes or people, which the other lookups have. Answer from what you found, in a few sentences or a short list of what fits what they asked, and say briefly if sources disagree. Links to your sources go under your answer by themselves, so don’t write any.',
+        ]
+      : []),
     '- When someone asks for music, a sound or speech, use the tools rather than saying you will, then say briefly what happened.',
     '- If a tool says it couldn’t do something, don’t try it again in this answer: tell them why, and what they can do about it.',
     '- What’s playing is in the “Now” line, and show_queue has the rest. Don’t say music is playing unless it says so, or you just started it.',
@@ -459,9 +520,11 @@ function system(guild: Guild, botName: string) {
   ].join('\n');
 }
 
+const isSearch = (t: Anthropic.ToolUnion) => 'name' in t && t.name === 'web_search';
+
 /** The tools for what this bot can do here: music only with the music container, speech only with the voice container and speech on */
-function tools(guild: Guild): Anthropic.Tool[] {
-  const list: Anthropic.Tool[] = [];
+function tools(guild: Guild): Anthropic.ToolUnion[] {
+  const list: Anthropic.ToolUnion[] = [];
   if (config.musicUrl) {
     list.push(
       {
@@ -552,6 +615,8 @@ function tools(guild: Guild): Anthropic.Tool[] {
     });
   }
   list.push(...lookupTools());
+  // Run by Anthropic, so it isn't one of useTool's
+  if (searchable(guild.id)) list.push({ type: 'web_search_20250305', name: 'web_search', max_uses: MOST_SEARCHES });
   return list;
 }
 
@@ -755,14 +820,15 @@ export async function answer(
   member: GuildMember,
   botId: string,
   repliedTo: Message | null = null,
-): Promise<{ text: string | null; spoke: boolean; people: Map<string, string> }> {
+): Promise<{ text: string | null; spoke: boolean; people: Map<string, string>; sources: string[] }> {
   const client = claude();
-  if (!client) return { text: null, spoke: false, people: new Map() };
+  if (!client) return { text: null, spoke: false, people: new Map(), sources: [] };
   const { guild } = message;
   const key = modelKey(guild.id);
   const model = MODELS[key].id;
   const botName = guild.members.me?.displayName ?? 'the bot';
-  const offered = tools(guild);
+  let offered = tools(guild);
+  let instructions = system(guild, botName);
   const { text: context, people, images } = await asked(message, member, botId, repliedTo);
   // Images first, as the API reads them best before what's said about them. Cached, as each round of tools sends them again
   const messages: Anthropic.MessageParam[] = [
@@ -770,7 +836,9 @@ export async function answer(
   ];
   let acted = false;
   let spoke = false;
+  const sources: string[] = [];
   const turn: Turn = { queued: [] };
+  const cut = (s: string) => (s.length > LOGGED_TOOL_CHARS ? `${s.slice(0, LOGGED_TOOL_CHARS)}…` : s).replace(/\n/g, ' | ');
   const done = (text: string | null) => {
     const typed = readable(guild, message.content).trim();
     if (acted) logActivity(guild.id, member.id, `Asked in chat: “${typed.length > LOGGED_CHARS ? `${typed.slice(0, LOGGED_CHARS)}…` : typed}”`);
@@ -781,36 +849,64 @@ export async function answer(
       // The oldest first, past as many as there are people it remembers cooldowns for
       if (lastQueued.size > MOST_REMEMBERED) lastQueued.delete(lastQueued.keys().next().value!);
     }
-    return { text: text && withoutOffer(text), spoke, people };
+    return { text: text && withoutOffer(text), spoke, people, sources };
   };
-  for (let round = 0; ; round++) {
+  let searches = 0;
+  let pauses = 0;
+  /** The tool results the cache reaches to, moved on each round, so a search's pages aren't paid for again in full */
+  let cachedTo: Anthropic.ToolResultBlockParam | null = null;
+  // Carrying on after a pause doesn't take a round
+  for (let round = 0, carryOn = false; ; ) {
     const last = round === MOST_ROUNDS - 1;
-    const res = await client.messages
-      .create({
+    const send = () =>
+      client.messages.create({
         model,
         max_tokens: MAX_TOKENS,
         // The personality, commands and tools stay the same from one answer to the next. They're cached once they're long enough to be
-        system: [{ type: 'text', text: system(guild, botName), cache_control: { type: 'ephemeral' } }],
-        // The history has tool calls, so the tools stay, but in the last round none can be used, so it has to answer
-        tools: offered,
-        ...(last ? { tool_choice: { type: 'none' as const } } : {}),
+        system: [{ type: 'text', text: instructions, cache_control: { type: 'ephemeral' } }],
+        // The history has tool calls, so the tools stay, but in the last round none can be used, so it has to answer. A
+        // paused search is let finish
+        tools: offered.map((t) => (isSearch(t) ? { ...t, max_uses: Math.max(1, MOST_SEARCHES - searches) } : t)),
+        ...(last && !carryOn ? { tool_choice: { type: 'none' as const } } : {}),
         messages,
         output_config: { effort: 'low' },
-      })
-      // Once something's been done, it's said so, so they don't ask again and have it done twice
-      .catch((err: unknown) => {
-        if (!acted) throw err;
-        console.error('Couldn’t finish a chat answer:', err instanceof Anthropic.APIError ? `${err.status} ${err.message}` : err);
-        return null;
       });
+    const res = await send().catch((err: unknown) => {
+      // An organization can have web search turned off. Only before anything's been searched, so nothing refers to it
+      if (round === 0 && !searchOff && offered.some(isSearch) && err instanceof Anthropic.APIError && err.status === 400 && /web.?search/i.test(err.message)) {
+        console.warn(`Chat answers without web search from now on, as the API refused it: ${err.message}`);
+        searchOff = true;
+        offered = tools(guild);
+        instructions = system(guild, botName);
+        return send();
+      }
+      // Once something's been done, it's said so, so they don't ask again and have it done twice
+      if (!acted) throw err;
+      console.error('Couldn’t finish a chat answer:', err instanceof Anthropic.APIError ? `${err.status} ${err.message}` : err);
+      return null;
+    });
     if (!res) return done('Done as you asked, though my words have deserted me. Do check what I did before asking again.');
     record(guild.id, key, res.usage);
+    searches += res.usage.server_tool_use?.web_search_requests ?? 0;
     if (res.stop_reason === 'refusal') return done('I’m afraid that’s one request I must decline.');
-    const said = res.content
-      .filter((b): b is Anthropic.TextBlock => b.type === 'text')
+    for (const b of res.content) if (b.type === 'server_tool_use') console.log(`Chat in server ${guild.id}: ${b.name} ${cut(JSON.stringify(b.input ?? {}))}`);
+    // After a search, the answer comes in pieces, a piece for each source it cites, and what came before it was only “let me look”
+    const searched = res.content.findLastIndex((b) => b.type === 'server_tool_use' || b.type === 'web_search_tool_result');
+    const pieces = res.content.slice(searched + 1).filter((b): b is Anthropic.TextBlock => b.type === 'text');
+    const cited = pieces.flatMap((b) => (b.citations ?? []).flatMap((c) => (c.type === 'web_search_result_location' ? [c.url] : [])));
+    const said = pieces
       .map((b) => b.text)
-      .join('\n')
+      .join(searched >= 0 || cited.length ? '' : '\n')
       .trim();
+    sources.push(...cited);
+    // A long run of searches stops partway, and carries on when it's sent back as it is
+    carryOn = res.stop_reason === 'pause_turn' && pauses < MOST_PAUSES;
+    if (carryOn) {
+      pauses++;
+      messages.push({ role: 'assistant', content: res.content });
+      continue;
+    }
+    if (res.stop_reason === 'pause_turn') return done(said || 'My search ran long, and I couldn’t finish it. Do ask again.');
     const asks = res.content.filter((b): b is Anthropic.ToolUseBlock => b.type === 'tool_use');
     if (res.stop_reason !== 'tool_use' || !asks.length || last) return done(said || null);
     messages.push({ role: 'assistant', content: res.content });
@@ -820,7 +916,6 @@ export async function answer(
       spoke ||= ask.name === 'say_aloud';
       const result = await useTool(member, ask.name, (ask.input ?? {}) as Record<string, unknown>, turn);
       // In the bot's log, so what it did and why can be followed when an answer goes wrong
-      const cut = (s: string) => (s.length > LOGGED_TOOL_CHARS ? `${s.slice(0, LOGGED_TOOL_CHARS)}…` : s).replace(/\n/g, ' | ');
       console.log(`Chat in server ${guild.id}: ${ask.name} ${cut(JSON.stringify(ask.input ?? {}))} → ${cut(result)}`);
       results.push({ type: 'tool_result', tool_use_id: ask.id, content: result });
       // What it remembers about someone stays with their own questions
@@ -830,7 +925,11 @@ export async function answer(
         doneIn.set(message.channelId, did.slice(-DONE_REMEMBERED));
       }
     }
+    if (cachedTo) delete cachedTo.cache_control;
+    cachedTo = results.at(-1)!;
+    cachedTo.cache_control = { type: 'ephemeral' };
     messages.push({ role: 'user', content: results });
+    round++;
   }
 }
 
@@ -874,8 +973,9 @@ export async function onMessage(message: Message, client: Client<true>) {
   let text: string | null;
   let spoke = false;
   let people = new Map<string, string>();
+  let sources: string[] = [];
   try {
-    ({ text, spoke, people } = await answer(message, member, client.user.id, repliedTo));
+    ({ text, spoke, people, sources } = await answer(message, member, client.user.id, repliedTo));
   } catch (err) {
     console.error('Couldn’t answer in chat:', err instanceof Anthropic.APIError ? `${err.status} ${err.message}` : err);
     record(guild.id, model, none, -1);
@@ -884,10 +984,15 @@ export async function onMessage(message: Message, client: Client<true>) {
     clearInterval(typingTimer);
   }
   if (!text) return;
-  const { reply, users } = finished(guild.id, text, people);
+  // Posted, not said aloud. Without previews, which would bury the answer
+  const tail = sourcesLine(sources);
+  const { reply, post: content, users } = finished(guild.id, text, people, tail);
   const voice = setting(guild.id, 'chatVoice');
   // Only the people it named, never @everyone or a role, and not the person asking just for the reply
-  const post = () => message.reply({ content: reply, allowedMentions: { parse: [], users, repliedUser: false } }).catch(console.error);
+  const post = () =>
+    message
+      .reply({ content, allowedMentions: { parse: [], users, repliedUser: false }, ...(tail ? { flags: MessageFlags.SuppressEmbeds } : {}) })
+      .catch(console.error);
   // A ping only works in text, so with voice only an answer that pings someone is posted too
   const posted = voice !== 'only' || users.length > 0;
   if (posted) await post();

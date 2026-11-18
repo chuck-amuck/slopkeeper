@@ -148,6 +148,7 @@ export const LABELS: Record<SettingKey, string> = {
   chat: 'Answer in chat',
   chatPersonality: 'Personality',
   chatModel: 'Model',
+  chatWebSearch: 'Search the web',
   chatVoice: 'Answer in voice',
   chatDailyLimit: 'Answers a day',
 };
@@ -303,7 +304,7 @@ export const GROUPS: [string, SettingKey[]][] = [
   ['Soundboard', ['soundVolume', 'evenVolume', 'joinSounds', 'joinSoundDelayMs', 'joinSoundCooldownMin', 'soundManagerRole']],
   ['Music', ['musicVolume', 'musicAutoplay', 'musicDjRole']],
   ['Looping sound room', ['loopRoom', 'loopSound', 'loopVolume', 'loopEvery', 'loopText', 'loopVoice', 'loopEffect', 'loopTextVolume', 'loopTextEvery', 'loopIntro', 'loopIntroDelayMs', 'loopSoundDelayMs', 'loopTextDelayMs']],
-  ['Chat', ['chat', 'chatPersonality', 'chatModel', 'chatVoice', 'chatDailyLimit']],
+  ['Chat', ['chat', 'chatPersonality', 'chatModel', 'chatWebSearch', 'chatVoice', 'chatDailyLimit']],
   ['Text to speech', ['tts', 'ttsVoice', 'ttsEffect', 'ttsSpeed', 'ttsPauseMs', 'ttsVolume', 'ttsChannel', 'ttsChannelWho', 'ttsGreet', 'ttsGreeting', 'ttsNightReminders', 'ttsHopOn', 'ttsRole', 'ttsMaxChars', 'ttsCooldownSec']],
 ];
 

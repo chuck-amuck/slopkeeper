@@ -5,7 +5,8 @@ import { recentActivity } from '../src/activity.ts';
 import { commandMention, rememberCommands } from '../src/commandIds.ts';
 import { config } from '../src/config.ts';
 import { db } from '../src/db.ts';
-import { answer, asksBot, chat, chatNote, chatNotes, chatUsage, COOLDOWN_MS, finished, MODELS, withoutOffer, noteOf, onMessage, resetChat, useTool, type Turn } from '../src/features/chat.ts';
+import { MessageFlags } from 'discord.js';
+import { answer, asksBot, chat, chatNote, chatNotes, chatUsage, COOLDOWN_MS, finished, MODELS, withoutOffer, noteOf, onMessage, resetChat, sourcesLine, useTool, type Turn } from '../src/features/chat.ts';
 import { clearQueue, queueOf } from '../src/features/music.ts';
 import { checkSetting } from '../src/features/setup.ts';
 import { setting, setSetting } from '../src/settings.ts';
@@ -36,6 +37,13 @@ mock.method(globalThis, 'fetch', async (input: string | URL | Request, init: Req
   const url = String(input instanceof Request ? input.url : input);
   if (url.startsWith('https://api.anthropic.com/v1/messages')) {
     if (apiDown || (replies[0] as { down?: boolean } | undefined)?.down) return Response.json({ type: 'error', error: { type: 'overloaded_error', message: 'Overloaded' } }, { status: 529 });
+    // A request the API refuses, as it does web search where an organization has it off
+    const refused = (replies[0] as { refused?: string } | undefined)?.refused;
+    if (refused) {
+      sent.push(JSON.parse(init.body as string));
+      replies.shift();
+      return Response.json({ type: 'error', error: { type: 'invalid_request_error', message: refused } }, { status: 400 });
+    }
     sent.push(JSON.parse(init.body as string));
     const next = replies.shift();
     assert.ok(next, 'asked the model more often than expected');
@@ -101,6 +109,7 @@ function fakeMessage(guild: ReturnType<typeof fakeGuild>, member: ReturnType<typ
   const answers: string[] = [];
   const reactions: string[] = [];
   const pinged: string[][] = [];
+  const flags: unknown[] = [];
   const earlier = new Map([['m0', { id: 'm0', author: { id: '202', displayName: 'Friend' }, member: { displayName: 'Friend' }, content: 'we should listen to <@201>’s album later', attachments: new Map() }]]);
   const channel = {
     name: 'general',
@@ -124,15 +133,16 @@ function fakeMessage(guild: ReturnType<typeof fakeGuild>, member: ReturnType<typ
     mentions: { users: new Map([...(opts.mentions ?? []), ...(opts.repliedTo ? [opts.repliedTo.author.id] : [])].map((u) => [u, {}])), repliedUser: opts.repliedTo ? opts.repliedTo.author : null },
     reference: opts.repliedTo ? { messageId: opts.repliedTo.id } : null,
     fetchReference: async () => ({ ...opts.repliedTo, member: null, attachments: new Map() }),
-    reply: async (m: { content: string; allowedMentions: { parse: string[]; users: string[]; repliedUser: boolean } }) => {
+    reply: async (m: { content: string; allowedMentions: { parse: string[]; users: string[]; repliedUser: boolean }; flags?: unknown }) => {
       // Never @everyone or a role, nor the person asking just for being replied to
       assert.deepEqual([m.allowedMentions.parse, m.allowedMentions.repliedUser], [[], false]);
       answers.push(m.content);
       pinged.push(m.allowedMentions.users);
+      flags.push(m.flags);
     },
     react: async (e: string) => void reactions.push(e),
   };
-  return { message: message as never, answers, reactions, pinged };
+  return { message: message as never, answers, reactions, pinged, flags };
 }
 
 const client = { user: { id: BOT } } as never;
@@ -207,7 +217,7 @@ test('“play the wall” finds the album and queues it, answering in character'
   assert.match(first.system[0].text, /robot butler/);
   assert.deepEqual(
     first.tools?.map((t) => t.name),
-    ['find_music', 'artist_albums', 'queue_music', 'undo_queue', 'show_queue', 'control_music', 'find_sound', 'play_sound', 'remember', 'games_for', 'game_info', 'play_stats', 'deals', 'music_history', 'patch_notes'],
+    ['find_music', 'artist_albums', 'queue_music', 'undo_queue', 'show_queue', 'control_music', 'find_sound', 'play_sound', 'remember', 'games_for', 'game_info', 'play_stats', 'deals', 'music_history', 'patch_notes', 'web_search'],
   );
   // The channel's last messages, with mentions as names, the music, and where the person is
   const asked = first.messages[0].content as string;
@@ -568,6 +578,99 @@ test('it sees the images attached to the message asking and the one it replies t
   assert.equal(typeof sent.at(-1)!.messages[0]!.content, 'string');
 });
 
+const cite = (url: string) => ({ type: 'web_search_result_location', url, title: 'A guide', encrypted_index: 'i', cited_text: 'Strength' });
+const searched = (id: string, query: string, url: string) => [
+  { type: 'server_tool_use', id, name: 'web_search', input: { query } },
+  { type: 'web_search_tool_result', tool_use_id: id, content: [{ type: 'web_search_result', url, title: 'A guide', encrypted_content: 'e', page_age: null }] },
+];
+
+test('it searches the web for a build, and posts the answer whole with its sources under it, each site once and without previews', async () => {
+  const guild = fakeGuild('g-search');
+  const member = fakeMember(guild);
+  replies = [
+    {
+      ...turn(
+        'end_turn',
+        text('Let me look that up.'),
+        ...searched('srv_1', 'slay the spire 2 ironclad build', 'https://www.thegamer.com/sts2-ironclad/'),
+        text('The usual pick is '),
+        { type: 'text', text: 'a Strength build with Inflame and Demon Form', citations: [cite('https://www.thegamer.com/sts2-ironclad/'), cite('https://www.thegamer.com/sts2-tier-list/')] },
+        text(', though '),
+        { type: 'text', text: 'Exhaust has a higher ceiling', citations: [cite('https://example.com/a_(b)')] },
+        text('.'),
+      ),
+      usage: { input_tokens: 15000, output_tokens: 300, cache_creation_input_tokens: 0, cache_read_input_tokens: 0, server_tool_use: { web_search_requests: 1, web_fetch_requests: 0 } },
+    },
+  ];
+  const asked = fakeMessage(guild, member, '<@100> good ironclad build in slay the spire 2?');
+  await onMessage(asked.message, client);
+  assert.deepEqual(asked.answers, [
+    'The usual pick is a Strength build with Inflame and Demon Form, though Exhaust has a higher ceiling.\n-# Sources: [thegamer.com](https://www.thegamer.com/sts2-ironclad/) · [example.com](https://example.com/a_%28b%29)',
+  ]);
+  assert.deepEqual(asked.flags, [MessageFlags.SuppressEmbeds]);
+  const offered = sent[0]!.tools!.find((t) => t.name === 'web_search') as unknown as { type: string; max_uses: number };
+  assert.deepEqual([offered.type, offered.max_uses], ['web_search_20250305', 2]);
+  assert.match(sent[0]!.system[0]!.text, /search the web with web_search/);
+  // A search costs a cent on top of its tokens
+  assert.ok(Math.abs(chatUsage(guild.id).cost - (0.01 + (15000 * 0.1 + 300 * 0.5) / 1e6)) < 1e-9);
+});
+
+test('a long search that pauses is sent back as it is to carry on, and with web search off it isn’t offered', async (t) => {
+  const guild = fakeGuild('g-search-more');
+  replies = [turn('pause_turn', ...searched('srv_2', 'bonemass tips', 'https://valheim.fandom.com/wiki/Bonemass')), turn('end_turn', text('Bring a mace: Bonemass hates blunt damage.'))];
+  const asked = fakeMessage(guild, fakeMember(guild), '<@100> tips for bonemass?');
+  await onMessage(asked.message, client);
+  assert.deepEqual([asked.answers, asked.flags], [['Bring a mace: Bonemass hates blunt damage.'], [undefined]]);
+  assert.equal(sent.length, 2);
+  const [, resumed] = sent;
+  assert.deepEqual(
+    resumed!.messages.map((m) => m.role),
+    ['user', 'assistant'],
+  );
+
+  setSetting(guild.id, 'chatWebSearch', false);
+  t.after(() => setSetting(guild.id, 'chatWebSearch', undefined));
+  replies = [turn('end_turn', text('Alas, the wider world is beyond my reach.'))];
+  await onMessage(fakeMessage(guild, fakeMember(guild, '205'), '<@100> tips for moder?').message, client);
+  assert.ok(!sent.at(-1)!.tools!.some((tool) => tool.name === 'web_search'));
+  assert.doesNotMatch(sent.at(-1)!.system[0]!.text, /web_search|searching the web/);
+});
+
+test('the sources line links each site once, at most three, only web pages, and the answer is cut to leave room for it', () => {
+  assert.equal(sourcesLine([]), '');
+  assert.equal(sourcesLine(['ftp://files.example.com/a', 'not a link', `https://long.example.com/${'a'.repeat(400)}`]), '');
+  assert.equal(sourcesLine(['https://www.a.com/1', 'https://a.com/2', 'https://b.com/1', 'https://c.com/1', 'https://d.com/1']), '\n-# Sources: [a.com](https://www.a.com/1) · [b.com](https://b.com/1) · [c.com](https://c.com/1)');
+  const tail = sourcesLine([`https://a.com/${'x'.repeat(280)}`]);
+  const { reply, post } = finished('g-tail', 'y'.repeat(3000), new Map(), tail);
+  assert.ok(post.length <= 2000 && reply.endsWith('…') && post === reply + tail);
+});
+
+test('web search is limited across an answer, its pages are cached for the next round, and it’s dropped where the API refuses it', async () => {
+  const guild = fakeGuild('g-search-limits');
+  const used = (n: number) => ({ input_tokens: 1000, output_tokens: 100, cache_creation_input_tokens: 0, cache_read_input_tokens: 0, server_tool_use: { web_search_requests: n, web_fetch_requests: 0 } });
+  replies = [
+    { ...turn('tool_use', ...searched('srv_3', 'deep rock builds', 'https://a.com/1'), ...searched('srv_4', 'deep rock driller', 'https://b.com/1'), toolUse('t1', 'show_queue', {})), usage: used(2) },
+    { ...turn('tool_use', toolUse('t2', 'show_queue', {})), usage: used(0) },
+    turn('end_turn', text('Driller it is.')),
+  ];
+  await onMessage(fakeMessage(guild, fakeMember(guild), '<@100> best deep rock class?').message, client);
+  const maxUses = (s: (typeof sent)[number]) => (s.tools!.find((tool) => tool.name === 'web_search') as unknown as { max_uses: number }).max_uses;
+  // Two searches is all an answer gets, as near as the API allows
+  assert.deepEqual(sent.map(maxUses), [2, 1, 1]);
+  // One moving breakpoint on the tool results, besides the instructions
+  const marks = (s: (typeof sent)[number]) =>
+    s.messages.flatMap((m) => (Array.isArray(m.content) ? (m.content as { cache_control?: unknown }[]) : [])).filter((b) => b.cache_control).length;
+  assert.deepEqual(sent.map(marks), [0, 1, 1]);
+  assert.deepEqual((sent[2]!.messages.at(-1)!.content as { cache_control?: unknown }[]).at(-1)!.cache_control, { type: 'ephemeral' });
+
+  replies = [{ refused: 'web search is not enabled for this organization' }, turn('end_turn', text('From memory: Driller.'))];
+  const asked = fakeMessage(guild, fakeMember(guild, '206'), '<@100> best deep rock class?');
+  await onMessage(asked.message, client);
+  assert.deepEqual(asked.answers, ['From memory: Driller.']);
+  assert.ok(sent.at(-2)!.tools!.some((tool) => tool.name === 'web_search') && !sent.at(-1)!.tools!.some((tool) => tool.name === 'web_search'));
+  assert.doesNotMatch(sent.at(-1)!.system[0]!.text, /web_search/);
+});
+
 test('an answer full of pings is cut to fit once they’re made', () => {
   const people = new Map(['Al', 'Bo', 'Cy', 'Di', 'Ed', 'Fi'].map((name, i) => [name, `12345678901234567${i}`]));
   const pings = ' @Al @Bo @Cy @Di @Ed @Fi';
@@ -576,7 +679,7 @@ test('an answer full of pings is cut to fit once they’re made', () => {
   // A name cut in half isn't a ping
   assert.equal(long.users.length, 3);
   assert.match(long.reply, /<@123456789012345672> @D…$/);
-  assert.deepEqual(finished('g-pings', 'hi @Al', people), { reply: 'hi <@123456789012345670>', users: ['123456789012345670'] });
+  assert.deepEqual(finished('g-pings', 'hi @Al', people), { reply: 'hi <@123456789012345670>', post: 'hi <@123456789012345670>', users: ['123456789012345670'] });
   // Nothing but pings: cut to what fits, not to nothing
   const dense = finished('g-pings', '@Al '.repeat(475).trim(), people);
   assert.ok(dense.reply.length <= 2000 && dense.reply.length > 1500, String(dense.reply.length));

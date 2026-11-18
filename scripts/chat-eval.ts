@@ -14,7 +14,7 @@ import { rememberCommands } from '../src/commandIds.ts';
 import { config } from '../src/config.ts';
 import { db } from '../src/db.ts';
 import { features } from '../src/features/all.ts';
-import { answer, MODELS, withPings } from '../src/features/chat.ts';
+import { answer, MODELS, SEARCH_COST, sourcesLine, withPings } from '../src/features/chat.ts';
 import { setSetting } from '../src/settings.ts';
 
 const BOT = '100';
@@ -202,6 +202,11 @@ const SCENES: Scene[] = [
   { name: 'their wishlist', turns: [{ say: '@bot is anything Sam wants on sale?', uses: [['deals', { kind: 'sales' }]], says: /Deep Rock/ }] },
   { name: 'the song someone added', inVoice: true, turns: [{ say: '@bot play the song Sam put on yesterday', uses: [['music_history', { person: 'Sam' }], 'queue_music'] }] },
   { name: 'most played song', turns: [{ say: '@bot what song gets played most here?', uses: [['music_history', { most_played: true }]] }] },
+  // Strategy it should look up, as games change after what the model knows
+  { name: 'a build', turns: [{ say: '@bot what’s a good ironclad build in slay the spire 2?', uses: ['web_search'], says: /strength|exhaust|block|demon form|inflame/i, longest: 900 }] },
+  { name: 'a boss tip', turns: [{ say: '@bot any tips for beating bonemass in valheim?', uses: ['web_search'], says: /blunt|mace|poison|resist/i, longest: 900 }] },
+  // Not for what the server's own lookups have
+  { name: 'our own games aren’t searched', turns: [{ say: '@bot who here owns valheim?', uses: ['game_info'], avoids: ['web_search'], says: /Sam/ }] },
   // The repo's logo, a bucket of slime with eyes
   { name: 'a picture', turns: [{ say: '@bot what do you make of this?', image: 'assets/logo.png', avoids: 'all', says: /bucket|pail|slime|goo|ooze/i }] },
   // Steam's real notes, so the answer can only be checked for not giving up on them. A few highlights as a list is fine
@@ -215,7 +220,7 @@ const registered = commandJson.map((c) => ({ ...c, id: String(fakeId++), default
 
 // What each turn called, and what the API cost
 let calls = 0;
-const tokens = { input: 0, write: 0, read: 0, output: 0 };
+const tokens = { input: 0, write: 0, read: 0, output: 0, searches: 0 };
 let made: { name: string; input: Record<string, unknown> }[] = [];
 let log: string[] = [];
 /** When the turn started, for how long each call and tool took */
@@ -237,9 +242,10 @@ globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) =>
       tokens.write += out.usage.cache_creation_input_tokens ?? 0;
       tokens.read += out.usage.cache_read_input_tokens ?? 0;
       tokens.output += out.usage.output_tokens;
+      tokens.searches += out.usage.server_tool_use?.web_search_requests ?? 0;
     }
     for (const b of out.content ?? []) {
-      if (b.type !== 'tool_use') continue;
+      if (b.type !== 'tool_use' && b.type !== 'server_tool_use') continue;
       made.push({ name: b.name, input: b.input });
       log.push(`      → ${b.name} ${JSON.stringify(b.input)} (at ${at()})`);
     }
@@ -360,11 +366,13 @@ function server(scene: Scene) {
     const started = Date.now();
     let reply: string | null;
     let people = new Map<string, string>();
+    let sources: string[] = [];
     try {
-      ({ text: reply, people } = await answer(message as never, robin as never, BOT, repliedTo as never));
+      ({ text: reply, people, sources } = await answer(message as never, robin as never, BOT, repliedTo as never));
     } catch (err) {
       reply = `ERROR ${(err as Error).message}`;
     }
+    if (sources.length) log.push(`      sources:${sourcesLine(sources).replace(/^\n-# Sources?:/, '')}`);
     said.push({ who: 'Robin', text: content, at: started });
     if (reply) said.push({ who: 'Slopkeeper', text: reply, at: Date.now() });
     return { reply: reply ?? '', pinged: reply ? withPings(reply, people).users.map(nameOf) : [], seconds: (Date.now() - started) / 1000 };
@@ -420,8 +428,8 @@ for (const scene of SCENES) {
 const turns = [...tally.values()].reduce((sum, t) => sum + t.turns, 0);
 const passed = [...tally.values()].reduce((sum, t) => sum + t.passed, 0);
 const price = MODELS[modelKey];
-const cost = ((tokens.input + tokens.write * 1.25) * price.input + tokens.read * price.cacheRead + tokens.output * price.output) / 1e6;
+const cost = ((tokens.input + tokens.write * 1.25) * price.input + tokens.read * price.cacheRead + tokens.output * price.output) / 1e6 + tokens.searches * SEARCH_COST;
 realLog(`\n${passed} of ${turns} turns passed.`);
 for (const [name, t] of tally) if (t.passed < t.turns) realLog(`  ✗ ${name}: ${t.passed} of ${t.turns}`);
-realLog(`${calls} calls on ${price.id}, about $${cost.toFixed(4)}: ${tokens.input} tokens in, ${tokens.write} written to the cache, ${tokens.read} read from it, ${tokens.output} out.`);
+realLog(`${calls} calls on ${price.id}, about $${cost.toFixed(4)}: ${tokens.input} tokens in, ${tokens.write} written to the cache, ${tokens.read} read from it, ${tokens.output} out, ${tokens.searches} web searches.`);
 process.exit(passed === turns ? 0 : 1);

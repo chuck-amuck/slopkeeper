@@ -674,6 +674,11 @@ db.exec(`
   );
 `);
 
+// Added with web search, after chat_usage came out
+if (!db.prepare("SELECT 1 FROM pragma_table_info('chat_usage') WHERE name = 'web_searches'").get()) {
+  db.exec('ALTER TABLE chat_usage ADD COLUMN web_searches INTEGER NOT NULL DEFAULT 0');
+}
+
 export function getKv(key: string): string | undefined {
   const row = db.prepare('SELECT value FROM kv WHERE key = ?').get(key) as { value: string } | undefined;
   return row?.value;
