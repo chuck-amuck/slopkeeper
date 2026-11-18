@@ -3,6 +3,7 @@
 
 import { DiscordAPIError, type MessageCreateOptions, type SendableChannels } from 'discord.js';
 import { db, setKv } from './db.ts';
+import { setting } from './settings.ts';
 
 export const POSTS = {
   hopOn: 'Hop-on ping',
@@ -31,10 +32,13 @@ export interface PostFailure {
   error: string;
 }
 
-/** Sends one of the bot's own posts. A refusal a setting can fix is kept until a later one of the same kind goes out */
-export async function sendPost(post: Post, guildId: string, channel: SendableChannels, message: MessageCreateOptions) {
+/**
+ * Sends one of the bot's own posts, with a line in the bot's personality above it if the server has those on (`line`
+ * false for the later pages of one post). A refusal a setting can fix is kept until a later one of the same kind goes out
+ */
+export async function sendPost(post: Post, guildId: string, channel: SendableChannels, message: MessageCreateOptions, line = true) {
   try {
-    const sent = await channel.send(message);
+    const sent = await channel.send(line ? await withLine(post, guildId, channel, message) : message);
     db.prepare('DELETE FROM kv WHERE key = ?').run(keyOf(guildId, post));
     return sent;
   } catch (err) {
@@ -43,6 +47,18 @@ export async function sendPost(post: Post, guildId: string, channel: SendableCha
     }
     throw err;
   }
+}
+
+/** Discord's longest message */
+const LONGEST_MESSAGE = 2000;
+
+async function withLine(post: Post, guildId: string, channel: SendableChannels, message: MessageCreateOptions): Promise<MessageCreateOptions> {
+  if (!setting(guildId, 'chatPostLines') || !('guild' in channel) || !channel.guild) return message;
+  // Chat is loaded only for servers that have these
+  const { postLine } = await import('./features/chat.ts');
+  const line = await postLine(channel.guild, POSTS[post], message);
+  if (!line || (message.content?.length ?? 0) + line.length + 1 > LONGEST_MESSAGE) return message;
+  return { ...message, content: message.content ? `${line}\n${message.content}` : line };
 }
 
 /** The server's posts that last failed for a reason a setting can fix, newest first */

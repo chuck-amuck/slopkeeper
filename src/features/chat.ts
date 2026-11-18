@@ -1,5 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk';
-import { type Attachment, type Client, Events, type Guild, type GuildMember, type GuildTextBasedChannel, type Message, MessageFlags, PermissionFlagsBits, type VoiceBasedChannel } from 'discord.js';
+import { type APIEmbed, type Attachment, type Client, Events, type Guild, type GuildMember, type GuildTextBasedChannel, type Message, type MessageCreateOptions, MessageFlags, PermissionFlagsBits, type VoiceBasedChannel } from 'discord.js';
 import { logActivity } from '../activity.ts';
 import { clickableCommands, commandList } from '../commandIds.ts';
 import { config } from '../config.ts';
@@ -147,6 +147,70 @@ function record(guildId: string, model: string, usage: Used, replies = 0) {
     usage.output_tokens,
     usage.server_tool_use?.web_search_requests ?? 0,
   );
+}
+
+/** A line above an automatic post is this long at most, and waited for this long */
+const LONGEST_POST_LINE = 200;
+const POST_LINE_TIMEOUT_MS = 5_000;
+
+/** What a post says, from its text and embeds, for the line above it to be about */
+function postText(guild: Guild, message: MessageCreateOptions): string {
+  const embeds = (message.embeds ?? []).map((e) => ('toJSON' in e && typeof e.toJSON === 'function' ? e.toJSON() : e) as APIEmbed);
+  return [
+    message.content ? readable(guild, message.content) : '',
+    ...embeds.flatMap((e) => [e.author?.name, e.title, e.description, ...(e.fields ?? []).map((f) => `${f.name}: ${f.value}`), e.footer?.text]),
+  ]
+    .filter(Boolean)
+    .join('\n')
+    .slice(0, 3000);
+}
+
+/** One line of what the model wrote, that can't ping anyone or link anywhere */
+function cleanLine(text: string): string {
+  const line = (text.trim().split('\n')[0] ?? '')
+    .replace(/<[^>]*>/g, '')
+    .replace(/https?:\/\/\S+/g, '')
+    .replace(/@/g, '@\u200b')
+    .replace(/^["“”'‘’]+|["“”'‘’]+$/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return line.length > LONGEST_POST_LINE ? `${line.slice(0, LONGEST_POST_LINE - 1).replace(/\s+\S*$/, '')}…` : line;
+}
+
+/**
+ * A line in the bot's personality to go above one of its automatic posts, about what the post says, when the server has
+ * those on. Null when it's off, or when anything goes wrong, so the post goes out as it is. It counts toward the month's
+ * cost, but not the day's answers
+ */
+export async function postLine(guild: Guild, kind: string, message: MessageCreateOptions): Promise<string | null> {
+  if (!setting(guild.id, 'chatPostLines') || !setting(guild.id, 'chat')) return null;
+  const client = claude();
+  const about = postText(guild, message);
+  if (!client || !about) return null;
+  const key = modelKey(guild.id);
+  try {
+    const res = await client.messages.create(
+      {
+        model: MODELS[key].id,
+        max_tokens: 150,
+        system: [
+          `You are ${guild.members.me?.displayName ?? 'the bot'}, a bot in the Discord server “${guild.name}”.`,
+          `Your personality: ${setting(guild.id, 'chatPersonality')}`,
+          `Write one line, in character and under 20 words, to go above one of your automatic posts (a ${kind.toLowerCase()}). React to it as a friend in the server would, with a quip or an aside: the post is right below, so don’t repeat its numbers, prices or dates, and don’t open with a greeting or by addressing people.`,
+          'Only the line: no quotes, @mentions or links, nothing made up about the people, and call them by name or “they”, never he or she.',
+        ].join('\n'),
+        messages: [{ role: 'user', content: `The ${kind.toLowerCase()}:\n${about}` }],
+        output_config: { effort: 'low' },
+      },
+      { timeout: POST_LINE_TIMEOUT_MS, maxRetries: 0 },
+    );
+    record(guild.id, key, res.usage);
+    if (res.stop_reason !== 'end_turn') return null;
+    return cleanLine(res.content.flatMap((b) => (b.type === 'text' ? [b.text] : [])).join(' ')) || null;
+  } catch (err) {
+    console.warn(`Chat couldn’t write a line for a ${kind.toLowerCase()} in server ${guild.id}: ${(err as Error).message}`);
+    return null;
+  }
 }
 
 const answeredToday = (guildId: string) =>

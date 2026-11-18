@@ -9,6 +9,7 @@ import { MessageFlags } from 'discord.js';
 import { answer, asksBot, chat, chatNote, chatNotes, chatUsage, COOLDOWN_MS, finished, MODELS, MOST_STRICT_TOOLS, strictAtMost, withoutOffer, noteOf, onMessage, resetChat, sourcesLine, useTool, type Turn } from '../src/features/chat.ts';
 import { clearQueue, queueOf } from '../src/features/music.ts';
 import { checkSetting } from '../src/features/setup.ts';
+import { sendPost } from '../src/postFailures.ts';
 import { setting, setSetting } from '../src/settings.ts';
 import { resetSpotify } from '../src/spotify.ts';
 
@@ -772,4 +773,67 @@ test('it knows the date, who’s in voice and playing what, and the bot’s comm
   // A command that's gone isn't made clickable from what was registered before
   rememberCommands(guild.id, [{ name: 'whatdoweplay', id: '900', description: 'Pick a game', type: 1 }]);
   assert.equal(commandMention(guild.id, 'gamenight plan'), '`/gamenight plan`');
+});
+
+// A line in its personality above the bot's own posts
+
+/** A channel that keeps what's posted in it */
+function postChannel(guild: ReturnType<typeof fakeGuild>) {
+  const posted: { content?: string; embeds?: unknown[]; allowedMentions?: unknown }[] = [];
+  return { channel: { id: '900', guild, send: async (m: (typeof posted)[number]) => (posted.push(m), { id: 'posted' }) } as never, posted };
+}
+const LEADERBOARD = { embeds: [{ title: '🏆 This week', description: '1. **Sam**: 12 h\n2. **Alex**: 3 h', footer: { text: 'Monday to Sunday' } }] };
+
+test('lines on automatic posts are off by default, and on, one goes above the post, written from what it says', async (t) => {
+  const guild = fakeGuild('g-lines');
+  const { channel, posted } = postChannel(guild);
+  await sendPost('weekly', guild.id, channel, LEADERBOARD);
+  assert.deepEqual([posted, sent], [[LEADERBOARD], []]);
+
+  setSetting(guild.id, 'chatPostLines', true);
+  t.after(() => setSetting(guild.id, 'chatPostLines', undefined));
+  // It can't ping or link, and only its first line counts
+  replies = [turn('end_turn', text('“Sam, you magnificent <@123> menace! https://example.com @everyone”\nAnd another thing.'))];
+  await sendPost('weekly', guild.id, channel, LEADERBOARD);
+  assert.deepEqual(posted[1], { ...LEADERBOARD, content: 'Sam, you magnificent menace! @\u200beveryone' });
+  assert.match(sent[0]!.system as unknown as string, /You are Slopkeeper, a bot in the Discord server “Test Server”\.[\s\S]*a weekly leaderboard/);
+  assert.equal(sent[0]!.messages[0]!.content, 'The weekly leaderboard:\n🏆 This week\n1. **Sam**: 12 h\n2. **Alex**: 3 h\nMonday to Sunday');
+  assert.equal(sent[0]!.model, MODELS.haiku.id);
+  assert.equal(sent[0]!.tools, undefined);
+
+  // Above a post with text of its own, which still pings who it did; roles read as names for the model
+  replies = [turn('end_turn', text('The gang assembles.'))];
+  const hopOn = { content: '<@&300> 🎮 **Sam** and **Alex** are in <#5>. Hop on!', allowedMentions: { roles: ['300'] } };
+  await sendPost('hopOn', guild.id, channel, hopOn);
+  assert.deepEqual(posted[2], { ...hopOn, content: `The gang assembles.\n${hopOn.content}` });
+  assert.match(sent[1]!.messages[0]!.content as string, /^The hop-on ping:\n@DJ 🎮/);
+
+  // Later pages of one post don't get one
+  await sendPost('patchNotes', guild.id, channel, LEADERBOARD, false);
+  assert.deepEqual([posted[3], sent.length], [LEADERBOARD, 2]);
+
+  // Its cost counts toward the month, but not as an answer toward the day's limit
+  const used = db.prepare('SELECT SUM(replies) AS replies, SUM(input_tokens) AS input FROM chat_usage WHERE guild_id = ?').get(guild.id) as { replies: number; input: number };
+  assert.deepEqual({ ...used }, { replies: 0, input: 2000 });
+});
+
+test('a post goes out without its line when the model is down, refuses, or chat is off', async (t) => {
+  const guild = fakeGuild('g-lines-2');
+  const { channel, posted } = postChannel(guild);
+  setSetting(guild.id, 'chatPostLines', true);
+  t.after(() => setSetting(guild.id, 'chatPostLines', undefined));
+  const warned = t.mock.method(console, 'warn', () => undefined);
+
+  apiDown = true;
+  await sendPost('weekly', guild.id, channel, LEADERBOARD);
+  apiDown = false;
+  replies = [turn('refusal')];
+  await sendPost('weekly', guild.id, channel, LEADERBOARD);
+  setSetting(guild.id, 'chat', false);
+  t.after(() => setSetting(guild.id, 'chat', undefined));
+  await sendPost('weekly', guild.id, channel, LEADERBOARD);
+  assert.deepEqual(posted, [LEADERBOARD, LEADERBOARD, LEADERBOARD]);
+  // The refusal was asked; being down says so in the log
+  assert.equal(sent.length, 1);
+  assert.equal(warned.mock.callCount(), 1);
 });

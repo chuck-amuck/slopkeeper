@@ -116,6 +116,8 @@ export const DEFAULTS = {
   chatWebSearch: process.env.CHAT_WEB_SEARCH !== 'false',
   // Game nights and votes, with the same permissions as the commands
   chatActions: process.env.CHAT_ACTIONS !== 'false',
+  // A line in its personality above the bot's automatic posts, written by the chat model
+  chatPostLines: process.env.CHAT_POST_LINES === 'true',
   // Off until a server turns it on, as not everyone wants every answer read out
   chatVoice: process.env.CHAT_VOICE || 'off',
   // Each answer costs a little, so a busy day stops here
@@ -181,6 +183,7 @@ export const DEFAULT_ENV: Partial<Record<SettingKey, string>> = {
   chatModel: 'CHAT_MODEL',
   chatWebSearch: 'CHAT_WEB_SEARCH',
   chatActions: 'CHAT_ACTIONS',
+  chatPostLines: 'CHAT_POST_LINES',
   chatVoice: 'CHAT_VOICE',
   chatDailyLimit: 'CHAT_DAILY_LIMIT',
 };

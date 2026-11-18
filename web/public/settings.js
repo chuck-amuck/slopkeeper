@@ -75,6 +75,7 @@ const FIELDS = {
   chatPersonality: { kind: 'longtext', maxLength: 1000, hint: 'Who the bot is when it answers, in a few sentences. Up to 1000 characters.' },
   chatWebSearch: { kind: 'boolean', hint: 'Searches the web when someone asks for a game’s strategy, builds, guides or news, through Anthropic, and links the sources. A search costs a cent, plus the pages it reads.' },
   chatActions: { kind: 'boolean', hint: 'Lets it plan, change and answer game nights, start votes on what to play, set reminders and make sounds from links when someone asks, with the same permissions as the commands. Off, it points people to the game night and vote commands, and doesn’t set reminders.' },
+  chatPostLines: { kind: 'boolean', hint: 'Adds a line in its personality above the bot’s automatic posts (hop-on pings, recaps, leaderboards, sales, bundles, free games and patch notes), written by the chat model from what the post says. Each costs a small fraction of a cent, and the post goes out without one if the model is slow or down.' },
   chatModel: { kind: 'choice', options: [['haiku', 'Claude Haiku 5.5 (cheapest and quickest)'], ['sonnet', 'Claude Sonnet 5.5 (better answers, about 20 times the cost)'], ['opus', 'Claude Opus 5.5 (smartest, about 40 times the cost)']], hint: 'Which model answers.' },
   chatVoice: {
     kind: 'choice',

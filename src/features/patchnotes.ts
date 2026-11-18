@@ -63,7 +63,7 @@ async function postDigest(client: Client<true>, guild: Guild, posts: PatchPost[]
     const out = await notesChannel(client, guild.id);
     if (!out) return false;
     const lines = posts.map((p) => `**${p.game}**: [${p.title.replace(/[[\]]/g, '')}](${p.url})`);
-    for (const page of paginate(lines, DIGEST_PAGE_CHARS)) await sendPost('patchNotes', guild.id, out, { embeds: [new EmbedBuilder().setTitle('🩹 Patch notes this week').setDescription(page.join('\n')).setColor(0x1b2838)] });
+    for (const [n, page] of paginate(lines, DIGEST_PAGE_CHARS).entries()) await sendPost('patchNotes', guild.id, out, { embeds: [new EmbedBuilder().setTitle('🩹 Patch notes this week').setDescription(page.join('\n')).setColor(0x1b2838)] }, n === 0);
     posts.forEach(done);
   }, WEEKLY);
 }
