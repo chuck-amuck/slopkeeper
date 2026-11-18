@@ -20,7 +20,7 @@ import {
 import { logActivity } from '../activity.ts';
 import { config } from '../config.ts';
 import { db, transaction } from '../db.ts';
-import { levelSpeech } from '../loudness.ts';
+import { holdSounds, levelSpeech } from '../loudness.ts';
 import * as perf from '../perf.ts';
 import { DEFAULTS, idSetting, setSetting, setting, storedSetting } from '../settings.ts';
 import type { Feature } from '../types.ts';
@@ -468,17 +468,88 @@ function money(sign: string, whole: string, part: string | undefined, scale: str
   return `${whole} ${units === 1 ? one : many}${small ? ` ${small}` : ''}`;
 }
 
+const VOWEL_LETTER = /[aeiouyàáâäèéêëìíîïòóôöùúûü]/iu;
+/** How long a drawn-out sound is held at normal speed: three letters, then more for each letter after, up to the longest */
+const HOLD_FROM_S = 0.6;
+const HOLD_PER_LETTER_S = 0.2;
+const LONGEST_HOLD_S = 1.5;
+/** As many as the voice container looks for in a line (voice/serve.py) */
+const MOST_HELD = 10;
+
+/** A drawn-out word as Piper's given it, the time it's said in the line it is (from 0), the sound to hold, and for how long */
+export interface Held {
+  word: string;
+  nth: number;
+  sound: 'vowel' | 'end';
+  /** Which vowel sound in the word, from 0, or -1 for the last */
+  vowel: number;
+  seconds: number;
+}
+
+/** As long a word as the voice container looks for */
+const LONGEST_HELD_WORD = 40;
+const STRETCH = /(\p{L})\1{2,}/giu;
+const VOWEL_GROUPS = /[aeiouyàáâäèéêëìíîïòóôöùúûü]+/giu;
+
+/** How many vowels are spelled before a stretch in a word, as the vowel sound to hold. A y that starts a word isn't one */
+function vowelsBefore(start: string) {
+  const letters = start.replace(/^y/i, '');
+  const groups = letters.match(VOWEL_GROUPS)?.length ?? 0;
+  // One running into the stretch, like the u of "bueeeno", is part of it
+  return VOWEL_LETTER.test(letters.at(-1) ?? '') ? groups - 1 : groups;
+}
+
+/** A word with its stretches taken out, and the sound to hold, if any: the last one stretched */
+function plainWord(word: string): { plain: string; hold?: Omit<Held, 'word' | 'nth'> } {
+  let plain = '';
+  let from = 0;
+  let hold: Omit<Held, 'word' | 'nth'> | undefined;
+  for (const { 0: run, 1: letter, index: at } of word.matchAll(STRETCH)) {
+    plain += word.slice(from, at);
+    from = at + run.length;
+    const end = from === word.length;
+    const vowel = VOWEL_LETTER.test(letter);
+    if (!vowel && !end) {
+      plain += run.length >= 4 ? letter + letter : run;
+      continue;
+    }
+    hold = { sound: vowel ? 'vowel' : 'end', vowel: end ? -1 : vowelsBefore(plain), seconds: Math.round(Math.min(LONGEST_HOLD_S, HOLD_FROM_S + HOLD_PER_LETTER_S * (run.length - 3)) * 100) / 100 };
+    plain += !end || (!vowel && letter.toLowerCase() === 'm') ? letter + letter : letter;
+  }
+  return { plain: plain + word.slice(from), hold };
+}
+
 /**
- * "nooo" and "yesss" as the word: a stretch at a word's end goes to one letter (m's to two, as "hm" is spelled). In the
- * middle, four or more go to two, as in "goooood". Three there can be real German ("Schifffahrt"), so they stay
+ * Drawn-out words, as the voice can't say "nooooo": "noo-oh" is what Piper makes of it. Each is given as the plain word, and
+ * the voice container says where its sound is, to be held (see holdSounds):
+ * - a vowel stretched at the end holds the word's last vowel sound, and goes to one letter, as "noo" reads as "new"
+ * - a vowel stretched in the middle holds that vowel ("baaaby"), and goes to two letters ("goooood"), as which it should be
+ *   can't be told
+ * - other letters stretched at the end hold the last sound ("yesss", "hmmm"), with m's kept at two, as "hm" is spelled
+ * - other letters in the middle aren't held, and only four or more go to two: three can be real German ("Schifffahrt")
+ * Roman numerals, words of one letter ("AAA", "xxx") and Piper's own [[ phonemes ]] stay as they are
  */
-const unstretched = (word: string) =>
-  /^(\p{L})\1*$/u.test(word) || /^[IVXLCDM]+$/.test(word)
-    ? word
-    : word.replace(/(\p{L})\1{2,}/gu, (run: string, letter: string, at: number) => {
-        if (at + run.length === word.length) return letter.toLowerCase() === 'm' ? letter + letter : letter;
-        return run.length >= 4 ? letter + letter : run;
-      });
+export function heldWords(text: string): { text: string; held: Held[] } {
+  const held: Held[] = [];
+  // How many times each word's been said so far, for the voice container to hold the right one
+  const said = new Map<string, number>();
+  const plain = text
+    .split(/(\[\[[^\]]*\]\])/)
+    .map((part) =>
+      part.startsWith('[[')
+        ? part
+        : part.replace(/\p{L}+/gu, (word) => {
+            const { plain, hold } = /^(\p{L})\1*$/iu.test(word) || /^[IVXLCDM]+$/.test(word) ? { plain: word } : plainWord(word);
+            const key = plain.toLowerCase();
+            const nth = said.get(key) ?? 0;
+            said.set(key, nth + 1);
+            if (hold && held.length < MOST_HELD && plain.length <= LONGEST_HELD_WORD) held.push({ word: plain, nth, ...hold });
+            return plain;
+          }),
+    )
+    .join('');
+  return { text: plain, held };
+}
 
 /** A full stop after these doesn't end a sentence for Piper either, so the next word isn't given a capital */
 const NOT_AN_END = new Set(['etc', 'vs', 'approx']);
@@ -487,8 +558,7 @@ const NOT_AN_END = new Set(['etc', 'vs', 'approx']);
  * Fixes what Piper reads oddly, each found by looking at the sounds it makes of them (the voice container's phonemize):
  * - a full stop starts a new sentence only before a capital, so "No. stop" ran on. "..." ran the words together
  * - Dr., Mr., Mrs. and St. end a sentence, though it reads them right (Saint or Street by what's around it) without the stop
- * - "nooo" came out "noo-oh", and "noo" as "new": one letter reads as the word, except "hm", which it spells, so m's keep two.
- *   Roman numerals and "AAA" stay as they are
+ * Drawn-out words ("nooo") are left as typed, to be held when they're said (heldWords)
  * - "$5" was "dollar five"
  */
 export function readable(text: string) {
@@ -505,7 +575,6 @@ export function readable(text: string) {
       .replace(/([!?])\.(?=\s|$)/g, '$1')
       // What "..." at the start left
       .replace(/^\s*\.\s+/, '')
-      .replace(/\p{L}+/gu, unstretched)
       .replace(/(?<=(?:^|[^\p{L}\p{N}'’])([\p{L}\p{N}'’]+)["'’”)\]]*\.["'’”)\]]*\s+)\p{Ll}/gu, (letter: string, word: string) =>
         word.length < 2 || NOT_AN_END.has(word.toLowerCase()) ? letter : letter.toUpperCase(),
       )
@@ -568,21 +637,31 @@ interface Pacing {
 
 const pacing = (guildId: string): Pacing => ({ speed: setting(guildId, 'ttsSpeed'), pauseMs: setting(guildId, 'ttsPauseMs') });
 
+/** A sound in a line to hold, from its start to its end sample, for this long */
+export interface Hold {
+  start: number;
+  end: number;
+  seconds: number;
+}
+
 async function speech(text: string, voice: Voice, effect: Effect | null, { speed, pauseMs }: Pacing, signal: AbortSignal, trace?: perf.Trace) {
   const asked = performance.now();
+  const { text: said, held } = heldWords(text);
+  const pace = (voice.pace ?? 1) * (effect?.pace ?? 1);
   // A model the container doesn't have gets its default one instead, with no error, so voice/start.sh fetches every model named here
   const res = await fetch(`${config.voiceUrl}/synthesize`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      text,
+      text: said,
       voice: voice.model,
       speaker_id: voice.speaker,
-      length_scale: Math.round(lengthFor(speed, voice.stretches) * (voice.pace ?? 1) * (effect?.pace ?? 1) * 100) / 100,
+      length_scale: Math.round(lengthFor(speed, voice.stretches) * pace * 100) / 100,
       noise_scale: voice.noise?.[0],
       noise_w_scale: voice.noise?.[1],
       // The voice container's own, as Piper's would turn some lengths into noise (voice/serve.py)
       sentence_silence: pauseMs / 1000,
+      held: held.length ? held.map(({ word, nth, sound, vowel }) => ({ word, nth, sound, vowel })) : undefined,
     }),
     signal: AbortSignal.any([signal, AbortSignal.timeout(SPEAK_TIMEOUT_MS + text.length * SPEAK_TIMEOUT_PER_CHAR_MS)]),
   });
@@ -597,7 +676,13 @@ async function speech(text: string, voice: Voice, effect: Effect | null, { speed
   trace?.part('voice container', (performance.now() - asked) / 1000, 'making');
   if (load > 0) trace?.part('loading the voice', load, 'voice container');
   if (synth !== undefined) trace?.part('saying it', synth, 'voice container');
-  return audio;
+  // Where each drawn-out word's sound is, in order, or "-" where it couldn't be found. Held longer when the speech is slower
+  const spans = (res.headers.get('x-held') ?? '').split(',');
+  const holds: Hold[] = held.flatMap((h, i) => {
+    const [start, end] = (spans[i] ?? '').split(':').map(Number);
+    return Number.isInteger(start) && Number.isInteger(end) && end > start ? [{ start, end, seconds: Math.round(((h.seconds * 100) / speed) * pace * 100) / 100 }] : [];
+  });
+  return { audio, holds };
 }
 
 /** Most of what's said again soon is a saved line, a preview then the same line said, or a looping room's speech */
@@ -645,18 +730,25 @@ async function makeLine(text: string, voice: Voice, effect: Effect | null, gain:
   folder ??= mkdtempSync(path.join(tmpdir(), 'slopkeeper-say-'));
   const file = path.join(folder, `made-${randomUUID()}.wav`);
   const unlevelled = `${file}.raw.wav`;
+  const held = `${file}.held.wav`;
   try {
-    const raw = await speech(text, voice, effect, paced, new AbortController().signal, trace).catch((err: unknown) => {
+    const { audio: raw, holds } = await speech(text, voice, effect, paced, new AbortController().signal, trace).catch((err: unknown) => {
       throw new VoiceDown(err instanceof Error ? err.message : String(err));
     });
     writeFileSync(unlevelled, raw);
     const levelling = performance.now();
-    await levelSpeech(unlevelled, file, filtersFor(voice, effect, gain));
+    // Said without them if they can't be held, rather than not at all
+    const holding = holds.length > 0 && (await holdSounds(unlevelled, held, holds, raw.readUInt32LE(24)).then(
+      () => true,
+      (err: unknown) => (console.error('Couldn’t hold a drawn-out word, so the line is said without:', err), false),
+    ));
+    await levelSpeech(holding ? held : unlevelled, file, filtersFor(voice, effect, gain));
     trace?.part('levelling and effects', (performance.now() - levelling) / 1000, 'making');
     return readFileSync(file);
   } finally {
     rmSync(file, { force: true });
     rmSync(unlevelled, { force: true });
+    rmSync(held, { force: true });
   }
 }
 

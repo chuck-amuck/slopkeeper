@@ -13,7 +13,7 @@ import { recentActivity } from '../src/activity.ts';
 import { config } from '../src/config.ts';
 import { Mixer } from '../src/mixer.ts';
 import * as perf from '../src/perf.ts';
-import { announceAloud, CURVE_STRETCHES, readable, effects, forgetSpoken, lengthFor, moveEffectVoices, NO_EFFECT, oldEffectVoice, phrases, previewPart, readMessage, removePhrase, savePhrase, say, sayOut, missingVoice, serverEffect, serverVoice, speak, speechFor, voiceGroup, voices } from '../src/features/say.ts';
+import { announceAloud, CURVE_STRETCHES, heldWords, previewSpeech, readable, effects, forgetSpoken, lengthFor, moveEffectVoices, NO_EFFECT, oldEffectVoice, phrases, previewPart, readMessage, removePhrase, savePhrase, say, sayOut, missingVoice, serverEffect, serverVoice, speak, speechFor, voiceGroup, voices } from '../src/features/say.ts';
 import { effectGain, forgetEffectGains, setEffectGain, soundKey } from '../src/features/effectGains.ts';
 import { addVoice, removeVoice, syncVoices, voiceFields, voicesVersion } from '../src/features/voices.ts';
 import { applySpeechVolume, stopPlayback } from '../src/features/voiceAudio.ts';
@@ -23,6 +23,7 @@ import { saveUpload } from '../src/features/soundLibrary.ts';
 import { soundboard } from '../src/features/soundboard.ts';
 import { stopTuning } from '../src/features/voiceTuning.ts';
 import { setSetting, storedSetting } from '../src/settings.ts';
+import { holdSounds } from '../src/loudness.ts';
 
 const hasFfmpeg = spawnSync('ffmpeg', ['-version']).status === 0;
 const dir = mkdtempSync(path.join(process.env.DATA_DIR!, 'speech-'));
@@ -609,17 +610,67 @@ test('what Piper reads oddly is fixed first', () => {
   // After a name they're Street and Drive, which can end a sentence
   assert.equal(readable('I live on Elm St. It is nice'), 'I live on Elm St. It is nice');
   assert.equal(readable('Elm St. it is nice'), 'Elm St. It is nice');
-  // Stretched words read as the word, with m's kept at two, and Roman numerals left alone
-  assert.equal(readable('nooo yesssss sooo hmmmm NOOO goooood'), 'no yes so hmm NO good');
-  assert.equal(readable('World War III and Rocky VIII, AAA batteries, xxx'), 'World War III and Rocky VIII, AAA batteries, xxx');
-  assert.equal(readable('Schifffahrt und Brennnessel'), 'Schifffahrt und Brennnessel');
-  assert.equal(readable('good cool'), 'good cool');
+  // Drawn-out words are left as typed, to be held when they're said
+  assert.equal(readable('nooo yesssss'), 'nooo yesssss');
   // Brackets are read as typed: Piper can't act out a stage direction, so nothing is taken for one
   assert.equal(readable('(whispers) come here (sighs heavily). fine'), '(whispers) come here (sighs heavily). Fine');
   assert.equal(readable('I am (not) coming'), 'I am (not) coming');
   assert.equal(readable('he said "go." then (it ended.) after'), 'he said "go." Then (it ended.) After');
   // A space before a stop stays where nothing was taken out
   assert.equal(readable('it took .5 seconds to edit the .env file'), 'it took .5 seconds to edit the .env file');
+});
+
+test('drawn-out words are said as the word, holding the sound that was stretched', () => {
+  const vowel = (word: string, seconds: number, nth = 0, which = -1) => ({ word, nth, sound: 'vowel', vowel: which, seconds });
+  const end = (word: string, seconds: number, nth = 0) => ({ word, nth, sound: 'end', vowel: -1, seconds });
+  // A vowel at the end goes to one letter and holds the last vowel sound, longer with each letter, up to 1.5 seconds. Each
+  // says which time the word is said, so the drawn-out one is held and not the one before
+  assert.deepEqual(heldWords('oh nooo, nooooo and noooooooooooooo'), { text: 'oh no, no and no', held: [vowel('no', 0.6), vowel('no', 1, 1), vowel('no', 1.5, 2)] });
+  assert.deepEqual(heldWords('No, no, NOooooo'), { text: 'No, no, NO', held: [vowel('NO', 1.2, 2)] });
+  assert.deepEqual(heldWords('NOOOO sooo byeee'), { text: 'NO so bye', held: [vowel('NO', 0.8), vowel('so', 0.6), vowel('bye', 0.6)] });
+  // Other letters at the end hold the last sound, with m's at two
+  assert.deepEqual(heldWords('yesssss hmmmm'), { text: 'yes hmm', held: [end('yes', 1), end('hmm', 0.8)] });
+  // In the middle, a vowel goes to two letters and holds that vowel; other letters aren't held, and three of them stay
+  assert.deepEqual(heldWords('goooood Schifffahrt Brrrrrown'), { text: 'good Schifffahrt Brrown', held: [vowel('good', 1, 0, 0)] });
+  assert.deepEqual(heldWords('baaaaby amaaaazing yeeeah bueeeno'), {
+    text: 'baaby amaazing yeeah bueeno',
+    held: [vowel('baaby', 0.8, 0, 0), vowel('amaazing', 0.8, 0, 1), vowel('yeeah', 0.6, 0, 0), vowel('bueeno', 0.6, 0, 0)],
+  });
+  // Left alone: plain words, Roman numerals, words of one letter and Piper's own phonemes
+  assert.deepEqual(heldWords('good cool World War III, AAA batteries, xxx'), { text: 'good cool World War III, AAA batteries, xxx', held: [] });
+  assert.deepEqual(heldWords('[[ nˈoːːː ]] nooo'), { text: '[[ nˈoːːː ]] no', held: [vowel('no', 0.6)] });
+  // At most ten a line, and none longer than the voice container looks for
+  assert.equal(heldWords('nooo '.repeat(12)).held.length, 10);
+  assert.deepEqual(heldWords(`${'ab'.repeat(25)}ooo nooo`).held, [vowel('no', 0.6)]);
+});
+
+test('a held sound is stretched at most 100 times', { skip: !hasFfmpeg }, async () => {
+  const out = path.join(dir, 'held-most.wav');
+  await holdSounds(speechFile, out, [{ start: 100, end: 110, seconds: 3 }], 44_100);
+  const wav = readFileSync(out);
+  const seconds = (wav.length - 44) / (wav.readUInt32LE(24) * wav.readUInt16LE(22) * (wav.readUInt16LE(34) / 8));
+  assert.ok(Math.abs(seconds - (0.15 + (10 / 44_100) * 99)) < 0.01, `${seconds} s`);
+});
+
+test('a drawn-out word’s sound is held where the voice container says it is', { skip: !hasFfmpeg }, async (t) => {
+  const bodies: { text: string; held?: unknown }[] = [];
+  let spans = '2000:4000';
+  t.mock.method(globalThis, 'fetch', async (_url: string, init: RequestInit) => {
+    bodies.push(JSON.parse(init.body as string));
+    return new Response(readFileSync(speechFile), { headers: { 'x-held': spans } });
+  });
+  const seconds = (wav: Buffer) => (wav.length - 44) / (wav.readUInt32LE(24) * wav.readUInt16LE(22) * (wav.readUInt16LE(34) / 8));
+  const guild = (id: string) => ({ id, members: { cache: new Map() }, roles: { cache: new Map() }, channels: { cache: new Map() } }) as never;
+  const plain = seconds(await previewSpeech(guild('held-1'), 'no', 'scottish'));
+  const held = seconds(await previewSpeech(guild('held-2'), 'nooooo', 'scottish'));
+  assert.deepEqual(bodies.map((b) => [b.text, b.held]), [['no', undefined], ['no', [{ word: 'no', nth: 0, sound: 'vowel', vowel: -1 }]]]);
+  // A second at normal speed, slower at the default 85%, in place of the 45 ms the sound took
+  const longer = held - plain;
+  assert.ok(Math.abs(longer - (1 / 0.85 - 2000 / 44100)) < 0.05, `${longer} s longer`);
+  // Said normally when it isn't found
+  spans = '-';
+  const missing = seconds(await previewSpeech(guild('held-3'), 'noooo', 'scottish'));
+  assert.ok(Math.abs(missing - plain) < 0.02, `${missing} s against ${plain} s`);
 });
 
 test('the pause between sentences goes with each line and makes it again when changed', { skip: !hasFfmpeg }, async (t) => {

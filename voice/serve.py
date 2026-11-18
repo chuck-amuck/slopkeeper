@@ -21,6 +21,11 @@ Piper can put silence between sentences only for every line at once, set when it
 22,050 Hz is 11,025 bytes, half a sample, which shifts everything after it into noise. So each line can ask for its own pause,
 `sentence_silence` in seconds (up to 2), counted in whole samples.
 
+A drawn-out word ("nooooo") comes as the plain word and `held`, a list of {word, nth, sound, vowel}: which time the word is said in
+the line (from 0), and "vowel" for its `vowel`th vowel sound (-1 for the last) or "end" for its last sound. Piper can't hold a sound, so the answer's X-Held header says where each one is in the audio, as start:end in
+samples, for the bot to stretch (see held.py). That takes each model's alignments, which Piper adds in memory with the onnx
+package as the model loads. onnxruntime then keeps a copy of the model's bytes for good (as many MB as the model), so it's let go.
+
 For the bot's health numbers, each line's answer says in a Server-Timing header how long went on loading a model, turning the words
 into sounds and saying them, and GET /stats says how much memory and CPU the container uses and how many models it holds.
 """
@@ -42,6 +47,7 @@ import onnxruntime
 from piper import PiperVoice
 
 import accent
+import held
 import models
 
 _Session = onnxruntime.InferenceSession
@@ -51,7 +57,11 @@ def _session(*args, sess_options=None, **kwargs):
     options = sess_options or onnxruntime.SessionOptions()
     options.enable_cpu_mem_arena = False
     options.enable_mem_pattern = False
-    return _Session(*args, sess_options=options, **kwargs)
+    session = _Session(*args, sess_options=options, **kwargs)
+    # Only kept to make the session again with other providers, which a CPU-only container never does
+    if isinstance(getattr(session, "_model_bytes", None), bytes):
+        session._model_bytes = None
+    return session
 
 
 # Each request's times so far, by step, while one is being answered on this thread
@@ -92,16 +102,66 @@ def _asked_silence():
     return min(max(float(asked), 0.0), MOST_SILENCE_S)
 
 
+MOST_HELD = 10
+
+
+def _whole(value, default, lowest):
+    return value if isinstance(value, int) and not isinstance(value, bool) and value >= lowest else default
+
+
+def _asked_held():
+    """The drawn-out words the line being answered asks about, each in its place in the answer, or None where it can't be used"""
+    if not flask.has_request_context():
+        return []
+    asked = (flask.request.get_json(silent=True) or {}).get("held")
+    if not isinstance(asked, list):
+        return []
+    return [
+        {"word": h["word"], "sound": h["sound"], "nth": _whole(h.get("nth"), 0, 0), "vowel": _whole(h.get("vowel"), -1, -1)}
+        if isinstance(h, dict) and isinstance(h.get("word"), str) and 0 < len(h["word"]) <= 40 and h.get("sound") in ("vowel", "end")
+        else None
+        for h in asked[:MOST_HELD]
+    ]
+
+
 def _synthesize_with_pauses(self, text, syn_config=None, include_alignments=False):
     silence = _asked_silence()
-    for i, chunk in enumerate(_synthesize(self, text, syn_config, include_alignments)):
+    asked = _asked_held()
+    # Each word's phonemes said alone, in this voice's own way (an accent's included), to find it in the sentences, and how many
+    # times it's said before the one to hold
+    waiting = {
+        i: {**h, "phonemes": [p for sentence in self.phonemize(h["word"]) for p in sentence], "skip": h["nth"]}
+        for i, h in enumerate(asked)
+        if h
+    }
+    found = {}
+    at = 0
+    for i, chunk in enumerate(_synthesize(self, text, syn_config, include_alignments or bool(asked))):
+        pause = 0
         if i > 0 and silence > 0:
             # Before each sentence after the first, so the line doesn't end on one
             quiet = np.zeros(round(chunk.sample_rate * silence), dtype=np.float32)
             chunk = dataclasses.replace(
                 chunk, audio_float_array=np.concatenate([quiet, chunk.audio_float_array]), _audio_int16_array=None, _audio_int16_bytes=None
             )
+            pause = len(quiet)
+        alignments = chunk.phoneme_alignments
+        if waiting and alignments:
+            phonemes = [a.phoneme for a in alignments]
+            starts = np.concatenate([[0], np.cumsum([a.num_samples for a in alignments])])
+            for index, entry in list(waiting.items()):
+                kept, spans = held.occurrences(phonemes, entry["phonemes"])
+                if entry["skip"] >= len(spans):
+                    entry["skip"] -= len(spans)
+                    continue
+                del waiting[index]
+                span = held.held_sound(kept, spans[entry["skip"]], entry["sound"], entry["vowel"])
+                if span:
+                    found[index] = (at + pause + int(starts[span[0]]), at + pause + int(starts[span[1]]))
+        at += len(chunk.audio_float_array)
         yield chunk
+    if asked:
+        _timing.held = [found.get(i) for i in range(len(asked))]
 
 
 def _number(name, default, kind=float):
@@ -173,7 +233,15 @@ def _load_tracked(*args, **kwargs):
         if path in _by_path:
             return _by_path[path]
         started = time.monotonic()
-        voice = _load(*args, **kwargs)
+        # Every model with its alignments, for drawn-out words, as Piper only gives them to the default one. A model that can't
+        # take them is used without, and its drawn-out words aren't held
+        try:
+            voice = _load(*args, **{**kwargs, "include_alignments": True})
+            kwargs["include_alignments"] = True
+        except Exception as err:  # noqa: BLE001
+            print(f"Loading {os.path.basename(path)} without alignments, so its drawn-out words aren't held: {err}", flush=True)
+            kwargs["include_alignments"] = False
+            voice = _load(*args, **kwargs)
         _fix_speakers(voice)
         _took("load", time.monotonic() - started)
         voice._reload = (args, kwargs)
@@ -329,6 +397,7 @@ def _run_measured(self, *args, **kwargs):
     def _start_timing():
         _timing.times = {}
         _timing.started = time.monotonic()
+        _timing.held = None
 
     @self.after_request
     def _server_timing(response):
@@ -336,6 +405,10 @@ def _run_measured(self, *args, **kwargs):
         if times is not None and flask.request.path == "/synthesize":
             times["total"] = time.monotonic() - _timing.started
             response.headers["Server-Timing"] = ", ".join(f"{step};dur={seconds * 1000:.1f}" for step, seconds in times.items())
+            # Each drawn-out word asked about, in order: where its sound is, or "-" where it couldn't be found
+            spans = getattr(_timing, "held", None)
+            if spans is not None:
+                response.headers["X-Held"] = ",".join(f"{s[0]}:{s[1]}" if s else "-" for s in spans)
         _timing.times = None
         return response
 

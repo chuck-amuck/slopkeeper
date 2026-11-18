@@ -1,2 +1,2 @@
 # What the voice image installs. requirements.txt pins it and everything it needs, with hashes: see CLAUDE.md to update it
-piper-tts[http]==1.8.0
+piper-tts[http,alignment]==1.8.0

@@ -104,13 +104,28 @@ for label, extra in (("default", {}), ("Spanish accent", {"voice": "davefx"})):
         with wave.open(io.BytesIO(audio)) as w:
             takes.append((w.getframerate(), w.readframes(w.getnframes())))
     (rate, plain), (_, paused) = takes
-    added = len(paused) - len(plain)
+    longer = len(paused) - len(plain)
     # Where the two part: what's the same at the end of both, taken back to a whole sample
     same_end = next((n for n in range(len(plain)) if plain[-1 - n] != paused[-1 - n]), len(plain))
     at = len(plain) - same_end + (len(plain) - same_end) % 2
-    print(f"{label} with a 0.25 s pause: {added // 2} samples longer, from {at / 2 / rate:.2f} s")
-    if added != 2 * round(rate * 0.25) or paused[:at] != plain[:at] or paused[at : at + added] != bytes(added) or paused[at + added :] != plain[at:]:
+    print(f"{label} with a 0.25 s pause: {longer // 2} samples longer, from {at / 2 / rate:.2f} s")
+    if longer != 2 * round(rate * 0.25) or paused[:at] != plain[:at] or paused[at : at + longer] != bytes(longer) or paused[at + longer :] != plain[at:]:
         sys.exit(f"The {label} line's pause isn't {round(rate * 0.25)} samples of silence between its sentences")
+# A drawn-out word: where its sound is, found from the model's alignments, which every model now loads with, each time it's said
+# told apart. A word that isn't there is "-"
+for label, extra in (("default", {}), ("Spanish accent", {"voice": "davefx"}), ("added voice", {"voice": added["file"]})):
+    held = [{"word": "no", "nth": 1, "sound": "vowel", "vowel": -1}, {"word": "banana", "sound": "end"}, {"word": "no", "nth": 0, "sound": "vowel"}]
+    body = json.dumps({"text": "Oh no, no, not again.", "held": held, **extra}).encode()
+    request = urllib.request.Request(url, body, {"Content-Type": "application/json"})
+    with urllib.request.urlopen(request, timeout=120) as res:
+        audio, spans = res.read(), res.headers.get("X-Held", "")
+    with wave.open(io.BytesIO(audio)) as w:
+        rate, frames = w.getframerate(), w.getnframes()
+    print(f"{label}: held at {spans} of {frames} samples")
+    second, missing, first = (spans.split(",") + ["", "", ""])[:3]
+    places = [tuple(int(n) for n in s.split(":")) if s.count(":") == 1 and s.replace(":", "").isdigit() else None for s in (first, second)]
+    if missing != "-" or None in places or not all(0 < a < b < frames and 0.02 < (b - a) / rate < 0.4 for a, b in places) or not places[0][1] <= places[1][0]:
+        sys.exit(f"The {label} line didn't say where its drawn-out words are: {spans!r}")
 # A voice no longer listed is deleted
 if ask("/models", {"version": "smoke-2", "voices": []})["voices"] or ask("/models")["version"] != "smoke-2":
     sys.exit("The added voice wasn't let go")
