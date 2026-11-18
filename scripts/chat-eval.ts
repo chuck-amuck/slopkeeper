@@ -200,7 +200,8 @@ const SCENES: Scene[] = [
   { name: 'the song someone added', inVoice: true, turns: [{ say: '@bot play the song Sam put on yesterday', uses: [['music_history', { person: 'Sam' }], 'queue_music'] }] },
   { name: 'most played song', turns: [{ say: '@bot what song gets played most here?', uses: [['music_history', { most_played: true }]] }] },
   // Steam's real notes, so the answer can only be checked for not giving up on them
-  { name: 'patch notes', turns: [{ say: '@bot what changed in the last valheim patch?', uses: ['patch_notes'], saysNot: /cut off|can(’|')?t (list|see)/i }] },
+  // A few highlights as a list is fine here
+  { name: 'patch notes', turns: [{ say: '@bot what changed in the last valheim patch?', uses: ['patch_notes'], saysNot: /cut off|can(’|')?t (list|see)/i, longest: 800 }] },
 ];
 
 // The bot's real commands, as Discord would list them
