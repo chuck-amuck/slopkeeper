@@ -129,6 +129,51 @@ export async function search(query: string): Promise<Track[]> {
   return body.tracks.items.filter(playable).map((t) => toTrack(t));
 }
 
+/** What a search for music by name found: a song or album to add by its URI, or an artist by name */
+export interface Found {
+  kind: 'song' | 'album' | 'artist';
+  name: string;
+  artist: string | null;
+  /** What to add it by: the song's or album's URI, or "artist:" and the name */
+  ref: string;
+}
+
+interface ApiNamed {
+  uri: string;
+  name: string;
+  artists?: { name: string }[];
+  album_type?: string;
+}
+
+/** The songs, albums or artists a name matches, best first, for whoever's asking to pick one */
+export async function searchFor(query: string, kind: Found['kind'], most = 5): Promise<Found[]> {
+  const q = query.trim().slice(0, 200);
+  if (!q) return [];
+  if (kind === 'song') return (await search(q)).slice(0, most).map((t) => ({ kind, name: t.title, artist: t.artist, ref: t.uri }));
+  const type = kind === 'album' ? 'album' : 'artist';
+  const body = await get<Record<string, Page<ApiNamed | null>>>(`/search?type=${type}&limit=${Math.min(most, SEARCH_LIMIT)}&market=${config.spotifyMarket}&q=${encodeURIComponent(q)}`);
+  return (body[`${type}s`]?.items ?? [])
+    .filter((x): x is ApiNamed => !!x?.name)
+    .map((x) => ({
+      kind,
+      name: x.name,
+      artist: kind === 'album' ? (x.artists?.map((a) => a.name).join(', ') ?? null) : null,
+      ref: kind === 'album' ? x.uri : `artist:${x.name}`,
+    }));
+}
+
+/**
+ * An artist's best-known songs, as many as a search gives: Spotify doesn't let apps like this one read an artist's top
+ * songs, but searching by artist lists them most-played first. Only songs that are theirs, so a namesake's aren't added
+ */
+export async function artistSongs(artist: string): Promise<Track[]> {
+  const name = artist.trim().slice(0, 100);
+  if (!name) return [];
+  const body = await get<{ tracks: Page<ApiTrack> }>(`/search?type=track&limit=${SEARCH_LIMIT}&market=${config.spotifyMarket}&q=${encodeURIComponent(`artist:"${name.replaceAll('"', '')}"`)}`);
+  const theirs = (t: ApiTrack) => t.artists.some((a) => a.name.toLowerCase() === name.toLowerCase());
+  return body.tracks.items.filter((t) => playable(t) && theirs(t)).map((t) => toTrack(t));
+}
+
 export type LinkKind = 'track' | 'album' | 'playlist';
 
 /** A Spotify song, album or playlist link or URI, or null if it isn't one */

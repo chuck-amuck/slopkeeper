@@ -651,6 +651,19 @@ db.exec(`
     at INTEGER NOT NULL,
     PRIMARY KEY (voice_key, effect)
   );
+
+  -- What answering in chat cost each day (in the server's time zone), from the tokens each answer reports
+  CREATE TABLE IF NOT EXISTS chat_usage (
+    guild_id TEXT NOT NULL,
+    day TEXT NOT NULL,
+    model TEXT NOT NULL,
+    replies INTEGER NOT NULL DEFAULT 0,
+    input_tokens INTEGER NOT NULL DEFAULT 0,
+    cache_write_tokens INTEGER NOT NULL DEFAULT 0,
+    cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+    output_tokens INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (guild_id, day, model)
+  );
 `);
 
 export function getKv(key: string): string | undefined {

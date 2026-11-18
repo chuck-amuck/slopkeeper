@@ -29,6 +29,8 @@ export const config = {
   apiPort: Number(process.env.API_PORT || 8787),
   // The voice container, for text to speech. Unset turns it off
   voiceUrl: process.env.VOICE_URL || null,
+  // An Anthropic API key, for answering people who @mention the bot (see features/chat.ts). Unset leaves it quiet
+  anthropicKey: process.env.ANTHROPIC_API_KEY || null,
   // The music container, which finds songs and downloads them with yt-dlp, and the password it shares with the bot. Unset turns music off
   musicUrl: process.env.MUSIC_URL || null,
   musicToken: process.env.MUSIC_TOKEN || null,

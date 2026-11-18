@@ -71,6 +71,11 @@ const FIELDS = {
   ttsRole: { kind: 'role', none: 'Everyone', hint: 'Who can use /say and have their messages read out, along with people with Manage Server. This page isn’t limited by it.' },
   ttsMaxChars: { kind: 'number', unit: 'characters', hint: 'Up to 6000. 1000 is about a minute and a quarter of speech, and 4000 a whole paragraph of about 5 minutes.' },
   ttsCooldownSec: { kind: 'number', unit: 'seconds', hint: 'Shortest time between one person’s lines. The page counts as one person.' },
+  chat: { kind: 'boolean', hint: 'Answers anyone who @mentions the bot or replies to it, in character, and does what they ask: music, sounds and speech, as they could themselves. Their message and the channel’s last 20 messages go to Anthropic to answer it.' },
+  chatPersonality: { kind: 'longtext', maxLength: 1000, hint: 'Who the bot is when it answers, in a few sentences. Up to 1000 characters.' },
+  chatModel: { kind: 'choice', options: [['haiku', 'Claude Haiku 5.5 (cheapest)'], ['opus', 'Claude Opus 5.5 (smartest, about 40 times the cost)']], hint: 'Which model answers.' },
+  chatSpeak: { kind: 'boolean', hint: 'Also says each answer aloud, in the default voice, when the person asking is in a voice channel.' },
+  chatDailyLimit: { kind: 'number', unit: 'answers', hint: 'The most answers a day, in the server’s time zone, so the cost can’t run away. Each person waits 10 seconds between answers too.' },
 };
 // Folded until opened, with what they're set to on the fold: long, and rarely changed once set up
 const FOLDED = new Set(['Looping sound room', 'Free games']);
@@ -252,6 +257,8 @@ export function renderSettings(main) {
         return el('input', { id: `setting-${setting.key}`, value, list: 'time-zones', autocomplete: 'off', spellcheck: false, onchange: change });
       case 'country':
         return el('input', { id: `setting-${setting.key}`, value, maxLength: 2, autocomplete: 'off', spellcheck: false, onchange: change });
+      case 'longtext':
+        return el('textarea', { id: `setting-${setting.key}`, value: value ?? '', rows: 4, maxLength: spec.maxLength, onchange: change });
       default:
         return typeof value === 'boolean'
           ? el('label', { className: 'toggle' }, el('input', { id: `setting-${setting.key}`, type: 'checkbox', checked: value, onchange: (e) => save(e.target.checked) }))
@@ -639,6 +646,7 @@ export function renderSettings(main) {
         const shown = keys.filter((key) => byKey.has(key));
         const parts = [
           title === 'Looping sound room' && data.loopBot && el('p', { className: `card-note${data.loopBot.ok ? '' : ' warning'}`, id: 'loop-bot-status' }, data.loopBot.note),
+          title === 'Chat' && data.chat && el('p', { className: `card-note${data.chat.ok ? '' : ' warning'}`, id: 'chat-status' }, data.chat.note),
           shown.map((key) => field(byKey.get(key), data)),
         ];
         let card;

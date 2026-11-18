@@ -33,6 +33,9 @@ const ANNOUNCE_PERMISSIONS = [
 const PATCH_MODES = { off: 'off', each: 'each one posted', digest: 'weekly digest' };
 const READ_WHO = { everyone: 'everyone', voice: 'only people in voice' };
 const LONGEST_GREETING = 100;
+export const LONGEST_PERSONALITY = 1000;
+/** The models chat can answer with, by setting value */
+export const CHAT_MODELS = { haiku: 'Claude Haiku 5.5', opus: 'Claude Opus 5.5' };
 
 export const LIMITS = {
   weeklyPostDay: [0, 6],
@@ -61,6 +64,7 @@ export const LIMITS = {
   loopSoundDelayMs: [0, 60_000],
   loopTextDelayMs: [0, 60_000],
   musicVolume: [0, 200],
+  chatDailyLimit: [1, 5000],
 } as const;
 
 /** Settings that take fractions, and in what steps. The rest are whole numbers */
@@ -139,6 +143,11 @@ export const LABELS: Record<SettingKey, string> = {
   musicVolume: 'Music volume',
   musicAutoplay: 'Autoplay',
   musicDjRole: 'Who can control music',
+  chat: 'Answer in chat',
+  chatPersonality: 'Personality',
+  chatModel: 'Model',
+  chatSpeak: 'Say answers aloud',
+  chatDailyLimit: 'Answers a day',
 };
 
 export function show(key: SettingKey, value: unknown): string {
@@ -235,6 +244,12 @@ export function show(key: SettingKey, value: unknown): string {
       return PATCH_MODES[value as keyof typeof PATCH_MODES] ?? String(value);
     case 'gameNightReminderMin':
       return value ? `${value} min before` : 'off';
+    case 'chatModel':
+      return CHAT_MODELS[value as keyof typeof CHAT_MODELS] ?? String(value);
+    case 'chatPersonality':
+      return `“${String(value)}”`;
+    case 'chatDailyLimit':
+      return `${value} a day`;
     default:
       // Every other on/off setting, such as Autoplay and Say who joined
       return typeof value === 'boolean' ? (value ? 'on' : 'off') : String(value);
@@ -284,6 +299,7 @@ export const GROUPS: [string, SettingKey[]][] = [
   ['Soundboard', ['soundVolume', 'evenVolume', 'joinSounds', 'joinSoundDelayMs', 'joinSoundCooldownMin', 'soundManagerRole']],
   ['Music', ['musicVolume', 'musicAutoplay', 'musicDjRole']],
   ['Looping sound room', ['loopRoom', 'loopSound', 'loopVolume', 'loopEvery', 'loopText', 'loopVoice', 'loopEffect', 'loopTextVolume', 'loopTextEvery', 'loopIntro', 'loopIntroDelayMs', 'loopSoundDelayMs', 'loopTextDelayMs']],
+  ['Chat', ['chat', 'chatPersonality', 'chatModel', 'chatSpeak', 'chatDailyLimit']],
   ['Text to speech', ['tts', 'ttsVoice', 'ttsEffect', 'ttsSpeed', 'ttsPauseMs', 'ttsVolume', 'ttsChannel', 'ttsChannelWho', 'ttsGreet', 'ttsGreeting', 'ttsNightReminders', 'ttsHopOn', 'ttsRole', 'ttsMaxChars', 'ttsCooldownSec']],
 ];
 
@@ -509,6 +525,13 @@ export function checkSetting(guild: Guild, key: SettingKey, value: unknown): Che
       return Object.hasOwn(READ_WHO, String(value)) ? { value: String(value) } : { error: 'Read everyone, or only people in voice.' };
     case 'ttsGreeting':
       return greetingProblem(String(value)) ? { error: greetingProblem(String(value))! } : { value: String(value).trim() };
+    case 'chatPersonality': {
+      const text = String(value).trim();
+      if (!/[\p{L}]/u.test(text)) return { error: 'Describe who the bot is when it answers.' };
+      return text.length > LONGEST_PERSONALITY ? { error: `Keep the personality to ${LONGEST_PERSONALITY} characters.` } : { value: text };
+    }
+    case 'chatModel':
+      return Object.hasOwn(CHAT_MODELS, String(value)) ? { value: String(value) } : { error: 'Pick Claude Haiku 5.5 or Claude Opus 5.5.' };
     case 'steamCountry': {
       const country = String(value).toLowerCase();
       return /^[a-z]{2}$/.test(country) ? { value: country } : { error: 'Use a two-letter country code, like us or gb.' };

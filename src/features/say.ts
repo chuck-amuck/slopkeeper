@@ -942,11 +942,15 @@ export function sayOut(channel: VoiceBasedChannel, line: string): Promise<string
 }
 
 /** Says an announcement to the people in a channel, unless that means leaving people in another */
+/** Whether the bot is in another voice channel, which speaking here would take it, and any music, away from */
+export function busyElsewhere(channel: VoiceBasedChannel) {
+  const botChannel = getVoiceConnection(channel.guild.id)?.joinConfig.channelId;
+  return !!botChannel && botChannel !== channel.id;
+}
+
 export async function announceAloud(channel: VoiceBasedChannel, line: string, key: 'ttsNightReminders' | 'ttsHopOn') {
   const { guild } = channel;
-  if (!setting(guild.id, key) || !humansIn(channel).length) return;
-  const botChannel = getVoiceConnection(guild.id)?.joinConfig.channelId;
-  if (botChannel && botChannel !== channel.id) return;
+  if (!setting(guild.id, key) || !humansIn(channel).length || busyElsewhere(channel)) return;
   const problem = await sayOut(channel, line);
   if (problem && problem !== STOPPED) console.error(`Couldn’t say an announcement in server ${guild.id}: ${problem}`);
 }
@@ -1013,8 +1017,7 @@ export async function readMessage(message: Message) {
   if (!message.inGuild() || message.author.bot || message.webhookId || message.system) return;
   const { guild, member, author } = message;
   if (!config.voiceUrl || !setting(guild.id, 'tts') || message.channelId !== idSetting(guild.id, 'ttsChannel')) return;
-  const role = idSetting(guild.id, 'ttsRole');
-  if (role && !member?.roles.cache.has(role) && !member?.permissions.has(PermissionFlagsBits.ManageGuild)) return;
+  if (!allowedToSpeak(guild.id, member)) return;
 
   const shown = sayable(message.content);
   const text = speechFor(guild, shown);
@@ -1060,10 +1063,20 @@ export function moveEffectVoices() {
   });
 }
 
+/**
+ * Whether someone may have the bot speak for them: with a role set, that takes the role or Manage Server. `perms` are
+ * their permissions where they asked, when known
+ */
+function allowedToSpeak(guildId: string, member: GuildMember | null | undefined, perms: Readonly<PermissionsBitField> | undefined = member?.permissions) {
+  const role = idSetting(guildId, 'ttsRole');
+  return !role || !!perms?.has(PermissionFlagsBits.ManageGuild) || !!member?.roles.cache.has(role);
+}
+
+export const maySpeak = (member: GuildMember) => allowedToSpeak(member.guild.id, member);
+
 /** With a role set, using this takes that role or Manage Server */
 function canSay(i: { guildId: string; memberPermissions: Readonly<PermissionsBitField>; member: GuildMember }) {
-  const role = idSetting(i.guildId, 'ttsRole');
-  return !role || i.memberPermissions.has(PermissionFlagsBits.ManageGuild) || i.member.roles.cache.has(role);
+  return allowedToSpeak(i.guildId, i.member, i.memberPermissions);
 }
 
 export const speak: Feature = {

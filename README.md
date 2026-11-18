@@ -8,7 +8,7 @@ Keeper of the slop. A Discord bot for friends servers that helps people get toge
 - **[Picking a game](docs/games.md):** knows everyone's Steam library and picks a multiplayer game that the people in voice all own.
 - **[Getting games](docs/deals.md):** posts when a game the group wants goes on sale, on Steam or cheaper on another official store, pinging whoever still needs it, and when a game is free to keep on Steam, Epic or GOG.
 - **[Remembering the night](docs/stats.md):** recaps each voice session, keeps a weekly leaderboard, tracks what everyone plays, per person and for the whole server, and posts a recap of each month.
-- **Messing around:** a [soundboard](docs/soundboard.md) that layers different sounds like Discord's own and restarts a spammed one without a gap, with short clips mirrored into Discord's soundboard, [text to speech](docs/speech.md) and [music](docs/music.md).
+- **Messing around:** a [soundboard](docs/soundboard.md) that layers different sounds like Discord's own and restarts a spammed one without a gap, with short clips mirrored into Discord's soundboard, [text to speech](docs/speech.md) and [music](docs/music.md), and a bot that [answers in chat](docs/chat.md) and does what you ask in plain English, like "queue the strokes".
 
 Everything happens through slash commands (type `/` in any channel, or run `/help`), a few **Apps** on messages and members (right-click, or press and hold on a phone), and automatic posts in each server's announce channel.
 
@@ -50,6 +50,7 @@ Everything happens through slash commands (type `/` in any channel, or run `/hel
 - [Soundboard](docs/soundboard.md): playing, adding and managing sounds, the looping room and Discord's soundboard
 - [Text to speech](docs/speech.md): `/say`, the voices and adding your own
 - [Music](docs/music.md): the shared queue, Autoplay and playlists
+- [Chat](docs/chat.md): @mention the bot, and it answers and does what you ask
 - [Web UI](docs/web-ui.md): every page, and signing in through Pangolin
 - [Setting up a server](docs/server-setup.md): adding the bot, `/setup`, every setting and its default, and several servers on one bot
 - [Self-hosting](docs/self-hosting.md): the application, Docker, the environment variables and the extra containers

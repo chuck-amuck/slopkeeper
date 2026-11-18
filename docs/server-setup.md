@@ -124,6 +124,11 @@ Each setting goes by the name `/setup show` and `/setup reset` use. A few are se
 | Music volume | `music` | `MUSIC_VOLUME` | 40% |
 | Autoplay | `music`, or `/music autoplay` | `MUSIC_AUTOPLAY` | off |
 | Who can control music | `music` | | everyone |
+| Answer in chat | web UI only | `CHAT` (`false` to turn off) | on, with an `ANTHROPIC_API_KEY` |
+| Personality | web UI only | `CHAT_PERSONALITY` | a robot butler with impeccable manners and no brakes |
+| Model | web UI only | `CHAT_MODEL` (`haiku` or `opus`) | `haiku` |
+| Say answers aloud | web UI only | `CHAT_SPEAK` | off |
+| Answers a day | web UI only | `CHAT_DAILY_LIMIT` | 200 |
 | Text to speech | `speech` | `TTS` (`false` to turn off) | on |
 | Default voice | web UI only | `TTS_VOICE` (a voice's id, such as `scottish`, `american-deep` or one added in the web UI) | `southern-man` |
 | Default effect | web UI only | `TTS_EFFECT` (an effect's id, such as `robot`, or `none`) | `none` |

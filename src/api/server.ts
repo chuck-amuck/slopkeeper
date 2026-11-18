@@ -2,6 +2,7 @@ import { ChannelType, type Guild, type VoiceChannel } from 'discord.js';
 import { type IncomingMessage } from 'node:http';
 import { config } from '../config.ts';
 import { linkWebUser, logActivity, recentActivity, webUser, webUserFor } from '../activity.ts';
+import { chatNote } from '../features/chat.ts';
 import { effects, voices } from '../features/say.ts';
 import { canGiveRole } from '../util.ts';
 import { checkSetting, GROUPS, LABELS, LIMITS, POSTING_CHANNELS, settingProblems, show, source, STEPS } from '../features/setup.ts';
@@ -48,6 +49,8 @@ function settingList(guild: Guild) {
     effects: effects().map(({ id, name }) => ({ id, name })),
     // Whether there's a voice container, without which there are no voices to add
     speech: Boolean(config.voiceUrl),
+    // Whether there's an API key for answering in chat, and this month's answers
+    chat: chatNote(guild.id),
   };
 }
 

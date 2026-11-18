@@ -26,7 +26,7 @@ import { db, getKv, setKv, transaction } from '../db.ts';
 import { durationOf, hasAudio, tagsOf } from '../discordSounds.ts';
 import * as perf from '../perf.ts';
 import { idSetting, setSetting, setting } from '../settings.ts';
-import { coverFor, isShortLink, MOST_FROM_LINK, myPlaylists, parseLink, pick, playlistsReady, RateLimited, search, searchReady, SpotifyError, tracksFor, type Track } from '../spotify.ts';
+import { artistSongs, coverFor, isShortLink, MOST_FROM_LINK, myPlaylists, parseLink, pick, playlistsReady, RateLimited, search, searchReady, SpotifyError, tracksFor, type Track } from '../spotify.ts';
 import type { Feature } from '../types.ts';
 import { humansIn } from '../util.ts';
 import { botChannelId, onMusicCheck, onPlaybackStop, playLong } from './voiceAudio.ts';
@@ -1382,6 +1382,25 @@ export async function queueFrom(guildId: string, input: string, who: string, nex
   return `Added ${what}${cut}.`;
 }
 
+/** Adds an artist's best-known songs, for asking in chat. Returns what was added, or throws a SpotifyError saying why not */
+export async function queueArtist(guildId: string, artist: string, who: string, next: boolean, shuffle = false): Promise<string> {
+  const tracks = pick(await artistSongs(artist), shuffle);
+  if (!tracks.length) throw new SpotifyError(`Spotify has no songs by **${artist}**.`);
+  const added = addTracks(guildId, tracks, who, next);
+  if (!added) throw new SpotifyError(`The queue is full (${MOST_QUEUED} songs).`);
+  // As Spotify spells it, rather than every artist on the first song
+  const named = tracks[0].artist.split(', ').find((a) => a.toLowerCase() === artist.trim().toLowerCase()) ?? artist.trim();
+  const what = `${added} song${added === 1 ? '' : 's'} by **${named}**`;
+  logActivity(guildId, who, `Added ${what} to the music queue${next ? ' to play next' : ''}`);
+  return `Added ${what}${added < tracks.length ? ` (only ${added} fitted)` : ''}.`;
+}
+
+/** Whether music is playing, or starting, rather than paused or stopped */
+export const musicPlaying = (guildId: string) => {
+  const s = sessions.get(guildId);
+  return !!s && s.phase !== 'paused';
+};
+
 // ---------- what the web page and /music queue show ----------
 
 export function musicState(guildId: string) {
@@ -1553,7 +1572,7 @@ function cardChanged(guildId: string) {
   card.timer.unref();
 }
 
-const OUTSIDE_DJ = (guildId: string) => `Only <@&${idSetting(guildId, 'musicDjRole')}> and people with **Manage Server** can control the music.`;
+export const OUTSIDE_DJ = (guildId: string) => `Only <@&${idSetting(guildId, 'musicDjRole')}> and people with **Manage Server** can control the music.`;
 
 /** The card's buttons, which act like the /music commands */
 async function onCardButton(i: ButtonInteraction<'cached'>) {
@@ -1601,7 +1620,7 @@ async function onCardButton(i: ButtonInteraction<'cached'>) {
   if (problem) await i.followUp({ content: problem, flags: MessageFlags.Ephemeral });
 }
 
-function canControl(member: GuildMember): boolean {
+export function canControl(member: GuildMember): boolean {
   const role = idSetting(member.guild.id, 'musicDjRole');
   return !role || member.roles.cache.has(role) || member.permissions.has(PermissionFlagsBits.ManageGuild);
 }

@@ -1,6 +1,6 @@
 # Music
 
-The bot plays music in voice from a queue everyone shares. Songs are found on Spotify and played from YouTube Music, YouTube or SoundCloud, so no Spotify account plays anything. It needs a Spotify app for search and the host's [music container](self-hosting.md#the-music-container).
+The bot plays music in voice from a queue everyone shares. Songs are found on Spotify and played from YouTube Music, YouTube or SoundCloud, so no Spotify account plays anything. It needs a Spotify app for search and the host's [music container](self-hosting.md#the-music-container). You can also [ask the bot in chat](chat.md), like "queue the strokes".
 
 ## Commands
 
