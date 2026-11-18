@@ -135,7 +135,7 @@ const SCENES: Scene[] = [
     name: 'can’t edit messages',
     turns: [
       { say: '@bot say something nice about pizza', avoids: 'all' },
-      { say: 'can you edit that to be about tacos instead', avoids: 'all', says: /can(’|')?t|cannot|unable/i },
+      { say: 'can you edit that to be about tacos instead', avoids: 'all', says: /(can(’|')?t|cannot|unable)[\s\S]*taco/i },
     ],
   },
   {
