@@ -27,7 +27,7 @@ Channels and profiles can't be added.
 
 ## Autoplay
 
-When **Autoplay** is on, three songs wait at the end of the queue, picked from YouTube Music's mix for the last song someone added, so the music carries on in that style. Songs people add always go ahead of them, and they change when a different song becomes last. They're 1 to 10 minutes long, never live versions, covers or remixes, and never a song played or offered since the music started.
+When **Autoplay** is on, three songs wait at the end of the queue, picked from YouTube Music's mix for the last song someone added, so the music carries on in that style. Songs people add always go ahead of them, and they change when a different song becomes last. They're 1 to 10 minutes long, never live versions, covers or remixes, and never a song played, queued or offered since the music started, even another upload of it. Songs are told apart by name, so another artist's song with the same name is passed over too.
 
 On the Music tab, **+** keeps one of Autoplay's songs and **✕** takes it out. Turning Autoplay off takes out the ones that haven't played. It's off until someone turns it on, and it can't follow a song from SoundCloud.
 

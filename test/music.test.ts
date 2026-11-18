@@ -44,6 +44,7 @@ import {
   startMusic,
   stopMusic,
   type PlayerStatus,
+  byName,
 } from '../src/features/music.ts';
 import { soundboard } from '../src/features/soundboard.ts';
 import { stopPlayback } from '../src/features/voiceAudio.ts';
@@ -1613,6 +1614,53 @@ test('a mix that can’t be read falls back on the latest song played, and isn�
   assert.equal(similarAsked.length, 2, 'a minute later it does');
   stopMusic(id, 'u1');
   stopMusic(other.id, 'u1');
+});
+
+test('a song’s name, for Autoplay, is the same whichever upload it is, and keeps the song when a title starts with the artist', () => {
+  const same = [
+    ['The Fruits of Conquest', 'The Strokes'],
+    ['The Fruits of Conquest (Official Video)', 'TheStrokesVEVO'],
+    ['The Strokes - The Fruits of Conquest [Official Audio]', 'The Strokes - Topic'],
+    ['The Fruits Of Conquest - The Strokes', 'TheStrokes'],
+    ['The Fruits of Conquest - 2026 Remaster', 'The Strokes'],
+    ['The Fruits of Conquest - Live at Madison Square Garden', 'The Strokes'],
+    ['The Fruits of Conquest feat. Somebody', 'The Strokes, Somebody'],
+    ['The Fruits of Conquest', 'Somebody & The Strokes'],
+  ];
+  assert.deepEqual(new Set(same.map(([title, artist]) => byName(title!, artist!))), new Set(['name:thefruitsofconquest']));
+  assert.equal(byName('Live Forever', 'Oasis'), 'name:liveforever');
+  // From a label's channel, a title of the artist, a dash and the song is kept whole, so the artist's other songs aren't one
+  assert.equal(byName('Daft Punk - Around the World', 'Warner Records'), 'name:daftpunkaroundtheworld');
+  assert.equal(byName('Daft Punk - One More Time (Official Video)', 'Daft Punk'), 'name:onemoretime');
+  assert.equal(byName('Hozier - From Eden', 'Rubyworks'), 'name:hozierfromeden');
+  assert.equal(byName('(  )', 'Band'), null);
+});
+
+test('Autoplay passes over other uploads of songs queued, played or picked already, by name', async () => {
+  const { id, guild, channel } = server();
+  setSetting(id, 'musicAutoplay', true);
+  const named = (v: string, title: string) => ({ ...mixSong(v), title });
+  // The last song someone added is a video from a label's channel, by Band, whose mix offers it back by its name alone
+  mixes.set(video(3), [
+    named('bbbbbbbbbb1', 'Song 1 (Official Video)'),
+    named('bbbbbbbbbb2', 'Song 2 - 2009 Remaster'),
+    named('bbbbbbbbbb7', 'Fresh Song'),
+    named('bbbbbbbbbb3', 'Something New'),
+    named('bbbbbbbbbb4', 'Something New [Lyrics]'),
+    named('bbbbbbbbbb5', 'Another'),
+    named('bbbbbbbbbb6', 'Third'),
+  ]);
+  addTracks(id, [song(1), song(2), { ...song(3), title: 'Band - Fresh Song (Official Video)', artist: 'Some Label' }], 'u1');
+  await startMusic(guild, channel);
+  await settle();
+  assert.deepEqual(titles(id), ['Song 1', 'Song 2', 'Band - Fresh Song (Official Video)', 'Something New', 'Another', 'Third']);
+  // Song 1 has played and left the queue, and still isn't picked
+  lastPlayed().end();
+  await settle();
+  await removeTrack(id, queueOf(id).find((r) => r.title === 'Third')!.id, 'u1');
+  await settle();
+  assert.deepEqual(titles(id), ['Song 2', 'Band - Fresh Song (Official Video)', 'Something New', 'Another', 'Like 0002 1'], 'its mix has nothing new left, so from the next');
+  stopMusic(id, 'u1');
 });
 
 test('Autoplay remembers what played through a restart', async (t) => {

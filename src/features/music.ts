@@ -77,6 +77,8 @@ const MIX_RETRY_MS = 60_000;
 const AUTOPLAY_WAIT_MS = 30_000;
 /** Songs remembered as played, so a long evening doesn't repeat them, kept across a restart */
 const PLAYED_KEPT = 500;
+/** Its video and its name for each */
+const SEEN_KEPT = 2 * PLAYED_KEPT;
 const AUTOPLAY_NOTE = 'Autoplay found nothing new like the songs played, so the music stops after this one.';
 const YOUTUBE_VIDEO = /^https:\/\/(?:(?:www|m|music)\.)?(?:youtube\.com\/watch\?(?:.*&)?v=|youtu\.be\/)(?<video>[\w-]{11})/;
 // A SoundCloud track's own page, which is what a set lists, and not a set or a profile
@@ -131,7 +133,10 @@ interface Session {
   note: string | null;
   /** The YouTube videos played since the music started, newest last, for Autoplay to go on from */
   played: { video: string; url: string; byPerson: boolean }[];
-  /** Videos Autoplay leaves out: those played, and those it added, so one taken out isn't added again */
+  /**
+   * Videos Autoplay leaves out, and songs by name (see `byName`), so another upload of one isn't picked either: those
+   * played, and those it added, so one taken out isn't added again
+   */
   seen: Set<string>;
   /** YouTube's mix for each video Autoplay went on from, or when it last couldn't be read */
   mixes: Map<string, Track[] | { failedAt: number }>;
@@ -682,6 +687,7 @@ async function playCurrent(s: Session, fromMs = 0): Promise<string | null> {
     return stop;
   }
   Object.assign(s, { stopAudio: stop, via: found.source, phase: 'playing', position: { ms: fromMs, at: Date.now(), speed: 1 } });
+  remember(s, byName(row.title, row.artist));
   const video = found.url && videoOf(found.url);
   if (video && s.played.at(-1)?.video !== video) {
     s.played.push({ video, url: `https://www.youtube.com/watch?v=${video}`, byPerson: row.added_by !== AUTOPLAY });
@@ -913,11 +919,55 @@ const lookAgainFor = new Set<string>();
 /** The last song in each server that ended while Autoplay looked, which a song being added or the music stopping lets go on */
 const stillLooking = new Map<string, () => void>();
 
-/** Notes a video as played or added, so Autoplay doesn't pick it again */
-function remember(s: Session, video: string) {
-  s.seen.delete(video);
-  s.seen.add(video);
-  if (s.seen.size > PLAYED_KEPT) s.seen.delete(s.seen.values().next().value!);
+/** Notes a video or song name as played or added, so Autoplay doesn't pick it again */
+function remember(s: Session, seen: string | null) {
+  if (!seen) return;
+  s.seen.delete(seen);
+  s.seen.add(seen);
+  if (s.seen.size > SEEN_KEPT) s.seen.delete(s.seen.values().next().value!);
+}
+
+/** What follows a dash in a song's name that says which version it is: “- 2009 Remaster”, “- Live at Leeds”, “- Radio Edit” */
+const VERSION_NOTE = /^(\d{4}\s+)?(remaster(ed)?\b|live(\s+(at|in|from|on)\b|$)|mono\b|stereo\b|demo\b|acoustic\b|instrumental\b|.*\b(version|edit|remix|remaster(ed)?)$)/i;
+/** Letters and digits alone, accents and case aside */
+const plainText = (text: string) =>
+  text
+    .normalize('NFKD')
+    .replace(/\p{M}/gu, '')
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, '');
+/** An artist or channel by name, as the music container compares them: LinkinParkVEVO and Linkin Park are one */
+const plainArtist = (name: string) => plainText(name).replace(/official|vevo|topic|music/g, '');
+
+/** A song's name without what's in brackets: (Official Video), [Lyrics], (feat. Someone) */
+const unbracketed = (title: string) => title.replace(/\s*[([][^)\]]*[)\]]/g, '').trim();
+
+/**
+ * A song as Autoplay knows it by name, since YouTube has many uploads of a song and its mix offers any of them: “The
+ * Fruits of Conquest” matched from Spotify and “The Strokes - The Fruits of Conquest (Official Video)” are one. Brackets
+ * go, and a dash's other side when one side is the artist or the other says which version it is, so remasters, live
+ * versions and features count as the song too. A title like “Artist - Song” from a label's channel is kept whole, as
+ * the artist can't be told from the song (see `namesOf`). Another artist's song of the same name counts too, which
+ * Autoplay can do without. Null when nothing's left to go by
+ */
+export function byName(title: string, artist: string): string | null {
+  let name = unbracketed(title);
+  const parts = name.split(/\s+[-–—]\s+/);
+  if (parts.length === 2) {
+    const [first, second] = parts as [string, string];
+    const artists = [artist, ...artist.split(/\s*(?:,|&|\band\b)\s*/)].map(plainArtist).filter(Boolean);
+    if (artists.includes(plainArtist(first))) name = second;
+    else if (artists.includes(plainArtist(second)) || VERSION_NOTE.test(second)) name = first;
+  }
+  const plain = plainText(name.replace(/\s(feat|ft)\.?\s.*$/i, ''));
+  return plain ? `name:${plain}` : null;
+}
+
+/** A song from YouTube's mix by each name an upload of it might have been known by: its own, and its artist and name together, as a title from a label's channel is */
+function namesOf(song: { title: string; artist: string }): string[] {
+  const title = unbracketed(song.title);
+  const together = [`${song.artist} ${title}`, `${title} ${song.artist}`].map(plainText);
+  return [byName(song.title, song.artist), ...together.map((plain) => `name:${plain}`)].filter((name): name is string => !!name);
 }
 
 /** Waits for Autoplay to add songs after the last one ended, unless someone adds one first or it takes too long */
@@ -968,7 +1018,10 @@ function topUp(s: Session): Promise<void> {
       if (s.note === AUTOPLAY_NOTE) s.note = null;
       const room = AUTOPLAY_SHOWN - autoplayWaiting(s);
       if (room <= 0) return;
-      for (const song of songs.slice(0, room)) remember(s, videoOf(song.uri)!);
+      for (const song of songs.slice(0, room)) {
+        remember(s, videoOf(song.uri)!);
+        remember(s, byName(song.title, song.artist));
+      }
       addTracks(guildId, songs.slice(0, room), AUTOPLAY);
     })
     .catch((err: unknown) => console.error(`Music: Autoplay couldn’t find songs in ${s.guild.name}:`, (err as Error).message))
@@ -992,8 +1045,8 @@ async function similarSongs(s: Session, wanted: number): Promise<Track[]> {
   const queuedVideo = await videoFor(s, s.autoplayFrom!);
   const fromQueue = queuedVideo ? { video: queuedVideo, url: `https://www.youtube.com/watch?v=${queuedVideo}` } : undefined;
   const seeds = [fromQueue, s.played.findLast((p) => p.byPerson), s.played.at(-1)].filter((p, n, all): p is { video: string; url: string } => !!p && all.findIndex((q) => q?.video === p.video) === n);
-  // A Spotify song is known by the video it was matched to, so the song Autoplay follows isn't offered back
-  const queued = new Set(queueOf(s.guild.id).map((r) => videoOf(r.uri) ?? s.matched.get(r.uri)));
+  // A Spotify song is known by the video it was matched to, so the song Autoplay follows isn't offered back, and any song by its name
+  const queued = new Set(queueOf(s.guild.id).flatMap((r) => [videoOf(r.uri) ?? s.matched.get(r.uri), byName(r.title, r.artist)]));
   if (queuedVideo) queued.add(queuedVideo);
   const picked: Track[] = [];
   let failed: Error | undefined;
@@ -1002,6 +1055,9 @@ async function similarSongs(s: Session, wanted: number): Promise<Track[]> {
     for (const song of mix) {
       const video = videoOf(song.uri)!;
       if (s.seen.has(video) || queued.has(video) || picked.some((p) => p.uri === song.uri)) continue;
+      // Another upload of a song played, queued or picked already
+      const names = namesOf(song);
+      if (names.some((name) => s.seen.has(name) || queued.has(name) || picked.some((p) => byName(p.title, p.artist) === name))) continue;
       if (song.durationMs < AUTOPLAY_SHORTEST_MS || song.durationMs > AUTOPLAY_LONGEST_MS) continue;
       picked.push(song);
       if (picked.length === wanted) return picked;
@@ -1143,7 +1199,7 @@ async function resumeOne(client: Client, saved: SavedSession) {
   // Paused at the same place, so pressing play carries on from there
   const s = newSession(guild, channel.id, first, 'paused', positionMs);
   if (Array.isArray(saved.played)) s.played = saved.played.filter((p) => typeof p?.video === 'string' && typeof p.url === 'string' && videoOf(p.url) === p.video);
-  if (Array.isArray(saved.seen)) s.seen = new Set(saved.seen.filter((v) => typeof v === 'string').slice(-PLAYED_KEPT));
+  if (Array.isArray(saved.seen)) s.seen = new Set(saved.seen.filter((v) => typeof v === 'string').slice(-SEEN_KEPT));
   if (Number.isFinite(saved.since)) s.since = saved.since!;
   const seed = saved.autoplayFrom;
   if (seed && typeof seed.key === 'string') {
