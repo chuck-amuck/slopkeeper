@@ -489,9 +489,9 @@ export async function onMessage(message: Message, client: Client<true>) {
 }
 
 /**
- * Says an answer in the asker's voice channel, as the bot's own line rather than theirs, so it isn't in Activity under
- * their name. Not where it would take the bot, and any music, from another channel, nor past the longest line. Null once
- * it's started, or why it couldn't be said
+ * Says an answer in the asker's voice channel, as the bot's own line: it's in Activity as said by the bot, not by them.
+ * Not where it would take the bot, and any music, from another channel, nor past the longest line. Null once it's
+ * started, or why it couldn't be said
  */
 async function sayAnswer(member: GuildMember, text: string): Promise<string | null> {
   const channel = member.voice.channel;
@@ -501,6 +501,7 @@ async function sayAnswer(member: GuildMember, text: string): Promise<string | nu
   if (text.length > setting(member.guild.id, 'ttsMaxChars')) return 'It’s longer than the longest line.';
   const problem = await sayOut(channel, text).catch((err: unknown) => String(err));
   if (problem) console.error(`Couldn’t say a chat answer in server ${member.guild.id}: ${problem}`);
+  else logActivity(member.guild.id, member.client.user.id, `Said “${text.length > LOGGED_CHARS ? `${text.slice(0, LOGGED_CHARS).trimEnd()}…` : text}” in <#${channel.id}>`);
   return problem;
 }
 

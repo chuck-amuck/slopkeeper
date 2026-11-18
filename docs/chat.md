@@ -19,7 +19,7 @@ The **Chat** card in the web UI's Settings has them all, and says how many answe
 - **Answer in chat:** on or off for the server.
 - **Personality:** who the bot is when it answers, in a few sentences. It starts as a robot butler with impeccable manners and no brakes.
 - **Model:** **Claude Haiku 5.5**, the default, or **Claude Opus 5.5**, which follows messy requests better and banters better, at about 40 times the cost.
-- **Answer in voice:** says each answer in the server's default voice when the person asking is in a voice channel and can use speech. **Text and voice** posts it too; **Voice only** just reacts 🔊, and remembers what it said so it can follow on. It's posted instead when it can't be said: they aren't in voice, it's over the longest line, the bot is busy in another voice channel, or it has just said something for them. Off by default.
+- **Answer in voice:** says each answer in the server's default voice when the person asking is in a voice channel and can use speech. **Text and voice** posts it too; **Voice only** just reacts 🔊, and remembers what it said so it can follow on. What it says is in Activity as said by the bot. It's posted instead when it can't be said: they aren't in voice, it's over the longest line, the bot is busy in another voice channel, or it has just said something for them. Off by default.
 - **Answers a day:** 200 by default, in the server's time zone. After that it says once that it's done for the day. Each person also waits 10 seconds between answers; asking sooner gets a ⏳.
 
 ## Privacy and cost
