@@ -143,23 +143,39 @@ const playerAchievements = cached(HOUR_MS, async (key: string) => {
 export const unlockedBy = (steamId: string, appid: number) => playerAchievements(`${steamId}:${appid}`);
 
 async function readPatchNotes(appid: number, count: number, maxLength: number) {
+  // Whole posts, shortened here: Steam's own shortening drops the breaks between paragraphs, so “event” runs into “May contain”
   const body = await steamGet<{ appnews?: { newsitems?: { gid: string; title: string; url: string; date: number; contents?: string }[] } }>('/ISteamNews/GetNewsForApp/v2/', {
     appid: String(appid),
     count: String(count),
-    maxlength: String(maxLength),
+    maxlength: '0',
     tags: 'patchnotes',
     format: 'json',
   });
-  return (body.appnews?.newsitems ?? []).map((n) => ({ gid: n.gid, title: n.title, url: n.url, date: n.date * 1000, text: plainNews(n.contents ?? '') }));
+  return (body.appnews?.newsitems ?? []).map((n) => ({ gid: n.gid, title: n.title, url: n.url, date: n.date * 1000, text: shortened(plainNews(n.contents ?? ''), maxLength) }));
 }
+
+/** Text cut at a word to at most `most` characters, with … when it was */
+const shortened = (text: string, most: number) => (text.length <= most ? text : `${text.slice(0, most - 1).replace(/\s+\S*$/, '')}…`);
 
 /** A game's latest posts its developers tagged as patch notes, newest first, each as long as a post's summary */
 export const patchNotes = cached(PATCH_NOTES_LAST_MS, (appid: number) => readPatchNotes(appid, 5, 300));
 /** The latest three at more length, for chat to sum up what changed */
 export const patchNotesAtLength = cached(PATCH_NOTES_LAST_MS, (appid: number) => readPatchNotes(appid, 3, 2000));
 
-/** Steam news is written in BBCode, with its own image placeholders */
-const plainNews = (text: string) => text.replace(/\[[^\]]*\]/g, ' ').replace(/\{STEAM_CLAN_IMAGE\}\S*/g, ' ').replace(/\s+/g, ' ').trim();
+const ENTITIES: Record<string, string> = { amp: '&', quot: '"', apos: "'", '#39': "'", lt: '<', gt: '>', nbsp: ' ' };
+
+/** Steam news, written in BBCode (or HTML, from a feed) with its own image placeholders, as plain text: a line a paragraph, • a list item */
+export const plainNews = (text: string) =>
+  text
+    .replace(/\[\*\]|<li\b[^>]*>/gi, '\n• ')
+    .replace(/\[\/?(?:p|h\d|list|olist|br|hr|quote|table|tr)\b[^\]]*\]|<\/?(?:p|h\d|ul|ol|br|hr|div|blockquote|tr)\b[^>]*>/gi, '\n')
+    .replace(/\[[^\]]*\]|<\/?[a-z][^>]*>/gi, ' ')
+    .replace(/\{STEAM_CLAN_IMAGE\}\S*/g, ' ')
+    .replace(/&(amp|quot|apos|#39|lt|gt|nbsp);/g, (_, name: string) => ENTITIES[name]!)
+    .split('\n')
+    .map((line) => line.replace(/\s+/g, ' ').trim())
+    .filter((line) => line && line !== '•')
+    .join('\n');
 
 /** Accepts a profile URL (/profiles/<id> or /id/<vanity>), a 17-digit SteamID64, or a bare vanity name */
 async function resolveSteamId(input: string): Promise<string | null> {

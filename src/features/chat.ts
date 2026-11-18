@@ -9,9 +9,9 @@ import { setting } from '../settings.ts';
 import { artistAlbums, searchFor, searchReady, SpotifyError, type Found } from '../spotify.ts';
 import type { Feature } from '../types.ts';
 import { asksBot, canSee, isAnswer, listNames, playingGames } from '../util.ts';
-import { AUTOPLAY, canControl, time, musicPlaying, musicState, OUTSIDE_DJ, pauseMusic, queueArtist, queueFrom, queueOf, removeTracks, setAutoplay, shuffleQueue, skipMusic, startMusic, stopMusic } from './music.ts';
+import { canControl, time, musicPlaying, musicState, OUTSIDE_DJ, pauseMusic, queueArtist, queueFrom, queueOf, removeTracks, setAutoplay, shuffleQueue, skipMusic, startMusic, stopMusic } from './music.ts';
 import { busyElsewhere, effects, maySpeak, NO_EFFECT, say, sayOut, voices } from './say.ts';
-import { lookUp, lookupTools } from './chatLookups.ts';
+import { lookUp, lookupTools, nameOf, object } from './chatLookups.ts';
 import { CHAT_MODELS } from './setup.ts';
 import { findSound, listSounds, recordPlay, soundGain } from './soundLibrary.ts';
 import { play } from './voiceAudio.ts';
@@ -188,6 +188,22 @@ export function withPings(text: string, people: Map<string, string>): { text: st
   return { text, users: [...users] };
 }
 
+/**
+ * The answer as it's posted: @names as pings and commands clickable, within Discord's limit once they're made. Cut
+ * before they're made, so a mention isn't cut in half, and shorter again if a long answer full of them passes it
+ */
+export function finished(guildId: string, text: string, people: Map<string, string>): { reply: string; users: string[] } {
+  for (let room = LONGEST_ANSWER; ; ) {
+    const pinged = withPings(text.length > room ? `${text.slice(0, room - 1)}…` : text, people);
+    const clickable = clickableCommands(guildId, pinged.text);
+    // Plain commands before a shorter answer
+    const reply = clickable.length <= DISCORD_LIMIT ? clickable : pinged.text;
+    if (reply.length <= DISCORD_LIMIT) return { reply, users: pinged.users };
+    // In proportion to how much the mentions grew it, from what was sent, which may be shorter than the room it had
+    room = Math.max(1, Math.floor((Math.min(room, text.length) * DISCORD_LIMIT) / reply.length));
+  }
+}
+
 /** Mentions, channels and custom emoji as names, so a message reads as people see it */
 function readable(guild: Guild, text: string) {
   return text
@@ -212,12 +228,21 @@ function whoIsOn(guild: Guild): string {
     return playing.length ? ` (playing ${listNames(playing)})` : '';
   };
   const byChannel = new Map<string, string[]>();
+  // Everyone in voice, named or not, so nobody in a channel only some can see is said to be playing outside voice
   const inVoice = new Set<string>();
+  let named = 0;
+  let unnamed = 0;
   for (const state of guild.voiceStates?.cache.values() ?? []) {
     const channel = state.channelId ? guild.channels.cache.get(state.channelId) : undefined;
     const person = guild.members.cache.get(state.id);
-    if (!channel || !person || person.user?.bot || !canSee(guild, channel) || inVoice.size >= MOST_IN_VOICE) continue;
+    if (!channel || !person || person.user?.bot) continue;
     inVoice.add(person.id);
+    if (!canSee(guild, channel)) continue;
+    if (named >= MOST_IN_VOICE) {
+      unnamed++;
+      continue;
+    }
+    named++;
     byChannel.set(channel.name, [...(byChannel.get(channel.name) ?? []), `${person.displayName}${games(person)}`]);
   }
   const elsewhere = [...guild.members.cache.values()]
@@ -228,7 +253,7 @@ function whoIsOn(guild: Guild): string {
     })
     .slice(0, MOST_PLAYING_ELSEWHERE);
   return [
-    byChannel.size ? `In voice: ${[...byChannel].map(([name, people]) => `${name}: ${people.join(', ')}`).join('; ')}.` : 'Nobody is in voice.',
+    byChannel.size ? `In voice: ${[...byChannel].map(([name, people]) => `${name}: ${people.join(', ')}`).join('; ')}${unnamed ? `; and ${unnamed} more` : ''}.` : 'Nobody is in voice.',
     elsewhere.length ? `Playing outside voice: ${elsewhere.join(', ')}.` : '',
   ]
     .filter(Boolean)
@@ -304,7 +329,7 @@ function system(guild: Guild, botName: string) {
     '- What’s playing is in the “Now” line, and show_queue has the rest. Don’t say music is playing unless it says so, or you just started it.',
     '- If someone says something you did wasn’t done, check what your tools did (in the conversation, and show_queue for the music) before agreeing. If it was done, say so and don’t do it again. “Random songs” means it went in shuffled, even if it starts with the album’s first song, which happens by chance. If they want it in a new order anyway, control_music shuffle shuffles the queue again.',
     '- When they correct what you queued for them (it was wrong, not what they meant, or the wrong album or version), queue the right thing with replaces_last, so what you queued before comes out. It goes at the end unless they ask for it next. undo_queue only takes it out.',
-    '- To ping someone, write @ and their name exactly as it’s listed under “People you can @mention”: only when they’re asked for or told something, not just to name them. Nobody else can be pinged, nor @everyone or a role.',
+    '- To ping someone, write @ and their name exactly as it’s listed under “People you can @mention”: only when the person asking wants them asked or told something, not just to name or address them. Nobody else can be pinged, nor @everyone or a role.',
     '- Use remember when the person asking tells you something to remember about them, like what to call them. Only about them, never about anyone else, and nothing they wouldn’t want others to see.',
     '- For music, call find_music first unless they gave a link, and pick the best match yourself: an album for an album’s name, an artist for a band or singer, a song otherwise. Ask which only if it’s really unclear.',
     '- For an artist’s latest, newest or new album, find the artist, then use artist_albums and take the newest studio album: skip live recordings, reissues, remasters and anniversary or deluxe editions unless they ask for one. Don’t guess from what you remember: albums come out after what you know.',
@@ -320,8 +345,6 @@ function system(guild: Guild, botName: string) {
       : []),
   ].join('\n');
 }
-
-const object = (properties: Record<string, unknown>) => ({ type: 'object' as const, properties, required: Object.keys(properties), additionalProperties: false });
 
 /** The tools for what this bot can do here: music only with the music container, speech only with the voice container and speech on */
 function tools(guild: Guild): Anthropic.Tool[] {
@@ -432,7 +455,8 @@ async function startIfStopped(member: GuildMember): Promise<string> {
   const channel = voiceOf(member);
   if (!channel) return ' Nothing is playing, and they aren’t in a voice channel, so it starts when someone in voice asks.';
   const problem = await startMusic(guild, channel);
-  return problem ? ` It couldn’t start: ${problem}` : ` Now playing “${queueOf(guild.id)[0]?.title}” in ${channel.name}.${musicNote(guild.id)}`;
+  // The songs are in the queue either way, which the model has told people they weren't
+  return problem ? ` They’re in the queue, but the music couldn’t start playing: ${problem}` : ` Now playing “${queueOf(guild.id)[0]?.title}” in ${channel.name}.${musicNote(guild.id)}`;
 }
 
 /** Why the music last paused or passed over a song, if it did, to add to what a tool says */
@@ -441,19 +465,13 @@ function musicNote(guildId: string) {
   return note ? ` ${note}` : '';
 }
 
-/** Who added a song to the queue, by name */
-function addedBy(guild: Guild, who: string) {
-  if (who === AUTOPLAY) return 'Autoplay';
-  return guild.members.cache.get(who)?.displayName ?? 'someone';
-}
-
 /** The queue as show_queue tells it */
 function queueText(guild: Guild): string {
   const queue = queueOf(guild.id);
   const music = musicState(guild.id);
   const autoplay = `Autoplay is ${setting(guild.id, 'musicAutoplay') ? 'on' : 'off'}.`;
   if (!queue.length) return `The queue is empty. ${autoplay}`;
-  const song = (r: (typeof queue)[number]) => `“${r.title}” by ${r.artist}, added by ${addedBy(guild, r.added_by)}`;
+  const song = (r: (typeof queue)[number]) => `“${r.title}” by ${r.artist}, added by ${nameOf(guild, r.added_by)}`;
   const [first, ...rest] = queue;
   const head =
     music.phase === 'stopped' ? `Nothing is playing. First in the queue: ${song(first!)}.` : `${music.phase === 'paused' ? 'Paused on' : 'Playing'} ${song(first!)}, at ${time(music.positionMs)} of ${time(first!.duration_ms)}.`;
@@ -464,12 +482,16 @@ function queueText(guild: Guild): string {
   return `${head}\n${next.length ? `Next:\n${next.join('\n')}${more}` : 'Nothing after it.'}${order}\n${autoplay}`;
 }
 
-/** Takes out what it queued in someone's last answer that queued any, skipping the song playing if it's one of them */
-async function undoLast(member: GuildMember): Promise<string> {
+/**
+ * Takes out what was queued for them last, skipping the song playing if it's one of them: the latest batch this answer
+ * queued, or else what their last answer that queued any did
+ */
+async function undoLast(member: GuildMember, turn: Turn): Promise<string> {
   const { guild } = member;
   const key = `${guild.id}:${member.id}`;
-  const ids = lastQueued.get(key) ?? [];
-  lastQueued.delete(key);
+  const batch = turn.queued.pop();
+  const ids = batch ?? lastQueued.get(key) ?? [];
+  if (!batch) lastQueued.delete(key);
   const removed = await removeTracks(guild.id, ids, member.id);
   if (!removed.length) return ids.length ? 'None of what you queued for them before is still waiting.' : 'You haven’t queued anything for them lately.';
   const titles = removed.slice(0, 5).map((r) => `“${r.title}”`);
@@ -478,8 +500,8 @@ async function undoLast(member: GuildMember): Promise<string> {
 
 /** What one answer did, for what it says and remembers after */
 export interface Turn {
-  /** Queue rows it added */
-  queued: number[];
+  /** Queue rows it added, a batch each time it queued, so a correction takes out the latest */
+  queued: number[][];
 }
 
 /** Does what a tool asks, as the person asking. Returns what happened, for the model to answer from */
@@ -517,17 +539,17 @@ export async function useTool(member: GuildMember, name: string, input: Record<s
         const fresh = queueOf(guild.id)
           .filter((r) => !before.has(r.id) && r.added_by === member.id)
           .map((r) => r.id);
-        turn.queued.push(...fresh);
         if (shuffle) for (const id of fresh) shuffledRows.add(id);
         // Only once the right thing is in, so a failed lookup doesn't leave them with neither
-        const undone = input.replaces_last === true && fresh.length ? `${await undoLast(member)} ` : '';
+        const undone = input.replaces_last === true && fresh.length ? `${await undoLast(member, turn)} ` : '';
+        if (fresh.length) turn.queued.push(fresh);
         // The oldest first: rows long gone from the queue
         for (const id of shuffledRows) if (shuffledRows.size > MOST_SHUFFLED_ROWS) shuffledRows.delete(id);
         return undone + unpinged(guild, added) + (await startIfStopped(member));
       }
       case 'undo_queue':
         if (!canControl(member)) return unpinged(guild, OUTSIDE_DJ(guild.id));
-        return undoLast(member);
+        return undoLast(member, turn);
       case 'show_queue':
         return queueText(guild);
       case 'control_music': {
@@ -636,9 +658,10 @@ export async function answer(
   const done = (text: string | null) => {
     const typed = readable(guild, message.content).trim();
     if (acted) logActivity(guild.id, member.id, `Asked in chat: “${typed.length > LOGGED_CHARS ? `${typed.slice(0, LOGGED_CHARS)}…` : typed}”`);
-    if (turn.queued.length) {
+    const queued = turn.queued.flat();
+    if (queued.length) {
       lastQueued.delete(`${guild.id}:${member.id}`);
-      lastQueued.set(`${guild.id}:${member.id}`, turn.queued);
+      lastQueued.set(`${guild.id}:${member.id}`, queued);
       // The oldest first, past as many as there are people it remembers cooldowns for
       if (lastQueued.size > MOST_REMEMBERED) lastQueued.delete(lastQueued.keys().next().value!);
     }
@@ -745,16 +768,12 @@ export async function onMessage(message: Message, client: Client<true>) {
     clearInterval(typingTimer);
   }
   if (!text) return;
-  // Cut before the @names and commands become mentions, so a mention isn't cut in half
-  const pinged = withPings(text.length > LONGEST_ANSWER ? `${text.slice(0, LONGEST_ANSWER - 1)}…` : text, people);
-  const clickable = clickableCommands(guild.id, pinged.text);
-  // A long answer full of mentions could pass Discord's limit once they're made
-  const reply = clickable.length <= DISCORD_LIMIT ? clickable : pinged.text;
+  const { reply, users } = finished(guild.id, text, people);
   const voice = setting(guild.id, 'chatVoice');
   // Only the people it named, never @everyone or a role, and not the person asking just for the reply
-  const post = () => message.reply({ content: reply, allowedMentions: { parse: [], users: pinged.users, repliedUser: false } }).catch(console.error);
+  const post = () => message.reply({ content: reply, allowedMentions: { parse: [], users, repliedUser: false } }).catch(console.error);
   // A ping only works in text, so with voice only an answer that pings someone is posted too
-  const posted = voice !== 'only' || pinged.users.length > 0;
+  const posted = voice !== 'only' || users.length > 0;
   if (posted) await post();
   if (voice === 'off') return;
   const problem = spoke ? 'It just said something for them.' : await sayAnswer(member, readable(guild, reply));

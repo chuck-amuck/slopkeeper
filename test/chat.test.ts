@@ -2,10 +2,10 @@ import './helpers.ts';
 import assert from 'node:assert/strict';
 import { beforeEach, mock, test } from 'node:test';
 import { recentActivity } from '../src/activity.ts';
-import { rememberCommands } from '../src/commandIds.ts';
+import { commandMention, rememberCommands } from '../src/commandIds.ts';
 import { config } from '../src/config.ts';
 import { db } from '../src/db.ts';
-import { answer, asksBot, chat, chatNote, chatNotes, chatUsage, COOLDOWN_MS, MODELS, noteOf, onMessage, resetChat, useTool, type Turn } from '../src/features/chat.ts';
+import { answer, asksBot, chat, chatNote, chatNotes, chatUsage, COOLDOWN_MS, finished, MODELS, noteOf, onMessage, resetChat, useTool, type Turn } from '../src/features/chat.ts';
 import { clearQueue, queueOf } from '../src/features/music.ts';
 import { checkSetting } from '../src/features/setup.ts';
 import { setting, setSetting } from '../src/settings.ts';
@@ -72,6 +72,7 @@ mock.method(globalThis, 'fetch', async (input: string | URL | Request, init: Req
       return Response.json({ tracks: { items: [song(5, 'The Strokes', 'Reptilia'), song(6, 'The Strokes', 'Last Nite')], next: null } });
     }
     if (where.startsWith(`/albums/${id22('wall')}`)) return Response.json({ name: 'The Wall', images: [], tracks: { items: [song(10, 'Pink Floyd', 'In the Flesh?'), song(11, 'Pink Floyd', 'The Thin Ice')], next: null } });
+    if (where.startsWith(`/albums/${id22('ep')}`)) return Response.json({ name: 'Wall Demos', images: [], tracks: { items: [song(12, 'Pink Floyd', 'Demo')], next: null } });
   }
   // Covers and the music container aren't needed here
   return new Response('{}', { status: 404 });
@@ -478,6 +479,61 @@ test('queueing the right thing in place of what it queued last takes that out fi
   clearQueue(guild.id, 'test');
 });
 
+test('a correction in the same answer takes out what that answer queued, not what was asked for before', async () => {
+  const guild = fakeGuild('g-replace-now');
+  const member = fakeMember(guild);
+  replies = [
+    turn('tool_use', toolUse('t1', 'queue_music', { ref: `artist:${id22('TheStrokes')}:The Strokes`, next: false, shuffle: false, replaces_last: false })),
+    turn('end_turn', text('The Strokes, my liege.')),
+  ];
+  await answer(fakeMessage(guild, member, '<@100> queue the strokes').message, member as never, BOT);
+  replies = [
+    turn('tool_use', toolUse('t2', 'queue_music', { ref: `spotify:album:${id22('wall')}`, next: false, shuffle: false, replaces_last: false })),
+    turn('tool_use', toolUse('t3', 'queue_music', { ref: `spotify:album:${id22('ep')}`, next: false, shuffle: false, replaces_last: true })),
+    turn('end_turn', text('The demos instead.')),
+  ];
+  await answer(fakeMessage(guild, member, '<@100> add the wall demos').message, member as never, BOT);
+  assert.deepEqual(
+    queueOf(guild.id).map((r) => r.title),
+    ['Reptilia', 'Last Nite', 'Someday', 'Demo'],
+  );
+  // And what the answer is remembered for is what it left in
+  assert.match(await useTool(member as never, 'undo_queue', {}), /^Took out 1 song: “Demo”\./);
+  assert.deepEqual(
+    queueOf(guild.id).map((r) => r.title),
+    ['Reptilia', 'Last Nite', 'Someday'],
+  );
+  clearQueue(guild.id, 'test');
+
+  // Two undos in one answer take out both of its batches, newest first, and leave the answer before alone
+  await useTool(member as never, 'queue_music', { ref: `artist:${id22('TheStrokes')}:The Strokes`, next: false, shuffle: false });
+  const now: Turn = { queued: [] };
+  await useTool(member as never, 'queue_music', { ref: `spotify:album:${id22('wall')}`, next: false, shuffle: false }, now);
+  await useTool(member as never, 'queue_music', { ref: `spotify:album:${id22('ep')}`, next: false, shuffle: false }, now);
+  assert.match(await useTool(member as never, 'undo_queue', {}, now), /^Took out 1 song: “Demo”/);
+  assert.match(await useTool(member as never, 'undo_queue', {}, now), /^Took out 2 songs: “In the Flesh\?”, “The Thin Ice”/);
+  assert.deepEqual(
+    queueOf(guild.id).map((r) => r.title),
+    ['Reptilia', 'Last Nite', 'Someday'],
+  );
+  clearQueue(guild.id, 'test');
+});
+
+test('an answer full of pings is cut to fit once they’re made', () => {
+  const people = new Map(['Al', 'Bo', 'Cy', 'Di', 'Ed', 'Fi'].map((name, i) => [name, `12345678901234567${i}`]));
+  const pings = ' @Al @Bo @Cy @Di @Ed @Fi';
+  const long = finished('g-pings', `${'x'.repeat(1900 - pings.length)}${pings}`, people);
+  assert.ok(long.reply.length <= 2000, String(long.reply.length));
+  // A name cut in half isn't a ping
+  assert.equal(long.users.length, 3);
+  assert.match(long.reply, /<@123456789012345672> @D…$/);
+  assert.deepEqual(finished('g-pings', 'hi @Al', people), { reply: 'hi <@123456789012345670>', users: ['123456789012345670'] });
+  // Nothing but pings: cut to what fits, not to nothing
+  const dense = finished('g-pings', '@Al '.repeat(475).trim(), people);
+  assert.ok(dense.reply.length <= 2000 && dense.reply.length > 1500, String(dense.reply.length));
+  assert.deepEqual(dense.users, ['123456789012345670']);
+});
+
 test('it remembers what people ask it to about themselves, and tells it to itself when they ask again', async () => {
   const guild = fakeGuild('g-notes');
   const member = fakeMember(guild);
@@ -512,13 +568,29 @@ test('it knows the date, who’s in voice and playing what, and the bot’s comm
   Object.assign(fakeMember(guild, '203'), { displayName: 'Alex', presence: { activities: [{ type: 0, name: 'Valheim' }] } });
   guild.channels.cache.set('v1', { id: 'v1', name: 'Hangout', permissionsFor: () => ({ has: () => true }) });
   Object.assign(guild, { voiceStates: { cache: new Map([['202', { id: '202', channelId: 'v1' }]]) } });
-  replies = [turn('end_turn', text('Try `/gamenight plan`, or /whatdoweplay, or /setup show. /gamenights is no command, nor is example.com/whatdoweplay.'))];
+  // Someone in a channel not everyone can see is neither named nor said to be outside voice
+  Object.assign(fakeMember(guild, '204'), { displayName: 'Jo', presence: { activities: [{ type: 0, name: 'Halo' }] } });
+  guild.channels.cache.set('v2', { id: 'v2', name: 'Secret', permissionsFor: () => ({ has: () => false }) });
+  Object.assign(guild, {
+    voiceStates: {
+      cache: new Map([
+        ['202', { id: '202', channelId: 'v1' }],
+        ['204', { id: '204', channelId: 'v2' }],
+      ]),
+    },
+  });
+  replies = [turn('end_turn', text('Try `/gamenight plan`, or /whatdoweplay, or /setup show, or _/whatdoweplay_ or __/whatdoweplay__. /gamenight alone runs nothing, /gamenights is no command, nor is example.com/whatdoweplay.'))];
   const asked = fakeMessage(guild, asker, '<@100> what should we play friday?');
   await onMessage(asked.message, client);
-  assert.deepEqual(asked.answers, ['Try </gamenight plan:901>, or </whatdoweplay:900>, or </setup show:902>. /gamenights is no command, nor is example.com/whatdoweplay.']);
+  assert.deepEqual(asked.answers, [
+    'Try </gamenight plan:901>, or </whatdoweplay:900>, or </setup show:902>, or _</whatdoweplay:900>_ or __</whatdoweplay:900>__. /gamenight alone runs nothing, /gamenights is no command, nor is example.com/whatdoweplay.',
+  ]);
   const context = sent.at(-1)!.messages[0]!.content as string;
   assert.match(context, /Now: \w+day, \w+ \d+, \d{4} at \d+:\d\d\s[AP]M\./);
   assert.match(context, /\nIn voice: Hangout: Sam \(playing Deep Rock Galactic\)\. Playing outside voice: Alex \(playing Valheim\)\.\n/);
   const prompt = (sent.at(-1)!.system as { text: string }[])[0]!.text;
   assert.match(prompt, /\n\/whatdoweplay: Pick a game everyone in voice can play\n\/gamenight plan: Plans a game night\n\/gamenight list: Upcoming game nights\n\/setup: Server settings \(for server admins\)\nApps on a message or a member [^\n]*: Compare with me$/);
+  // A command that's gone isn't made clickable from what was registered before
+  rememberCommands(guild.id, [{ name: 'whatdoweplay', id: '900', description: 'Pick a game', type: 1 }]);
+  assert.equal(commandMention(guild.id, 'gamenight plan'), '`/gamenight plan`');
 });

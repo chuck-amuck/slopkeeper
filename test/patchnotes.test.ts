@@ -5,6 +5,7 @@ import { config } from '../src/config.ts';
 import { db, getKv, setKv } from '../src/db.ts';
 import { achievementProgress, achievements } from '../src/features/achievements.ts';
 import { maybePostPatches, playedApps } from '../src/features/patchnotes.ts';
+import { plainNews } from '../src/features/steam.ts';
 import { due } from '../src/schedule.ts';
 import { setSetting } from '../src/settings.ts';
 import { fakeClient } from './helpers.ts';
@@ -105,7 +106,7 @@ test('a post from the next check is noticed, and Steam’s markup is cleaned up'
   await maybePostPatches(client);
   assert.equal(sent.length, 1);
   const { title, url, description } = sent[0].embeds[0].toJSON();
-  assert.deepEqual([title, url, description], ['🩹 Valheim: Patch b', 'https://steam.test/b', 'Fixes Fixed the thing']);
+  assert.deepEqual([title, url, description], ['🩹 Valheim: Patch b', 'https://steam.test/b', 'Fixes\nFixed the thing']);
 });
 
 test('a new post from weeks ago isn’t news', async (t) => {
@@ -317,4 +318,11 @@ test('/achievements covers your voice channel, or who you pick', async (t) => {
 test('/achievements refuses a bot, or a game it doesn’t know', async (t) => {
   assert.equal((await runAchievements(t, 'Valheim', { other: { id: 'b', bot: true } })).content, 'Bots don’t have achievements.');
   assert.equal((await runAchievements(t, 'Nope')).content, 'Pick a game from the list.');
+});
+
+test('Steam news reads as plain text, a line a paragraph, with list items marked and nothing glued together', () => {
+  const posted =
+    '[p][img src="{STEAM_CLAN_IMAGE}/27142043/7bcfea.jpg"][/img][/p][h3]Hello Miners,[/h3][p]\nThis small patch is to prepare for the event[/p][p][/p][p]May contain: [b]Tactical Turtle Hat[/b][/p][list][*]Fixed fps when players > 4 &amp; < 8[*][url=https://x.test]Crash[/url] fix[/list]';
+  assert.equal(plainNews(posted), 'Hello Miners,\nThis small patch is to prepare for the event\nMay contain: Tactical Turtle Hat\n• Fixed fps when players > 4 & < 8\n• Crash fix');
+  assert.equal(plainNews('<p>One<br>Two</p><ul><li>Three</li></ul> {STEAM_CLAN_IMAGE}/a.png'), 'One\nTwo\n• Three');
 });

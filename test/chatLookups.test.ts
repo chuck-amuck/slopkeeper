@@ -212,6 +212,31 @@ test('patch_notes: Steam’s latest for any game, or what the server’s patch n
   assert.equal(await ask(robin, 'patch_notes', { game: 'other game' }), 'Other Game’s latest patch notes, newest first:\n- “Update 2”, November 12, 2026 (https://steam.test/9): New maps');
 });
 
+test('a game known only from play here is found on Steam, and with Steam down a game here is still found by part of its name', async (t) => {
+  played('201', 'Lethal Company', 1, 1);
+  fakeWeb(t, {
+    'storesearch/?term=Lethal%20Company': { items: [{ id: 1966720, name: 'Lethal Company' }] },
+    GetNewsForApp: { appnews: { newsitems: [{ gid: '9', title: 'v70', url: 'https://steam.test/9', date: Date.UTC(2026, 10, 12, 18) / 1000, contents: 'Fixes' }] } },
+  });
+  assert.equal(await ask(robin, 'patch_notes', { game: 'Lethal Company' }), 'Lethal Company’s latest patch notes, newest first:\n- “v70”, November 12, 2026 (https://steam.test/9): Fixes');
+  // By part of its name: Steam is asked for the game it's known by here
+  fakeWeb(t, {
+    'storesearch/?term=lethal&': { items: [{ id: 1, name: 'Lethal Weapon' }] },
+    'storesearch/?term=Lethal%20Company': { items: [{ id: 1966720, name: 'Lethal Company' }] },
+    GetNewsForApp: { appnews: { newsitems: [{ gid: '9', title: 'v70', url: 'https://steam.test/9', date: Date.UTC(2026, 10, 12, 18) / 1000, contents: 'Fixes' }] } },
+  });
+  assert.match(await ask(robin, 'patch_notes', { game: 'lethal' }), /^Lethal Company’s latest patch notes/);
+
+  fakeWeb(t, {});
+  addGame('Deep Rock Galactic', 548430);
+  db.prepare(`INSERT INTO patch_posts (guild_id, gid, appid, game, title, url, date, text, posted) VALUES (?, '2', 548430, 'Deep Rock Galactic', 'Season 6', 'https://steam.test/2', ?, 'New biome.', 1)`).run(GUILD, Date.UTC(2026, 10, 10, 18));
+  assert.equal(await ask(robin, 'patch_notes', { game: 'deep rock' }), 'Deep Rock Galactic’s latest patch notes, newest first:\n- “Season 6”, November 10, 2026 (https://steam.test/2): New biome.');
+  // Nothing here by that name, or nothing here with a Steam app, so it's Steam being down that's said
+  assert.equal(await ask(robin, 'deals', { kind: 'price', game: 'halo', person: '' }), 'Steam couldn’t be reached just now. Try again in a bit.');
+  assert.equal(await ask(robin, 'patch_notes', { game: 'Lethal Company' }), 'Steam couldn’t be reached just now. Try again in a bit.');
+  assert.equal(await ask(robin, 'deals', { kind: 'price', game: 'lethal', person: '' }), 'Steam couldn’t be reached just now. Try again in a bit.');
+});
+
 test('achievements: how the people in voice are getting on, and what none of them has yet', async (t) => {
   const key = config.steamApiKey;
   t.after(() => void (config.steamApiKey = key));

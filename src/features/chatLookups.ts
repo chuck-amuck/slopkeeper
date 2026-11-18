@@ -12,7 +12,7 @@ import { dealBundles } from './deals.ts';
 import { reviewGiveaways } from './freegames.ts';
 import { searchSteam } from './gamefacts.ts';
 import { allGames, memberGames, ownersOfApp } from './games.ts';
-import { checkpoint, PERIODS, playedByKey, plural, sessionCount, stats } from './gamestats.ts';
+import { checkpoint, PERIODS, playsIn, plural, sessionCount, stats, totalsBy } from './gamestats.ts';
 import { AUTOPLAY } from './music.ts';
 import { dealText, lowestPrice, money, onSale, priceCheck, saleName, saleReasons, salePrices } from './sales.ts';
 import { checkpointVoice, voiceTotals } from './sessions.ts';
@@ -30,7 +30,8 @@ const MOST_CHOICES = 8;
 /** Each patch note, so three of them are about a thousand tokens */
 const LONGEST_NOTE = 1500;
 
-const object = (properties: Record<string, unknown>) => ({ type: 'object' as const, properties, required: Object.keys(properties), additionalProperties: false });
+/** A tool's input: every property required and nothing else, as strict tools need */
+export const object = (properties: Record<string, unknown>) => ({ type: 'object' as const, properties, required: Object.keys(properties), additionalProperties: false });
 const PEOPLE = {
   type: 'array',
   items: { type: 'string' },
@@ -229,16 +230,38 @@ async function gameNamed(guild: Guild, said: string, anywhere: boolean): Promise
   const key = gameKey(said);
   const games = knownGames(guild);
   const exact = games.find((g) => gameKey(g.name) === key);
-  if (exact) return exact;
-  // Steam's game of that very name comes before one here with the name in it, so “Portal” isn't taken for Portal 2
-  const onSteam = anywhere ? await searchSteam(said).catch(steamDown) : [];
+  if (exact && (exact.appid !== null || !anywhere)) return exact;
+  // Steam's game of that very name comes before one here with the name in it, so “Portal” isn't taken for Portal 2.
+  // With Steam down, a game here can still be found, and its kept patch notes read
+  let down: unknown = null;
+  const search = async (name: string) => (anywhere ? await searchSteam(name).catch((err) => ((down = err), [])) : []);
+  const onSteam = await search(said);
   const steamExact = onSteam.find((item) => gameKey(item.name) === key);
   if (steamExact) return { name: steamExact.name, appid: steamExact.id };
-  const close = games.filter((g) => gameKey(g.name).includes(key));
-  if (close.length === 1) return close[0]!;
+  const close = exact ? [exact] : games.filter((g) => gameKey(g.name).includes(key));
   if (close.length > 1) return `More than one game here matches “${said}”: ${listNames(close.slice(0, MOST_CHOICES).map((g) => g.name))}. Ask which one.`;
+  const [game] = close;
+  if (game) {
+    if (game.appid !== null || !anywhere) return game;
+    // Known here only from play, so it has no Steam app yet, which a price, patch notes or achievements need
+    const named = gameKey(game.name) === key ? onSteam : await search(game.name);
+    const found = named.find((item) => gameKey(item.name) === gameKey(game.name));
+    if (found) return { name: found.name, appid: found.id };
+    // Not “it isn't on Steam” when Steam just didn't answer
+    return down ? steamDown(down) : game;
+  }
   if (!anywhere) return `Nobody here has or has played a game called “${said}”.`;
+  if (down) steamDown(down);
   return onSteam[0] ? { name: onSteam[0].name, appid: onSteam[0].id, closest: true } : `Steam has no game called “${said}”.`;
+}
+
+/** Every name Stats has a game's plays under, which may not be how the library writes it, most played first */
+function statsNames(guild: Guild, name: string): string[] {
+  const keys = new Set([gameKey(name), gameKey(gameName(guild.id, name))]);
+  const names = db.prepare('SELECT game, COUNT(*) AS n FROM named_plays WHERE guild_id = ? AND channel_id IS NOT NULL GROUP BY game ORDER BY n DESC').all(guild.id) as { game: string }[];
+  // Once each regardless of case, as Stats matches a name that way
+  const seen = new Set<string>();
+  return names.map((r) => r.game).filter((g) => keys.has(gameKey(g)) && !seen.has(g.toLowerCase()) && seen.add(g.toLowerCase()));
 }
 
 /** Says when a game is only Steam's closest match, so the answer doesn't pass it off as the one asked for */
@@ -258,7 +281,8 @@ export function ago(at: number, now = Date.now()) {
 }
 
 const dateOf = (guild: Guild, at: number) => new Date(at).toLocaleDateString('en-US', { timeZone: setting(guild.id, 'timezone'), month: 'long', day: 'numeric', year: 'numeric' });
-const nameOf = (guild: Guild, id: string) => (id === AUTOPLAY ? 'Autoplay' : (guild.members.cache.get(id)?.displayName ?? 'someone who left'));
+/** Someone by name for the model, or Autoplay for what it added */
+export const nameOf = (guild: Guild, id: string) => (id === AUTOPLAY ? 'Autoplay' : (guild.members.cache.get(id)?.displayName ?? 'someone who left'));
 const more = (rows: unknown[], shown: number) => (rows.length > shown ? `…and ${rows.length - shown} more.` : '');
 /** A name as a sentence, without a second stop after “RV There Yet?” */
 const sentence = (text: string) => (/[.!?]$/.test(text) ? text : `${text}.`);
@@ -312,9 +336,10 @@ async function gameInfo(guild: Guild, said: string) {
   const names = (people: { name: string }[]) => listNames(people.map((p) => p.name));
   const owners = listed ? listed.owners : hit.appid === null ? [] : [...ownersOfApp(guild, hit.appid)].map((id) => ({ name: nameOf(guild, id) }));
   const sale = hit.appid === null ? undefined : salePrices(guild.id).get(hit.appid);
-  const played = playedByKey(guild.id).get(gameKey(gameName(guild.id, hit.name)));
-  const playedName = stats(guild.id, 0, 'none', 'game').find((g) => gameKey(g.key) === gameKey(hit.name))?.key;
-  const players = playedName ? stats(guild.id, 0, 'game', 'user_id', undefined, playedName).filter((p) => guild.members.cache.has(p.key)) : [];
+  // Under every name it was played as, as one game. The total and the players come from the same plays, so they agree
+  const plays = statsNames(guild, hit.name).flatMap((name) => playsIn(guild.id, 0, Date.now(), undefined, name).map((p) => ({ ...p, game: hit.name })));
+  const played = totalsBy(plays, 'game')[0];
+  const players = totalsBy(plays, 'user_id').filter((p) => guild.members.cache.has(p.key));
   const low = sale && lowestPrice(sale, sale.lowest);
   return [
     `${sentence(`${hit.name}${listed?.maxPlayers ? `, for up to ${listed.maxPlayers} players` : ''}`)} ${listed ? 'It’s in the server’s game library.' : 'It isn’t in the server’s game library.'}`,
@@ -366,8 +391,7 @@ async function playStats(asker: GuildMember, periodName: string, personSaid: str
   if (gameSaid) {
     const hit = await gameNamed(guild, gameSaid, false);
     if (typeof hit === 'string') return hit;
-    // As Stats has it written, which may not be how the library writes it
-    game = stats(guild.id, 0, 'none', 'game').find((g) => gameKey(g.key) === gameKey(hit.name))?.key ?? hit.name;
+    game = statsNames(guild, hit.name)[0] ?? hit.name;
   }
   const label = `(${period.label}, games played in voice)`;
 
@@ -519,7 +543,8 @@ async function patchNotes(guild: Guild, said: string) {
     }[])
   ).slice(0, 3);
   if (!notes.length) return fromSteam ? `Steam has no recent patch notes for ${hit.name}.` : 'Steam couldn’t be reached just now. Try again in a bit.';
-  const short = (text: string) => (text.length > LONGEST_NOTE ? `${text.slice(0, LONGEST_NOTE - 1)}…` : text);
+  // A line a paragraph, under its note
+  const short = (text: string) => (text.length > LONGEST_NOTE ? `${text.slice(0, LONGEST_NOTE - 1)}…` : text).replace(/\n/g, '\n  ');
   return (
     closestNote(hit, said) +
     [`${hit.name}’s latest patch notes, newest first:`, ...notes.map((n) => `- “${n.title}”, ${dateOf(guild, n.date)} (${n.url}): ${short(n.text)}`)].join('\n')

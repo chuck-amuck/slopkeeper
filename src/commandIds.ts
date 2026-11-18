@@ -27,6 +27,8 @@ export function rememberCommands(guildId: string, commands: Iterable<Registered>
   const lines: string[] = [];
   const names: string[] = [];
   const apps: string[] = [];
+  // A command that's gone keeps no ID
+  for (const key of ids.keys()) if (key.startsWith(`${guildId}:`)) ids.delete(key);
   for (const c of commands) {
     ids.set(`${guildId}:${c.name}`, c.id);
     if (c.type !== undefined && c.type !== ApplicationCommandType.ChatInput) {
@@ -40,7 +42,8 @@ export function rememberCommands(guildId: string, commands: Iterable<Registered>
           ? (o.options ?? []).map((s) => ({ name: `${o.name} ${s.name}`, description: s.description }))
           : [],
     );
-    names.push(c.name, ...subs.map((s) => `${c.name} ${s.name}`));
+    // A command with subcommands only runs as one of them, so only they're made clickable
+    names.push(...(subs.length ? subs.map((s) => `${c.name} ${s.name}`) : [c.name]));
     // An admin's command is one line: everyone else only needs to know it's there
     if (c.defaultMemberPermissions || !subs.length) lines.push(`/${c.name}: ${c.description}${c.defaultMemberPermissions ? ' (for server admins)' : ''}`);
     else lines.push(...subs.map((s) => `/${c.name} ${s.name}: ${s.description}`));
@@ -63,5 +66,5 @@ export function clickableCommands(guildId: string, text: string): string {
   const names = [...(lists.get(guildId)?.names ?? [])].sort((a, b) => b.length - a.length);
   if (!names.length) return text;
   const any = names.map((n) => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
-  return text.replace(new RegExp(`(^|[\\s(“"'*_])(\`?)/(${any})(?![\\w-])\\2`, 'g'), (_, before: string, _tick: string, name: string) => `${before}${commandMention(guildId, name)}`);
+  return text.replace(new RegExp(`(^|[\\s(“"'*_])(\`?)/(${any})(?![A-Za-z0-9-]|_[A-Za-z0-9])\\2`, 'g'), (_, before: string, _tick: string, name: string) => `${before}${commandMention(guildId, name)}`);
 }
