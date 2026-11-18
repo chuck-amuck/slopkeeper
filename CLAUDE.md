@@ -88,8 +88,9 @@ same static ffmpeg as the image and CI. Without ffmpeg the audio tests skip sile
   voice with both and compare them: rubberband and other filters can change between versions.
 - Music resumes at the same second after a restart if people are still in the channel and it was under 10 minutes
   ago, so redeploying during playback is fine.
-- Public playlists come from the Spotify embed page's `__NEXT_DATA__` (first 100 songs) and covers from oEmbed. If
-  playlists break, check that page's shape first.
+- Public playlists come from the Spotify embed page's `__NEXT_DATA__` (first 100 songs) and covers from oEmbed, and so
+  do song and album links when there's no Spotify app or it's waiting or failing. If links break, check that page's
+  shape first.
 
 ## Where to look
 

@@ -1,6 +1,6 @@
 # Music
 
-The bot plays music in voice from a queue everyone shares. Songs are found on Spotify or YouTube Music and played from YouTube Music, YouTube or SoundCloud, so no Spotify account plays anything. It needs the host's [music container](self-hosting.md#the-music-container). A Spotify app is optional: it adds Spotify search and Spotify links. You can also [ask the bot in chat](chat.md), like "queue the strokes".
+The bot plays music in voice from a queue everyone shares. Songs are found on Spotify or YouTube Music and played from YouTube Music, YouTube or SoundCloud, so no Spotify account plays anything. It needs the host's [music container](self-hosting.md#the-music-container). A Spotify app is optional: it adds Spotify search. Spotify links work without one. You can also [ask the bot in chat](chat.md), like "queue the strokes".
 
 ## Commands
 
@@ -19,7 +19,7 @@ The web UI's **Music** tab has all of this, plus search results to pick from, a 
 
 ## Playlists and links
 
-- **Spotify:** a link to any public playlist (yours, someone else's or Spotify's own) adds its first 100 songs. They're read from Spotify's public embed player, so covers fill in a few seconds later. Private playlists can't be read. If the host has [signed in a Spotify account](self-hosting.md#the-music-container), its own playlists are read in full and listed first.
+- **Spotify:** a song or album link adds it, read with the host's Spotify app, or from Spotify's public player when there's no app, or the app is being made to wait or failing. A link to any public playlist (yours, someone else's or Spotify's own) adds its first 100 songs. They're read from Spotify's public embed player, so covers fill in a few seconds later. Private playlists can't be read. If the host has [signed in a Spotify account](self-hosting.md#the-music-container), its own playlists are read in full and listed first.
 - **YouTube:** a playlist link adds its first 100 videos, or with `shuffle`, 100 picked from its first 500. Private, deleted, live and over-20-minute videos are left out, and the reply says how many. A link to one video in a playlist adds just that video.
 - **SoundCloud:** a playlist or album (`/sets/` link) works the same way, but slower. Tracks SoundCloud locks are left out.
 

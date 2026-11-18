@@ -203,6 +203,75 @@ test('any public playlist is read from Spotify’s embed player, with no sign-in
   await assert.rejects(tracksFor({ kind: 'playlist', id: ID }), /Try again in a minute/);
 });
 
+/** Spotify's embed page for a song or an album, as it shows them, with the cover in three sizes */
+const nextData = (entity: unknown) => `<html><body><script id="__NEXT_DATA__" type="application/json">${JSON.stringify({ props: { pageProps: { state: { data: { entity }, settings: {} } } } })}</script></body></html>`;
+const images = { image: [640, 300, 64].map((size) => ({ url: `https://image-cdn-fa.spotifycdn.com/image/ab67616d0000b273${String(size).padStart(24, 'c')}`, maxWidth: size, maxHeight: size })) };
+const COVER_300 = `https://i.scdn.co/image/ab67616d0000b273${'300'.padStart(24, 'c')}`;
+const songPage = (extra = {}) => nextData({ type: 'track', uri: `spotify:track:${ID}`, name: 'Reptilia', title: 'Reptilia', artists: [{ name: 'The Strokes', uri: 'spotify:artist:x' }, { name: 'Friend' }], duration: 219_826, isPlayable: true, visualIdentity: images, ...extra });
+const albumPage = () =>
+  nextData({
+    type: 'album',
+    name: 'Is This It',
+    subtitle: 'The Strokes',
+    visualIdentity: images,
+    trackList: [
+      { uri: `spotify:track:${'1'.repeat(22)}`, title: 'Is This It', subtitle: 'The Strokes', duration: 151_333, isPlayable: true },
+      { uri: `spotify:track:${'2'.repeat(22)}`, title: 'Gone', subtitle: 'The Strokes', duration: 1, isPlayable: false },
+      { uri: `spotify:track:${'3'.repeat(22)}`, title: 'The Modern Age', subtitle: 'The Strokes', duration: 212_000, isPlayable: true },
+    ],
+  });
+const pages = { [`/embed/track/${ID}`]: () => songPage(), [`/embed/album/${ID}`]: () => albumPage() };
+
+test('without a Spotify app, song and album links are read from Spotify’s public player, with their covers', async (t) => {
+  Object.assign(config, { spotifyClientId: '', spotifyClientSecret: '' });
+  const spotify = fakeSpotify(t, pages);
+  assert.deepEqual(await tracksFor({ kind: 'track', id: ID }), {
+    name: 'Reptilia',
+    tracks: [{ uri: `spotify:track:${ID}`, title: 'Reptilia', artist: 'The Strokes, Friend', album: '', cover: COVER_300, durationMs: 219_826 }],
+    capped: false,
+  });
+  const album = await tracksFor({ kind: 'album', id: ID });
+  assert.equal(album.name, 'Is This It');
+  assert.deepEqual(album.tracks.map((s) => [s.title, s.album, s.cover, s.durationMs]), [
+    ['Is This It', 'Is This It', COVER_300, 151_333],
+    ['The Modern Age', 'Is This It', COVER_300, 212_000],
+  ]);
+  assert.deepEqual(spotify.asked, [`https://open.spotify.com/embed/track/${ID}`, `https://open.spotify.com/embed/album/${ID}`]);
+  assert.equal(spotify.tokens(), 0);
+  // Added from a link, as anyone would paste it
+  assert.equal(await queueFrom('sp-embed', `https://open.spotify.com/album/${ID}?si=x`, 'u1', false), 'Added 2 songs from **Is This It**.');
+
+  t.mock.restoreAll();
+  fakeSpotify(t, { [`/embed/track/${ID}`]: () => songPage({ isPlayable: false }) });
+  await assert.rejects(tracksFor({ kind: 'track', id: ID }), /can’t be played here/);
+  t.mock.restoreAll();
+  fakeSpotify(t, { [`/embed/track/${ID}`]: () => MISSING_PAGE });
+  await assert.rejects(tracksFor({ kind: 'track', id: ID }), /won’t show that song/);
+});
+
+test('when the app is being made to wait or fails, a link is read from the public player, but one that’s wrong isn’t', async (t) => {
+  const warned = t.mock.method(console, 'warn', () => {});
+  let api: Response | null = new Response('{}', { status: 429, headers: { 'retry-after': '600' } });
+  const spotify = fakeSpotify(t, { ...pages, [`/v1/tracks/${ID}`]: () => api ?? apiTrack(7) });
+  assert.equal((await tracksFor({ kind: 'track', id: ID })).tracks[0].cover, COVER_300);
+  // Then the app isn't asked until the wait is over
+  await tracksFor({ kind: 'track', id: ID });
+  assert.equal(spotify.asked.filter((a) => a.startsWith('/v1/tracks')).length, 1);
+  assert.equal(spotify.asked.filter((a) => a.includes('/embed/track/')).length, 2);
+  assert.equal(warned.mock.callCount(), 1, 'said once, not for every link');
+
+  resetSpotify();
+  api = new Response('{}', { status: 502 });
+  assert.equal((await tracksFor({ kind: 'track', id: ID })).name, 'Reptilia');
+
+  // A link Spotify doesn't know is the same on the public player, so it isn't asked
+  resetSpotify();
+  t.mock.restoreAll();
+  const wrong = fakeSpotify(t, pages);
+  await assert.rejects(tracksFor({ kind: 'album', id: ID }), /couldn’t find that/);
+  assert.ok(!wrong.asked.some((a) => a.includes('/embed/')));
+});
+
 test('a link is added to the queue with what it was, and words add the top result', async (t) => {
   fakeSpotify(t, {
     [`/v1/tracks/${ID}`]: () => apiTrack(7),

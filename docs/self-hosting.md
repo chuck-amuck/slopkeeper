@@ -52,7 +52,7 @@ Set in `.env` (see `.env.example`).
 | `LOOP_PORT` | 8788 | The loop bot's port, set in its own container |
 | `MUSIC_TOKEN` | none | Same value as the music container's `MUSIC_TOKEN` |
 | `MUSIC_AUDIO_DIR` | `/music/audio` | Where the bot reads the songs the music container downloads, from its volume |
-| `SPOTIFY_CLIENT_ID`, `SPOTIFY_CLIENT_SECRET` | none | A Spotify app's, for Spotify search and links. Without one, search uses YouTube Music. See [the music container](#the-music-container) |
+| `SPOTIFY_CLIENT_ID`, `SPOTIFY_CLIENT_SECRET` | none | A Spotify app's, for Spotify search. Without one, search uses YouTube Music, and Spotify links are read from Spotify's public player. See [the music container](#the-music-container) |
 | `SPOTIFY_REFRESH_TOKEN` | none | From the Spotify account signing in once, so the bot can read its own playlists. See [the music container](#the-music-container) |
 | `SPOTIFY_MARKET` | `US` | The country whose Spotify catalogue search uses |
 | `ANTHROPIC_API_KEY` | none | An [Anthropic](https://console.anthropic.com) API key, for [answering in chat](chat.md). Unset, the bot doesn't answer |
@@ -95,11 +95,11 @@ Set `VOICE_URL=http://voice:5000` on the bot, and don't publish the port. On fir
 
 ## The music container
 
-Music needs a container built from [`music/`](../music). It finds songs and downloads their audio with [yt-dlp](https://github.com/yt-dlp/yt-dlp), and searches YouTube Music with [ytmusicapi](https://github.com/sigma67/ytmusicapi). Spotify is optional, to search and to read Spotify links: every song plays from YouTube or SoundCloud, and one neither has is skipped. Each server picks where searching looks in its settings.
+Music needs a container built from [`music/`](../music). It finds songs and downloads their audio with [yt-dlp](https://github.com/yt-dlp/yt-dlp), and searches YouTube Music with [ytmusicapi](https://github.com/sigma67/ytmusicapi). Spotify is optional, to search Spotify (its links work without it): every song plays from YouTube or SoundCloud, and one neither has is skipped. Each server picks where searching looks in its settings.
 
 **Read this first.** Downloading from YouTube and SoundCloud is against their terms of service, and playing into a Discord channel for others may be too. It's for a few friends in a private server; YouTube can slow down or block an address that downloads a lot. yt-dlp never signs in to anything.
 
-1. **Spotify app (optional):** without one, searching uses YouTube Music and Spotify links don't work. Sign in to [developer.spotify.com/dashboard](https://developer.spotify.com/dashboard), create an app with any name, the redirect URI `http://127.0.0.1:8888/callback` (only step 4 uses it) and only **Web API** ticked, then copy its Client ID and Client Secret from its settings. On its own it only reads the catalogue. Step 4 adds an account's playlists. Since February 2026 these apps need a Premium owner.
+1. **Spotify app (optional):** without one, searching uses YouTube Music, and Spotify song, album and playlist links are read from Spotify's public player. Sign in to [developer.spotify.com/dashboard](https://developer.spotify.com/dashboard), create an app with any name, the redirect URI `http://127.0.0.1:8888/callback` (only step 4 uses it) and only **Web API** ticked, then copy its Client ID and Client Secret from its settings. On its own it only reads the catalogue. Step 4 adds an account's playlists. Since February 2026 these apps need a Premium owner.
 2. **Add the container,** and don't publish its port. The bot reads the downloaded audio from the same volume:
    ```yaml
    slopkeeper:
