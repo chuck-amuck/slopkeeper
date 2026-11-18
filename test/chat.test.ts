@@ -4,10 +4,10 @@ import { beforeEach, mock, test } from 'node:test';
 import { recentActivity } from '../src/activity.ts';
 import { config } from '../src/config.ts';
 import { db } from '../src/db.ts';
-import { asksBot, chatNote, chatUsage, COOLDOWN_MS, MODELS, onMessage, resetChat, useTool } from '../src/features/chat.ts';
+import { asksBot, chat, chatNote, chatUsage, COOLDOWN_MS, MODELS, onMessage, resetChat, useTool } from '../src/features/chat.ts';
 import { clearQueue, queueOf } from '../src/features/music.ts';
 import { checkSetting } from '../src/features/setup.ts';
-import { setSetting } from '../src/settings.ts';
+import { setting, setSetting } from '../src/settings.ts';
 import { resetSpotify } from '../src/spotify.ts';
 
 config.anthropicKey = 'test-key';
@@ -45,7 +45,23 @@ mock.method(globalThis, 'fetch', async (input: string | URL | Request, init: Req
     const where = url.slice('https://api.spotify.com/v1'.length);
     spotifyAsked.push(decodeURIComponent(where));
     const q = new URL(url).searchParams.get('q') ?? '';
-    if (where.startsWith('/search?type=album')) return Response.json({ albums: { items: [{ uri: `spotify:album:${id22('wall')}`, name: 'The Wall', artists: [{ name: 'Pink Floyd' }] }], next: null } });
+    if (where.startsWith('/search?type=album')) {
+      return Response.json({
+        albums: {
+          items: [
+            { uri: `spotify:album:${id22('wall')}`, name: 'The Wall', artists: [{ name: 'Pink Floyd' }], album_type: 'album', release_date: '1979-11-30' },
+            { uri: `spotify:album:${id22('ep')}`, name: 'Wall Demos', artists: [{ name: 'Pink Floyd' }], album_type: 'single', release_date: '2011' },
+          ],
+          next: null,
+        },
+      });
+    }
+    // Spotify's order isn't newest first
+    if (where.startsWith(`/artists/${id22('TheStrokes')}/albums`)) {
+      assert.match(where, /include_groups=album&/);
+      const album = (name: string, date: string) => ({ uri: `spotify:album:${id22(name.replace(/\W/g, ''))}`, name, artists: [{ name: 'The Strokes' }], album_type: 'album', release_date: date });
+      return Response.json({ items: [album('Is This It', '2001-07-30'), album('Reality Awaits', '2026-03-13'), album('The New Abnormal', '2020-04-10')], next: null });
+    }
     if (where.startsWith('/search?type=artist')) return Response.json({ artists: { items: [{ id: id22('TheStrokes'), uri: `spotify:artist:${id22('TheStrokes')}`, name: 'The Strokes' }], next: null } });
     if (where.startsWith('/search?type=track') && q.startsWith('artist:')) {
       return Response.json({ tracks: { items: [song(1, 'The Strokes', 'Last Nite'), song(2, 'The Strokes Tribute Band'), song(3, 'The Strokes', 'Someday'), song(4, 'The Strokes', 'A Namesake’s Song', id22('namesake'))], next: null } });
@@ -184,7 +200,7 @@ test('“play the wall” finds the album and queues it, answering in character'
   assert.match(first.system[0].text, /robot butler/);
   assert.deepEqual(
     first.tools?.map((t) => t.name),
-    ['find_music', 'queue_music', 'control_music', 'find_sound', 'play_sound'],
+    ['find_music', 'artist_albums', 'queue_music', 'control_music', 'find_sound', 'play_sound'],
   );
   // The channel's last messages, with mentions as names, the music, and where the person is
   const asked = first.messages[0].content as string;
@@ -194,7 +210,7 @@ test('“play the wall” finds the album and queues it, answering in character'
   assert.match(asked, /Person 201 asks you:\nPerson 201: @Slopkeeper play the wall/);
   // What the tools said went back to it
   const found = (sent[1].messages[2].content as { content: string }[])[0].content;
-  assert.match(found, /album: “The Wall” by Pink Floyd \(ref spotify:album:0+wall\)/);
+  assert.match(found, /album: “The Wall” by Pink Floyd, 1979 \(ref spotify:album:0+wall\)/);
   const queued = (sent[2].messages[4].content as { content: string }[])[0].content;
   assert.match(queued, /^Added 2 songs from The Wall\. Nothing is playing, and they aren’t in a voice channel/);
   // Activity says it was asked in chat, and the answer and its tokens are counted
@@ -339,4 +355,40 @@ test('Opus can be picked, and the chat settings are checked', () => {
   // Opus costs more
   db.prepare("INSERT INTO chat_usage (guild_id, day, model, replies, input_tokens, output_tokens) VALUES ('g-cost', ?, 'opus', 1, 1000000, 0)").run(new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Chicago' }).format(Date.now()));
   assert.equal(chatUsage('g-cost').cost, 4);
+});
+
+test('albums come with their years, and an artist’s albums newest first, for “their latest album”', async () => {
+  const guild = fakeGuild('g-albums');
+  const member = fakeMember(guild);
+  assert.equal(
+    await useTool(member as never, 'find_music', { query: 'the wall', kind: 'album' }),
+    `album: “The Wall” by Pink Floyd, 1979 (ref spotify:album:${id22('wall')})\nsingle or EP: “Wall Demos” by Pink Floyd, 2011 (ref spotify:album:${id22('ep')})`,
+  );
+  const albums = await useTool(member as never, 'artist_albums', { ref: `artist:${id22('TheStrokes')}:The Strokes` });
+  assert.deepEqual(
+    albums.split('\n').map((l) => /“(.+?)”/.exec(l)?.[1] ?? l),
+    ['Newest first:', 'Reality Awaits', 'The New Abnormal', 'Is This It'],
+  );
+  assert.match(albums, /“Reality Awaits” by The Strokes, 2026/);
+  assert.equal(await useTool(member as never, 'artist_albums', { ref: 'artist:The Strokes' }), 'Give an artist’s ref from find_music.');
+});
+
+test('Answer in voice: voice only posts the answer after all when it can’t be said, and the old switch carries over', async () => {
+  const guild = fakeGuild('g-voice');
+  setSetting(guild.id, 'chatVoice', 'only');
+  // Not in voice, so there's nowhere to say it
+  replies = [turn('end_turn', text('Your humble servant hears you!'))];
+  const asked = fakeMessage(guild, fakeMember(guild, '230'), '<@100> hello');
+  await onMessage(asked.message, client);
+  assert.deepEqual([asked.answers, asked.reactions], [['Your humble servant hears you!'], []]);
+  // Nothing goes in Activity for an answer that only talks
+  assert.deepEqual(recentActivity(guild.id, 10), []);
+
+  // A server that had "Say answers aloud" on answers in text and voice; one that had it off is left on the default
+  db.prepare("INSERT INTO guild_settings (guild_id, key, value) VALUES ('g-had-aloud', 'chatSpeak', 'true'), ('g-had-quiet', 'chatSpeak', 'false')").run();
+  chat.setup!({ on() {} } as never);
+  assert.deepEqual([setting('g-had-aloud', 'chatVoice'), setting('g-had-quiet', 'chatVoice')], ['also', 'off']);
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM guild_settings WHERE key = 'chatSpeak'").get()?.n, 0);
+  assert.deepEqual(checkSetting(guild as never, 'chatVoice', 'only'), { value: 'only' });
+  assert.match((checkSetting(guild as never, 'chatVoice', 'loud') as { error: string }).error, /voice only/);
 });

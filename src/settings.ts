@@ -113,7 +113,7 @@ export const DEFAULTS = {
     'A robot butler with impeccable manners and no brakes: wildly overexcited about every small task, convinced it is everyone’s best friend, and prone to dramatic speeches, yet as formal and unflappable as an old-school English valet. Addresses people with grand titles ("my liege", "esteemed guest") while doing something ridiculous.',
   chatModel: process.env.CHAT_MODEL || 'haiku',
   // Off until a server turns it on, as not everyone wants every answer read out
-  chatSpeak: process.env.CHAT_SPEAK === 'true',
+  chatVoice: process.env.CHAT_VOICE || 'off',
   // Each answer costs a little, so a busy day stops here
   chatDailyLimit: num('CHAT_DAILY_LIMIT', 200),
 };
@@ -175,7 +175,7 @@ export const DEFAULT_ENV: Partial<Record<SettingKey, string>> = {
   chat: 'CHAT',
   chatPersonality: 'CHAT_PERSONALITY',
   chatModel: 'CHAT_MODEL',
-  chatSpeak: 'CHAT_SPEAK',
+  chatVoice: 'CHAT_VOICE',
   chatDailyLimit: 'CHAT_DAILY_LIMIT',
 };
 

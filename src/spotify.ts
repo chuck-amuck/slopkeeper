@@ -134,8 +134,11 @@ export interface Found {
   kind: 'song' | 'album' | 'artist';
   name: string;
   artist: string | null;
-  /** What to add it by: the song's or album's URI, or "artist:" and the name */
+  /** What to add it by: the song's or album's URI, or "artist:", the artist's id and their name */
   ref: string;
+  /** An album's year, and whether it's a single or EP rather than an album, so "their latest album" can be told */
+  year?: string;
+  single?: boolean;
 }
 
 interface ApiNamed {
@@ -144,7 +147,17 @@ interface ApiNamed {
   name: string;
   artists?: { name: string }[];
   album_type?: string;
+  release_date?: string;
 }
+
+const albumFound = (x: ApiNamed): Found => ({
+  kind: 'album',
+  name: x.name,
+  artist: x.artists?.map((a) => a.name).join(', ') ?? null,
+  ref: x.uri,
+  year: x.release_date?.slice(0, 4),
+  single: x.album_type === 'single',
+});
 
 /** The songs, albums or artists a name matches, best first, for whoever's asking to pick one */
 export async function searchFor(query: string, kind: Found['kind'], most = 5): Promise<Found[]> {
@@ -155,13 +168,20 @@ export async function searchFor(query: string, kind: Found['kind'], most = 5): P
   const body = await get<Record<string, Page<ApiNamed | null>>>(`/search?type=${type}&limit=${Math.min(most, SEARCH_LIMIT)}&market=${config.spotifyMarket}&q=${encodeURIComponent(q)}`);
   return (body[`${type}s`]?.items ?? [])
     .filter((x): x is ApiNamed => !!x?.name)
-    .map((x) => ({
-      kind,
-      name: x.name,
-      artist: kind === 'album' ? (x.artists?.map((a) => a.name).join(', ') ?? null) : null,
+    .map((x) =>
       // The artist's id too, so a namesake's songs aren't taken for theirs
-      ref: kind === 'album' ? x.uri : `artist:${x.id}:${x.name}`,
-    }));
+      kind === 'album' ? albumFound(x) : { kind, name: x.name, artist: null, ref: `artist:${x.id}:${x.name}` },
+    );
+}
+
+/** An artist's albums, newest first, singles and EPs left out, for "their latest album" */
+export async function artistAlbums(artistId: string, most = SEARCH_LIMIT): Promise<Found[]> {
+  const body = await get<Page<ApiNamed | null>>(`/artists/${encodeURIComponent(artistId)}/albums?include_groups=album&limit=${SEARCH_LIMIT}&market=${config.spotifyMarket}`);
+  return body.items
+    .filter((x): x is ApiNamed => !!x?.name)
+    .sort((a, b) => (b.release_date ?? '').localeCompare(a.release_date ?? ''))
+    .slice(0, most)
+    .map(albumFound);
 }
 
 /**

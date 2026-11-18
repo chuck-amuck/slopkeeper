@@ -4,7 +4,7 @@
 
 ## What it can do
 
-- **[Music](music.md):** finds songs, albums and artists on Spotify by name and adds them to the queue, starting the music in your voice channel if nothing is playing. An artist adds up to 10 of their best-known songs. It also takes links, and skips, pauses, resumes, shuffles and turns Autoplay on or off. "Stop the music" pauses it; it only empties the queue when you ask for that.
+- **[Music](music.md):** finds songs, albums and artists on Spotify by name and adds them to the queue, starting the music in your voice channel if nothing is playing. An artist adds up to 10 of their best-known songs, and "their new album" looks up their albums by date, so it finds one newer than the model knows of. It also takes links, and skips, pauses, resumes, shuffles and turns Autoplay on or off. "Stop the music" pauses it; it only empties the queue when you ask for that.
 - **[Sounds](soundboard.md):** plays a sound from the library in your voice channel, finding it by name.
 - **[Speech](speech.md):** says something in your voice channel, in any voice and effect.
 
@@ -19,7 +19,7 @@ The **Chat** card in the web UI's Settings has them all, and says how many answe
 - **Answer in chat:** on or off for the server.
 - **Personality:** who the bot is when it answers, in a few sentences. It starts as a robot butler with impeccable manners and no brakes.
 - **Model:** **Claude Haiku 5.5**, the default, or **Claude Opus 5.5**, which follows messy requests better and banters better, at about 40 times the cost.
-- **Say answers aloud:** also says each answer in the default voice, when the person asking is in a voice channel. It's said as their own line, so the speech settings' longest line and wait between lines apply, and it isn't said when the bot is busy in another voice channel or has just said something for them. Off by default.
+- **Answer in voice:** says each answer in the server's default voice when the person asking is in a voice channel and can use speech. **Text and voice** posts it too; **Voice only** just reacts 🔊, and remembers what it said so it can follow on. It's posted instead when it can't be said: they aren't in voice, it's over the longest line, the bot is busy in another voice channel, or it has just said something for them. Off by default.
 - **Answers a day:** 200 by default, in the server's time zone. After that it says once that it's done for the day. Each person also waits 10 seconds between answers; asking sooner gets a ⏳.
 
 ## Privacy and cost

@@ -35,6 +35,8 @@ const READ_WHO = { everyone: 'everyone', voice: 'only people in voice' };
 const LONGEST_GREETING = 100;
 export const LONGEST_PERSONALITY = 1000;
 /** The models chat can answer with, by setting value */
+/** Whether chat answers are said in voice too, or instead of posted */
+export const CHAT_VOICE = { off: 'no, text only', also: 'text and voice', only: 'voice only' };
 export const CHAT_MODELS = { haiku: 'Claude Haiku 5.5', opus: 'Claude Opus 5.5' };
 
 export const LIMITS = {
@@ -146,7 +148,7 @@ export const LABELS: Record<SettingKey, string> = {
   chat: 'Answer in chat',
   chatPersonality: 'Personality',
   chatModel: 'Model',
-  chatSpeak: 'Say answers aloud',
+  chatVoice: 'Answer in voice',
   chatDailyLimit: 'Answers a day',
 };
 
@@ -246,6 +248,8 @@ export function show(key: SettingKey, value: unknown): string {
       return value ? `${value} min before` : 'off';
     case 'chatModel':
       return CHAT_MODELS[value as keyof typeof CHAT_MODELS] ?? String(value);
+    case 'chatVoice':
+      return CHAT_VOICE[value as keyof typeof CHAT_VOICE] ?? String(value);
     case 'chatPersonality':
       return `“${String(value)}”`;
     case 'chatDailyLimit':
@@ -299,7 +303,7 @@ export const GROUPS: [string, SettingKey[]][] = [
   ['Soundboard', ['soundVolume', 'evenVolume', 'joinSounds', 'joinSoundDelayMs', 'joinSoundCooldownMin', 'soundManagerRole']],
   ['Music', ['musicVolume', 'musicAutoplay', 'musicDjRole']],
   ['Looping sound room', ['loopRoom', 'loopSound', 'loopVolume', 'loopEvery', 'loopText', 'loopVoice', 'loopEffect', 'loopTextVolume', 'loopTextEvery', 'loopIntro', 'loopIntroDelayMs', 'loopSoundDelayMs', 'loopTextDelayMs']],
-  ['Chat', ['chat', 'chatPersonality', 'chatModel', 'chatSpeak', 'chatDailyLimit']],
+  ['Chat', ['chat', 'chatPersonality', 'chatModel', 'chatVoice', 'chatDailyLimit']],
   ['Text to speech', ['tts', 'ttsVoice', 'ttsEffect', 'ttsSpeed', 'ttsPauseMs', 'ttsVolume', 'ttsChannel', 'ttsChannelWho', 'ttsGreet', 'ttsGreeting', 'ttsNightReminders', 'ttsHopOn', 'ttsRole', 'ttsMaxChars', 'ttsCooldownSec']],
 ];
 
@@ -532,6 +536,8 @@ export function checkSetting(guild: Guild, key: SettingKey, value: unknown): Che
     }
     case 'chatModel':
       return Object.hasOwn(CHAT_MODELS, String(value)) ? { value: String(value) } : { error: 'Pick Claude Haiku 5.5 or Claude Opus 5.5.' };
+    case 'chatVoice':
+      return Object.hasOwn(CHAT_VOICE, String(value)) ? { value: String(value) } : { error: 'Pick text only, text and voice, or voice only.' };
     case 'steamCountry': {
       const country = String(value).toLowerCase();
       return /^[a-z]{2}$/.test(country) ? { value: country } : { error: 'Use a two-letter country code, like us or gb.' };
