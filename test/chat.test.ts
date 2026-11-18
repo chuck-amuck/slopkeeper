@@ -734,10 +734,29 @@ test('with everything set up, it offers no more strict tools than the API takes'
 test('past the API’s limit of strict tools, the last ones aren’t strict, and those with no input or one plain text never are', () => {
   const tool = (name: string, properties: Record<string, unknown>) => ({ name, strict: true, input_schema: { type: 'object' as const, properties } });
   const many = Array.from({ length: 25 }, (_, n) => tool(`t${n}`, { a: { type: 'string' }, b: { type: 'string' } }));
-  const list = strictAtMost([tool('none', {}), tool('text', { a: { type: 'string' } }), tool('choice', { a: { type: 'string', enum: ['x'] } }), ...many]);
+  const list = strictAtMost([tool('none', {}), tool('text', { a: { type: 'string' } }), tool('choice', { a: { type: 'string', enum: ['x'] } }), ...many, tool('set_reminder', { a: { type: 'string' }, b: { type: 'string' } })]);
   const strict = list.filter((t) => 'strict' in t && t.strict).map((t) => ('name' in t ? t.name : ''));
-  assert.deepEqual(strict, ['choice', ...many.slice(0, 19).map((t) => t.name)]);
-  assert.equal(list.length, 28);
+  // One that does something comes first, even last in the list
+  assert.deepEqual(strict, ['choice', ...many.slice(0, MOST_STRICT_TOOLS - 2).map((t) => t.name), 'set_reminder']);
+  assert.equal(list.length, 29);
+});
+
+test('when the API refuses the tools as too much to check strictly, fewer are strict, and the answer still comes', async () => {
+  const guild = fakeGuild('g-grammar');
+  const grammar = { refused: 'The compiled grammar is too large, which would cause performance issues. Simplify your tool schemas or reduce the number of strict tools.' };
+  const warned = mock.method(console, 'warn', () => {});
+  replies = [grammar, turn('end_turn', text('Present, my liege.')), turn('end_turn', text('Still here.'))];
+  const first = fakeMessage(guild, fakeMember(guild), '<@100> hello');
+  await onMessage(first.message, client);
+  assert.deepEqual(first.answers, ['Present, my liege.']);
+  const strictIn = (n: number) => (sent[n]!.tools as unknown as { strict?: boolean }[]).filter((tool) => tool.strict).length;
+  assert.ok(strictIn(0) > 0 && strictIn(1) <= Math.floor(MOST_STRICT_TOOLS / 2), `${strictIn(0)} then ${strictIn(1)}`);
+  assert.equal(warned.mock.callCount(), 1);
+  // And so are the next answers'
+  const second = fakeMessage(guild, fakeMember(guild, '218'), '<@100> you there?');
+  await onMessage(second.message, client);
+  assert.equal(strictIn(2), strictIn(1));
+  warned.mock.restore();
 });
 
 test('a long search that pauses is sent back as it is to carry on, and with web search off it isn’t offered', async (t) => {

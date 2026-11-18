@@ -121,6 +121,7 @@ export function resetChat() {
   shuffledRows.clear();
   api = null;
   searchOff = false;
+  strictBudget = MOST_STRICT_TOOLS;
 }
 
 /** The server's model, or Haiku for one that's gone */
@@ -672,8 +673,12 @@ function system(guild: Guild, botName: string) {
 
 const isSearch = (t: Anthropic.ToolUnion) => 'name' in t && t.name === 'web_search';
 
-/** The API checks at most this many tools' input strictly, and refuses the request if more ask */
-export const MOST_STRICT_TOOLS = 20;
+/**
+ * The API compiles the strict tools' inputs into one grammar, and refuses the whole request when it's too big: with this
+ * bot's tools, past 17 of them. So at most this many, with room to spare, and fewer again if the API still refuses
+ */
+export const MOST_STRICT_TOOLS = 14;
+let strictBudget = MOST_STRICT_TOOLS;
 const isStrict = (tool: Anthropic.ToolUnion): tool is Anthropic.Tool => 'input_schema' in tool && !!tool.strict;
 function loose(tool: Anthropic.Tool): Anthropic.Tool {
   const { strict: _, ...rest } = tool;
@@ -681,17 +686,21 @@ function loose(tool: Anthropic.Tool): Anthropic.Tool {
 }
 
 /**
- * Strict only where it helps: a tool with no input, or one plain text, gains nothing from it. Past the API's limit, the
- * last ones aren't strict either, rather than every answer failing
+ * Strict only where it helps: a tool with no input, or one plain text, gains nothing from it. Those that do something
+ * come first, as their ids, choices and times matter most, then the lookups in order. Past `most`, the rest aren't
+ * strict, rather than every answer failing
  */
-export function strictAtMost(list: Anthropic.ToolUnion[]): Anthropic.ToolUnion[] {
-  let strict = 0;
-  return list.map((tool) => {
-    if (!isStrict(tool)) return tool;
+export function strictAtMost(list: Anthropic.ToolUnion[], most = strictBudget): Anthropic.ToolUnion[] {
+  const helps = (tool: Anthropic.Tool) => {
     const fields = Object.values((tool.input_schema.properties ?? {}) as Record<string, { type?: unknown; enum?: unknown }>);
-    const helps = fields.length > 1 || (fields.length === 1 && (fields[0]!.type !== 'string' || !!fields[0]!.enum));
-    return helps && ++strict <= MOST_STRICT_TOOLS ? tool : loose(tool);
-  });
+    return fields.length > 1 || (fields.length === 1 && (fields[0]!.type !== 'string' || !!fields[0]!.enum));
+  };
+  const acts = (tool: Anthropic.Tool) => ACTING.has(tool.name) || ACTIONS.has(tool.name);
+  const chosen = new Set<string>();
+  for (const first of [true, false]) {
+    for (const tool of list) if (chosen.size < most && isStrict(tool) && helps(tool) && acts(tool) === first) chosen.add(tool.name);
+  }
+  return list.map((tool) => (isStrict(tool) && !chosen.has(tool.name) ? loose(tool) : tool));
 }
 
 /** The tools for what this bot can do here: music only with the music container, speech only with the voice container and speech on */
@@ -1068,6 +1077,13 @@ export async function answer(
         searchOff = true;
         offered = tools(guild);
         instructions = system(guild, botName);
+        return send();
+      }
+      // The API can refuse the tools as too much to check strictly, and does for all of them, so fewer are strict from now on
+      if (round === 0 && strictBudget > 0 && err instanceof Anthropic.APIError && err.status === 400 && /grammar/i.test(err.message)) {
+        strictBudget = Math.floor(strictBudget / 2);
+        console.warn(`Chat makes at most ${strictBudget} tools strict from now on, as the API refused more: ${err.message}`);
+        offered = tools(guild);
         return send();
       }
       // Once something's been done, it's said so, so they don't ask again and have it done twice
