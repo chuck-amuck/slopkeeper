@@ -53,6 +53,8 @@ In the web UI's **Manage**, paste a link to a YouTube video or Short, a TikTok, 
 
 The sound's **Trim** later has **Pick again from the link**, to choose a different part of the same video. Instagram turns down many Reels without signing in, and TikTok sometimes refuses a video; the editor says so. This needs the host's [music container](self-hosting.md#the-music-container).
 
+With [chat](chat.md) on, you can also ask the bot: "@Slopkeeper make a sound called bonk from <link>, 0:05 to 0:12". It downloads the link and adds that part, and posts when it's done. It's for the same people who can change sounds here.
+
 ## Who can change sounds
 
 Everyone can, until a role is set with `/setup sound-managers`. Then only that role and people with **Manage Server** can add, change, remove or restore sounds, or change Discord's soundboard. Everyone else can still play and test sounds, stop them, post a panel and pick their own join sound.
