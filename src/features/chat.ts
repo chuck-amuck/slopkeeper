@@ -731,7 +731,7 @@ const WARM_UP_AFTER_MS = 5_000;
 /**
  * The API takes about 20 s to get ready for strict tools it hasn't seen, so the first answer after a deploy that changed
  * them would keep someone waiting. So each set of tools the servers use is sent once at the start, in a request for one
- * token, which costs well under a cent. A refusal of the tools lowers how many are strict, before anyone asks. Never throws
+ * token: about 9,000 tokens in, a tenth of a cent with Haiku. A refusal of the tools lowers how many are strict, before anyone asks. Never throws
  */
 export async function warmUp(guilds: Iterable<Guild>): Promise<void> {
   const client = claude();
