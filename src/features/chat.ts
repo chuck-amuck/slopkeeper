@@ -149,9 +149,10 @@ function record(guildId: string, model: string, usage: Used, replies = 0) {
   );
 }
 
-/** A line above an automatic post is this long at most, and waited for this long */
+/** A line above an automatic post is this long at most, and waited for this long, or less for a post people wait on */
 const LONGEST_POST_LINE = 200;
 const POST_LINE_TIMEOUT_MS = 5_000;
+const URGENT_POST_LINE_TIMEOUT_MS = 2_500;
 
 /** What a post says, from its text and embeds, for the line above it to be about */
 function postText(guild: Guild, message: MessageCreateOptions): string {
@@ -182,7 +183,7 @@ function cleanLine(text: string): string {
  * those on. Null when it's off, or when anything goes wrong, so the post goes out as it is. It counts toward the month's
  * cost, but not the day's answers
  */
-export async function postLine(guild: Guild, kind: string, message: MessageCreateOptions): Promise<string | null> {
+export async function postLine(guild: Guild, kind: string, message: MessageCreateOptions, urgent = false): Promise<string | null> {
   if (!setting(guild.id, 'chatPostLines') || !setting(guild.id, 'chat')) return null;
   const client = claude();
   const about = postText(guild, message);
@@ -202,7 +203,7 @@ export async function postLine(guild: Guild, kind: string, message: MessageCreat
         messages: [{ role: 'user', content: `The ${kind.toLowerCase()}:\n${about}` }],
         output_config: { effort: 'low' },
       },
-      { timeout: POST_LINE_TIMEOUT_MS, maxRetries: 0 },
+      { timeout: urgent ? URGENT_POST_LINE_TIMEOUT_MS : POST_LINE_TIMEOUT_MS, maxRetries: 0 },
     );
     record(guild.id, key, res.usage);
     if (res.stop_reason !== 'end_turn') return null;
@@ -432,6 +433,7 @@ function line(guild: Guild, m: Message, botId: string) {
  */
 export async function catchUp(member: GuildMember, channel: GuildTextBasedChannel, before: string, hours: number, now = Date.now()): Promise<string> {
   const { guild } = member;
+  if (channel.permissionsFor(member)?.has(PermissionFlagsBits.ReadMessageHistory) === false) return `${member.displayName} can’t read this channel’s history, so don’t sum it up for them.`;
   const botId = member.client.user.id;
   const sinceThem = !(hours > 0);
   const floor = now - (sinceThem ? CATCH_UP_DAYS * 24 : Math.min(hours, CATCH_UP_DAYS * 24)) * 3_600_000;

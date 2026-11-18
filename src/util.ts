@@ -12,6 +12,22 @@ export function canSee(guild: Guild, channel: GuildBasedChannel): boolean {
   return !me || channel.permissionsFor(me)?.has(PermissionFlagsBits.ViewChannel) !== false;
 }
 
+/** Whether a member can see a channel. One that isn't cached, as it's gone, hides nothing */
+export function memberSees(member: GuildMember, channelId: string): boolean {
+  const channel = member.guild.channels.cache.get(channelId);
+  return !channel || channel.permissionsFor(member)?.has(PermissionFlagsBits.ViewChannel) !== false;
+}
+
+/**
+ * Whether what was posted or set in one channel can be repeated in another, `where`, that others may be reading: it's
+ * the same channel, or everyone in the server can see it
+ */
+export function sayableIn(guild: Guild, channelId: string, where: { id: string } | null): boolean {
+  if (channelId === where?.id) return true;
+  const channel = guild.channels.cache.get(channelId);
+  return !channel || channel.permissionsFor(guild.roles.everyone)?.has(PermissionFlagsBits.ViewChannel) !== false;
+}
+
 export function humansIn(channel: VoiceBasedChannel): GuildMember[] {
   return [...channel.members.values()].filter((m) => !m.user.bot);
 }

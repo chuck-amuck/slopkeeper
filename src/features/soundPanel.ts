@@ -172,14 +172,17 @@ function actionButton(action: string, page: number, name: string, label: string,
 
 /** With a sound managers role set, changing sounds takes that role or Manage Server. Anyone can still play them */
 export function canChangeSounds(i: BaseInteraction<'cached'>) {
-  const role = idSetting(i.guildId, 'soundManagerRole');
-  return !role || i.memberPermissions.has(PermissionFlagsBits.ManageGuild) || i.member.roles.cache.has(role);
+  return soundManager(i.guildId, i.memberPermissions, (role) => i.member.roles.cache.has(role));
 }
 
 /** The same, for someone asking in chat */
 export function mayChangeSounds(member: GuildMember) {
-  const role = idSetting(member.guild.id, 'soundManagerRole');
-  return !role || member.permissions.has(PermissionFlagsBits.ManageGuild) || member.roles.cache.has(role);
+  return soundManager(member.guild.id, member.permissions, (role) => member.roles.cache.has(role));
+}
+
+function soundManager(guildId: string, permissions: { has(flag: bigint): boolean }, hasRole: (role: string) => boolean) {
+  const role = idSetting(guildId, 'soundManagerRole');
+  return !role || permissions.has(PermissionFlagsBits.ManageGuild) || hasRole(role);
 }
 
 export const managersOnly = (guildId: string) => `Only <@&${idSetting(guildId, 'soundManagerRole')}> and people with **Manage Server** can change sounds.`;

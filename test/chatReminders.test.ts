@@ -16,14 +16,16 @@ const posted: { channelId: string; content: string; allowedMentions: unknown }[]
 const blind = new Set<string>();
 let failing: unknown = null;
 const members = new Map<string, unknown>();
-const guild = { id: GUILD, name: 'Test Server', members: { cache: members }, channels: { cache: new Map<string, unknown>() }, roles: { cache: new Map() } };
+const guild = { id: GUILD, name: 'Test Server', members: { cache: members }, channels: { cache: new Map<string, unknown>() }, roles: { cache: new Map(), everyone: { id: GUILD } } };
+/** Channels everyone in the server can't see */
+const closed = new Set<string>();
 const textChannel = (id: string) => ({
   id,
   name: 'general',
   guild,
   isSendable: () => true,
   isDMBased: () => false,
-  permissionsFor: (who: { id: string }) => ({ has: () => !blind.has(who.id) }),
+  permissionsFor: (who: { id: string }) => ({ has: () => !blind.has(who.id) && !(who.id === GUILD && closed.has(id)) }),
   send: async (message: { content: string; allowedMentions: unknown }) => {
     if (failing) throw failing;
     posted.push({ channelId: id, ...message });
@@ -92,6 +94,19 @@ test('a wait is read in minutes, hours, days or weeks, and a day and time as gam
   assert.match((readReminderTime(GUILD, 'fri 9pm', now) as { label: string }).label, /^Friday, .* 9:00 PM C[SD]T \(in /);
   assert.equal(readReminderTime(GUILD, 'in 31 days', now), 'A reminder can be at most 30 days ahead.');
   assert.match(readReminderTime(GUILD, 'whenever', now) as string, /^“whenever” isn’t a time it can read/);
+
+  // An hour without am or pm could be either
+  for (const either of ['tomorrow at 9', 'in 2 days at 9', 'fri 7:30', 'at 9']) {
+    assert.equal(readReminderTime(GUILD, either, now), `Is “${either}” in the morning or the evening? Ask them, unless they said, then give it with am or pm.`);
+  }
+  assert.match((readReminderTime(GUILD, 'tomorrow 9am', now) as { label: string }).label, /, 9:00 AM C[SD]T/);
+  assert.match((readReminderTime(GUILD, 'tomorrow 21:00', now) as { label: string }).label, /, 9:00 PM C[SD]T/);
+  assert.match((readReminderTime(GUILD, 'tomorrow noon', now) as { label: string }).label, /, 12:00 PM C[SD]T/);
+
+  // Days ahead are on the calendar, so a clock change doesn't skip one: late on the Saturday before spring forward
+  const saturdayNight = Date.parse('2027-03-14T05:30:00Z');
+  assert.equal(setting(GUILD, 'timezone'), 'America/Chicago');
+  assert.equal((readReminderTime(GUILD, 'in 1 day at 9am', saturdayNight) as { at: number }).at, Date.parse('2027-03-14T14:00:00Z'));
 });
 
 test('it sets a reminder for the asker or the people named, who must see the channel, at most 5 people and 10 waiting each', async () => {
@@ -140,6 +155,19 @@ test('each person lists the reminders they set or that are for them, and cancels
     chatReminders(guild as never).map((r) => [r.by, r.people, r.text, r.channel]),
     [['Alex', ['Alex'], 'water the plants', 'general']],
   );
+});
+
+test('asked in another channel, a reminder set where not everyone can see doesn’t say what it is', async () => {
+  db.exec('DELETE FROM chat_reminders');
+  closed.add('c2');
+  const staff = textChannel('c2');
+  guild.channels.cache.set('c2', staff);
+  const id = idIn(await act(robin, 'set_reminder', { when: 'in 20 minutes', about: 'the surprise party', people: [] }, staff as never) as string);
+  assert.match(await act(robin, 'reminders', {}, staff as never) as string, /the surprise party/);
+  assert.match(await list(robin), new RegExp(`^reminder ${id}: \\w+day, .+ \\(in \\d+ minutes\\), set in a channel not everyone here can see, so what it says isn’t shown here$`));
+  assert.doesNotMatch(await list(robin), /surprise/);
+  assert.equal(await cancel(robin, id), `Cancelled reminder ${id}.`);
+  closed.delete('c2');
 });
 
 test('when it’s due it’s posted where it was asked, pinging only those it’s for, and late only up to an hour', async () => {

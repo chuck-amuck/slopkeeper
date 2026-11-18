@@ -85,9 +85,10 @@ const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', '
 
 /**
  * Reads times like "fri 8pm", "tomorrow 20:30", "nov 3 7pm", "11/3 9", "2026-11-03 19:00" or just "9pm" (the next 9pm)
- * as wall-clock time in the server's time zone. A bare hour under 12 means pm, since game nights are in the evening.
+ * as wall-clock time in the server's time zone. A bare hour under 12 means pm, since game nights are in the evening;
+ * `hours` 'am' or 'pm' reads every hour under 12 without am or pm that way instead, for a caller to compare the two.
  */
-export function parseWhen(text: string, now: number, timeZone: string): number | null {
+export function parseWhen(text: string, now: number, timeZone: string, hours: 'evening' | 'am' | 'pm' = 'evening'): number | null {
   let rest = ` ${text.toLowerCase().replace(/,/g, ' ')} `;
   const today = zonedParts(now, timeZone);
   let date: { year: number; month: number; day: number } | null = null;
@@ -127,7 +128,7 @@ export function parseWhen(text: string, now: number, timeZone: string): number |
     if (hour > 23 || minute > 59 || (half && (hour === 0 || hour > 12))) return null;
     if (half === 'p' && hour < 12) hour += 12;
     else if (half === 'a' && hour === 12) hour = 0;
-    else if (!half && !m[2] && hour >= 1 && hour < 12) hour += 12;
+    else if (!half && hour >= 1 && hour < 12 && (hours === 'pm' || (hours === 'evening' && !m[2]))) hour += 12;
   }
   // Anything left over that isn't filler means the text wasn't understood
   if (rest.replace(/\b(at|on|this|the)\b/g, '').trim()) return null;

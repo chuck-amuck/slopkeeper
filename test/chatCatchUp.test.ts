@@ -28,6 +28,7 @@ function channelWith(said: [string, number, string][], { failing = false } = {})
     .map((m, i) => ({ ...m, id: String(1_000_000 + i) }));
   const channel = {
     name: 'general',
+    permissionsFor: (who: { id: string }) => ({ has: () => !noHistory.has(who.id) }),
     messages: {
       fetch: async ({ limit, before }: { limit: number; before: string }) => {
         calls++;
@@ -40,6 +41,8 @@ function channelWith(said: [string, number, string][], { failing = false } = {})
   return { channel: channel as never, calls: () => calls };
 }
 const ASKING = '9999999';
+/** People who can't read the channel's history */
+const noHistory = new Set<string>();
 const read = (said: [string, number, string][], hours = 0) => catchUp(robin, channelWith(said).channel, ASKING, hours, NOW);
 
 test('it reads back to when the asker last wrote, not counting what they said as they asked', async () => {
@@ -89,6 +92,14 @@ test('it pages back up to 500 messages, and sends the newest when they don’t a
   assert.ok(left > 100 && left < 200, String(left));
   assert.match(first!, new RegExp(`\\] Sam: long ${left} y+$`));
   assert.ok(cut.length <= 40_000 + 200);
+});
+
+test('someone who can’t read the channel’s history isn’t caught up on it', async () => {
+  noHistory.add('201');
+  const { channel, calls } = channelWith([['201', 30, 'hi']]);
+  assert.equal(await catchUp(robin, channel, ASKING, 0, NOW), 'Robin can’t read this channel’s history, so don’t sum it up for them.');
+  assert.equal(calls(), 0);
+  noHistory.delete('201');
 });
 
 test('a channel it can’t read back in says so', async () => {

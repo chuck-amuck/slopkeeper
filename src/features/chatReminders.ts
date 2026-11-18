@@ -8,7 +8,7 @@ import { type Client, type Guild, type GuildMember, type GuildTextBasedChannel, 
 import { logActivity } from '../activity.ts';
 import { db } from '../db.ts';
 import { setting } from '../settings.ts';
-import { listNames, zonedParts } from '../util.ts';
+import { listNames, sayableIn, zonedParts } from '../util.ts';
 import { nameOf, object, peopleNamed } from './chatLookups.ts';
 import { describe, parseWhen } from './gamenight.ts';
 
@@ -45,7 +45,7 @@ export const reminderTools = (): Anthropic.Tool[] => [
       'Sets a reminder, posted in this channel at that time and pinging the people it’s for: the person asking, or those they name (at most 5 people, never a role or everyone). Up to 30 days ahead.',
     strict: true,
     input_schema: object({
-      when: { type: 'string', description: 'A wait like “in 20 minutes”, “in 2 hours” or “in 3 days”, or a day and time like “fri 9pm”, “tomorrow 9am” or “nov 3 7pm”' },
+      when: { type: 'string', description: 'A wait like “in 20 minutes”, “in 2 hours” or “in 3 days”, or a day and time like “fri 9pm”, “tomorrow 9am” or “nov 3 7pm”, with am or pm if they said or meant it (“tomorrow morning at 9” is 9am)' },
       about: { type: 'string', description: 'What to remind them of, in a few words, like “check the oven”' },
       people: { type: 'array', items: { type: 'string' }, description: 'Who it’s for, by display name or “me”; empty for just the person asking' },
     }),
@@ -69,9 +69,9 @@ export async function remind(member: GuildMember, name: string, input: Record<st
     case 'set_reminder':
       return setReminder(member, text('when'), text('about'), input.people, where);
     case 'reminders':
-      return listFor(member);
+      return listFor(member, where);
     case 'cancel_reminder':
-      return cancelFor(member, Number(input.reminder_id));
+      return cancelFor(member, Number(input.reminder_id), where);
     default:
       return null;
   }
@@ -108,19 +108,23 @@ export function readWait(text: string): number | null {
   return split && !split.rest ? split.wait : null;
 }
 
-/** “in 2 days at 9am”: that many days ahead, at that time there */
-function daysAheadAt(said: string, now: number, timeZone: string): number | null {
+/** “in 2 days at 9am”: that many days ahead on the calendar there (not 48 hours, which a clock change moves), at that time */
+function daysAheadAt(said: string, now: number, timeZone: string, hours: 'am' | 'pm'): number | null {
   const split = splitWait(said);
   if (!split?.rest || split.wait % DAY) return null;
-  const day = zonedParts(now + split.wait, timeZone);
-  return parseWhen(`${day.year}-${day.month}-${day.day} ${split.rest}`, now, timeZone);
+  const today = zonedParts(now, timeZone);
+  const day = new Date(Date.UTC(today.year, today.month - 1, today.day + split.wait / DAY));
+  return parseWhen(`${day.getUTCFullYear()}-${day.getUTCMonth() + 1}-${day.getUTCDate()} ${split.rest}`, now, timeZone, hours);
 }
 
 /** When a reminder is due, from a wait or a day and time, or what's wrong with it */
 export function readReminderTime(guildId: string, said: string, now = Date.now()): { at: number; label: string } | string {
   const timeZone = setting(guildId, 'timezone');
   const wait = readWait(said);
-  const at = wait !== null ? now + wait : (daysAheadAt(said, now, timeZone) ?? parseWhen(said.slice(0, 100), now, timeZone));
+  const read = (hours: 'am' | 'pm') => (wait !== null ? now + wait : (daysAheadAt(said, now, timeZone, hours) ?? parseWhen(said.slice(0, 100), now, timeZone, hours)));
+  const at = read('am');
+  // “At 9” could be either, and a reminder can be any time of day
+  if (at !== null && read('pm') !== at) return `Is “${said}” in the morning or the evening? Ask them, unless they said, then give it with am or pm.`;
   if (at === null) return `“${said}” isn’t a time it can read. Give it like “in 20 minutes”, “in 2 hours”, “fri 9pm” or “tomorrow 9am”, or ask them when.`;
   if (at < now + MINUTE) return 'That’s less than a minute away, or already passed.';
   if (at > now + FURTHEST_AHEAD) return 'A reminder can be at most 30 days ahead.';
@@ -154,7 +158,8 @@ async function setReminder(member: GuildMember, when: string, about: string, sai
   return `Set reminder ${id} for ${forWhom}, ${time.label}: “${about}”. It’s posted here then, pinging ${ids.length === 1 ? 'them' : 'each of them'}.`;
 }
 
-function listFor(member: GuildMember): string {
+/** Each reminder they set or are in, with what it says only where that can be said, as the answer is public */
+function listFor(member: GuildMember, here: GuildTextBasedChannel | null): string {
   const { guild } = member;
   const rows = db
     .prepare('SELECT * FROM chat_reminders WHERE guild_id = ? AND (created_by = ? OR EXISTS (SELECT 1 FROM json_each(people) WHERE value = ?)) ORDER BY due_at')
@@ -163,6 +168,7 @@ function listFor(member: GuildMember): string {
   const timeZone = setting(guild.id, 'timezone');
   return rows
     .map((r) => {
+      if (!sayableIn(guild, r.channel_id, here)) return `reminder ${r.id}: ${describe(r.due_at, timeZone)} (${inWords(r.due_at - Date.now())}), set in a channel not everyone here can see, so what it says isn’t shown here`;
       const where = guild.channels.cache.get(r.channel_id)?.name;
       return `reminder ${r.id}: ${describe(r.due_at, timeZone)} (${inWords(r.due_at - Date.now())}), for ${names(guild, peopleOf(r))}, set by ${nameOf(guild, r.created_by)}${where ? ` in #${where}` : ''}: ${r.text}`;
     })
@@ -171,7 +177,7 @@ function listFor(member: GuildMember): string {
 
 const getReminder = (guildId: string, id: number) => db.prepare('SELECT * FROM chat_reminders WHERE id = ? AND guild_id = ?').get(id, guildId) as Reminder | undefined;
 
-function cancelFor(member: GuildMember, id: number): string {
+function cancelFor(member: GuildMember, id: number, here: GuildTextBasedChannel | null): string {
   const { guild } = member;
   const reminder = getReminder(guild.id, id);
   if (!reminder) return 'There’s no reminder waiting with that id. reminders lists them.';
@@ -179,7 +185,7 @@ function cancelFor(member: GuildMember, id: number): string {
   if (reminder.created_by === member.id) {
     db.prepare('DELETE FROM chat_reminders WHERE id = ?').run(id);
     logActivity(guild.id, member.id, `Cancelled a reminder for ${names(guild, people)}`);
-    return `Cancelled reminder ${id}: “${reminder.text}”.`;
+    return sayableIn(guild, reminder.channel_id, here) ? `Cancelled reminder ${id}: “${reminder.text}”.` : `Cancelled reminder ${id}.`;
   }
   if (!people.includes(member.id)) return `Only ${nameOf(guild, reminder.created_by)}, who set it, can cancel it.`;
   const left = people.filter((p) => p !== member.id);

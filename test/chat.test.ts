@@ -9,6 +9,7 @@ import { MessageFlags } from 'discord.js';
 import { answer, asksBot, chat, chatNote, chatNotes, chatUsage, COOLDOWN_MS, finished, MODELS, MOST_STRICT_TOOLS, strictAtMost, withoutOffer, noteOf, onMessage, resetChat, sourcesLine, useTool, type Turn } from '../src/features/chat.ts';
 import { clearQueue, queueOf } from '../src/features/music.ts';
 import { checkSetting } from '../src/features/setup.ts';
+import { ACTIONS } from '../src/features/chatActions.ts';
 import { sendPost } from '../src/postFailures.ts';
 import { setting, setSetting } from '../src/settings.ts';
 import { resetSpotify } from '../src/spotify.ts';
@@ -631,7 +632,8 @@ test('with everything set up, it offers no more strict tools than the API takes'
   assert.ok(strict.length <= MOST_STRICT_TOOLS, `${strict.length} strict tools: ${strict.join(', ')}`);
   // Those with more than one plain text to give keep it, the last ones too, so none lose it to the limit
   assert.ok(strict.includes('queue_music') && strict.includes('plan_game_night') && !strict.includes('show_queue') && !strict.includes('play_sound'));
-  assert.ok(strict.includes('set_reminder') && strict.includes('make_sound'), `${strict.length} strict tools: ${strict.join(', ')}`);
+  // The actions above all, as their ids, choices and times matter most
+  for (const name of ACTIONS) assert.ok(strict.includes(name), `${name} isn’t strict: ${strict.length} strict tools: ${strict.join(', ')}`);
 });
 
 test('past the API’s limit of strict tools, the last ones aren’t strict, and those with no input or one plain text never are', () => {

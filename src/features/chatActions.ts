@@ -4,7 +4,7 @@ import { logActivity } from '../activity.ts';
 import { plain } from '../api/common.ts';
 import { gameKey } from '../gameText.ts';
 import { setting } from '../settings.ts';
-import { listNames } from '../util.ts';
+import { listNames, memberSees, sayableIn } from '../util.ts';
 import { nameOf, object, unquoted } from './chatLookups.ts';
 import { answerFor, cancelNight, describe, editNight, gameNames, type NightEdit, planNight, readWhen, stopSeries, upcomingNight, upcomingNights } from './gamenight.ts';
 import { gamesInVote, postVote } from './gamevote.ts';
@@ -63,7 +63,7 @@ export function actionTools(guild: Guild): Anthropic.Tool[] {
         action: { type: 'string', enum: ['cancel', 'stop_repeating', 'change'] },
         game: { type: 'string', description: 'For change: the new game, or empty to keep it' },
         when: { type: 'string', description: 'For change: the new day and time, as for plan_game_night, or empty to keep it' },
-        details: { type: 'string', description: 'For change: the new details, or empty to keep them' },
+        details: { type: 'string', description: 'For change: the new details, “none” to take them off, or empty to keep them' },
       }),
     },
     {
@@ -108,12 +108,13 @@ export async function act(member: GuildMember, name: string, input: Record<strin
   if (ACTIONS.has(name) && !setting(member.guild.id, 'chatActions')) return 'Taking actions in chat is turned off on this server. Point them to the command, if there is one.';
   switch (name) {
     case 'game_nights':
-      return nightsList(member.guild);
+      return nightsList(member, where);
     case 'plan_game_night':
       return plan(member, text('game'), text('when'), text('details'), text('voice_channel'), REPEATS[text('repeat') as keyof typeof REPEATS] ?? null, where);
     case 'change_game_night':
       return change(member, Number(input.night_id), text('action'), { game: text('game'), when: text('when'), details: text('details') });
     case 'answer_game_night': {
+      if (!seenNight(member, Number(input.night_id))) return 'There’s no game night with that id. game_nights lists them.';
       const result = await answerFor(member.client, member.guild, Number(input.night_id), member.id, text('answer'));
       if (result === undefined) return 'There’s no game night with that id. game_nights lists them.';
       if (typeof result === 'string') return result;
@@ -129,20 +130,33 @@ export async function act(member: GuildMember, name: string, input: Record<strin
   }
 }
 
-const upcoming = (guild: Guild) => upcomingNights(guild.id, Date.now()).nights;
+/** A night coming up whose card the asker can see, as its buttons need */
+function seenNight(member: GuildMember, id: number) {
+  const night = upcomingNight(member.guild.id, id, Date.now());
+  return night && memberSees(member, night.channel_id) ? night : undefined;
+}
 /** The game as the library names it, so its role is pinged, or as they said it */
 const libraryName = (guild: Guild, said: string) => gameNames(guild.id).find((n) => gameKey(n) === gameKey(said)) ?? said;
 
-function nightsList(guild: Guild): string {
-  const nights = upcoming(guild);
+/**
+ * The nights coming up whose cards the asker can see. Those posted where not everyone here can see, only as
+ * /gamenight list shows them, since the answer is public
+ */
+function nightsList(member: GuildMember, where: GuildTextBasedChannel | null): string {
+  const { guild } = member;
+  const nights = upcomingNights(guild.id, Date.now()).nights.filter((n) => memberSees(member, n.channel_id));
   if (!nights.length) return 'No game nights are planned.';
   const timeZone = setting(guild.id, 'timezone');
   const who = (ids: string[]) => listNames(ids.map((id) => nameOf(guild, id)));
   const lines = nights.slice(0, MOST_NIGHTS).map((n) => {
+    const started = n.starts_at < Date.now() ? ' (started)' : '';
+    if (!sayableIn(guild, n.channel_id, where)) {
+      return `night ${n.id}: ${n.game}, ${describe(n.starts_at, timeZone)}${started}; ${n.people.in.length} in; posted where not everyone here can see, so its details and who’s in aren’t said here`;
+    }
     const voice = n.voice_channel_id ? guild.channels.cache.get(n.voice_channel_id)?.name : null;
     const details = n.details && (n.details.length > LONGEST_DETAILS ? `${n.details.slice(0, LONGEST_DETAILS)}…` : n.details);
     return [
-      `night ${n.id}: ${n.game}, ${describe(n.starts_at, timeZone)}${n.starts_at < Date.now() ? ' (started)' : ''}`,
+      `night ${n.id}: ${n.game}, ${describe(n.starts_at, timeZone)}${started}`,
       `hosted by ${nameOf(guild, n.created_by)}`,
       voice ? `in ${voice}` : null,
       details ? `details: ${details.replace(/\s+/g, ' ')}` : null,
@@ -182,7 +196,7 @@ async function plan(member: GuildMember, said: string, when: string, details: st
   const voice = voiceName ? voiceNamed(member, voiceName) : null;
   if (typeof voice === 'string') return voice;
   // Asked again, or after an answer that didn't arrive, it isn't posted twice
-  const same = upcoming(guild).find((n) => gameKey(n.game) === gameKey(game) && n.starts_at === time.at);
+  const same = upcomingNights(guild.id, Date.now()).nights.find((n) => gameKey(n.game) === gameKey(game) && n.starts_at === time.at);
   if (same) return `There’s already a ${same.game} night then, hosted by ${nameOf(guild, same.created_by)} (night ${same.id}).`;
   let note: string;
   try {
@@ -198,7 +212,7 @@ async function plan(member: GuildMember, said: string, when: string, details: st
 
 async function change(member: GuildMember, id: number, action: string, edit: { game: string; when: string; details: string }): Promise<string> {
   const { guild, client } = member;
-  const night = upcomingNight(guild.id, id, Date.now());
+  const night = seenNight(member, id);
   if (!night) return 'There’s no upcoming game night with that id. game_nights lists them.';
   // In the night's channel, as its buttons are
   const card = guild.channels.cache.get(night.channel_id);
@@ -225,7 +239,7 @@ async function change(member: GuildMember, id: number, action: string, edit: { g
       const changes: NightEdit = {};
       if (edit.game) changes.game = libraryName(guild, edit.game);
       if (edit.when) changes.when = edit.when;
-      if (edit.details) changes.details = edit.details;
+      if (edit.details) changes.details = /^(none|nothing|clear|remove)$/i.test(edit.details) ? null : edit.details;
       if (!Object.keys(changes).length) return 'Ask what to change: the game, the time or the details.';
       const result = await editNight(client, guild, night.id, changes, member.id);
       if (result === undefined) return 'That game night is gone.';

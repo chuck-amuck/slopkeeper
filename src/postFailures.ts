@@ -56,7 +56,8 @@ async function withLine(post: Post, guildId: string, channel: SendableChannels, 
   if (!setting(guildId, 'chatPostLines') || !('guild' in channel) || !channel.guild) return message;
   // Chat is loaded only for servers that have these
   const { postLine } = await import('./features/chat.ts');
-  const line = await postLine(channel.guild, POSTS[post], message);
+  // A hop-on ping is posted as people join, so it waits less
+  const line = await postLine(channel.guild, POSTS[post], message, post === 'hopOn');
   if (!line || (message.content?.length ?? 0) + line.length + 1 > LONGEST_MESSAGE) return message;
   return { ...message, content: message.content ? `${line}\n${message.content}` : line };
 }

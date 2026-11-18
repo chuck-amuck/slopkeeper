@@ -13,10 +13,14 @@ const GUILD = 'g-actions';
 // What the bot posted, edited and made in Discord
 const posted: { channelId: string; message: { content?: string; embeds?: unknown[]; components?: unknown[] } }[] = [];
 const events: unknown[] = [];
+/** Text channels not everyone can see, and the people kept out of them */
+const closed = new Set<string>();
+const outsiders = new Set<string>();
 const textChannel = (id: string) => ({
   id,
-  name: 'general',
+  name: closed.has(id) ? 'staff' : 'general',
   guild,
+  permissionsFor: (who: { id: string }) => ({ has: () => !closed.has(id) || (who.id !== GUILD && !outsiders.has(who.id)) }),
   isTextBased: () => true,
   isSendable: () => true,
   send: async (message: (typeof posted)[number]['message']) => {
@@ -101,6 +105,7 @@ function addGame(name: string, owners: string[]) {
 beforeEach(() => {
   db.exec('DELETE FROM game_nights; DELETE FROM game_night_series; DELETE FROM game_night_rsvps; DELETE FROM game_votes; DELETE FROM games;');
   noManaging.clear();
+  outsiders.clear();
   posted.length = 0;
   events.length = 0;
 });
@@ -174,6 +179,32 @@ test('anyone answers a night for themselves, and only its host or someone with M
   const halo = nightId(await list());
   await act(robin, 'answer_game_night', { night_id: halo, answer: 'out' }, here);
   assert.equal(await change(robin, halo, { action: 'cancel' }), 'Cancelled Halo night.');
+});
+
+test('a night posted where not everyone can see is listed elsewhere without its details or people, and not at all to those who can’t see it', async () => {
+  closed.add('c2');
+  const staff = textChannel('c2');
+  channels.set('c2', staff);
+  assert.match(await act(robin, 'plan_game_night', { game: 'Valheim', when: 'fri 9pm', details: 'bring mead', voice_channel: '', repeat: 'no' }, staff as never) as string, /^Planned Valheim night/);
+  const id = nightId(await act(robin, 'game_nights', {}, staff as never) as string);
+  assert.match(await act(sam, 'answer_game_night', { night_id: id, answer: 'in' }, staff as never) as string, /^Marked Sam “In”/);
+
+  // In its own channel, all of it; elsewhere, what /gamenight list shows anyone
+  assert.match(await act(robin, 'game_nights', {}, staff as never) as string, /details: bring mead; in: Robin and Sam/);
+  const elsewhere = await list();
+  assert.match(elsewhere, new RegExp(`^night ${id}: Valheim, Friday, .*; 2 in; posted where not everyone here can see, so its details and who’s in aren’t said here$`));
+  assert.doesNotMatch(elsewhere, /mead|Robin|Sam/);
+
+  // Someone who can't see it doesn't see it listed, and can't answer or change it
+  outsiders.add('203');
+  assert.equal(await list(mod), 'No game nights are planned.');
+  assert.equal(await act(mod, 'answer_game_night', { night_id: id, answer: 'in' }, here), 'There’s no game night with that id. game_nights lists them.');
+  assert.equal(await change(mod, id, { action: 'cancel' }), 'There’s no upcoming game night with that id. game_nights lists them.');
+  outsiders.clear();
+  // Its details can be taken off
+  assert.match(await change(robin, id, { details: 'none' }), /^Changed the details\./);
+  assert.doesNotMatch(await act(robin, 'game_nights', {}, staff as never) as string, /details:/);
+  closed.delete('c2');
 });
 
 test('a vote is for the asker’s voice channel, on the games named however they’re written, one at a time', async () => {

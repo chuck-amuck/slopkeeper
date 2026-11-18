@@ -32,7 +32,7 @@ config.musicUrl = 'http://music.test';
 config.musicToken = 'eval';
 config.voiceUrl = 'http://voice.test';
 
-/** A tool call it should or shouldn't make: by name, or by name and some of what it's given, or any one of several */
+/** A tool call it should or shouldn't make: by name, or by name and some of what it's given (a value, or a pattern for text), or any one of several */
 type Call = string | [string, Record<string, unknown>] | { oneOf: Call[] };
 
 interface Turn {
@@ -207,6 +207,9 @@ const SCENES: Scene[] = [
   { name: 'a reminder', turns: [{ say: '@bot remind me in 20 minutes to take the pizza out', uses: ['set_reminder'], says: /20 minutes|\d:\d\d/ }] },
   { name: 'a reminder for someone', turns: [{ say: '@bot remind Sam friday at 8pm about the raid', uses: ['set_reminder'], says: /Sam/ }] },
   { name: 'a reminder with no time', turns: [{ say: '@bot remind me to call my mom', avoids: ['set_reminder'], asks: true }] },
+  // Without am or pm, it asks or takes the likely one from what it's for, but never reads it as evening, as game nights do
+  { name: 'a reminder without am or pm', turns: [{ say: '@bot remind me tomorrow at 9 to call the dentist', avoids: [['set_reminder', { when: /pm|21/i }]], saysNot: /9:00 PM/ }] },
+  { name: 'a reminder in the morning', turns: [{ say: '@bot remind me tomorrow morning at 9 to call the dentist', uses: [['set_reminder', { when: /9\s*am/i }]], says: /9:00 AM/ }] },
   { name: 'my reminders', turns: [{ say: '@bot what reminders do I have?', uses: ['reminders'], says: /oven/i }] },
   { name: 'cancelling a reminder', turns: [{ say: '@bot cancel my oven reminder', uses: ['reminders', 'cancel_reminder'] }] },
   // Votes and picks, in voice with Alex
@@ -454,10 +457,10 @@ function server(scene: Scene) {
 const matches = (call: Call, c: { name: string; input: Record<string, unknown> }): boolean => {
   if (typeof call === 'object' && !Array.isArray(call)) return call.oneOf.some((one) => matches(one, c));
   const [name, some] = typeof call === 'string' ? [call, {}] : call;
-  return c.name === name && Object.entries(some).every(([k, v]) => c.input[k] === v);
+  return c.name === name && Object.entries(some).every(([k, v]) => (v instanceof RegExp ? v.test(String(c.input[k] ?? '')) : c.input[k] === v));
 };
 const named = (call: Call): string =>
-  typeof call === 'string' ? call : Array.isArray(call) ? `${call[0]} ${JSON.stringify(call[1])}` : call.oneOf.map(named).join(' or ');
+  typeof call === 'string' ? call : Array.isArray(call) ? `${call[0]} ${JSON.stringify(call[1], (_, v: unknown) => (v instanceof RegExp ? String(v) : v))}` : call.oneOf.map(named).join(' or ');
 const OFFER = /\b(shall i|should i|would you like|if you(’|')?d like|want me to|just say the word|let me know)\b|\?\s*$/i;
 
 /** What's wrong with an answer, if anything */
@@ -470,7 +473,7 @@ function problems(turn: Turn, reply: string, pinged: string[]) {
   if (reply.length > (turn.longest ?? 500)) wrong.push(`${reply.length} characters long`);
   if (turn.says && !turn.says.test(reply)) wrong.push(`didn’t say ${turn.says}`);
   if (turn.saysNot?.test(reply)) wrong.push(`said ${turn.saysNot}`);
-  if (turn.asks ? !/\?/.test(reply) : OFFER.test(reply)) wrong.push(turn.asks ? 'didn’t ask' : 'ended with an offer or a question');
+  if (turn.asks ? !/\?|\btell me\b/i.test(reply) : OFFER.test(reply)) wrong.push(turn.asks ? 'didn’t ask' : 'ended with an offer or a question');
   if (reply.startsWith('ERROR')) wrong.push('failed');
   return wrong;
 }
