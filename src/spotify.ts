@@ -189,6 +189,19 @@ export async function searchFor(query: string, kind: Found['kind'], most = 5): P
     );
 }
 
+/** Songs, albums and artists a name matches, `most` of each, in one search, for when it isn't known which it is */
+export async function searchEverything(query: string, most = 3): Promise<{ songs: Track[]; others: Found[] }> {
+  const q = query.trim().slice(0, 200);
+  if (!q) return { songs: [], others: [] };
+  type Body = { tracks?: Page<ApiTrack>; albums?: Page<ApiNamed | null>; artists?: Page<ApiNamed | null> };
+  const body = await get<Body>(`/search?type=track,album,artist&limit=${Math.min(most, SEARCH_LIMIT)}&market=${config.spotifyMarket}&q=${encodeURIComponent(q)}`);
+  const named = (page: Page<ApiNamed | null> | undefined) => (page?.items ?? []).filter((x): x is ApiNamed => !!x?.name);
+  return {
+    songs: (body.tracks?.items ?? []).filter(playable).map((t) => toTrack(t)),
+    others: [...named(body.albums).map(albumFound), ...named(body.artists).map((x): Found => ({ kind: 'artist', name: x.name, artist: null, ref: `artist:${x.id}:${x.name}` }))],
+  };
+}
+
 /** An artist's albums, newest first, singles and EPs left out, for "their latest album" */
 export async function artistAlbums(artistId: string, most = SEARCH_LIMIT): Promise<Found[]> {
   const body = await get<Page<ApiNamed | null>>(`/artists/${encodeURIComponent(artistId)}/albums?include_groups=album&limit=${SEARCH_LIMIT}&market=${config.spotifyMarket}`);

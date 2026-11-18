@@ -58,6 +58,15 @@ mock.method(globalThis, 'fetch', async (input: string | URL | Request, init: Req
     const where = url.slice('https://api.spotify.com/v1'.length);
     spotifyAsked.push(decodeURIComponent(where));
     const q = new URL(url).searchParams.get('q') ?? '';
+    // Everything at once, three of each
+    if (where.startsWith('/search?type=track,album,artist')) {
+      assert.match(where, /&limit=3&/);
+      return Response.json({
+        tracks: { items: [song(20, 'The Strokes', 'Lonely in the Future')], next: null },
+        albums: { items: [{ id: id22('ra'), uri: `spotify:album:${id22('ra')}`, name: 'Reality Awaits', artists: [{ name: 'The Strokes' }], album_type: 'album', release_date: '2026-03-13' }], next: null },
+        artists: { items: [{ id: id22('TheStrokes'), uri: `spotify:artist:${id22('TheStrokes')}`, name: 'The Strokes' }], next: null },
+      });
+    }
     if (where.startsWith('/search?type=album')) {
       return Response.json({
         albums: {
@@ -90,6 +99,7 @@ mock.method(globalThis, 'fetch', async (input: string | URL | Request, init: Req
   if (url === 'http://music.test/search') {
     const body = JSON.parse(init.body as string) as Record<string, string>;
     ytmAsked.push(body);
+    if (body.search === 'fails for artists' && body.kind === 'artist') return new Response('', { status: 502 });
     const ytmSong = (id: string, title: string, artist: string) => ({ id, title, artists: [artist], album: 'Room On Fire', seconds: 200, cover: null });
     if (body.kind === 'album') return Response.json({ results: [{ id: 'MPREb_wall', title: 'The Wall', artists: ['Pink Floyd'], year: '1979', type: 'Album' }, { id: 'MPREb_ep', title: 'Wall EP', artists: ['Pink Floyd'], year: '2011', type: 'EP' }] });
     if (body.kind === 'artist') return Response.json({ results: [{ id: 'UCnotThem', name: 'The Strokes Tribute' }, { id: 'UCstrokes', name: 'The Strokes' }] });
@@ -280,6 +290,32 @@ test('an artist adds their best-known songs, and only theirs', async () => {
     ['Reptilia', 'Last Nite', 'Someday', 'A Namesake’s Song'],
   );
   clearQueue(guild.id, 'test');
+});
+
+test('a name that could be a song, album or artist is searched as all three at once', async (t) => {
+  const guild = fakeGuild('g-any');
+  const member = fakeMember(guild);
+  assert.equal(
+    await useTool(member as never, 'find_music', { query: 'reality awaits', kind: 'any' }),
+    [
+      `song: “Lonely in the Future” by The Strokes (ref spotify:track:${id22(20)})`,
+      `album: “Reality Awaits” by The Strokes, 2026 (ref spotify:album:${id22('ra')})`,
+      `artist: “The Strokes” (ref artist:${id22('TheStrokes')}:The Strokes)`,
+    ].join('\n'),
+  );
+  // On YouTube Music, the three searches go to the music container together
+  config.musicToken = 'music-token';
+  t.after(() => (config.musicToken = null));
+  setSetting(guild.id, 'musicSearch', 'youtube-music');
+  ytmAsked.length = 0;
+  const found = await useTool(member as never, 'find_music', { query: 'the wall', kind: 'any' });
+  assert.deepEqual(ytmAsked.map((a) => a.kind).sort(), ['album', 'artist', 'song']);
+  assert.ok(ytmAsked.every((a) => Number(a.limit) === 3));
+  assert.match(found, /^song: “Reptilia”[\s\S]*\nalbum: “The Wall” by Pink Floyd, 1979[\s\S]*\nartist: “The Strokes Tribute”/);
+  // One kind failing keeps the others
+  const some = await useTool(member as never, 'find_music', { query: 'fails for artists', kind: 'any' });
+  assert.match(some, /^song: “Reptilia”[\s\S]*\nalbum: “The Wall”/);
+  assert.doesNotMatch(some, /artist:/);
 });
 
 test('a server that searches YouTube Music finds, lists and queues from there, and Spotify’s artists fall back to it by name', async (t) => {

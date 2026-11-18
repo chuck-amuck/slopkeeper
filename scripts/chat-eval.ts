@@ -107,7 +107,7 @@ const SCENES: Scene[] = [
   },
   { name: 'a question isn’t a request', turns: [{ say: '@bot are your records lacking knowledge of reality awaits?', avoids: ['queue_music', 'control_music'] }] },
   // Reality Awaits is an album, newer than the model knows, so a search for a song by that name finds nothing
-  { name: 'an album it hasn’t heard of', turns: [{ say: '@bot have you heard of reality awaits?', uses: ['find_music'], avoids: ['queue_music', 'control_music'], says: /strokes[^.]*album|album[^.]*strokes/i }] },
+  { name: 'an album it hasn’t heard of', turns: [{ say: '@bot have you heard of reality awaits?', uses: ['find_music'], avoids: ['queue_music', 'control_music'], says: /strokes[^.]*album|album[^.]*strokes|reality awaits[^.]*strokes/i }] },
   {
     name: 'follows the conversation',
     earlier: [

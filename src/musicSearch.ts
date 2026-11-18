@@ -11,6 +11,7 @@ import {
   pick,
   RateLimited,
   search as searchSpotify,
+  searchEverything as findEverythingOnSpotify,
   searchFor as findOnSpotify,
   searchReady as spotifyReady,
   SpotifyError,
@@ -230,21 +231,46 @@ export function artistRef(ref: string): { source: Source; id?: string; name: str
 /** An album on YouTube Music, from find_music's ref */
 export const YTM_ALBUM_REF = /^ytm:album:([\w-]{1,64})$/;
 
-/** Songs, albums or artists matching some words, best first, as chat is told them */
-export async function findMusic(guildId: string, query: string, kind: Found['kind'], most = 5): Promise<Searched<Found>> {
+// With any kind, this many of each
+const EACH_KIND = 3;
+
+/** Songs found, as chat is told them, kept so queueing one doesn't look it up again */
+function songsFound(tracks: Track[], most: number): Found[] {
+  remember(tracks);
+  return tracks.slice(0, most).map((t) => ({ kind: 'song', name: t.title, artist: t.artist || null, ref: t.uri }));
+}
+
+/** Songs, albums or artists on YouTube Music, as chat is told them */
+async function findOnYtm(q: string, kind: Found['kind'], most: number): Promise<Found[]> {
+  const { results } = await askYtm<{ results?: unknown }>({ search: q, kind, limit: most });
+  if (kind === 'song') return songsFound(listOf<YtmSong>(results).map(ytmTrack).filter((t): t is Track => !!t), most);
+  if (kind === 'album') return listOf<YtmAlbum>(results).flatMap(ytmAlbumFound);
+  return listOf<YtmArtist>(results).flatMap((a) => (ytmId(a?.id) && typeof a.name === 'string' && a.name.trim() ? [{ kind, name: a.name, artist: null, ref: `ytm:artist:${a.id}:${a.name}` }] : []));
+}
+
+/**
+ * Songs, albums or artists matching some words, best first, as chat is told them. `any` finds a few of each, for a
+ * name that could be any of them
+ */
+export async function findMusic(guildId: string, query: string, kind: Found['kind'] | 'any', most = 5): Promise<Searched<Found>> {
   const q = query.trim().replace(/\s+/g, ' ').slice(0, 200);
   if (!q) return { found: [], from: null, answered: [] };
-  const songsFound = (tracks: Track[]): Found[] => {
-    remember(tracks);
-    return tracks.slice(0, most).map((t) => ({ kind: 'song', name: t.title, artist: t.artist || null, ref: t.uri }));
-  };
   return firstFound<Found>(guildId, {
-    spotify: async () => (kind === 'song' ? songsFound(await searchSpotify(q)) : findOnSpotify(q, kind, most)),
+    spotify: async () => {
+      if (kind === 'any') {
+        const { songs, others } = await findEverythingOnSpotify(q, EACH_KIND);
+        return [...songsFound(songs, EACH_KIND), ...others];
+      }
+      return kind === 'song' ? songsFound(await searchSpotify(q), most) : findOnSpotify(q, kind, most);
+    },
     'youtube-music': async () => {
-      const { results } = await askYtm<{ results?: unknown }>({ search: q, kind, limit: most });
-      if (kind === 'song') return songsFound(listOf<YtmSong>(results).map(ytmTrack).filter((t): t is Track => !!t));
-      if (kind === 'album') return listOf<YtmAlbum>(results).flatMap(ytmAlbumFound);
-      return listOf<YtmArtist>(results).flatMap((a) => (ytmId(a?.id) && typeof a.name === 'string' && a.name.trim() ? [{ kind, name: a.name, artist: null, ref: `ytm:artist:${a.id}:${a.name}` }] : []));
+      if (kind !== 'any') return findOnYtm(q, kind, most);
+      // The three at once, which the music container runs side by side, keeping whichever came back
+      const each = await Promise.allSettled((['song', 'album', 'artist'] as const).map((k) => findOnYtm(q, k, EACH_KIND)));
+      const found = each.flatMap((r) => (r.status === 'fulfilled' ? r.value : []));
+      const failed = each.find((r): r is PromiseRejectedResult => r.status === 'rejected');
+      if (failed && !found.length) throw failed.reason;
+      return found;
     },
   });
 }
