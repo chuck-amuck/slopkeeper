@@ -8,6 +8,7 @@
 //   node --disable-warning=ExperimentalWarning scripts/chat-eval.ts [scene filter | all] [haiku | sonnet | opus] [runs]
 // Runs a scene several times with `runs`, as the model doesn't answer the same way every time. Exits 1 if a check fails.
 import '../test/helpers.ts';
+import { createHash } from 'node:crypto';
 import { mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { PermissionFlagsBits } from 'discord.js';
@@ -281,10 +282,47 @@ let log: string[] = [];
 let turnStarted = Date.now();
 const at = () => `${((Date.now() - turnStarted) / 1000).toFixed(1)} s`;
 const realFetch = globalThis.fetch;
+
+// Spotify's answers are kept and used again, so running scenes over and over doesn't use up its rate limit, which the
+// live bot shares. A scene's first run asks Spotify, and later runs for 30 days read what it said. Only good answers are
+// kept, and getting a token always asks
+const SAVED_DIR = process.env.EVAL_CACHE || '.eval-cache';
+const SAVED_FOR = 30 * 24 * 3_600_000;
+const SAVED_FROM = /^https:\/\/(api|open)\.spotify\.com\//;
+const outside = { reused: 0, asked: 0 };
+let saving = true;
+async function savedOrAsked(url: string, input: string | URL | Request, init?: RequestInit): Promise<Response> {
+  const method = init?.method ?? (input instanceof Request ? input.method : 'GET');
+  const key = createHash('sha256').update(`${method} ${url} ${typeof init?.body === 'string' ? init.body : ''}`).digest('hex').slice(0, 32);
+  const file = path.join(SAVED_DIR, `${key}.json`);
+  try {
+    const saved = JSON.parse(readFileSync(file, 'utf8')) as { at: number; status: number; type: string; body: string };
+    if (Date.now() - saved.at < SAVED_FOR) {
+      outside.reused++;
+      return new Response(saved.body, { status: saved.status, headers: { 'content-type': saved.type } });
+    }
+  } catch {
+    // Not kept yet
+  }
+  const res = await realFetch(input, init);
+  outside.asked++;
+  if (res.ok && saving) {
+    try {
+      mkdirSync(SAVED_DIR, { recursive: true });
+      writeFileSync(file, JSON.stringify({ at: Date.now(), url, status: res.status, type: res.headers.get('content-type') ?? '', body: await res.clone().text() }));
+    } catch (err) {
+      saving = false;
+      console.warn(`Spotify’s answers can’t be kept in ${SAVED_DIR}, so every run asks it: ${(err as Error).message}`);
+    }
+  }
+  return res;
+}
+
 globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
   const url = String(input instanceof Request ? input.url : input);
   if (url.startsWith('http://music.test') || url.startsWith('http://voice.test')) return new Response('{}', { status: 503 });
   if (url.startsWith('https://cdn.eval/')) return new Response(readFileSync(url.slice('https://cdn.eval/'.length)));
+  if (SAVED_FROM.test(url)) return savedOrAsked(url, input, init);
   const res = await realFetch(input, init);
   if (url.startsWith('https://api.anthropic.com/')) {
     calls++;
@@ -506,5 +544,5 @@ const price = MODELS[modelKey];
 const cost = ((tokens.input + tokens.write * 1.25) * price.input + tokens.read * price.cacheRead + tokens.output * price.output) / 1e6 + tokens.searches * SEARCH_COST;
 realLog(`\n${passed} of ${turns} turns passed.`);
 for (const [name, t] of tally) if (t.passed < t.turns) realLog(`  ✗ ${name}: ${t.passed} of ${t.turns}`);
-realLog(`${calls} calls on ${price.id}, about $${cost.toFixed(4)}: ${tokens.input} tokens in, ${tokens.write} written to the cache, ${tokens.read} read from it, ${tokens.output} out, ${tokens.searches} web searches.`);
+realLog(`${calls} calls on ${price.id}, about $${cost.toFixed(4)}: ${tokens.input} tokens in, ${tokens.write} written to the cache, ${tokens.read} read from it, ${tokens.output} out, ${tokens.searches} web searches. Spotify: ${outside.reused} answers reused, ${outside.asked} asked.`);
 process.exit(passed === turns ? 0 : 1);

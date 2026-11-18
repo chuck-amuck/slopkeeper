@@ -35,6 +35,8 @@ same static ffmpeg as the image and CI. Without ffmpeg the audio tests skip sile
   pings and length (1 or 2 cents on Haiku, so not in CI). Run it after changing chat's prompt or tools, in sk-test
   with `ANTHROPIC_API_KEY`, `SPOTIFY_CLIENT_ID` and `SPOTIFY_CLIENT_SECRET` set:
   `node --disable-warning=ExperimentalWarning scripts/chat-eval.ts [scene | all] [haiku | sonnet | opus] [runs]`.
+  Spotify's answers are kept in `.eval-cache/` (ignored by git) for 30 days, so reruns don't use up the rate limit the
+  live bot shares: make that folder and mount it writable when the repo is mounted read-only.
 - Web UI by hand: run `web/src/index.ts` against a fake bot (`BOT_URL`) and drive `chromium --headless=new` over CDP.
   Non-GET calls need the header `x-slopkeeper: 1`.
 
