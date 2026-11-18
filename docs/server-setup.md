@@ -128,6 +128,7 @@ Each setting goes by the name `/setup show` and `/setup reset` use. A few are se
 | Personality | web UI only | `CHAT_PERSONALITY` | a robot butler with impeccable manners and no brakes |
 | Model | web UI only | `CHAT_MODEL` (`haiku`, `sonnet` or `opus`) | `haiku` |
 | Search the web | web UI only | `CHAT_WEB_SEARCH` (`false` to turn off) | on |
+| Take actions | web UI only | `CHAT_ACTIONS` (`false` to turn off) | on |
 | Answer in voice | web UI only | `CHAT_VOICE` (`off`, `also` or `only`) | off |
 | Answers a day | web UI only | `CHAT_DAILY_LIMIT` | 200 |
 | Text to speech | `speech` | `TTS` (`false` to turn off) | on |

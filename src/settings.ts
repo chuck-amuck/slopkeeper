@@ -114,6 +114,8 @@ export const DEFAULTS = {
   chatModel: process.env.CHAT_MODEL || 'haiku',
   // A cent or so a search, only when someone asks for a strategy, a build or news
   chatWebSearch: process.env.CHAT_WEB_SEARCH !== 'false',
+  // Game nights and votes, with the same permissions as the commands
+  chatActions: process.env.CHAT_ACTIONS !== 'false',
   // Off until a server turns it on, as not everyone wants every answer read out
   chatVoice: process.env.CHAT_VOICE || 'off',
   // Each answer costs a little, so a busy day stops here
@@ -178,6 +180,7 @@ export const DEFAULT_ENV: Partial<Record<SettingKey, string>> = {
   chatPersonality: 'CHAT_PERSONALITY',
   chatModel: 'CHAT_MODEL',
   chatWebSearch: 'CHAT_WEB_SEARCH',
+  chatActions: 'CHAT_ACTIONS',
   chatVoice: 'CHAT_VOICE',
   chatDailyLimit: 'CHAT_DAILY_LIMIT',
 };

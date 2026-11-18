@@ -10,6 +10,7 @@
 import '../test/helpers.ts';
 import { mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import { PermissionFlagsBits } from 'discord.js';
 import { rememberCommands } from '../src/commandIds.ts';
 import { config } from '../src/config.ts';
 import { db } from '../src/db.ts';
@@ -168,7 +169,24 @@ const SCENES: Scene[] = [
   // What it knows of the server and the bot
   { name: 'the date', turns: [{ say: '@bot what’s the date today?', avoids: 'all', says: new RegExp(month) }] },
   { name: 'who’s playing what', turns: [{ say: '@bot what’s Alex playing?', avoids: 'all', says: /Deep Rock Galactic/ }] },
-  { name: 'plan a night', turns: [{ say: '@bot set up a game night for valheim friday at 9', says: /\/gamenight plan/ }] },
+  // Game nights, as the server has a Valheim night on Saturday at 8, hosted by Sam
+  { name: 'plan a night', turns: [{ say: '@bot set up a game night for deep rock friday at 9', uses: [['plan_game_night', { game: 'Deep Rock Galactic' }]], says: /Friday.*9/ }] },
+  { name: 'plan a night tonight', turns: [{ say: '@bot plan lethal company tonight at 10, make it weekly', uses: [['plan_game_night', { repeat: 'weekly' }]], says: /10/ }] },
+  { name: 'a night with no time', turns: [{ say: '@bot let’s do a valheim night sometime', avoids: ['plan_game_night'], asks: true }] },
+  { name: 'answering a night', turns: [{ say: '@bot I’m in for the valheim night', uses: ['game_nights', ['answer_game_night', { answer: 'in' }]] }] },
+  { name: 'what’s planned', turns: [{ say: '@bot what game nights are coming up?', uses: ['game_nights'], says: /Valheim/ }] },
+  { name: 'someone else’s night', turns: [{ say: '@bot cancel the valheim night', says: /Sam|host|Manage Events/i }] },
+  // Votes and picks, in voice with Alex
+  { name: 'a vote', inVoice: true, turns: [{ say: '@bot start a vote on what to play', uses: ['start_vote'] }] },
+  { name: 'a vote, not in voice', turns: [{ say: '@bot start a vote on what we play', says: /voice/i }] },
+  {
+    name: 'a pick and a reroll',
+    inVoice: true,
+    turns: [
+      { say: '@bot just pick a game for us', uses: ['pick_game'], avoids: ['start_vote'] },
+      { say: 'reroll', uses: ['pick_game'] },
+    ],
+  },
   { name: 'add a game', turns: [{ say: '@bot add Valheim to our game library', says: /\/game add/ }] },
 
   // Looking things up
@@ -300,6 +318,13 @@ function seed(guildId: string) {
   for (const [days, uri, title, artist, by] of songs) {
     db.prepare('INSERT INTO music_plays (guild_id, at, uri, title, artist, source, duration_ms, added_by) VALUES (?, ?, ?, ?, ?, NULL, 200000, ?)').run(guildId, ago(days), uri, title, artist, by);
   }
+  const saturday = new Date();
+  saturday.setDate(saturday.getDate() + ((6 - saturday.getDay() + 7) % 7 || 7));
+  saturday.setHours(20, 0, 0, 0);
+  const night = db
+    .prepare("INSERT INTO game_nights (guild_id, channel_id, message_id, game, starts_at, created_by) VALUES (?, ?, 'n1', 'Valheim', ?, '301')")
+    .run(guildId, `c${guildId}`, saturday.getTime()).lastInsertRowid;
+  db.prepare("INSERT INTO game_night_rsvps (night_id, user_id, status) VALUES (?, '301', 'in')").run(night);
   db.prepare(
     "INSERT INTO patch_posts (guild_id, gid, appid, game, title, url, date, text, posted) VALUES (?, 'p1', 892970, 'Valheim', 'Patch 0.220.3', 'https://store.steampowered.com/news/app/892970', ?, ?, 1)",
   ).run(guildId, ago(3), 'Fixed a crash when sailing in the Ashlands. Boats no longer sink when docked. Better performance in large bases.');
@@ -308,7 +333,8 @@ function seed(guildId: string) {
 /** A server where Robin asks, Sam has been talking, Alex is in voice playing Deep Rock Galactic, and Jordan and Sasha are around */
 function server(scene: Scene) {
   const id = `9${String(++servers).padStart(4, '0')}`;
-  const me = { id: BOT, displayName: 'Slopkeeper', roles: { botRole: null }, user: { bot: true } };
+  // It can make Discord events
+  const me = { id: BOT, displayName: 'Slopkeeper', roles: { botRole: null }, user: { bot: true }, permissions: { has: (flag: bigint) => flag === PermissionFlagsBits.CreateEvents } };
   const voice = { id: 'v1', name: 'General', isVoiceBased: () => true, members: new Map(), permissionsFor: () => ({ has: () => true }) };
   const guild = {
     id,
@@ -317,7 +343,12 @@ function server(scene: Scene) {
     roles: { cache: new Map([['300', { id: '300', name: 'DJ' }]]), everyone: { id } },
     channels: { cache: new Map([['v1', voice]]) },
     voiceStates: { cache: new Map([['302', { id: '302', channelId: 'v1' }], ...(scene.inVoice ? [['201', { id: '201', channelId: 'v1' }] as const] : [])]) },
+    scheduledEvents: { create: async () => ({ id: 'event' }), edit: async () => ({}), delete: async () => {} },
   };
+  // What it posts, game nights and votes, goes nowhere
+  const channelId = `c${id}`;
+  const posting = { id: channelId, guild, isTextBased: () => true, isSendable: () => true, send: async () => ({ id: `posted-${Date.now()}` }), messages: { edit: async () => ({}) } };
+  const client = { user: { id: BOT }, channels: { fetch: async (wanted: string) => (wanted === channelId ? channel : null) } };
   Object.assign(voice, { guild });
   const person = (name: string) => ({
     id: PEOPLE[name]!,
@@ -326,6 +357,8 @@ function server(scene: Scene) {
     user: { bot: false },
     roles: { cache: new Map() },
     permissions: { has: () => false },
+    permissionsIn: () => ({ has: () => false }),
+    client,
     voice: { channel: name === 'Alex' || (name === 'Robin' && scene.inVoice) ? voice : null },
     presence: name === 'Alex' ? { activities: [{ type: 0, name: 'Deep Rock Galactic' }] } : null,
   });
@@ -350,7 +383,7 @@ function server(scene: Scene) {
     attachments: new Map(),
     type: s.who === 'Slopkeeper' ? REPLY : 0,
   });
-  const channel = { name: 'general', isThread: () => false, messages: { fetch: async () => new Map(said.map(asMessage).reverse().map((m) => [m.id, m])) } };
+  const channel = { ...posting, name: 'general', isThread: () => false, messages: { ...posting.messages, fetch: async () => new Map(said.map(asMessage).reverse().map((m) => [m.id, m])) } };
 
   /** Robin says something and the bot answers. Returns the answer and who it pinged */
   return async (turn: Turn) => {
@@ -362,7 +395,7 @@ function server(scene: Scene) {
     const attachments = new Map(
       turn.image ? [['a1', { id: 'a1', url: `https://cdn.eval/${turn.image}`, contentType: 'image/png', size: statSync(turn.image).size, width: 1024, height: 1024 }]] : [],
     );
-    const message = { id: `m${said.length}`, channelId: `c${id}`, content, guild, member: robin, channel, author: { id: '201', displayName: 'Robin' }, attachments };
+    const message = { id: `m${said.length}`, channelId, content, guild, member: robin, channel, author: { id: '201', displayName: 'Robin' }, attachments };
     const started = Date.now();
     let reply: string | null;
     let people = new Map<string, string>();

@@ -158,7 +158,8 @@ export function nextOccurrence(from: number, everyDays: number, after: number, t
   }
 }
 
-function describe(ms: number, timeZone: string): string {
+/** A night's time as people read it, like “Friday, Nov 20, 9:00 PM CST” */
+export function describe(ms: number, timeZone: string): string {
   return new Date(ms).toLocaleString('en-US', {
     timeZone,
     weekday: 'long',
@@ -412,15 +413,26 @@ async function refreshCard(client: Client<true>, night: Night) {
 }
 
 /** What the web UI shows: nights still to come, and the series that will post more */
+function listed(night: Night) {
+  const series = getSeries(night.series_id);
+  return { ...night, people: rsvps(night.id), repeats: series ? repeatLabel(series.every_days) : null };
+}
+
 export function upcomingNights(guildId: string, now: number) {
   const nights = db
     .prepare('SELECT * FROM game_nights WHERE guild_id = ? AND cancelled = 0 AND starts_at > ? ORDER BY starts_at LIMIT 50')
     .all(guildId, now - LISTED_AFTER_START) as unknown as Night[];
   const series = db.prepare('SELECT * FROM game_night_series WHERE guild_id = ? ORDER BY next_at').all(guildId) as unknown as Series[];
   return {
-    nights: nights.map((n) => ({ ...n, people: rsvps(n.id), repeats: getSeries(n.series_id) ? repeatLabel(getSeries(n.series_id)!.every_days) : null })),
+    nights: nights.map(listed),
     series: series.map((s) => ({ ...s, repeats: repeatLabel(s.every_days) })),
   };
+}
+
+/** One of the nights upcomingNights lists, or undefined if this server has no such night coming up or going on */
+export function upcomingNight(guildId: string, id: number, now: number) {
+  const night = getNight(id);
+  return night?.guild_id === guildId && !night.cancelled && night.starts_at > now - LISTED_AFTER_START ? listed(night) : undefined;
 }
 
 /** How a typed time reads in a server, for the web UI to show before anything is posted */

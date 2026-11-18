@@ -32,7 +32,7 @@ The web UI's Settings page can add and remove game roles too. It only asks for i
 
 ## Game nights
 
-`/gamenight plan` posts an RSVP card and adds the night to the server's **Events**. The card shows the time in everyone's own time zone, the host, the voice channel and who's **In**, **Maybe** or **Can't**.
+`/gamenight plan` posts an RSVP card and adds the night to the server's **Events**. You can also [ask the bot in chat](chat.md#what-it-can-do): "plan Valheim friday at 9". The card shows the time in everyone's own time zone, the host, the voice channel and who's **In**, **Maybe** or **Can't**.
 
 - The game's ping role is pinged when the night is planned.
 - 15 minutes before the start, the bot pings everyone who's **In** or **Maybe** (`/setup gamenight-reminder` changes or turns this off).

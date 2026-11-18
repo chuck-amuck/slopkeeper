@@ -1,5 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk';
-import { type Attachment, type Client, Events, type Guild, type GuildMember, type Message, MessageFlags, PermissionFlagsBits, type VoiceBasedChannel } from 'discord.js';
+import { type Attachment, type Client, Events, type Guild, type GuildMember, type GuildTextBasedChannel, type Message, MessageFlags, PermissionFlagsBits, type VoiceBasedChannel } from 'discord.js';
 import { logActivity } from '../activity.ts';
 import { clickableCommands, commandList } from '../commandIds.ts';
 import { config } from '../config.ts';
@@ -11,6 +11,7 @@ import type { Feature } from '../types.ts';
 import { asksBot, canSee, isAnswer, listNames, playingGames } from '../util.ts';
 import { canControl, time, musicPlaying, musicState, OUTSIDE_DJ, pauseMusic, queueArtist, queueFrom, queueOf, removeTracks, setAutoplay, shuffleQueue, skipMusic, startMusic, stopMusic } from './music.ts';
 import { busyElsewhere, effects, maySpeak, NO_EFFECT, say, sayOut, voices } from './say.ts';
+import { act, ACTIONS, actionTools } from './chatActions.ts';
 import { lookUp, lookupTools, nameOf, object } from './chatLookups.ts';
 import { CHAT_MODELS } from './setup.ts';
 import { findSound, listSounds, recordPlay, soundGain } from './soundLibrary.ts';
@@ -481,6 +482,7 @@ async function asked(
 function system(guild: Guild, botName: string) {
   const commands = commandList(guild.id);
   const searches = searchable(guild.id);
+  const actions = setting(guild.id, 'chatActions');
   return [
     `You are ${botName}, a bot in the Discord server “${guild.name}”, answering someone who @mentioned you or replied to you.`,
     `Your personality: ${setting(guild.id, 'chatPersonality')}`,
@@ -489,13 +491,21 @@ function system(guild: Guild, botName: string) {
     '- End once you’ve answered or said what you did. Never add an offer of something else (“I can, however, …”, “Shall I…?”, “How may I serve you?”, “if you’d like…”, “just say the word”): if they want more, they’ll ask. No question unless you need an answer to do what they asked. One short apology at most; don’t grovel.',
     '- If they tell you to stop, to be quiet or that you talk too much, answer in a few words and do nothing else.',
     '- Vary how you start and how you address people: don’t open every answer with a greeting or their name.',
-    '- Don’t assume anyone’s gender: no “sir” or “madam”, unless they’ve asked to be called that.',
+    '- Don’t assume anyone’s gender: no “sir” or “madam”, and “they” for anyone whose pronouns you haven’t been told, unless they’ve asked to be called otherwise.',
     '- Act only when they ask you to do something. A question gets an answer, not an action: “do you know X?” isn’t “play X”. Looking things up to answer is fine (find_music, artist_albums, show_queue), and better than guessing.',
-    `- What you can do is what your tools do: music, soundboard sounds, speech, remembering things about the person asking, and looking up the server’s games, play stats, deals, songs played before, patch notes and achievements${searches ? ', and searching the web' : ''}. You can’t edit or delete messages, change settings, or see more than this channel’s recent messages, so don’t offer to. For the bot’s other features, point them to its command (see below).`,
+    `- What you can do is what your tools do: music, soundboard sounds, speech, remembering things about the person asking, looking up the server’s games, game nights, play stats, deals, songs played before, patch notes and achievements, picking a game at random${actions ? ', planning, changing and answering game nights, starting a vote on what to play' : ''}${searches ? ', and searching the web' : ''}. You can’t edit or delete messages, change settings, or see more than this channel’s recent messages, so don’t offer to. For the bot’s other features, point them to its command (see below).`,
     '- When they ask about games, stats, deals or what was played, look it up rather than guessing or sending them to a command, and answer from what you found: pick out what answers them, as a short list at most, not everything. If a lookup says a name matches more than one person or game, ask which.',
+    '- “Just pick one”, “choose for us” or “reroll” means pick_game, which picks at random, with kind and steam_deck “any” unless they asked for co-op, PvP or Steam Deck; “what can we play?” means games_for.',
+    ...(actions
+      ? [
+          '- To plan a game night, give plan_game_night the time as a day and time like “fri 9pm”, “tomorrow 20:30” or “nov 3 7pm”: turn words like “tonight” or “this saturday” into one from today’s date, and if they didn’t say a time, ask. Then say the day and time back from what it says, so a misread is seen. Plan one only when they ask for one.',
+          '- To change, cancel or answer a game night (“I’m in for friday”, “move it to 10”), find it with game_nights first. If more than one could be the one they mean, ask which.',
+          '- start_vote posts a vote the people in their voice channel answer with its buttons; it closes by itself.',
+        ]
+      : []),
     ...(searches
       ? [
-          '- For a game’s strategy, builds, guides, tips, walkthroughs, mods or wiki facts, and for news or anything else that may have changed since what you know (releases, updates, results, events), search the web with web_search rather than answering from memory: games change after what you know. Not for chat, jokes or opinions, nor for the server’s own games, stats, deals, patch notes or people, which the other lookups have. Answer from what you found, in a few sentences or a short list of what fits what they asked, and say briefly if sources disagree. Links to your sources go under your answer by themselves, so don’t write any.',
+          '- For a game’s strategy, builds, guides, tips, walkthroughs, mods or wiki facts, and for news or anything else that may have changed since what you know (releases, results, events), search the web with web_search rather than answering from memory: games change after what you know. Not for chat, jokes or opinions, nor for the server’s own games, stats, deals, patch notes or people, which the other lookups have. Answer from what you found, in a few sentences or a short list of what fits what they asked, and say briefly if sources disagree. Links to your sources go under your answer by themselves, so don’t write any.',
         ]
       : []),
     '- When someone asks for music, a sound or speech, use the tools rather than saying you will, then say briefly what happened.',
@@ -521,6 +531,28 @@ function system(guild: Guild, botName: string) {
 }
 
 const isSearch = (t: Anthropic.ToolUnion) => 'name' in t && t.name === 'web_search';
+
+/** The API checks at most this many tools' input strictly, and refuses the request if more ask */
+export const MOST_STRICT_TOOLS = 20;
+const isStrict = (tool: Anthropic.ToolUnion): tool is Anthropic.Tool => 'input_schema' in tool && !!tool.strict;
+function loose(tool: Anthropic.Tool): Anthropic.Tool {
+  const { strict: _, ...rest } = tool;
+  return rest;
+}
+
+/**
+ * Strict only where it helps: a tool with no input, or one plain text, gains nothing from it. Past the API's limit, the
+ * last ones aren't strict either, rather than every answer failing
+ */
+export function strictAtMost(list: Anthropic.ToolUnion[]): Anthropic.ToolUnion[] {
+  let strict = 0;
+  return list.map((tool) => {
+    if (!isStrict(tool)) return tool;
+    const fields = Object.values((tool.input_schema.properties ?? {}) as Record<string, { type?: unknown; enum?: unknown }>);
+    const helps = fields.length > 1 || (fields.length === 1 && (fields[0]!.type !== 'string' || !!fields[0]!.enum));
+    return helps && ++strict <= MOST_STRICT_TOOLS ? tool : loose(tool);
+  });
+}
 
 /** The tools for what this bot can do here: music only with the music container, speech only with the voice container and speech on */
 function tools(guild: Guild): Anthropic.ToolUnion[] {
@@ -614,10 +646,10 @@ function tools(guild: Guild): Anthropic.ToolUnion[] {
       }),
     });
   }
-  list.push(...lookupTools());
+  list.push(...lookupTools(), ...actionTools(guild));
   // Run by Anthropic, so it isn't one of useTool's
   if (searchable(guild.id)) list.push({ type: 'web_search_20250305', name: 'web_search', max_uses: MOST_SEARCHES });
-  return list;
+  return strictAtMost(list);
 }
 
 /** The role's name rather than a ping, as the model reads it */
@@ -676,10 +708,12 @@ async function undoLast(member: GuildMember, turn: Turn): Promise<string> {
   return `Took out ${removed.length} song${removed.length === 1 ? '' : 's'}: ${titles.join(', ')}${removed.length > titles.length ? ', and more' : ''}.${musicNote(guild.id)}`;
 }
 
-/** What one answer did, for what it says and remembers after */
+/** One answer: where it was asked, and what it did, for what it says and remembers after */
 export interface Turn {
   /** Queue rows it added, a batch each time it queued, so a correction takes out the latest */
   queued: number[][];
+  /** Where game nights and votes it starts are posted */
+  channel?: GuildTextBasedChannel;
 }
 
 /** Does what a tool asks, as the person asking. Returns what happened, for the model to answer from */
@@ -688,7 +722,7 @@ export async function useTool(member: GuildMember, name: string, input: Record<s
   const key = `${guild.id}:${member.id}`;
   const text = (key: string) => String(input[key] ?? '').trim();
   try {
-    const found = await lookUp(member, name, input);
+    const found = (await lookUp(member, name, input)) ?? (await act(member, name, input, turn.channel ?? null));
     if (found !== null) return found;
     switch (name) {
       case 'find_music': {
@@ -810,6 +844,8 @@ const described = (f: Found) =>
 
 /** Tools that change something, which go in Activity as asked in chat */
 const ACTING = new Set(['queue_music', 'undo_queue', 'control_music', 'play_sound', 'say_aloud', 'remember']);
+// Looked up when it's used, as chatActions may not have loaded yet when this does
+const acting = (name: string) => ACTING.has(name) || ACTIONS.has(name);
 
 /**
  * The answer to someone's message, having done what they asked. Null when there's nothing to say. Throws the API's
@@ -837,7 +873,7 @@ export async function answer(
   let acted = false;
   let spoke = false;
   const sources: string[] = [];
-  const turn: Turn = { queued: [] };
+  const turn: Turn = { queued: [], channel: message.channel };
   const cut = (s: string) => (s.length > LOGGED_TOOL_CHARS ? `${s.slice(0, LOGGED_TOOL_CHARS)}…` : s).replace(/\n/g, ' | ');
   const done = (text: string | null) => {
     const typed = readable(guild, message.content).trim();
@@ -912,14 +948,14 @@ export async function answer(
     messages.push({ role: 'assistant', content: res.content });
     const results: Anthropic.ToolResultBlockParam[] = [];
     for (const ask of asks) {
-      acted ||= ACTING.has(ask.name);
+      acted ||= acting(ask.name);
       spoke ||= ask.name === 'say_aloud';
       const result = await useTool(member, ask.name, (ask.input ?? {}) as Record<string, unknown>, turn);
       // In the bot's log, so what it did and why can be followed when an answer goes wrong
       console.log(`Chat in server ${guild.id}: ${ask.name} ${cut(JSON.stringify(ask.input ?? {}))} → ${cut(result)}`);
       results.push({ type: 'tool_result', tool_use_id: ask.id, content: result });
       // What it remembers about someone stays with their own questions
-      if (ACTING.has(ask.name) && ask.name !== 'remember') {
+      if (acting(ask.name) && ask.name !== 'remember') {
         const first = `for ${member.displayName}: ${result.split('\n')[0]!}`;
         const did = [...(doneIn.get(message.channelId) ?? []), { at: Date.now(), text: first.length > LONGEST_DONE ? `${first.slice(0, LONGEST_DONE)}…` : first }];
         doneIn.set(message.channelId, did.slice(-DONE_REMEMBERED));

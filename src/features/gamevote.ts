@@ -14,6 +14,7 @@ import {
 } from 'discord.js';
 import { db } from '../db.ts';
 import type { Feature } from '../types.ts';
+import { gameKey } from '../gameText.ts';
 import { humansIn } from '../util.ts';
 import { candidatesFor, NOBODY_COUNTED, type Candidate } from './games.ts';
 import { every } from '../schedule.ts';
@@ -119,6 +120,12 @@ export async function tick(client: Client<true>) {
 
 const voteIn = (voice: VoiceBasedChannel) => db.prepare('SELECT * FROM game_votes WHERE voice_channel_id = ?').get(voice.id) as Vote | undefined;
 
+/** The games on the vote going in a voice channel, if there is one */
+export function gamesInVote(voice: VoiceBasedChannel): string[] {
+  const vote = voteIn(voice);
+  return vote ? (JSON.parse(vote.options) as { name: string }[]).map((o) => o.name) : [];
+}
+
 /**
  * Opens a vote on what the people in a voice channel all own, or returns why there's nothing to vote on. `only`
  * narrows it to those games, as the web UI's filters do; they still have to be owned by everyone.
@@ -126,8 +133,9 @@ const voteIn = (voice: VoiceBasedChannel) => db.prepare('SELECT * FROM game_vote
 async function open(guild: Guild, channelId: string, voice: VoiceBasedChannel, minutes: number, only?: string[]) {
   const found = await candidatesFor(guild, humansIn(voice).map((m) => m.id));
   if (!found) return NOBODY_COUNTED;
-  const wanted = only && new Set(only);
-  const ready = found.candidates.filter((c) => c.missing.length === 0 && (!wanted || wanted.has(c.name)));
+  // By name as people write it, as chat may not have it exactly
+  const wanted = only && new Set(only.map(gameKey));
+  const ready = found.candidates.filter((c) => c.missing.length === 0 && (!wanted || wanted.has(gameKey(c.name))));
   if (ready.length < 2) {
     return ready.length ? `**${ready[0].name}** is the only game that fits, so there’s nothing to vote on.` : 'No game fits everyone here, so there’s nothing to vote on.';
   }

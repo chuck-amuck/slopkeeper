@@ -74,6 +74,7 @@ const FIELDS = {
   chat: { kind: 'boolean', hint: 'Answers anyone who @mentions the bot or replies to it, in character, and does what they ask: music, sounds and speech, as they could themselves. Their message and the channel’s last 20 messages go to Anthropic to answer it.' },
   chatPersonality: { kind: 'longtext', maxLength: 1000, hint: 'Who the bot is when it answers, in a few sentences. Up to 1000 characters.' },
   chatWebSearch: { kind: 'boolean', hint: 'Searches the web when someone asks for a game’s strategy, builds, guides or news, through Anthropic, and links the sources. A search costs a cent, plus the pages it reads.' },
+  chatActions: { kind: 'boolean', hint: 'Lets it plan, change and answer game nights and start votes on what to play when someone asks, with the same permissions as the commands. Off, it points people to the commands instead.' },
   chatModel: { kind: 'choice', options: [['haiku', 'Claude Haiku 5.5 (cheapest and quickest)'], ['sonnet', 'Claude Sonnet 5.5 (better answers, about 20 times the cost)'], ['opus', 'Claude Opus 5.5 (smartest, about 40 times the cost)']], hint: 'Which model answers.' },
   chatVoice: {
     kind: 'choice',

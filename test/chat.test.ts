@@ -6,7 +6,7 @@ import { commandMention, rememberCommands } from '../src/commandIds.ts';
 import { config } from '../src/config.ts';
 import { db } from '../src/db.ts';
 import { MessageFlags } from 'discord.js';
-import { answer, asksBot, chat, chatNote, chatNotes, chatUsage, COOLDOWN_MS, finished, MODELS, withoutOffer, noteOf, onMessage, resetChat, sourcesLine, useTool, type Turn } from '../src/features/chat.ts';
+import { answer, asksBot, chat, chatNote, chatNotes, chatUsage, COOLDOWN_MS, finished, MODELS, MOST_STRICT_TOOLS, strictAtMost, withoutOffer, noteOf, onMessage, resetChat, sourcesLine, useTool, type Turn } from '../src/features/chat.ts';
 import { clearQueue, queueOf } from '../src/features/music.ts';
 import { checkSetting } from '../src/features/setup.ts';
 import { setting, setSetting } from '../src/settings.ts';
@@ -217,7 +217,7 @@ test('“play the wall” finds the album and queues it, answering in character'
   assert.match(first.system[0].text, /robot butler/);
   assert.deepEqual(
     first.tools?.map((t) => t.name),
-    ['find_music', 'artist_albums', 'queue_music', 'undo_queue', 'show_queue', 'control_music', 'find_sound', 'play_sound', 'remember', 'games_for', 'game_info', 'play_stats', 'deals', 'music_history', 'patch_notes', 'web_search'],
+    ['find_music', 'artist_albums', 'queue_music', 'undo_queue', 'show_queue', 'control_music', 'find_sound', 'play_sound', 'remember', 'games_for', 'pick_game', 'game_info', 'play_stats', 'deals', 'music_history', 'patch_notes', 'game_nights', 'plan_game_night', 'change_game_night', 'answer_game_night', 'start_vote', 'web_search'],
   );
   // The channel's last messages, with mentions as names, the music, and where the person is
   const asked = first.messages[0].content as string;
@@ -613,6 +613,32 @@ test('it searches the web for a build, and posts the answer whole with its sourc
   assert.match(sent[0]!.system[0]!.text, /search the web with web_search/);
   // A search costs a cent on top of its tokens
   assert.ok(Math.abs(chatUsage(guild.id).cost - (0.01 + (15000 * 0.1 + 300 * 0.5) / 1e6)) < 1e-9);
+});
+
+test('with everything set up, it offers no more strict tools than the API takes', async (t) => {
+  const was = { voiceUrl: config.voiceUrl, steamApiKey: config.steamApiKey };
+  t.after(() => Object.assign(config, was));
+  Object.assign(config, { voiceUrl: 'http://voice.test', steamApiKey: 'steam-key' });
+  const guild = fakeGuild('g-strict');
+  setSetting(guild.id, 'tts', true);
+  t.after(() => setSetting(guild.id, 'tts', undefined));
+  replies = [turn('end_turn', text('Ready, my liege.'))];
+  await onMessage(fakeMessage(guild, fakeMember(guild), '<@100> hello').message, client);
+  const offered = sent[0]!.tools as unknown as { name: string; strict?: boolean }[];
+  assert.ok(offered.some((tool) => tool.name === 'say_aloud') && offered.some((tool) => tool.name === 'achievements'));
+  const strict = offered.filter((tool) => tool.strict).map((tool) => tool.name);
+  assert.ok(strict.length <= MOST_STRICT_TOOLS, `${strict.length} strict tools: ${strict.join(', ')}`);
+  // Those with more than one plain text to give keep it
+  assert.ok(strict.includes('queue_music') && strict.includes('plan_game_night') && !strict.includes('show_queue') && !strict.includes('play_sound'));
+});
+
+test('past the API’s limit of strict tools, the last ones aren’t strict, and those with no input or one plain text never are', () => {
+  const tool = (name: string, properties: Record<string, unknown>) => ({ name, strict: true, input_schema: { type: 'object' as const, properties } });
+  const many = Array.from({ length: 25 }, (_, n) => tool(`t${n}`, { a: { type: 'string' }, b: { type: 'string' } }));
+  const list = strictAtMost([tool('none', {}), tool('text', { a: { type: 'string' } }), tool('choice', { a: { type: 'string', enum: ['x'] } }), ...many]);
+  const strict = list.filter((t) => 'strict' in t && t.strict).map((t) => ('name' in t ? t.name : ''));
+  assert.deepEqual(strict, ['choice', ...many.slice(0, 19).map((t) => t.name)]);
+  assert.equal(list.length, 28);
 });
 
 test('a long search that pauses is sent back as it is to carry on, and with web search off it isn’t offered', async (t) => {

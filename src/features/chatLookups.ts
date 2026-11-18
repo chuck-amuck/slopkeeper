@@ -11,7 +11,7 @@ import { achievementProgress } from './achievements.ts';
 import { dealBundles } from './deals.ts';
 import { reviewGiveaways } from './freegames.ts';
 import { searchSteam } from './gamefacts.ts';
-import { allGames, memberGames, ownersOfApp } from './games.ts';
+import { allGames, choose, memberGames, ownersOfApp } from './games.ts';
 import { checkpoint, PERIODS, playsIn, plural, sessionCount, stats, totalsBy } from './gamestats.ts';
 import { AUTOPLAY } from './music.ts';
 import { dealText, lowestPrice, money, onSale, priceCheck, saleName, saleReasons, salePrices } from './sales.ts';
@@ -27,6 +27,8 @@ const MOST_ROWS = 25;
 const MOST_ALMOST = 8;
 /** People or games listed when a name matches more than one */
 const MOST_CHOICES = 8;
+/** People whose last random pick it remembers, so “reroll” picks another */
+const MOST_PICKS_KEPT = 500;
 /** Each patch note, so three of them are about a thousand tokens */
 const LONGEST_NOTE = 1500;
 
@@ -49,8 +51,19 @@ export function lookupTools(): Anthropic.Tool[] {
       strict: true,
       input_schema: object({
         people: PEOPLE,
-        kind: { type: 'string', enum: ['any', 'coop', 'pvp'] },
-        steam_deck: { type: 'string', enum: ['any', 'playable', 'verified'], description: 'Only games that work on Steam Deck' },
+        kind: { type: 'string', enum: ['any', 'coop', 'pvp'], description: 'any, unless they asked for co-op or PvP games' },
+        steam_deck: { type: 'string', enum: ['any', 'playable', 'verified'], description: 'any, unless they asked for games that work on Steam Deck' },
+      }),
+    },
+    {
+      name: 'pick_game',
+      description:
+        'Picks one game at random from what a group can all play, as /whatdoweplay does, for “just pick one”, “choose for us” or “reroll”. Asked again by the same person, it picks a different one when it can.',
+      strict: true,
+      input_schema: object({
+        people: PEOPLE,
+        kind: { type: 'string', enum: ['any', 'coop', 'pvp'], description: 'any, unless they asked for co-op or PvP games' },
+        steam_deck: { type: 'string', enum: ['any', 'playable', 'verified'], description: 'any, unless they asked for games that work on Steam Deck' },
       }),
     },
     {
@@ -100,7 +113,7 @@ export function lookupTools(): Anthropic.Tool[] {
       : []),
     {
       name: 'patch_notes',
-      description: 'A game’s latest patch notes from Steam, newest first, to sum up what changed.',
+      description: 'A game’s latest patch notes from Steam, newest first, to sum up what changed. For what’s in a game’s latest patch or update, use this before searching the web.',
       strict: true,
       input_schema: object({ game: GAME }),
     },
@@ -118,7 +131,7 @@ export function lookupTools(): Anthropic.Tool[] {
   ];
 }
 
-const LOOKUPS = new Set(['games_for', 'game_info', 'play_stats', 'deals', 'music_history', 'patch_notes', 'achievements']);
+const LOOKUPS = new Set(['games_for', 'pick_game', 'game_info', 'play_stats', 'deals', 'music_history', 'patch_notes', 'achievements']);
 
 /** What a lookup found, as the model is told it, or null if `name` isn't one */
 export async function lookUp(member: GuildMember, name: string, input: Record<string, unknown>): Promise<string | null> {
@@ -132,6 +145,8 @@ export async function lookUp(member: GuildMember, name: string, input: Record<st
     switch (name) {
       case 'games_for':
         return await gamesFor(member, input.people, text('kind'), text('steam_deck'));
+      case 'pick_game':
+        return await pickGame(member, input.people, text('kind'), text('steam_deck'));
       case 'game_info':
         return await gameInfo(guild, text('game'));
       case 'play_stats':
@@ -289,7 +304,23 @@ const sentence = (text: string) => (/[.!?]$/.test(text) ? text : `${text}.`);
 /** Names with times, like “Valheim (3h), Deep Rock Galactic (1h)”, as a number after a name can read as part of it */
 const timed = (rows: { name: string; ms: number }[]) => rows.map((r) => `${r.name} (${formatDuration(r.ms)})`).join(', ');
 
-async function gamesFor(asker: GuildMember, said: unknown, kind: string, deck: string) {
+type GroupGame = Awaited<ReturnType<typeof pickFromWeb>>['ready'][number];
+
+/** A game a group could play, with what's worth knowing about it, as a line of a list */
+function groupLine(r: GroupGame) {
+  const facts = [
+    r.coop && r.pvp ? 'co-op and PvP' : r.coop ? 'co-op' : r.pvp ? 'PvP' : null,
+    r.deck >= DECK_VERIFIED ? 'Steam Deck verified' : r.deck >= DECK_PLAYABLE ? 'playable on Steam Deck' : null,
+    r.playedMs ? `${formatDuration(r.playedMs)} played here between them${r.last ? `, last ${ago(r.last)}` : ''}` : 'not played here yet',
+    r.steamMinutes ? `${formatDuration(r.steamMinutes * 60_000)} on Steam between them` : null,
+    r.borrowed.length ? `${listNames(r.borrowed)} through family sharing` : null,
+    r.missing.length ? `${listNames(r.missing)} doesn’t have it` : null,
+  ];
+  return `- ${r.name}: ${facts.filter(Boolean).join('; ')}`;
+}
+
+/** What the people named, or those in voice with the asker, could play together, most played first, or what's wrong */
+async function groupGames(asker: GuildMember, said: unknown, kind: string, deck: string) {
   const { guild } = asker;
   const named = peopleNamed(asker, said);
   if (typeof named === 'string') return named;
@@ -298,35 +329,57 @@ async function gamesFor(asker: GuildMember, said: unknown, kind: string, deck: s
   const url = new URL('http://chat/');
   url.searchParams.set('users', people.map((m) => m.id).join(','));
   const picked = await pickFromWeb(guild, url);
-  const fits = (r: (typeof picked.ready)[number]) =>
-    (kind !== 'coop' || r.coop) && (kind !== 'pvp' || r.pvp) && r.deck >= (deck === 'verified' ? DECK_VERIFIED : deck === 'playable' ? DECK_PLAYABLE : 0);
+  const fits = (r: GroupGame) => (kind !== 'coop' || r.coop) && (kind !== 'pvp' || r.pvp) && r.deck >= (deck === 'verified' ? DECK_VERIFIED : deck === 'playable' ? DECK_PLAYABLE : 0);
   // What they've played most together first, then what they've put most time into on Steam
-  const byPlayed = (a: (typeof picked.ready)[number], b: (typeof picked.ready)[number]) => b.playedMs - a.playedMs || b.steamMinutes - a.steamMinutes;
-  const ready = picked.ready.filter(fits).sort(byPlayed);
+  const byPlayed = (a: GroupGame, b: GroupGame) => b.playedMs - a.playedMs || b.steamMinutes - a.steamMinutes;
   const almost = picked.almost.filter(fits).sort(byPlayed);
-  const line = (r: (typeof picked.ready)[number]) => {
-    const facts = [
-      r.coop && r.pvp ? 'co-op and PvP' : r.coop ? 'co-op' : r.pvp ? 'PvP' : null,
-      r.deck >= DECK_VERIFIED ? 'Steam Deck verified' : r.deck >= DECK_PLAYABLE ? 'playable on Steam Deck' : null,
-      r.playedMs ? `${formatDuration(r.playedMs)} played here between them${r.last ? `, last ${ago(r.last)}` : ''}` : 'not played here yet',
-      r.steamMinutes ? `${formatDuration(r.steamMinutes * 60_000)} on Steam between them` : null,
-      r.borrowed.length ? `${listNames(r.borrowed)} through family sharing` : null,
-      r.missing.length ? `${listNames(r.missing)} doesn’t have it` : null,
-    ];
-    return `- ${r.name}: ${facts.filter(Boolean).join('; ')}`;
-  };
   const filtered = kind !== 'any' || deck !== 'any' ? ' like that' : '';
   const all = picked.counted === 2 ? 'both' : 'all';
+  return {
+    people,
+    picked,
+    ready: picked.ready.filter(fits).sort(byPlayed),
+    /** "One purchase away:" and those games, or nothing */
+    oneAway: almost.length ? ['One purchase away:', ...almost.slice(0, MOST_ALMOST).map(groupLine)] : [],
+    filtered,
+    all,
+    none: `No multiplayer game${filtered} is owned by ${all} of them and fits ${people.length} players.`,
+  };
+}
+
+async function gamesFor(asker: GuildMember, said: unknown, kind: string, deck: string) {
+  const found = await groupGames(asker, said, kind, deck);
+  if (typeof found === 'string') return found;
+  const { people, picked, ready, oneAway, filtered, all, none } = found;
   return [
     `For ${listNames(people.map((m) => m.displayName))}: ${picked.counted} of ${picked.people} have games the bot knows about.`,
     ...picked.notes,
-    ready.length ? `Games they ${all} have${filtered}, most played here first:` : `No multiplayer game${filtered} is owned by ${all} of them and fits ${people.length} players.`,
-    ...ready.slice(0, MOST_ROWS).map(line),
+    ready.length ? `Games they ${all} have${filtered}, most played here first:` : none,
+    ...ready.slice(0, MOST_ROWS).map(groupLine),
     more(ready, MOST_ROWS),
-    ...(almost.length ? ['One purchase away:', ...almost.slice(0, MOST_ALMOST).map(line)] : []),
+    ...oneAway,
   ]
     .filter(Boolean)
     .join('\n');
+}
+
+/** The game picked last for each person, by server */
+const lastPicks = new Map<string, string>();
+
+/** One game at random from what they could all play, as /whatdoweplay picks, other than the last one picked for them */
+async function pickGame(asker: GuildMember, said: unknown, kind: string, deck: string) {
+  const found = await groupGames(asker, said, kind, deck);
+  if (typeof found === 'string') return found;
+  const { people, picked, ready, oneAway, filtered, all, none } = found;
+  const who = `For ${listNames(people.map((m) => m.displayName))}`;
+  if (!ready.length) return [`${who}: ${none}`, ...picked.notes, ...oneAway].join('\n');
+  const key = `${asker.guild.id}:${asker.id}`;
+  const pick = choose(ready, lastPicks.get(key));
+  lastPicks.delete(key);
+  lastPicks.set(key, pick.name);
+  if (lastPicks.size > MOST_PICKS_KEPT) lastPicks.delete(lastPicks.keys().next().value!);
+  const how = ready.length === 1 ? `${pick.name} is the only game they ${all} have${filtered}:` : `picked at random from the ${ready.length} games they ${all} have${filtered}:`;
+  return [`${who}, ${how}`, groupLine(pick), ...picked.notes].join('\n');
 }
 
 async function gameInfo(guild: Guild, said: string) {

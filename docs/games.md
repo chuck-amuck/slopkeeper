@@ -9,6 +9,8 @@ Linking Steam, picking a game everyone in voice owns, and the server's game libr
 | `/whatdoweplay [type] [deck]` | Run it in voice. It picks a random game everyone in your channel can play. `type` keeps to co-op or PvP games and `deck` to Steam Deck ones, both from Steam's store. |
 | `/gamevote [minutes]` | Run it in voice. Everyone in your channel votes on the games they all own. It's open 1 minute by default, up to 10. |
 
+[Chat](chat.md#what-it-can-do) does both too: "just pick one", "reroll", "start a vote on what to play".
+
 A game qualifies if Steam tags it multiplayer, co-op or PvP, or it's in the [game library](#game-library). A library game with a player cap is skipped when there are more people than that, and games hidden with **Never suggest this** are skipped.
 
 The answer also shows **Also works** (other games everyone owns, most played first), **One purchase away** (games all but one person owns, and who needs to buy them) and **Not counted** (people whose games the bot doesn't know, left out rather than blocking every game: no Steam link and no games marked, or a private profile it has never seen the games of; a profile made private keeps the games seen before).

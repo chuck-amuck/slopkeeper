@@ -56,9 +56,9 @@ test('the lookup tools: achievements need a Steam key, and songs played before n
   const keys = { steam: config.steamApiKey, music: config.musicUrl };
   t.after(() => Object.assign(config, { steamApiKey: keys.steam, musicUrl: keys.music }));
   Object.assign(config, { steamApiKey: null, musicUrl: null });
-  assert.deepEqual(lookupTools().map((tool) => tool.name), ['games_for', 'game_info', 'play_stats', 'deals', 'patch_notes']);
+  assert.deepEqual(lookupTools().map((tool) => tool.name), ['games_for', 'pick_game', 'game_info', 'play_stats', 'deals', 'patch_notes']);
   Object.assign(config, { steamApiKey: 'key', musicUrl: 'http://music' });
-  assert.deepEqual(lookupTools().map((tool) => tool.name), ['games_for', 'game_info', 'play_stats', 'deals', 'music_history', 'patch_notes', 'achievements']);
+  assert.deepEqual(lookupTools().map((tool) => tool.name), ['games_for', 'pick_game', 'game_info', 'play_stats', 'deals', 'music_history', 'patch_notes', 'achievements']);
   assert.equal(lookUp(robin, 'queue_music', {}) instanceof Promise, true);
 });
 
