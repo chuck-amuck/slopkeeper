@@ -75,7 +75,8 @@ const SCENES: Scene[] = [
   { name: 'an artist', turns: [{ say: '@bot queue the strokes', uses: ['find_music', 'queue_music'] }] },
   { name: 'their latest album', turns: [{ say: '@bot play the new strokes album', uses: ['artist_albums', 'queue_music'] }] },
   { name: 'their latest album, shuffled', turns: [{ say: '@bot play the most recent strokes album and shuffle it', uses: ['artist_albums', ['queue_music', { shuffle: true }]] }] },
-  { name: 'another artist’s latest', turns: [{ say: '@bot queue radiohead’s latest album', uses: ['artist_albums', 'queue_music'] }] },
+  // Newer than their latest studio album are a live album and KID A MNESIA, which reissues two older ones under a new name
+  { name: 'another artist’s latest', turns: [{ say: '@bot queue radiohead’s latest album', uses: ['artist_albums', 'queue_music'], says: /a moon shaped pool/i }] },
   { name: 'an album, in voice', inVoice: true, turns: [{ say: '@bot play the wall', uses: ['queue_music'] }] },
   { name: 'an artist, shuffled', turns: [{ say: '@bot put on some daft punk, shuffled', uses: [['queue_music', { shuffle: true }]] }] },
   { name: 'a song by name', turns: [{ say: '@bot play wish you were here', uses: ['queue_music'] }] },
@@ -105,6 +106,8 @@ const SCENES: Scene[] = [
     ],
   },
   { name: 'a question isn’t a request', turns: [{ say: '@bot are your records lacking knowledge of reality awaits?', avoids: ['queue_music', 'control_music'] }] },
+  // Reality Awaits is an album, newer than the model knows, so a search for a song by that name finds nothing
+  { name: 'an album it hasn’t heard of', turns: [{ say: '@bot have you heard of reality awaits?', uses: ['find_music'], avoids: ['queue_music', 'control_music'], says: /strokes[^.]*album|album[^.]*strokes/i }] },
   {
     name: 'follows the conversation',
     earlier: [
