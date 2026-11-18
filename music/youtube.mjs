@@ -1,5 +1,6 @@
-// Finds songs on YouTube Music, YouTube or SoundCloud with yt-dlp, and keeps their audio in a folder the bot reads.
-// yt-dlp needs updating as YouTube changes, so it's updated when the container starts and daily after that
+// Finds songs on YouTube Music, YouTube or SoundCloud with yt-dlp, and keeps their audio in a folder the bot reads, and
+// searches YouTube Music with ytmusicapi. Both need updating as YouTube changes, so they're updated when the container
+// starts and daily after that
 import { execFile, spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -11,6 +12,13 @@ const FETCH_TIMEOUT_MS = 3 * 60_000;
 const MAX_ANSWER = 64 * 1024;
 // A song being played and the next one being fetched, without running many yt-dlps at once
 const AT_ONCE = 2;
+// Searches have their own few at once, so one never waits behind a download, and give up sooner
+const SEARCHES_AT_ONCE = 4;
+const SEARCH_TIMEOUT_MS = 15_000;
+const MAX_SEARCH_ANSWER = 256 * 1024;
+// A search's answer is kept this long, for a few at most, so asking again (as chat does, or a fallback) doesn't ask YouTube
+export const SEARCH_KEEP_MS = 5 * 60_000;
+const MOST_SEARCHES_KEPT = 500;
 const SAFE_FILE = /^[\w.-]+$/;
 // A video downloaded for the soundboard's editor is kept this long after it was last asked for, and checked for this often
 export const CLIP_KEEP_MS = 60 * 60_000;
@@ -18,15 +26,18 @@ const CLIP_SWEEP_MS = 10 * 60_000;
 
 /**
  * `o.audioDir` holds the audio, `o.cacheBytes` caps it, `o.clipDir` holds videos for the soundboard, `o.fetchCommand` runs fetch.py with a request on stdin,
- * `o.versionCommand` prints yt-dlp's version and `o.updateCommand` updates it
+ * `o.searchCommand` runs search.py the same way, `o.versionCommand` and `o.searchVersionCommand` print yt-dlp's and ytmusicapi's versions, and
+ * `o.updateCommand` updates both
  */
 export function createFetcher(o) {
   const indexFile = path.join(o.audioDir, 'index.json');
   const clipIndexFile = path.join(o.clipDir, 'index.json');
   const state = { ready: false, version: null, message: 'Starting yt-dlp' };
   const pending = new Map();
-  const waiting = [];
-  let running = 0;
+  const lanes = { fetch: { most: AT_ONCE, running: 0, waiting: [] }, search: { most: SEARCHES_AT_ONCE, running: 0, waiting: [] } };
+  /** Searches answered lately, by what was asked */
+  const searched = new Map();
+  let searchVersion = null;
   let updateTimer;
   let sweepTimer;
   let onChange = () => {};
@@ -49,28 +60,32 @@ export function createFetcher(o) {
     fs.renameSync(`${file}.new`, file);
   }
 
-  /** Waits for a turn, so only a few downloads run at once */
-  async function turn() {
-    if (running >= AT_ONCE) await new Promise((resolve) => waiting.push(resolve));
-    running++;
+  /** Waits for a turn in its lane, so only a few downloads, and a few searches, run at once */
+  async function turn(lane) {
+    if (lane.running >= lane.most) await new Promise((resolve) => lane.waiting.push(resolve));
+    lane.running++;
   }
 
-  function done() {
-    running--;
-    waiting.shift()?.();
+  function done(lane) {
+    lane.running--;
+    lane.waiting.shift()?.();
   }
 
-  /** Runs fetch.py once with a request, and returns its answer */
-  async function run(request) {
-    await turn();
+  /** Runs fetch.py once with a request, or search.py for a search, and returns its answer */
+  async function run(request, kind = 'fetch') {
+    const lane = lanes[kind];
+    await turn(lane);
     try {
-      const [command, ...args] = o.fetchCommand;
-      const proc = spawn(command, args, { stdio: ['pipe', 'pipe', 'pipe'], timeout: FETCH_TIMEOUT_MS, killSignal: 'SIGKILL' });
+      const searching = kind === 'search';
+      const [command, ...args] = searching ? o.searchCommand : o.fetchCommand;
+      const timeout = searching ? (o.searchTimeoutMs ?? SEARCH_TIMEOUT_MS) : FETCH_TIMEOUT_MS;
+      const proc = spawn(command, args, { stdio: ['pipe', 'pipe', 'pipe'], timeout, killSignal: 'SIGKILL' });
       let out = '';
       let err = '';
-      proc.stdout.on('data', (chunk) => (out = (out + chunk).slice(0, MAX_ANSWER)));
+      const most = searching ? MAX_SEARCH_ANSWER : MAX_ANSWER;
+      proc.stdout.on('data', (chunk) => (out = (out + chunk).slice(0, most)));
       proc.stderr.on('data', (chunk) => (err = (err + chunk).slice(-2000)));
-      proc.stdin.end(JSON.stringify({ dir: o.audioDir, ...request }));
+      proc.stdin.end(JSON.stringify(searching ? request : { dir: o.audioDir, ...request }));
       const code = await new Promise((resolve) => {
         proc.once('exit', resolve);
         proc.once('error', () => resolve(-1));
@@ -78,11 +93,36 @@ export function createFetcher(o) {
       try {
         return JSON.parse(out.trim().split('\n').at(-1));
       } catch {
-        throw new Error(`yt-dlp stopped without an answer (exit ${code}): ${err.trim().slice(-300) || 'no output'}`);
+        throw new Error(`${searching ? 'The search' : 'yt-dlp'} stopped without an answer (exit ${code}): ${err.trim().slice(-300) || 'no output'}`);
       }
     } finally {
-      done();
+      done(lane);
     }
+  }
+
+  /**
+   * Songs, albums or artists on YouTube Music, or an album or artist read in full. An answer is kept for a few minutes,
+   * and only one search runs for the same ask
+   */
+  async function search(request, now = Date.now()) {
+    const key = JSON.stringify(request);
+    const kept = searched.get(key);
+    if (kept && now - kept.at < SEARCH_KEEP_MS) return { ...kept.answer, kept: true };
+    if (pending.has(`search ${key}`)) return pending.get(`search ${key}`);
+    const job = (async () => {
+      const answer = await run(request, 'search');
+      if (answer.error) return answer;
+      searched.delete(key);
+      searched.set(key, { at: Date.now(), answer });
+      // The oldest go first
+      for (const old of searched.keys()) {
+        if (searched.size <= MOST_SEARCHES_KEPT) break;
+        searched.delete(old);
+      }
+      return answer;
+    })().finally(() => pending.delete(`search ${key}`));
+    pending.set(`search ${key}`, job);
+    return job;
   }
 
   /** Deletes the least recently played audio until the folder is under its cap */
@@ -200,6 +240,20 @@ export function createFetcher(o) {
     return stdout.trim().split('\n').at(-1);
   }
 
+  /** Says ytmusicapi's version when it changes. Searching failing doesn't stop downloads, so this only logs */
+  async function checkSearchVersion() {
+    if (!o.searchVersionCommand) return;
+    const [command, ...args] = o.searchVersionCommand;
+    try {
+      const { stdout } = await promisify(execFile)(command, args, { timeout: 60_000 });
+      const version = stdout.trim().split('\n').at(-1);
+      if (version !== searchVersion) o.log(`ytmusicapi ${version}`);
+      searchVersion = version;
+    } catch (err) {
+      o.log('ytmusicapi didn’t run:', err.message);
+    }
+  }
+
   async function update() {
     if (o.updateCommand) {
       const [command, ...args] = o.updateCommand;
@@ -208,11 +262,13 @@ export function createFetcher(o) {
     const version = await checkVersion();
     if (version !== state.version) o.log(`yt-dlp ${version}`);
     setState({ ready: true, version, message: '' });
+    await checkSearchVersion();
   }
 
   return {
     state,
     fetchAudio,
+    search,
     clip,
     sweepClips,
     /** `listener` hears every change to whether yt-dlp is ready */

@@ -72,6 +72,8 @@ jobs:
         with:
           node-version: 24
       - run: node --test "music/*.test.mjs"
+      - run: python3 -m py_compile music/*.py
+      - run: python3 -m unittest discover -s music -p '*_test.py'
 
   build:
     needs: test

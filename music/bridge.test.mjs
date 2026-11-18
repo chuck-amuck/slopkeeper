@@ -5,7 +5,7 @@ import path from 'node:path';
 import { after, test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { containerUsage, createBridge, LEFTOVERS } from './bridge.mjs';
-import { CLIP_KEEP_MS } from './youtube.mjs';
+import { CLIP_KEEP_MS, SEARCH_KEEP_MS } from './youtube.mjs';
 
 const TOKEN = 'music-token';
 const temp = () => fs.mkdtempSync(path.join(tmpdir(), 'slopkeeper-music-'));
@@ -15,7 +15,7 @@ after(() => Promise.all(running.map((b) => b.stop())));
 
 /**
  * Stands in for fetch.py: a song called Missing isn't found, one called Broken stops without answering, and anything else
- * is "downloaded" as a file of a kilobyte per second of song. Each run is counted in runs.log
+ * is "downloaded" as a file of a kilobyte per second of song, taking 1.5 s for one called Slow. Each run is counted in runs.log
  */
 const FAKE_FETCH = `
   const fs = require('node:fs');
@@ -39,10 +39,36 @@ const FAKE_FETCH = `
       const file = 'youtube-' + (r.uri ?? r.url).replace(/\\W/g, '') + '.webm';
       fs.writeFileSync(r.dir + '/' + file, Buffer.alloc(Math.round((r.durationMs ?? 4000) / 1000) * 1024));
       console.log(JSON.stringify({ file, source: 'youtube', url: 'https://www.youtube.com/watch?v=x', title: r.title ?? 'A Video', durationMs: r.durationMs ?? 4000 }));
-    }, 30);
+    }, r.title?.startsWith('Slow') ? 1500 : 30);
   });
 `;
-const youtubeFake = { fetchCommand: [process.execPath, '-e', FAKE_FETCH], versionCommand: [process.execPath, '-e', 'console.log("2026.10.26")'], updateCommand: null };
+/**
+ * Stands in for search.py: "broken" fails, "crash" stops without answering, "slow" takes 5 seconds, and anything else finds
+ * one song named for what was asked. Each run is counted in the file SEARCH_RUNS names
+ */
+const FAKE_SEARCH = `
+  const fs = require('node:fs');
+  let raw = '';
+  process.stdin.on('data', (c) => (raw += c)).on('end', () => {
+    const r = JSON.parse(raw);
+    fs.appendFileSync(process.env.SEARCH_RUNS, JSON.stringify(r) + '\\n');
+    if (r.search === 'broken') return console.log(JSON.stringify({ error: 'YouTube Music’s page didn’t have what was expected' }));
+    if (r.search === 'crash') process.exit(1);
+    if (r.search === 'slow') return setTimeout(() => console.log('{"results":[]}'), 5000);
+    if (r.album) return console.log(JSON.stringify({ id: r.album, title: 'An Album', songs: [] }));
+    if (r.artist) return console.log(JSON.stringify({ id: r.artist, name: 'Band', songs: [], albums: [], singles: [] }));
+    console.log(JSON.stringify({ results: [{ id: 'aaaaaaaaaaa', title: r.search, kind: r.kind, limit: r.limit }] }));
+  });
+`;
+process.env.SEARCH_RUNS = path.join(temp(), 'searches.log');
+const searchRuns = () => (fs.existsSync(process.env.SEARCH_RUNS) ? fs.readFileSync(process.env.SEARCH_RUNS, 'utf8').trim().split('\n').map((line) => JSON.parse(line)) : []);
+const youtubeFake = {
+  fetchCommand: [process.execPath, '-e', FAKE_FETCH],
+  searchCommand: [process.execPath, '-e', FAKE_SEARCH],
+  versionCommand: [process.execPath, '-e', 'console.log("2026.10.26")'],
+  searchVersionCommand: [process.execPath, '-e', 'console.log("1.12.4")'],
+  updateCommand: null,
+};
 
 /** A bridge with a stand-in for yt-dlp */
 async function bridge(options = {}) {
@@ -289,4 +315,65 @@ test('a video that can’t be had, or a link that isn’t one, says so', async (
   assert.equal((await missing.json()).error, 'Video unavailable');
   assert.equal((await clip(base, 'file:///etc/passwd')).status, 400);
   assert.equal((await ask(base, '/clip', { method: 'POST', body: JSON.stringify({ uri: 'spotify:track:1' }) })).status, 400);
+});
+
+const searchFor = (base, body) => ask(base, '/search', { method: 'POST', body: JSON.stringify(body) });
+
+test('it searches YouTube Music for songs, albums and artists, and reads an album or artist, keeping answers a few minutes', async (t) => {
+  const { base } = await bridge();
+  const before = searchRuns().length;
+  const res = await searchFor(base, { search: '  the   strokes ', kind: 'artist' });
+  assert.equal(res.status, 200);
+  assert.match(res.headers.get('server-timing'), /^search;dur=\d+(\.\d+)?$/);
+  assert.deepEqual(await res.json(), { results: [{ id: 'aaaaaaaaaaa', title: 'the strokes', kind: 'artist', limit: 10 }] });
+  // Asked again, the same way or spaced differently, it's answered from what was kept
+  const again = await searchFor(base, { search: 'the strokes', kind: 'artist', limit: 10 });
+  assert.equal(again.headers.get('server-timing'), null);
+  assert.deepEqual((await again.json()).results[0].title, 'the strokes');
+  assert.deepEqual(await (await searchFor(base, { album: 'MPREb_tc3z4MYeOpY' })).json(), { id: 'MPREb_tc3z4MYeOpY', title: 'An Album', songs: [] });
+  assert.equal((await (await searchFor(base, { artist: 'UC8N13xhRG78YQK7Ppc4Ytrg' })).json()).name, 'Band');
+  assert.deepEqual(searchRuns().slice(before), [{ search: 'the strokes', kind: 'artist', limit: 10 }, { album: 'MPREb_tc3z4MYeOpY' }, { artist: 'UC8N13xhRG78YQK7Ppc4Ytrg' }]);
+
+  // A few minutes later it's asked again
+  t.mock.timers.enable({ apis: ['Date'], now: Date.now() + SEARCH_KEEP_MS + 1000 });
+  await searchFor(base, { search: 'the strokes', kind: 'artist' });
+  t.mock.timers.reset();
+  assert.equal(searchRuns().length - before, 4);
+});
+
+test('a search that isn’t one is refused, and one that fails says so and isn’t kept', async () => {
+  const { base } = await bridge();
+  for (const wrong of [{}, { search: '', kind: 'song' }, { search: 'x', kind: 'playlist' }, { search: 'x', kind: 'song', limit: 11 }, { search: 'x'.repeat(201), kind: 'song' }, { album: '../etc' }, { artist: 'a b' }]) {
+    assert.equal((await searchFor(base, wrong)).status, 400, JSON.stringify(wrong));
+  }
+  const before = searchRuns().length;
+  for (let i = 0; i < 2; i++) {
+    const res = await searchFor(base, { search: 'broken', kind: 'song' });
+    assert.equal(res.status, 502);
+    assert.match((await res.json()).error, /didn’t have what was expected/);
+  }
+  assert.equal(searchRuns().length - before, 2);
+  const crashed = await searchFor(base, { search: 'crash', kind: 'song' });
+  assert.equal(crashed.status, 502);
+  assert.match((await crashed.json()).error, /^The search stopped without an answer/);
+});
+
+test('a search doesn’t wait behind downloads, and gives up when YouTube Music is slow', async () => {
+  const { base } = await bridge({ searchTimeoutMs: 300 });
+  // Both download slots busy with songs that take a while
+  const downloads = [1, 2].map((n) => fetchSong(base, song(n, { title: `Slow ${n}` })));
+  await sleep(100);
+  const started = Date.now();
+  assert.equal((await searchFor(base, { search: 'quick', kind: 'song' })).status, 200);
+  assert.ok(Date.now() - started < 1000, `${Date.now() - started} ms`);
+  const slow = await searchFor(base, { search: 'slow', kind: 'song' });
+  assert.equal(slow.status, 502);
+  await Promise.all(downloads);
+});
+
+test('ytmusicapi’s version is logged when it starts', async () => {
+  const lines = [];
+  await bridge({ log: (...args) => lines.push(args.join(' ')) });
+  await sleep(200);
+  assert.ok(lines.includes('ytmusicapi 1.12.4'), lines.join('\n'));
 });

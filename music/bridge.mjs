@@ -53,8 +53,10 @@ export function createBridge(options = {}) {
     cacheBytes: Number(env.MUSIC_CACHE_MB || 1024) * 1024 * 1024,
     // yt-dlp lives in its own Python environment, which the node user can update
     fetchCommand: ['/opt/ytdlp/bin/python', path.join(import.meta.dirname, 'fetch.py')],
+    searchCommand: ['/opt/ytdlp/bin/python', path.join(import.meta.dirname, 'search.py')],
     versionCommand: ['/opt/ytdlp/bin/python', '-c', 'import yt_dlp; print(yt_dlp.version.__version__)'],
-    updateCommand: ['/opt/ytdlp/bin/pip', 'install', '--quiet', '--upgrade', 'yt-dlp[default,deno]'],
+    searchVersionCommand: ['/opt/ytdlp/bin/python', '-c', 'import importlib.metadata as m; print(m.version("ytmusicapi"))'],
+    updateCommand: ['/opt/ytdlp/bin/pip', 'install', '--quiet', '--upgrade', 'yt-dlp[default,deno]', 'ytmusicapi'],
     log: (...args) => console.log(...args),
     ...options,
   };
@@ -78,6 +80,38 @@ export function createBridge(options = {}) {
 
   const json = (res, code, body) => res.writeHead(code, { 'content-type': 'application/json' }).end(JSON.stringify(body));
 
+  /** What a search asks, as search.py takes it, or null if it isn't one */
+  function searchAsked(body) {
+    const id = (value) => typeof value === 'string' && /^[\w-]{1,64}$/.test(value);
+    if (typeof body?.search === 'string') {
+      const words = body.search.trim().replace(/\s+/g, ' ');
+      const limit = body.limit ?? 10;
+      if (!words || words.length > 200 || !['song', 'album', 'artist'].includes(body.kind) || !Number.isInteger(limit) || limit < 1 || limit > 10) return null;
+      return { search: words, kind: body.kind, limit };
+    }
+    if (id(body?.album)) return { album: body.album };
+    if (id(body?.artist)) return { artist: body.artist };
+    return null;
+  }
+
+  /** Songs, albums or artists on YouTube Music, or one album or artist in full */
+  async function searchRoute(res, body) {
+    const asked = searchAsked(body);
+    if (!asked) return json(res, 400, { error: 'say what to search for, or which album or artist' });
+    if (!youtube.state.ready) return json(res, 503, { error: youtube.state.message || 'yt-dlp isn’t ready' });
+    const started = performance.now();
+    try {
+      const { kept, ...answer } = await youtube.search(asked);
+      if (!kept) res.setHeader('server-timing', `search;dur=${(performance.now() - started).toFixed(1)}`);
+      // Nothing found is an empty list, so an error is always a failure, for the bot to try elsewhere
+      if (answer.error) return json(res, 502, { error: answer.error });
+      return json(res, 200, answer);
+    } catch (err) {
+      o.log('Search failed:', err.message);
+      return json(res, 502, { error: err.message });
+    }
+  }
+
   const server = http.createServer(async (req, res) => {
     if (!authorized(req)) return json(res, 401, { error: 'unauthorized' });
     const route = `${req.method} ${new URL(req.url, 'http://x').pathname}`;
@@ -91,7 +125,7 @@ export function createBridge(options = {}) {
       req.once('close', () => sse.delete(res));
       return;
     }
-    if (!['POST /fetch', 'POST /lookup', 'POST /similar', 'POST /clip'].includes(route)) return json(res, 404, { error: 'not found' });
+    if (!['POST /fetch', 'POST /lookup', 'POST /similar', 'POST /clip', 'POST /search'].includes(route)) return json(res, 404, { error: 'not found' });
     let body;
     try {
       let raw = '';
@@ -100,6 +134,7 @@ export function createBridge(options = {}) {
     } catch {
       return json(res, 400, { error: 'bad JSON' });
     }
+    if (route === 'POST /search') return searchRoute(res, body);
     const song = typeof body?.uri === 'string' && typeof body.title === 'string' && typeof body.artist === 'string' && Number.isFinite(body.durationMs);
     const link = typeof body?.url === 'string' && /^https:\/\//.test(body.url);
     if (route === 'POST /fetch' ? !song && !link : !link) return json(res, 400, { error: 'say which song or link' });

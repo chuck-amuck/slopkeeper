@@ -17,8 +17,9 @@ same static ffmpeg as the image and CI. Without ffmpeg the audio tests skip sile
   `--test-name-pattern="<name>"` for one test).
 - Web: `cd web && node --test 'test/*.test.ts'` works with the host's node; typecheck with `npx tsc -p .` in the
   container.
-- Music container: `node --test 'music/*.test.mjs'`. `voice/` has syntax checks and tests, which CI runs too:
-  `python3 -m py_compile voice/*.py`, `python3 -m unittest discover -s voice -p '*_test.py'` and `sh -n voice/start.sh`.
+- Music container: `node --test 'music/*.test.mjs'`, and its YouTube Music search shaping with
+  `python3 -m unittest discover -s music -p '*_test.py'` (no ytmusicapi needed). `voice/` has syntax checks and tests,
+  which CI runs too: `python3 -m py_compile voice/*.py`, `python3 -m unittest discover -s voice -p '*_test.py'` and `sh -n voice/start.sh`.
 - Voice image: `docker build -q -t sk-voice-test voice && sh voice/smoke.sh sk-voice-test /tmp/voice-models` makes it
   say a line with the default and Spanish models, and with one whose settings list speakers it doesn't take (about
   140 MB, kept in that folder). CI runs it before pushing.
