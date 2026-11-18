@@ -6,6 +6,7 @@ import path from 'node:path';
 import { config } from '../src/config.ts';
 import { recentActivity } from '../src/activity.ts';
 import { addTracks, AUTOPLAY, MOST_FILES_BYTES } from '../src/features/music.ts';
+import { resetMusicSearch } from '../src/musicSearch.ts';
 import { resetSpotify } from '../src/spotify.ts';
 import { GUILD, call, guild, ok, refused, wav } from './apiFixture.ts';
 
@@ -103,7 +104,7 @@ test('the music queue can be filled, reordered and emptied from the page', async
   assert.equal(bad.status, 400);
   const search = await call(`/guilds/${GUILD}/music/search?q=hello`);
   assert.equal(search.status, 502);
-  assert.match(((await search.json()) as any).error, /SPOTIFY_CLIENT_ID/);
+  assert.match(((await search.json()) as any).error, /Searching for music isn’t set up on this bot/);
   assert.match((await ok(`/guilds/${GUILD}/music/playlists`)).problem, /SPOTIFY_REFRESH_TOKEN/);
   const play = await call(`/guilds/${GUILD}/music/play`, { method: 'POST', json: { channelId: 'v1' } });
   assert.equal(play.status, 400);
@@ -112,6 +113,39 @@ test('the music queue can be filled, reordered and emptied from the page', async
   assert.deepEqual(music.queue, []);
   assert.equal(recentActivity(GUILD, 1)[0].action, 'Cleared the music queue');
   assert.equal((await call(`/guilds/${GUILD}/music/queue/shuffle`, { method: 'POST' })).status, 409, 'nothing to shuffle');
+});
+
+test('the page searches YouTube Music without a Spotify app, says where it looked, and adds a song it found', async (t) => {
+  Object.assign(config, { musicUrl: 'http://music.test', musicToken: 'music-token' });
+  t.after(async () => {
+    Object.assign(config, { musicUrl: null, musicToken: null });
+    resetMusicSearch();
+    await ok(`/guilds/${GUILD}/music/queue`, { method: 'DELETE' });
+  });
+  let results: unknown[] = [];
+  const realFetch = globalThis.fetch;
+  t.mock.method(globalThis, 'fetch', async (input: string, init?: RequestInit) => {
+    if (!String(input).startsWith('http://music.test/')) return realFetch(input, init);
+    assert.equal(String(input), 'http://music.test/search');
+    return Response.json({ results });
+  });
+  const music = await ok(`/guilds/${GUILD}/music`);
+  assert.deepEqual([music.searchReady, music.searchFrom], [true, 'YouTube Music']);
+  assert.deepEqual(await ok(`/guilds/${GUILD}/music/search?q=nothing`), { tracks: [], searched: ['YouTube Music'], problem: null });
+  results = [{ id: 'Bn-lcvrMOlc', title: 'Last Nite', artists: ['The Strokes'], album: 'Is This It', seconds: 194, cover: 'https://yt3.googleusercontent.com/abc=w300-h300-l90-rj' }];
+  const { tracks } = await ok(`/guilds/${GUILD}/music/search?q=last%20nite`);
+  assert.equal(tracks[0].uri, 'https://music.youtube.com/watch?v=Bn-lcvrMOlc');
+
+  // Picked, it goes in as found, with its picture
+  const added = await ok(`/guilds/${GUILD}/music/queue`, { method: 'POST', json: { track: tracks[0] } });
+  assert.deepEqual(
+    added.queue.map((r: any) => [r.uri, r.title, r.album, r.cover]),
+    [['https://music.youtube.com/watch?v=Bn-lcvrMOlc', 'Last Nite', 'Is This It', 'https://yt3.googleusercontent.com/abc=w300-h300-l90-rj']],
+  );
+  // Only a song's own link, and only a picture from where songs' come from
+  assert.equal((await call(`/guilds/${GUILD}/music/queue`, { method: 'POST', json: { track: { ...tracks[0], uri: 'https://music.youtube.com/watch?v=Bn-lcvrMOlc&list=x' } } })).status, 400);
+  const elsewhere = await ok(`/guilds/${GUILD}/music/queue`, { method: 'POST', json: { track: { ...tracks[0], cover: 'https://evil.example/x.png' } } });
+  assert.equal(elsewhere.queue.at(-1).cover, null);
 });
 
 test('the page lists the Spotify account’s own playlists, and can shuffle one into the queue', async (t) => {

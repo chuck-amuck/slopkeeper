@@ -106,6 +106,9 @@ export const DEFAULTS = {
   musicAutoplay: process.env.MUSIC_AUTOPLAY === 'true',
   // Unset lets everyone control music
   musicDjRole: null as string | null,
+  // Where songs are looked for by name: spotify or youtube-music. The other is asked when it fails or finds nothing
+  musicSearch: process.env.MUSIC_SEARCH === 'youtube-music' ? 'youtube-music' : 'spotify',
+  musicSearchFallback: process.env.MUSIC_SEARCH_FALLBACK !== 'false',
   // Only does anything with an ANTHROPIC_API_KEY
   chat: process.env.CHAT !== 'false',
   chatPersonality:
@@ -123,6 +126,10 @@ export const DEFAULTS = {
   // Each answer costs a little, so a busy day stops here
   chatDailyLimit: num('CHAT_DAILY_LIMIT', 200),
 };
+
+if (process.env.MUSIC_SEARCH && !['spotify', 'youtube-music'].includes(process.env.MUSIC_SEARCH)) {
+  console.warn(`MUSIC_SEARCH is “${process.env.MUSIC_SEARCH}”, which isn’t spotify or youtube-music, so searches start on Spotify`);
+}
 
 /** Env var that sets each setting's default, for /setup show */
 export const DEFAULT_ENV: Partial<Record<SettingKey, string>> = {
@@ -178,6 +185,8 @@ export const DEFAULT_ENV: Partial<Record<SettingKey, string>> = {
   ttsHopOn: 'TTS_HOP_ON',
   musicVolume: 'MUSIC_VOLUME',
   musicAutoplay: 'MUSIC_AUTOPLAY',
+  musicSearch: 'MUSIC_SEARCH',
+  musicSearchFallback: 'MUSIC_SEARCH_FALLBACK',
   chat: 'CHAT',
   chatPersonality: 'CHAT_PERSONALITY',
   chatModel: 'CHAT_MODEL',

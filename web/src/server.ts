@@ -147,9 +147,10 @@ function encoding(req: IncomingMessage, offered: { br?: unknown; gzip?: unknown 
 }
 
 const HEADERS = {
-  // Server icons and custom emoji come from Discord's CDN, and album covers from Spotify's; nothing else is loaded from anywhere.
+  // Server icons and custom emoji come from Discord's CDN, and album covers from Spotify, YouTube, SoundCloud and YouTube Music (COVER_HOSTS in
+  // the bot's src/musicSearch.ts); nothing else is loaded from anywhere.
   // Voice previews play from a blob: the page fetched itself
-  'content-security-policy': "default-src 'self'; media-src 'self' blob:; img-src 'self' https://cdn.discordapp.com https://i.scdn.co https://i.ytimg.com https://i1.sndcdn.com; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
+  'content-security-policy': "default-src 'self'; media-src 'self' blob:; img-src 'self' https://cdn.discordapp.com https://i.scdn.co https://i.ytimg.com https://i1.sndcdn.com https://lh3.googleusercontent.com https://yt3.googleusercontent.com; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
   'x-content-type-options': 'nosniff',
   'referrer-policy': 'no-referrer',
   'x-slopkeeper-version': VERSION,

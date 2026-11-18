@@ -113,6 +113,13 @@ class SearchTest(unittest.TestCase):
         self.ask({'search': 'x', 'kind': 'song', 'limit': 50})
         self.assertEqual(self.yt.asked[-1][3], 10)
 
+    def test_googles_pictures_are_asked_for_at_300_pixels(self):
+        self.assertEqual(search.cover([{'url': 'https://yt3.googleusercontent.com/abc=w60-h60-l90-rj'}, {'url': 'https://yt3.googleusercontent.com/abc=w120-h120-s-l90-rj'}]),
+                         'https://yt3.googleusercontent.com/abc=w300-h300-s-l90-rj')
+        self.assertEqual(search.cover([{'url': 'https://lh3.googleusercontent.com/xyz=w544-h544'}]), 'https://lh3.googleusercontent.com/xyz=w300-h300')
+        self.assertEqual(search.cover([{'url': 'https://i.ytimg.com/vi/x/sddefault.jpg?sqp=-oay=w120-h90'}]), 'https://i.ytimg.com/vi/x/sddefault.jpg?sqp=-oay=w120-h90')
+        self.assertIsNone(search.cover([]))
+
     def test_a_page_it_couldnt_read_is_a_failure_not_a_miss(self):
         failed = search.plain_error(Exception('"Unable to find \'contents\' using path [...] on {...}'))
         self.assertNotIn('missing', failed)

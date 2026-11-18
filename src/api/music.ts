@@ -5,7 +5,8 @@ import { logActivity } from '../activity.ts';
 import { addTracks, AUTOPLAY, clearQueue, discardUpload, fileProblem, keepTrack, MOST_FILE_BYTES, moveTrack, musicChannelFor, musicState, pauseMusic, queueFrom, queueOf, queueUpload, removeTrack, seekMusic, shuffleQueue, skipMusic, startMusic, stopMusic, uploadFile } from '../features/music.ts';
 import { feeds } from '../changes.ts';
 import { setting } from '../settings.ts';
-import { myPlaylists, playlistsReady, search, SpotifyError, type Track } from '../spotify.ts';
+import { COVER_HOSTS, SOURCES, searchSongs, YTM_SONG } from '../musicSearch.ts';
+import { myPlaylists, playlistsReady, SpotifyError, type Track } from '../spotify.ts';
 import { type Ask, Refused, by, plain, readJson, refuse, saveBody, voiceChannelFor, whoDid } from './common.ts';
 
 // The management API for the music queue and player
@@ -52,7 +53,7 @@ async function startNow(guild: Guild, channelId: unknown, added: string): Promis
   return problem ? `${added} ${plain(guild, problem)}` : `Playing in ${channel.name}.`;
 }
 
-/** Spotify's messages are for whoever searched; anything else is the bot's fault */
+/** Spotify's and the search's messages are for whoever searched; anything else is the bot's fault */
 const spotifyRefused = (err: unknown): never => {
   if (err instanceof SpotifyError) throw new Refused(502, err.message.replaceAll('**', ''));
   throw err;
@@ -63,8 +64,9 @@ export async function handleMusic(guild: Guild, req: IncomingMessage, url: URL, 
   if (key === 'GET ') return answer(guild);
   if (key === 'GET search') {
     const q = (url.searchParams.get('q') ?? '').slice(0, 200);
-    const tracks: Track[] = await search(q).catch(spotifyRefused);
-    return { tracks };
+    const { found, answered, failed } = await searchSongs(guild.id, q).catch(spotifyRefused);
+    // Where it looked, for saying where nothing was found, and why the first didn't answer if it didn't
+    return { tracks: found, searched: answered.map((s) => SOURCES[s]), problem: failed ?? null };
   }
   if (key === 'GET playlists') {
     if (!playlistsReady()) return { playlists: [], problem: 'Playlists need the bot signed in to Spotify once, with SPOTIFY_REFRESH_TOKEN. See The music container in docs/self-hosting.md.' };
@@ -88,13 +90,21 @@ export async function handleMusic(guild: Guild, req: IncomingMessage, url: URL, 
     if (track && typeof track === 'object') {
       // A search result picked on the page, sent back as it came
       const t = track as Record<string, unknown>;
-      if (typeof t.uri !== 'string' || !/^spotify:track:[A-Za-z0-9]{22}$/.test(t.uri) || typeof t.title !== 'string' || typeof t.durationMs !== 'number') throw new Refused(400, 'That isn’t a song.');
-      const picked: Track = { uri: t.uri, title: t.title.slice(0, 300), artist: String(t.artist ?? '').slice(0, 300), album: String(t.album ?? '').slice(0, 300), cover: typeof t.cover === 'string' && t.cover.startsWith('https://i.scdn.co/') ? t.cover : null, durationMs: t.durationMs };
+      const song = typeof t.uri === 'string' && (/^spotify:track:[A-Za-z0-9]{22}$/.test(t.uri) || YTM_SONG.test(t.uri));
+      if (!song || typeof t.title !== 'string' || typeof t.durationMs !== 'number' || !Number.isFinite(t.durationMs) || t.durationMs < 0) throw new Refused(400, 'That isn’t a song.');
+      const picked: Track = {
+        uri: t.uri as string,
+        title: t.title.slice(0, 300),
+        artist: String(t.artist ?? '').slice(0, 300),
+        album: String(t.album ?? '').slice(0, 300),
+        cover: typeof t.cover === 'string' && COVER_HOSTS.test(t.cover) ? t.cover : null,
+        durationMs: t.durationMs,
+      };
       if (!addTracks(guild.id, [picked], by(), next === true)) throw new Refused(409, 'The queue is full.');
       logActivity(guild.id, by(), `Added **${picked.title}** to the music queue${next === true ? ' to play next' : ''}`);
       return done(`Added ${picked.title}${next === true ? ' to play next' : ''}.`);
     }
-    if (typeof query !== 'string' || !query.trim()) throw new Refused(400, 'Search for a song, or paste a Spotify link.');
+    if (typeof query !== 'string' || !query.trim()) throw new Refused(400, 'Search for a song, or paste a link.');
     const message = await queueFrom(guild.id, query, by(), next === true, shuffle === true).catch(spotifyRefused);
     // Nothing added leaves nothing to start
     return queueOf(guild.id).length ? done(plain(guild, message)) : { ...answer(guild), message: plain(guild, message) };

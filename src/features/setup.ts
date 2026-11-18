@@ -20,6 +20,7 @@ import { findSound, listSounds } from './soundLibrary.ts';
 import { loopSpeechProblem } from './loopRoom.ts';
 import { commandMention } from '../commandIds.ts';
 import { config } from '../config.ts';
+import { SOURCES, type Source } from '../musicSearch.ts';
 import { POSTS, postFailures, type Post } from '../postFailures.ts';
 import { voiceProblem } from '../voiceJoin.ts';
 
@@ -145,6 +146,8 @@ export const LABELS: Record<SettingKey, string> = {
   musicVolume: 'Music volume',
   musicAutoplay: 'Autoplay',
   musicDjRole: 'Who can control music',
+  musicSearch: 'Music search',
+  musicSearchFallback: 'Fall back to the other',
   chat: 'Answer in chat',
   chatPersonality: 'Personality',
   chatModel: 'Model',
@@ -253,6 +256,8 @@ export function show(key: SettingKey, value: unknown): string {
       return CHAT_MODELS[value as keyof typeof CHAT_MODELS] ?? String(value);
     case 'chatVoice':
       return CHAT_VOICE[value as keyof typeof CHAT_VOICE] ?? String(value);
+    case 'musicSearch':
+      return SOURCES[value as Source] ?? String(value);
     case 'chatPersonality':
       return `“${String(value)}”`;
     case 'chatDailyLimit':
@@ -304,7 +309,7 @@ export const GROUPS: [string, SettingKey[]][] = [
   ['Patch notes', ['patchNotes', 'patchNotesChannel']],
   ['Free games', ['freeGames', 'freeGamesChannel', 'freeGamesMinRating', 'freeGamesTaste', 'freeGamesMultiplayer', 'freeGamesUnlisted']],
   ['Soundboard', ['soundVolume', 'evenVolume', 'joinSounds', 'joinSoundDelayMs', 'joinSoundCooldownMin', 'soundManagerRole']],
-  ['Music', ['musicVolume', 'musicAutoplay', 'musicDjRole']],
+  ['Music', ['musicVolume', 'musicAutoplay', 'musicSearch', 'musicSearchFallback', 'musicDjRole']],
   ['Looping sound room', ['loopRoom', 'loopSound', 'loopVolume', 'loopEvery', 'loopText', 'loopVoice', 'loopEffect', 'loopTextVolume', 'loopTextEvery', 'loopIntro', 'loopIntroDelayMs', 'loopSoundDelayMs', 'loopTextDelayMs']],
   ['Chat', ['chat', 'chatPersonality', 'chatModel', 'chatWebSearch', 'chatActions', 'chatPostLines', 'chatVoice', 'chatDailyLimit']],
   ['Text to speech', ['tts', 'ttsVoice', 'ttsEffect', 'ttsSpeed', 'ttsPauseMs', 'ttsVolume', 'ttsChannel', 'ttsChannelWho', 'ttsGreet', 'ttsGreeting', 'ttsNightReminders', 'ttsHopOn', 'ttsRole', 'ttsMaxChars', 'ttsCooldownSec']],
@@ -541,6 +546,8 @@ export function checkSetting(guild: Guild, key: SettingKey, value: unknown): Che
       return Object.hasOwn(CHAT_MODELS, String(value)) ? { value: String(value) } : { error: 'Pick Claude Haiku 5.5, Claude Sonnet 5.5 or Claude Opus 5.5.' };
     case 'chatVoice':
       return Object.hasOwn(CHAT_VOICE, String(value)) ? { value: String(value) } : { error: 'Pick text only, text and voice, or voice only.' };
+    case 'musicSearch':
+      return Object.hasOwn(SOURCES, String(value)) ? { value: String(value) } : { error: 'Pick Spotify or YouTube Music.' };
     case 'steamCountry': {
       const country = String(value).toLowerCase();
       return /^[a-z]{2}$/.test(country) ? { value: country } : { error: 'Use a two-letter country code, like us or gb.' };

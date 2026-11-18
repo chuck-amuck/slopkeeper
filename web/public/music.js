@@ -59,8 +59,10 @@ export async function removeSong(row, index, shown) {
   const fresh = await request(api(`/music/queue/${row.id}`), { method: 'DELETE' });
   undoToast(`Removed ${row.title}.`, async () => {
     const { uri, title, artist, album, cover, durationMs } = row;
-    // A YouTube or SoundCloud song is added again from its link, and an upload from the file kept for this
-    const json = uri.startsWith('spotify:') ? { track: { uri, title, artist, album, cover, durationMs } } : uri.startsWith('file:') ? { file: uri.slice(5) } : { query: uri };
+    // A song found by searching goes back as it was, a YouTube or SoundCloud song is added again from its link, and an upload from the file kept for this.
+    // The YouTube Music link is YTM_SONG in the bot's src/musicSearch.ts
+    const found = uri.startsWith('spotify:') || /^https:\/\/music\.youtube\.com\/watch\?v=[\w-]{11}$/.test(uri);
+    const json = found ? { track: { uri, title, artist, album, cover, durationMs } } : uri.startsWith('file:') ? { file: uri.slice(5) } : { query: uri };
     const added = await request(api('/music/queue'), { method: 'POST', json });
     // It goes on the end, so it's the newest row with that song
     const back = added.queue.findLast((r) => r.uri === uri);
@@ -163,7 +165,7 @@ function seekBar(o) {
   return { node: el('div', { className: 'now-progress' }, elapsed, track, total), paint };
 }
 
-/** Music in voice, found on Spotify and played from YouTube: what's playing, search, and the queue everyone shares */
+/** Music in voice, found on Spotify or YouTube Music and played from YouTube: what's playing, search, and the queue everyone shares */
 export function renderMusic(main) {
   const guildId = state.guildId;
   let data = null;
@@ -240,7 +242,9 @@ export function renderMusic(main) {
 
   // ---------- search ----------
   const searchHelp = el('p', { className: 'hint search-help', id: 'music-search-help' });
-  const query = el('input', { type: 'search', ariaLabel: 'Search Spotify', placeholder: 'Search or paste a link', 'aria-describedby': 'music-search-help', enterKeyHint: 'search', autocomplete: 'off', maxLength: 300, oninput: () => {
+  // Where searching looks first, as Settings picks, which the bot says
+  let searchFrom = 'Spotify';
+  const query = el('input', { type: 'search', ariaLabel: 'Search for songs', placeholder: 'Search or paste a link', 'aria-describedby': 'music-search-help', enterKeyHint: 'search', autocomplete: 'off', maxLength: 300, oninput: () => {
     paintLinkButtons();
     if (mode === 'playlists') showPlaylists();
   } });
@@ -249,17 +253,17 @@ export function renderMusic(main) {
   let playlists = null;
   const modes = el('div', { className: 'views' });
   const MODES = [
-    ['songs', 'Songs', 'Search or paste a link', `Searches Spotify. A Spotify, YouTube or SoundCloud link works too, or upload an audio file (up to ${MOST_FILE_MB} MB and 20 minutes).`],
-    ['playlists', 'My playlists', 'Find a playlist or paste a link', 'Your saved playlists, or a link to any public one.'],
+    ['songs', 'Songs', 'Search or paste a link', () => `Searches ${searchFrom}. A Spotify, YouTube or SoundCloud link works too, or upload an audio file (up to ${MOST_FILE_MB} MB and 20 minutes).`],
+    ['playlists', 'My playlists', 'Find a playlist or paste a link', () => 'Your saved playlists, or a link to any public one.'],
   ];
   function setMode(id) {
     mode = id;
     const [, label, hint, help] = MODES.find(([m]) => m === id);
     // A placeholder is cut short on a phone, so the whole of it is said below the box
-    searchHelp.textContent = help;
+    searchHelp.textContent = help();
     modes.replaceChildren(...MODES.map(([m, text]) => el('button', { type: 'button', ...(m === id && { 'aria-current': 'page' }), onclick: () => setMode(m) }, text)));
     query.placeholder = hint;
-    query.ariaLabel = label === 'Songs' ? 'Search Spotify' : 'Find a playlist';
+    query.ariaLabel = label === 'Songs' ? `Search ${searchFrom}` : 'Find a playlist';
     query.value = '';
     paintLinkButtons();
     results.hidden = true;
@@ -441,9 +445,9 @@ export function renderMusic(main) {
         if (mode === 'playlists') return;
         searchButton.disabled = true;
         void attempt(async () => {
-          const { tracks } = await request(api(`/music/search?q=${encodeURIComponent(text)}`));
+          const { tracks, searched, problem } = await request(api(`/music/search?q=${encodeURIComponent(text)}`));
           if (guildId !== state.guildId) return;
-          showResults(tracks, text);
+          showResults(tracks, text, searched?.length ? searched.join(' or ') : searchFrom, problem);
         }).finally(() => (searchButton.disabled = false));
       },
     },
@@ -455,7 +459,7 @@ export function renderMusic(main) {
     linkEnd,
     linkShuffle,
   );
-  const searchNote = el('p', { className: 'card-note', hidden: true }, 'Search needs a Spotify app’s Client ID and Secret (SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET).');
+  const searchNote = el('p', { className: 'card-note', hidden: true }, 'Search needs the music container, or a Spotify app’s Client ID and Secret (SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET).');
 
   /** Play next on an empty queue starts it straight away, in Play in's channel */
   const playingIn = (next) => (next && voice.channel() ? { channelId: voice.channel().id } : {});
@@ -525,7 +529,7 @@ export function renderMusic(main) {
     );
   }
 
-  function showResults(tracks, text) {
+  function showResults(tracks, text, where, problem) {
     results.hidden = false;
     results.replaceChildren(
       ...(tracks.length
@@ -534,8 +538,8 @@ export function renderMusic(main) {
               'div',
               { className: 'song' },
               cover(t.cover, 40),
-              el('div', { className: 'song-text' }, el('div', { className: 'song-title' }, t.title), el('div', { className: 'song-sub' }, `${t.artist} · ${t.album}`)),
-              el('span', { className: 'song-time' }, time(t.durationMs)),
+              el('div', { className: 'song-text' }, el('div', { className: 'song-title' }, t.title), el('div', { className: 'song-sub' }, [t.artist, t.album].filter(Boolean).join(' · '))),
+              el('span', { className: 'song-time' }, t.durationMs ? time(t.durationMs) : ''),
               // Named with the song, as a list of buttons all called Play next says nothing to a screen reader
               el(
                 'div',
@@ -545,9 +549,9 @@ export function renderMusic(main) {
               ),
             ),
           )
-        : [notice('empty', `Nothing on Spotify matches “${text}”.`, { compact: true })]),
+        : [notice('empty', `Nothing on ${where} matches “${text}”.${problem ? ` ${problem}` : ''}`, { compact: true })]),
     );
-    announce(tracks.length ? `${tracks.length} song${tracks.length === 1 ? '' : 's'} found.` : `Nothing on Spotify matches ${text}.`);
+    announce(tracks.length ? `${tracks.length} song${tracks.length === 1 ? '' : 's'} found.` : `Nothing on ${where} matches ${text}.${problem ? ` ${problem}` : ''}`);
   }
 
   // A file dropped anywhere on the card uploads, as Upload does. Only files light it up, not text or links dragged over
@@ -769,6 +773,13 @@ export function renderMusic(main) {
     problem.textContent = data.problem ?? '';
     problem.hidden = !data.problem;
     searchNote.hidden = data.searchReady;
+    if (data.searchFrom && data.searchFrom !== searchFrom) {
+      searchFrom = data.searchFrom;
+      if (mode === 'songs') {
+        searchHelp.textContent = MODES[0][3]();
+        query.ariaLabel = `Search ${searchFrom}`;
+      }
+    }
     // Playlists only show with the Spotify account signed in
     modes.hidden = !data.playlistsReady;
     if (!data.playlistsReady && mode === 'playlists') setMode('songs');

@@ -1,6 +1,6 @@
 # Music
 
-The bot plays music in voice from a queue everyone shares. Songs are found on Spotify and played from YouTube Music, YouTube or SoundCloud, so no Spotify account plays anything. It needs a Spotify app for search and the host's [music container](self-hosting.md#the-music-container). You can also [ask the bot in chat](chat.md), like "queue the strokes".
+The bot plays music in voice from a queue everyone shares. Songs are found on Spotify or YouTube Music and played from YouTube Music, YouTube or SoundCloud, so no Spotify account plays anything. It needs the host's [music container](self-hosting.md#the-music-container). A Spotify app is optional: it adds Spotify search and Spotify links. You can also [ask the bot in chat](chat.md), like "queue the strokes".
 
 ## Commands
 
@@ -34,7 +34,8 @@ On the Music tab, **+** keeps one of Autoplay's songs and **✕** takes it out. 
 ## How it plays
 
 - **Queue:** each server has its own, up to 500 songs. When it runs out, the music stops unless Autoplay is on.
-- **Finding songs:** each Spotify song is matched by name and length on YouTube Music, then YouTube, then SoundCloud, passing over live versions, covers and remixes unless that's what the song is. The next songs are fetched ahead, so they start without a wait. A song that can't be found or won't play is skipped, and so is one YouTube turns down twice; a second in a row pauses the music, in case YouTube is turning every song away.
+- **Searching:** words are looked up on Spotify or YouTube Music, as the web UI's **Music search** setting picks. It's Spotify unless the host changed it, and a bot without a Spotify app always searches YouTube Music. With **Fall back to the other** on, as it is unless turned off, the other is asked when the first fails, is making the bot wait, or finds nothing. `/music play`'s suggestions as you type come from the first.
+- **Finding songs:** a song found on YouTube Music plays as found. Each Spotify song is matched by name and length on YouTube Music, then YouTube, then SoundCloud, passing over live versions, covers and remixes unless that's what the song is. The next songs are fetched ahead, so they start without a wait. A song that can't be found or won't play is skipped, and so is one YouTube turns down twice; a second in a row pauses the music, in case YouTube is turning every song away.
 - **Restarts:** after a restart or update, the music carries on from the same second in the same channel, if someone's still there and it was under 10 minutes ago. Paused music stays paused.
 - **With sounds and speech:** they play on top, and music drops to under a third while the bot talks.
 - **Everyone leaving** pauses the music and keeps the queue. The soundboard's **Stop** leaves music playing. While music plays, the bot doesn't leave for being idle, and the looping room waits.

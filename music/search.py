@@ -16,11 +16,17 @@ KINDS = {'song': 'songs', 'album': 'albums', 'artist': 'artists'}
 ID = re.compile(r'^[\w-]{1,64}$')
 
 
+# Google's pictures take their size in the link, and a song's come at 120 pixels, which looks soft in the player. 300 is
+# what Spotify's covers are
+COVER_SIZE = re.compile(r'=w\d+-h\d+(?=-|$)')
+
+
 def cover(thumbnails):
-    """The largest picture, which ytmusicapi lists last"""
+    """The largest picture, which ytmusicapi lists last, at 300 pixels when it's one of Google's"""
     for picture in reversed(thumbnails or []):
-        if picture.get('url'):
-            return picture['url']
+        url = picture.get('url')
+        if url:
+            return COVER_SIZE.sub('=w300-h300', url, count=1) if '.googleusercontent.com/' in url else url
     return None
 
 

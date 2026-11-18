@@ -50,6 +50,15 @@ const FIELDS = {
   soundVolume: { kind: 'number', unit: '%', hint: 'How loud every sound plays, including join sounds and the looping sound. Speech has its own volume. The Sounds slider on the Soundboard tab and the Volume button change this too.' },
   musicVolume: { kind: 'number', unit: '%', hint: 'How loud music plays. It drops to under a third while the bot is talking. The slider on the Music tab and the Volume button change this too.' },
   musicAutoplay: { kind: 'boolean', hint: 'Keeps three songs waiting at the end of the queue, from YouTube, like the last song in it that someone added, so the music carries on in that style. Songs people add play first, and Autoplay’s change to follow the last of them. Turning it off takes out the ones it added. The switch on the Music tab and the /music card change this too.' },
+  musicSearch: {
+    kind: 'choice',
+    options: [
+      ['spotify', 'Spotify'],
+      ['youtube-music', 'YouTube Music'],
+    ],
+    hint: 'Where /music play, the Music tab and chat look for songs by name. Either way the song plays from YouTube. A service the bot isn’t set up for is passed over.',
+  },
+  musicSearchFallback: { kind: 'boolean', hint: 'Asks the other service when this one fails, is making the bot wait, or finds nothing.' },
   musicDjRole: { kind: 'role', none: 'Everyone', hint: 'Who can add, skip, pause, shuffle and stop music with /music, along with people with Manage Server. Anyone can see the queue. This page isn’t limited by it.' },
   loopRoom: { kind: 'voice', none: 'Off', hint: 'While anyone’s in this channel, the bot plays the looping sound and speech there nonstop. Join sounds don’t play there.' },
   loopSound: { kind: 'sound', none: 'Not set', hint: 'A sound from the library.' },

@@ -147,11 +147,14 @@ test('Spotify’s refusals become messages for whoever asked', async (t) => {
   config.spotifyClientId = '';
   await assert.rejects(search('x'), (err: Error) => err instanceof SpotifyError && /SPOTIFY_CLIENT_ID/.test(err.message));
   config.spotifyClientId = 'id';
-  fakeSpotify(t, {
+  const { asked } = fakeSpotify(t, {
     '/v1/search': () => new Response('{}', { status: 429, headers: { 'retry-after': '7' } }),
   });
   await assert.rejects(search('x'), /Try again in 7 seconds/);
+  // Searching isn't asked again until then, but the rest of Spotify's API still is
+  await assert.rejects(search('y'), (err) => err instanceof RateLimited && err.retryAfterSeconds >= 6);
   await assert.rejects(tracksFor({ kind: 'album', id: ID }), /couldn’t find that/);
+  assert.equal(asked.filter((a) => a.startsWith('/v1/search')).length, 1);
 });
 
 test('any public playlist is read from Spotify’s embed player, with no sign-in, and a private one says so', async (t) => {
@@ -315,7 +318,7 @@ test('shuffling a playlist into the queue says so, and a long one in order says 
 test('/music play suggests the owner’s matching playlists first, then songs', async (t) => {
   const offered = async (typed: string) => {
     let answer: { name: string; value: string }[] = [];
-    await music.commands![0].autocomplete!({ options: { getSubcommand: () => 'play', getFocused: () => typed }, respond: async (a: typeof answer) => void (answer = a) } as never);
+    await music.commands![0].autocomplete!({ guildId: 'g-suggest', options: { getSubcommand: () => 'play', getFocused: () => typed }, respond: async (a: typeof answer) => void (answer = a) } as never);
     return answer;
   };
   fakeSpotify(t, {

@@ -124,6 +124,8 @@ Each setting goes by the name `/setup show` and `/setup reset` use. A few are se
 | Music volume | `music` | `MUSIC_VOLUME` | 40% |
 | Autoplay | `music`, or `/music autoplay` | `MUSIC_AUTOPLAY` | off |
 | Who can control music | `music` | | everyone |
+| Music search | web UI only | `MUSIC_SEARCH` (`spotify` or `youtube-music`) | Spotify |
+| Fall back to the other | web UI only | `MUSIC_SEARCH_FALLBACK` (`false` to turn off) | on |
 | Answer in chat | web UI only | `CHAT` (`false` to turn off) | on, with an `ANTHROPIC_API_KEY` |
 | Personality | web UI only | `CHAT_PERSONALITY` | a robot butler with impeccable manners and no brakes |
 | Model | web UI only | `CHAT_MODEL` (`haiku`, `sonnet` or `opus`) | `haiku` |

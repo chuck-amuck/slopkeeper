@@ -72,13 +72,28 @@ async function accessToken(as: As): Promise<string> {
 
 const NOT_FOUND = 'Spotify couldn’t find that.';
 
+// Spotify asks the bot to wait sometimes, for seconds or for hours, and not always for everything at once. Until then
+// that part of the API (search, albums, artists, ...) isn't asked, so the wait doesn't grow and a fallback answers at once
+const waits = new Map<string, number>();
+const partOf = (pathAndQuery: string) => pathAndQuery.split(/[/?]/)[1] ?? '';
+
+/** Seconds until Spotify's search, or another part of its API, can be asked again, or 0 */
+export const spotifyWaiting = (part = 'search') => Math.max(0, Math.ceil(((waits.get(part) ?? 0) - Date.now()) / 1000));
+
 async function get<T>(pathAndQuery: string, as: As = 'app', retried = false): Promise<T> {
+  const part = partOf(pathAndQuery);
+  const wait = spotifyWaiting(part);
+  if (wait) throw new RateLimited(wait);
   const res = await fetch(`${API}${pathAndQuery}`, { headers: { authorization: `Bearer ${await accessToken(as)}` }, signal: requestTimeout() });
   if (res.status === 401 && !retried) {
     tokens.delete(as);
     return get(pathAndQuery, as, true);
   }
-  if (res.status === 429) throw new SpotifyError(`Spotify is limiting searches right now. Try again in ${Number(res.headers.get('retry-after')) || 30} seconds.`);
+  if (res.status === 429) {
+    const seconds = Number(res.headers.get('retry-after')) || 30;
+    waits.set(part, Math.max(waits.get(part) ?? 0, Date.now() + seconds * 1000));
+    throw new RateLimited(seconds);
+  }
   if (res.status === 404) throw new SpotifyError(NOT_FOUND);
   if (!res.ok) throw new SpotifyError(`Spotify didn’t answer (HTTP ${res.status}). Try again in a moment.`);
   return (await res.json()) as T;
@@ -369,8 +384,9 @@ export async function myPlaylists(): Promise<Playlist[]> {
   return lists;
 }
 
-/** Forgets access tokens and playlists, for tests */
+/** Forgets access tokens, playlists and waits, for tests */
 export function resetSpotify() {
   tokens.clear();
+  waits.clear();
   owned = undefined;
 }

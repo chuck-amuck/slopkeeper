@@ -26,7 +26,8 @@ import { db, getKv, setKv, transaction } from '../db.ts';
 import { durationOf, hasAudio, tagsOf } from '../discordSounds.ts';
 import * as perf from '../perf.ts';
 import { idSetting, setSetting, setting } from '../settings.ts';
-import { artistSongs, coverFor, isShortLink, MOST_FROM_LINK, myPlaylists, parseLink, pick, playlistsReady, RateLimited, search, searchReady, SpotifyError, tracksFor, type Track } from '../spotify.ts';
+import { artistSongs, coverFor, isShortLink, MOST_FROM_LINK, myPlaylists, parseLink, pick, playlistsReady, RateLimited, SpotifyError, tracksFor, type Track } from '../spotify.ts';
+import { knownTrack, searchReady, searchSongs, searchSource, sourceNames } from '../musicSearch.ts';
 import type { Feature } from '../types.ts';
 import { humansIn } from '../util.ts';
 import { botChannelId, onMusicCheck, onPlaybackStop, playLong } from './voiceAudio.ts';
@@ -1397,15 +1398,27 @@ export function tidyFiles() {
 // ---------- adding by search or link ----------
 
 /** Songs for whatever was typed: a Spotify link to a song, album or playlist, a YouTube or SoundCloud link, or words to search for. The name says what was found */
-export async function resolve(input: string, shuffle = false): Promise<{ name: string; tracks: Track[]; capped?: boolean; note?: string }> {
+export async function resolve(guildId: string, input: string, shuffle = false): Promise<{ name: string; tracks: Track[]; capped?: boolean; note?: string }> {
+  // One of /music play's suggestions, as it was found
+  const known = knownTrack(input);
+  if (known) return { name: songName(known), tracks: [known] };
   if (isShortLink(input)) throw new SpotifyError('Short spotify.link links can’t be read. Open it and copy the open.spotify.com link instead.');
   const link = parseLink(input);
   if (link) return tracksFor(link, shuffle);
   if (OTHER_LINK.test(input.trim())) return lookUp(input.trim(), shuffle);
   if (/^https?:\/\//i.test(input.trim())) throw new SpotifyError('That isn’t a Spotify, YouTube or SoundCloud link.');
-  const [top] = await search(input);
-  if (!top) throw new SpotifyError(`Nothing on Spotify matches “${input.trim()}”.`);
-  return { name: `${top.title} by ${top.artist}`, tracks: [top] };
+  const {
+    found: [top],
+    answered,
+    failed,
+  } = await searchSongs(guildId, input);
+  if (!top) throw new SpotifyError(`Nothing on ${sourceNames(answered)} matches “${input.trim()}”.${failed ? ` ${failed}` : ''}`);
+  return { name: songName(top), tracks: [top] };
+}
+
+/** “Title by Artist”, or the title alone for a song with no artist */
+function songName(track: Track) {
+  return track.artist ? `${track.title} by ${track.artist}` : track.title;
 }
 
 /**
@@ -1450,7 +1463,7 @@ async function lookUp(url: string, shuffle = false): Promise<{ name: string; tra
 
 /** Adds what was typed and says what happened. `shuffle` picks an album's or playlist's songs at random. Throws SpotifyError with a message for the user */
 export async function queueFrom(guildId: string, input: string, who: string, next: boolean, shuffle = false): Promise<string> {
-  const found = await resolve(input, shuffle);
+  const found = await resolve(guildId, input, shuffle);
   if (!found.tracks.length) throw new SpotifyError(`**${found.name}** has no songs that can be played here.`);
   const added = addTracks(guildId, found.tracks, who, next);
   if (!added) throw new SpotifyError(`The queue is full (${MOST_QUEUED} songs).`);
@@ -1496,6 +1509,8 @@ export function musicState(guildId: string) {
   return {
     problem: unavailable(),
     searchReady: searchReady(),
+    // Where searching on the Music tab looks first
+    searchFrom: searchSource(guildId),
     // Only with the account's sign-in; without it the page doesn't offer them
     playlistsReady: playlistsReady(),
     phase: s?.phase ?? 'stopped',
@@ -1715,11 +1730,13 @@ export function canControl(member: GuildMember): boolean {
 
 const searches = new Map<string, { at: number; tracks: Track[] }>();
 
-async function searched(typed: string): Promise<Track[]> {
-  let found = searches.get(typed.toLowerCase());
+/** Songs to suggest for what's being typed, from the server's own search service */
+async function searched(guildId: string, typed: string): Promise<Track[]> {
+  const key = `${guildId} ${typed.toLowerCase()}`;
+  let found = searches.get(key);
   if (!found || Date.now() - found.at > 60_000) {
-    found = { at: Date.now(), tracks: await search(typed).catch(() => []) };
-    searches.set(typed.toLowerCase(), found);
+    found = { at: Date.now(), tracks: (await searchSongs(guildId, typed, true).catch(() => null))?.found ?? [] };
+    searches.set(key, found);
     if (searches.size > 200) searches.delete(searches.keys().next().value!);
   }
   return found.tracks;
@@ -1740,15 +1757,15 @@ async function suggest(i: AutocompleteInteraction) {
     );
   }
   const typed = String(i.options.getFocused()).trim();
-  if (!typed || parseLink(typed) || !searchReady()) return i.respond([]);
+  if (!typed || !i.guildId || /^(https?:\/\/|spotify:)/i.test(typed) || !searchReady()) return i.respond([]);
   // The account's own playlists that match come first, as searching can't find them. Discord waits 3 seconds, so both are asked at once
   const [lists, tracks] = await Promise.all([
     playlistsReady() ? myPlaylists().then((all) => all.filter((p) => p.name.toLowerCase().includes(typed.toLowerCase())).slice(0, 5), () => []) : [],
-    typed.length < 3 ? [] : searched(typed),
+    typed.length < 3 ? [] : searched(i.guildId, typed),
   ]);
   return i.respond([
     ...lists.map((p) => ({ name: `Playlist: ${p.name} (${p.songs} song${p.songs === 1 ? '' : 's'})`.slice(0, 100), value: `spotify:playlist:${p.id}` })),
-    ...tracks.slice(0, 25 - lists.length).map((t) => ({ name: `${t.title} – ${t.artist}`.slice(0, 100), value: t.uri })),
+    ...tracks.slice(0, 25 - lists.length).map((t) => ({ name: `${t.title}${t.artist ? ` – ${t.artist}` : ''}`.slice(0, 100), value: t.uri })),
   ]);
 }
 
