@@ -559,16 +559,27 @@ test('when several songs in a row are missing, the note names the last one skipp
   stopMusic(id, 'u1');
 });
 
-test('a song that can’t be fetched pauses and says why', async () => {
+test('a song the music container can’t get is tried again, then skipped, and a second in a row pauses the music', async () => {
   const { id, guild, channel } = server();
   youtube.set(song(1).uri, 'fail');
-  addTracks(id, [song(1), song(2)], 'u1');
+  youtube.set(song(3).uri, 'fail');
+  youtube.set(song(4).uri, 'fail');
+  addTracks(id, [song(1), song(2), song(3), song(4), song(5)], 'u1');
   const errors = mock.method(console, 'error', () => {});
-  assert.match((await startMusic(guild, channel))!, /couldn’t get Song 1/);
-  errors.mock.restore();
+  // Turned down twice, so it's skipped rather than holding up the queue
+  assert.equal(await startMusic(guild, channel), null);
+  assert.equal(errors.mock.calls.filter((c) => String(c.arguments[0]).includes('couldn’t get Song 1')).length, 2, 'tried twice');
+  assert.equal(lastPlayed().file, audioFile(2));
+  assert.equal(musicState(id).note, 'Couldn’t get Song 1, so it was skipped.');
+  // Once a song has been heard, the next one turned down is skipped too; one more straight after pauses the music,
+  // in case YouTube is turning every song away
+  lastPlayed().heard();
+  lastPlayed().end();
+  await sleep(5);
   assert.equal(musicState(id).phase, 'paused');
-  assert.match(musicState(id).note!, /couldn’t get Song 1/);
-  assert.deepEqual(titles(id), ['Song 1', 'Song 2'], 'nothing is skipped, as it may work in a moment');
+  assert.equal(musicState(id).note, 'The music player couldn’t get Song 4 either, so the music paused. Try again in a moment.');
+  assert.deepEqual(titles(id), ['Song 4', 'Song 5']);
+  errors.mock.restore();
   stopMusic(id, 'u1');
 });
 

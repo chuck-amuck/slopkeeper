@@ -429,3 +429,17 @@ test('the web UI reports how it’s doing to POST /perf/web', async () => {
   assert.match(text, /^slopkeeper_container_memory_bytes\{container="web"\} 50000000$/m);
   assert.match(text, /^slopkeeper_web_requests_total\{status="2xx"\} 3$/m);
 });
+
+test('what chat remembers is listed with the settings, and can be forgotten one person at a time', async () => {
+  const { setNote } = await import('../src/features/chat.ts');
+  setNote(GUILD, 'u1', 'Wants to be called Master.');
+  const { chat } = await ok(`/guilds/${GUILD}/settings`);
+  assert.deepEqual(
+    chat.notes.map((n: { userId: string; name: string; note: string }) => [n.userId, n.name, n.note]),
+    [['u1', 'Ana', 'Wants to be called Master.']],
+  );
+  await refused(404, `/guilds/${GUILD}/chat-notes/u2`, { method: 'DELETE' });
+  assert.deepEqual((await ok(`/guilds/${GUILD}/chat-notes/u1`, { method: 'DELETE' })).notes, []);
+  assert.deepEqual((await ok(`/guilds/${GUILD}/chat-notes`)).notes, []);
+  assert.equal((await ok(`/guilds/${GUILD}/activity`)).entries[0].action, 'Had the bot forget what it remembered about Ana');
+});

@@ -664,6 +664,14 @@ db.exec(`
     output_tokens INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (guild_id, day, model)
   );
+  -- What the bot remembers about someone when they talk to it in chat, at their asking, in a few words
+  CREATE TABLE IF NOT EXISTS chat_notes (
+    guild_id TEXT NOT NULL,
+    user_id TEXT NOT NULL,
+    note TEXT NOT NULL,
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY (guild_id, user_id)
+  );
 `);
 
 export function getKv(key: string): string | undefined {

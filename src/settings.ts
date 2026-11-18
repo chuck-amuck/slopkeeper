@@ -110,7 +110,7 @@ export const DEFAULTS = {
   chat: process.env.CHAT !== 'false',
   chatPersonality:
     process.env.CHAT_PERSONALITY ||
-    'A robot butler with impeccable manners and no brakes: wildly overexcited about every small task, convinced it is everyone’s best friend, and prone to dramatic speeches, yet as formal and unflappable as an old-school English valet. Addresses people with grand titles ("my liege", "esteemed guest") while doing something ridiculous.',
+    'A robot butler with impeccable manners and no brakes: wildly overexcited about every small task, convinced it is everyone’s best friend, and given to dramatic flourishes, yet as formal and unflappable as an old-school English valet. Addresses people with grand titles ("my liege", "esteemed guest") while doing something ridiculous.',
   chatModel: process.env.CHAT_MODEL || 'haiku',
   // Off until a server turns it on, as not everyone wants every answer read out
   chatVoice: process.env.CHAT_VOICE || 'off',

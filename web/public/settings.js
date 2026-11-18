@@ -598,6 +598,39 @@ export function renderSettings(main) {
     );
   }
 
+  /** What chat remembers about people, at their asking, each forgotten with a press */
+  function chatNotesCard(first) {
+    const body = el('div');
+    const paint = (notes) =>
+      body.replaceChildren(
+        ...(notes.length
+          ? notes.map((row) =>
+              el(
+                'div',
+                { className: 'field' },
+                el('div', {}, el('div', { className: 'series-name' }, row.name), el('p', { className: 'hint' }, row.note)),
+                el(
+                  'div',
+                  { className: 'control' },
+                  confirmButton({ ariaLabel: `Forget what it remembers about ${row.name}` }, 'Forget', 'Forget it?', async () => {
+                    paint((await request(api(`/chat-notes/${row.userId}`), { method: 'DELETE' })).notes);
+                    toast(`It no longer remembers anything about ${row.name}.`);
+                  }),
+                ),
+              ),
+            )
+          : [notice('empty', 'Nothing yet. People can ask it to remember things about them, like what to call them.', { compact: true })]),
+      );
+    paint(first);
+    return el(
+      'section',
+      { className: 'card', id: 'settings-chat-notes' },
+      el('h2', {}, 'What chat remembers'),
+      el('p', { className: 'card-note' }, 'What people asked it to remember about them. It goes to Anthropic with that person’s questions.'),
+      body,
+    );
+  }
+
   function joinSoundCard(first) {
     const body = el('div');
     const who = el('select', { required: true, ariaLabel: 'Person' }, el('option', { value: '' }, 'Pick a person'), first.members.map((m) => el('option', { value: m.id, selected: m.id === state.me?.userId }, m.name)));
@@ -670,7 +703,7 @@ export function renderSettings(main) {
           card = el('details', { className: 'card fold', id: slug(title) }, el('summary', {}, el('h2', {}, title), value), ...parts);
         } else card = el('section', { className: 'card', id: slug(title) }, el('h2', {}, title), ...parts);
         // Built only for its own group: the previews share one body each
-        const extra = { 'Hop-on pings': () => gamePingCard(gamePings), 'Sale alerts': salesCard, 'Free games': freeGamesCard, 'Text to speech': () => data.speech && voicesCard(main, refreshFields) }[title]?.();
+        const extra = { 'Hop-on pings': () => gamePingCard(gamePings), 'Sale alerts': salesCard, 'Free games': freeGamesCard, 'Text to speech': () => data.speech && voicesCard(main, refreshFields), Chat: () => data.chat?.ok && data.chat.notes && chatNotesCard(data.chat.notes) }[title]?.();
         return extra ? [card, extra] : [card];
       });
       const joinCard = joinSoundCard(joinSounds);

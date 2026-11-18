@@ -34,7 +34,7 @@ On the Music tab, **+** keeps one of Autoplay's songs and **✕** takes it out. 
 ## How it plays
 
 - **Queue:** each server has its own, up to 500 songs. When it runs out, the music stops unless Autoplay is on.
-- **Finding songs:** each Spotify song is matched by name and length on YouTube Music, then YouTube, then SoundCloud, passing over live versions, covers and remixes unless that's what the song is. The next songs are fetched ahead, so they start without a wait. A song that can't be found or won't play is skipped, and a second in a row pauses the music.
+- **Finding songs:** each Spotify song is matched by name and length on YouTube Music, then YouTube, then SoundCloud, passing over live versions, covers and remixes unless that's what the song is. The next songs are fetched ahead, so they start without a wait. A song that can't be found or won't play is skipped, and so is one YouTube turns down twice; a second in a row pauses the music, in case YouTube is turning every song away.
 - **Restarts:** after a restart or update, the music carries on from the same second in the same channel, if someone's still there and it was under 10 minutes ago. Paused music stays paused.
 - **With sounds and speech:** they play on top, and music drops to under a third while the bot talks.
 - **Everyone leaving** pauses the music and keeps the queue. The soundboard's **Stop** leaves music playing. While music plays, the bot doesn't leave for being idle, and the looping room waits.

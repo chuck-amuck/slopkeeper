@@ -4,7 +4,7 @@ import { beforeEach, mock, test } from 'node:test';
 import { recentActivity } from '../src/activity.ts';
 import { config } from '../src/config.ts';
 import { db } from '../src/db.ts';
-import { asksBot, chat, chatNote, chatUsage, COOLDOWN_MS, MODELS, onMessage, resetChat, useTool } from '../src/features/chat.ts';
+import { answer, asksBot, chat, chatNote, chatNotes, chatUsage, COOLDOWN_MS, MODELS, noteOf, onMessage, resetChat, useTool, type Turn } from '../src/features/chat.ts';
 import { clearQueue, queueOf } from '../src/features/music.ts';
 import { checkSetting } from '../src/features/setup.ts';
 import { setting, setSetting } from '../src/settings.ts';
@@ -96,6 +96,7 @@ function fakeMember(guild: ReturnType<typeof fakeGuild>, id = '201', roleIds: st
 function fakeMessage(guild: ReturnType<typeof fakeGuild>, member: ReturnType<typeof fakeMember>, content: string, opts: { mentions?: string[]; repliedTo?: { id: string; author: { id: string; displayName: string }; type: number; content: string }; bot?: boolean } = {}) {
   const answers: string[] = [];
   const reactions: string[] = [];
+  const pinged: string[][] = [];
   const earlier = new Map([['m0', { id: 'm0', author: { id: '202', displayName: 'Friend' }, member: { displayName: 'Friend' }, content: 'we should listen to <@201>’s album later', attachments: new Map() }]]);
   const channel = {
     name: 'general',
@@ -119,13 +120,15 @@ function fakeMessage(guild: ReturnType<typeof fakeGuild>, member: ReturnType<typ
     mentions: { users: new Map([...(opts.mentions ?? []), ...(opts.repliedTo ? [opts.repliedTo.author.id] : [])].map((u) => [u, {}])), repliedUser: opts.repliedTo ? opts.repliedTo.author : null },
     reference: opts.repliedTo ? { messageId: opts.repliedTo.id } : null,
     fetchReference: async () => ({ ...opts.repliedTo, member: null, attachments: new Map() }),
-    reply: async (m: { content: string; allowedMentions: unknown }) => {
-      assert.deepEqual(m.allowedMentions, { parse: [], repliedUser: false }, 'an answer never pings anyone');
+    reply: async (m: { content: string; allowedMentions: { parse: string[]; users: string[]; repliedUser: boolean } }) => {
+      // Never @everyone or a role, nor the person asking just for being replied to
+      assert.deepEqual([m.allowedMentions.parse, m.allowedMentions.repliedUser], [[], false]);
       answers.push(m.content);
+      pinged.push(m.allowedMentions.users);
     },
     react: async (e: string) => void reactions.push(e),
   };
-  return { message: message as never, answers, reactions };
+  return { message: message as never, answers, reactions, pinged };
 }
 
 const client = { user: { id: BOT } } as never;
@@ -200,7 +203,7 @@ test('“play the wall” finds the album and queues it, answering in character'
   assert.match(first.system[0].text, /robot butler/);
   assert.deepEqual(
     first.tools?.map((t) => t.name),
-    ['find_music', 'artist_albums', 'queue_music', 'control_music', 'find_sound', 'play_sound'],
+    ['find_music', 'artist_albums', 'queue_music', 'undo_queue', 'show_queue', 'control_music', 'find_sound', 'play_sound', 'remember'],
   );
   // The channel's last messages, with mentions as names, the music, and where the person is
   const asked = first.messages[0].content as string;
@@ -383,6 +386,12 @@ test('Answer in voice: voice only posts the answer after all when it can’t be 
   assert.deepEqual([asked.answers, asked.reactions], [['Your humble servant hears you!'], []]);
   // Nothing goes in Activity for an answer that only talks
   assert.deepEqual(recentActivity(guild.id, 10), []);
+  // One that pings someone is posted, as a ping only works in text, and only once when it can't be said
+  fakeMember(guild, '202');
+  replies = [turn('end_turn', text('Hail, @Person 202!'))];
+  const pinging = fakeMessage(guild, fakeMember(guild, '231'), '<@100> greet my friend');
+  await onMessage(pinging.message, client);
+  assert.deepEqual([pinging.answers, pinging.pinged, pinging.reactions], [['Hail, <@202>!'], [['202']], []]);
 
   // A server that had "Say answers aloud" on answers in text and voice; one that had it off is left on the default
   db.prepare("INSERT INTO guild_settings (guild_id, key, value) VALUES ('g-had-aloud', 'chatSpeak', 'true'), ('g-had-quiet', 'chatSpeak', 'false')").run();
@@ -391,4 +400,68 @@ test('Answer in voice: voice only posts the answer after all when it can’t be 
   assert.equal(db.prepare("SELECT COUNT(*) AS n FROM guild_settings WHERE key = 'chatSpeak'").get()?.n, 0);
   assert.deepEqual(checkSetting(guild as never, 'chatVoice', 'only'), { value: 'only' });
   assert.match((checkSetting(guild as never, 'chatVoice', 'loud') as { error: string }).error, /voice only/);
+});
+
+test('it pings people talking in the channel or in voice by name, and nobody else', async () => {
+  const guild = fakeGuild('g-pings');
+  const asker = fakeMember(guild);
+  // Friend (202) wrote the channel's last message; 203 is in voice; 204 is neither
+  const friend = fakeMember(guild, '202');
+  friend.displayName = 'Friend';
+  fakeMember(guild, '203').displayName = 'Sam';
+  fakeMember(guild, '204').displayName = 'Lurker';
+  // Someone in voice with the asker's name can't be told from them, so isn't pinged
+  fakeMember(guild, '206').displayName = 'Person 201';
+  Object.assign(guild, { voiceStates: { cache: new Map(['203', '206'].map((id) => [id, { id, channelId: 'v1' }])) } });
+  replies = [turn('end_turn', text('Hear ye, @Friend and @Sam, and @Lurker and @everyone!'))];
+  const asked = fakeMessage(guild, asker, '<@100> honour my friends');
+  await onMessage(asked.message, client);
+  assert.deepEqual(asked.answers, ['Hear ye, <@202> and <@203>, and @Lurker and @everyone!']);
+  assert.deepEqual(asked.pinged, [['202', '203']]);
+  assert.match(sent[0].messages[0].content as string, /People you can @mention: @Friend, @Sam\./);
+});
+
+test('it can show the queue, and take out what it just queued when that was wrong', async () => {
+  const guild = fakeGuild('g-undo');
+  const member = fakeMember(guild);
+  replies = [
+    turn('tool_use', toolUse('t1', 'queue_music', { ref: `spotify:album:${id22('wall')}`, next: false, shuffle: false })),
+    turn('end_turn', text('The Wall, my liege.')),
+  ];
+  await answer(fakeMessage(guild, member, '<@100> play the wall').message, member as never, BOT);
+  assert.match(await useTool(member as never, 'show_queue', {}), /Nothing is playing\. First in the queue: “In the Flesh\?” by Pink Floyd, added by Person 201\.\nNext:\n1\. “The Thin Ice” by Pink Floyd, added by Person 201\nAutoplay is off\./);
+
+  // Someone else's songs stay
+  const other = fakeMember(guild, '205');
+  await useTool(other as never, 'queue_music', { ref: `artist:${id22('TheStrokes')}:The Strokes`, next: false, shuffle: false });
+  replies = [turn('tool_use', toolUse('t2', 'undo_queue', {})), turn('end_turn', text('Banished.'))];
+  await answer(fakeMessage(guild, member, '<@100> wrong album').message, member as never, BOT);
+  assert.deepEqual(
+    queueOf(guild.id).map((r) => r.title),
+    ['Reptilia', 'Last Nite', 'Someday'],
+  );
+  assert.match(String((sent.at(-1)!.messages.at(-1)!.content as { content: string }[])[0]!.content), /^Took out 2 songs: “In the Flesh\?”, “The Thin Ice”\./);
+  // Only once
+  assert.equal(await useTool(member as never, 'undo_queue', {}), 'You haven’t queued anything for them lately.');
+  clearQueue(guild.id, 'test');
+});
+
+test('it remembers what people ask it to about themselves, and tells it to itself when they ask again', async () => {
+  const guild = fakeGuild('g-notes');
+  const member = fakeMember(guild);
+  const turnOf: Turn = { queued: [] };
+  assert.equal(await useTool(member as never, 'remember', { note: '  Wants to be called   Master. ' }, turnOf), 'Remembered about them: Wants to be called Master.');
+  assert.equal(noteOf(guild.id, member.id), 'Wants to be called Master.');
+  assert.deepEqual(
+    chatNotes(guild as never).map((n) => [n.userId, n.name, n.note]),
+    [['201', 'Person 201', 'Wants to be called Master.']],
+  );
+  replies = [turn('end_turn', text('As you wish, Master.'))];
+  await answer(fakeMessage(guild, member, '<@100> hello').message, member as never, BOT);
+  assert.match(sent.at(-1)!.messages[0]!.content as string, /What you remember about Person 201: Wants to be called Master\./);
+  // Up to the longest note, and empty forgets
+  await useTool(member as never, 'remember', { note: 'x'.repeat(500) });
+  assert.equal(noteOf(guild.id, member.id)?.length, 200);
+  assert.equal(await useTool(member as never, 'remember', { note: '' }), 'Forgot what you remembered about them.');
+  assert.equal(noteOf(guild.id, member.id), null);
 });

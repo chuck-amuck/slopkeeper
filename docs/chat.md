@@ -4,13 +4,15 @@
 
 ## What it can do
 
-- **[Music](music.md):** finds songs, albums and artists on Spotify by name and adds them to the queue, starting the music in your voice channel if nothing is playing. An artist adds up to 10 of their best-known songs, and "their new album" looks up their albums by date, so it finds one newer than the model knows of. It also takes links, and skips, pauses, resumes, shuffles and turns Autoplay on or off. "Stop the music" pauses it; it only empties the queue when you ask for that.
+- **[Music](music.md):** finds songs, albums and artists on Spotify by name and adds them to the queue, starting the music in your voice channel if nothing is playing. An artist adds up to 10 of their best-known songs, and "their new album" looks up their albums by date, so it finds one newer than the model knows of. It also takes links, and skips, pauses, resumes, shuffles and turns Autoplay on or off. "Stop the music" pauses it; it only empties the queue when you ask for that. It can look at the queue ("what's next?", "did you shuffle it?"), and when you say what it just queued was wrong, it takes those songs out before adding the right ones.
 - **[Sounds](soundboard.md):** plays a sound from the library in your voice channel, finding it by name.
 - **[Speech](speech.md):** says something in your voice channel, in any voice and effect.
+- **Pinging people:** "tell @Sam happy birthday" pings Sam. It can ping people talking in the channel lately, people you @mention, and people in voice; never anyone else, a role or @everyone.
+- **Remembering you:** tell it something to remember about you, like what to call you, and it keeps a short note (up to 200 characters) that it reads whenever you ask it something. Only about the person asking. The web UI's **What chat remembers** card lists the notes, with a button to forget each.
 
-It does these as you: only what you could do yourself. With a DJ role set, people without it can't control the music through it either, the text to speech role and cooldown still apply, and sounds and speech need you in a voice channel. Activity shows what you asked, as "Asked in chat", and what it did, under your name.
+It does these as you: only what you could do yourself. With a DJ role set, people without it can't control the music through it either, the text to speech role and cooldown still apply, and sounds and speech need you in a voice channel. Activity shows what you asked, as "Asked in chat", and what it did, under your name. A question gets an answer: "do you know their new album?" doesn't queue it.
 
-Anything else, it just answers. It sees the channel's last 20 messages, what's playing, and whether you're in voice, so it can follow along. It doesn't remember earlier conversations past that, and it doesn't read messages that don't @mention it or reply to one of its answers. Replies to its other posts, like hop-on pings and recaps, are left to people.
+Anything else, it just answers, briefly, and it can't edit or delete messages or change settings. It sees the channel's last 20 messages, what's playing, and whether you're in voice, so it can follow along. Past that it remembers only the notes above, and it doesn't read messages that don't @mention it or reply to one of its answers. Replies to its other posts, like hop-on pings and recaps, are left to people.
 
 ## Settings
 
@@ -19,12 +21,12 @@ The **Chat** card in the web UI's Settings has them all, and says how many answe
 - **Answer in chat:** on or off for the server.
 - **Personality:** who the bot is when it answers, in a few sentences. It starts as a robot butler with impeccable manners and no brakes.
 - **Model:** **Claude Haiku 5.5**, the default, or **Claude Opus 5.5**, which follows messy requests better and banters better, at about 40 times the cost.
-- **Answer in voice:** says each answer in the server's default voice when the person asking is in a voice channel and can use speech. **Text and voice** posts it too; **Voice only** just reacts 🔊, and remembers what it said so it can follow on. What it says is in Activity as said by the bot. It's posted instead when it can't be said: they aren't in voice, it's over the longest line, the bot is busy in another voice channel, or it has just said something for them. Off by default.
+- **Answer in voice:** says each answer in the server's default voice when the person asking is in a voice channel and can use speech. **Text and voice** posts it too; **Voice only** just reacts 🔊, and remembers what it said so it can follow on; an answer that pings someone is posted too, as pings only work in text. What it says is in Activity as said by the bot. It's posted instead when it can't be said: they aren't in voice, it's over the longest line, the bot is busy in another voice channel, or it has just said something for them. Off by default.
 - **Answers a day:** 200 by default, in the server's time zone. After that it says once that it's done for the day. Each person also waits 10 seconds between answers; asking sooner gets a ⏳.
 
 ## Privacy and cost
 
-Each answer sends the message, the channel's last 20 messages (with people's display names), what's playing and the server's name to [Anthropic's API](https://www.anthropic.com/legal/commercial-terms). Nothing is sent for messages that don't @mention the bot or reply to one of its answers, so tell people in the server what @mentioning it does.
+Each answer sends the message, the channel's last 20 messages (with people's display names), what's playing, the names of the people it can ping, the asker's note if they have one, and the server's name to [Anthropic's API](https://www.anthropic.com/legal/commercial-terms). Nothing is sent for messages that don't @mention the bot or reply to one of its answers, so tell people in the server what @mentioning it does. The bot's log notes each thing it does in chat (the action, what it was given and what came back), for working out what went wrong.
 
 With Haiku, an answer costs about a twentieth of a cent, or roughly $1.50 a month at 100 answers a day. With Opus it's about 1–2 cents, or roughly $50 a month at that rate.
 

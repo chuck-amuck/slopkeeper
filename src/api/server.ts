@@ -2,7 +2,7 @@ import { ChannelType, type Guild, type VoiceChannel } from 'discord.js';
 import { type IncomingMessage } from 'node:http';
 import { config } from '../config.ts';
 import { linkWebUser, logActivity, recentActivity, webUser, webUserFor } from '../activity.ts';
-import { chatNote } from '../features/chat.ts';
+import { chatNote, chatNotes, noteOf, setNote } from '../features/chat.ts';
 import { effects, voices } from '../features/say.ts';
 import { canGiveRole } from '../util.ts';
 import { checkSetting, GROUPS, LABELS, LIMITS, POSTING_CHANNELS, settingProblems, show, source, STEPS } from '../features/setup.ts';
@@ -49,8 +49,8 @@ function settingList(guild: Guild) {
     effects: effects().map(({ id, name }) => ({ id, name })),
     // Whether there's a voice container, without which there are no voices to add
     speech: Boolean(config.voiceUrl),
-    // Whether there's an API key for answering in chat, and this month's answers
-    chat: chatNote(guild.id),
+    // Whether there's an API key for answering in chat, this month's answers, and what it remembers about people
+    chat: { ...chatNote(guild.id), notes: chatNotes(guild) },
   };
 }
 
@@ -114,7 +114,20 @@ export async function handleSettings(guild: Guild, req: IncomingMessage, key?: s
   return { warning: (checked.warning && plain(guild, checked.warning)) || speechProblem || undefined };
 }
 
+/** What chat remembers about people: listed, and forgotten one person at a time */
+function handleChatNotes(guild: Guild, req: IncomingMessage, userId?: string) {
+  if (userId === undefined && req.method === 'GET') return { notes: chatNotes(guild) };
+  if (userId !== undefined && req.method === 'DELETE') {
+    if (noteOf(guild.id, userId) === null) throw new Refused(404, 'It doesn’t remember anything about them.');
+    setNote(guild.id, userId, '');
+    logActivity(guild.id, by(), `Had the bot forget what it remembered about ${guild.members.cache.get(userId)?.displayName ?? 'someone who left'}`);
+    return { notes: chatNotes(guild) };
+  }
+  throw new Refused(405, 'Not here.');
+}
+
 export async function serverRoutes({ client, guild, req, res, url, section, rest }: Ask) {
+  if (section === 'chat-notes' && rest.length <= 1) return handleChatNotes(guild, req, rest[0]);
   if (section === 'settings' && rest.length <= 1) return handleSettings(guild, req, rest[0]);
   if (section === 'activity' && !rest.length && req.method === 'GET') return activityList(guild, Number(url.searchParams.get('before')) || undefined);
   if (section === 'me' && !rest.length) return handleMe(guild, req);

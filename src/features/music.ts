@@ -371,20 +371,29 @@ export function keepTrack(guildId: string, id: number, who: string): QueueRow | 
 
 /** Takes a song out of the queue. Taking out the one playing skips it */
 export async function removeTrack(guildId: string, id: number, who: string): Promise<QueueRow | null> {
-  const row = queueOf(guildId).find((r) => r.id === id);
-  if (!row) return null;
+  return (await removeTracks(guildId, [id], who))[0] ?? null;
+}
+
+/**
+ * Takes several songs out of the queue at once, as one change in Activity. Taking out the one playing skips it. Returns
+ * the ones that were still there
+ */
+export async function removeTracks(guildId: string, ids: number[], who: string): Promise<QueueRow[]> {
+  const rows = queueOf(guildId).filter((r) => ids.includes(r.id));
+  if (!rows.length) return [];
   const s = sessions.get(guildId);
   // An upload isn't deleted straight away, in case it was taken out by mistake
-  waitAgain(guildId, row);
-  if (s) seedTakenOut(s, [id]);
-  if (s?.current.id === id) await moveOn(s);
-  else db.prepare('DELETE FROM music_queue WHERE id = ?').run(id);
+  for (const row of rows) waitAgain(guildId, row);
+  if (s) seedTakenOut(s, rows.map((r) => r.id));
+  const playing = rows.find((r) => r.id === s?.current.id);
+  for (const row of rows) if (row !== playing) db.prepare('DELETE FROM music_queue WHERE id = ?').run(row.id);
+  if (s && playing) await moveOn(s);
   tidyFiles();
-  logActivity(guildId, who, `Removed **${row.title}** from the music queue`);
+  logActivity(guildId, who, rows.length === 1 ? `Removed **${rows[0]!.title}** from the music queue` : `Removed ${rows.length} songs from the music queue`);
   fetchNext(guildId);
   cardChanged(guildId);
   if (s && sessions.get(guildId) === s) void topUp(s);
-  return row;
+  return rows;
 }
 
 /** Empties the queue, apart from the song playing */
@@ -416,9 +425,14 @@ export async function askYoutube(where: '/fetch' | '/lookup' | '/similar' | '/cl
   const ytdlp = perf.serverTiming(res.headers.get('server-timing')).get('ytdlp');
   if (ytdlp !== undefined) trace?.part('yt-dlp', ytdlp, 'download');
   if (res.status === 404) return { missing: String(answer.error ?? 'Not found.') };
+  // 502 is YouTube or SoundCloud turning it down; anything else is the music container itself
+  if (res.status === 502) throw new TurnedDown(String(answer.error ?? 'HTTP 502'));
   if (!res.ok) throw new Error(String(answer.error ?? `HTTP ${res.status}`));
   return answer;
 }
+
+/** The music container answered, but couldn't get the song: YouTube turning one down, say, rather than the container being down */
+class TurnedDown extends Error {}
 
 /** The audio for a song: a file the music container downloaded, with where it came from, or why there isn't one */
 async function fetchAudio(row: QueueRow, trace?: perf.Trace, retried = false): Promise<{ file: string; source: string; url: string | null } | { missing: string }> {
@@ -592,7 +606,12 @@ async function playCurrent(s: Session, fromMs = 0): Promise<string | null> {
   const trace = new perf.Trace('music_start_seconds', 'Music', s.guild.id, SLOW_SONG_S);
   let found: Awaited<ReturnType<typeof fetchAudio>>;
   try {
-    found = await fetchAudio(row, trace);
+    // YouTube turns down a download now and then, and a second go often gets it
+    found = await fetchAudio(row, trace).catch((err: unknown) => {
+      if (!(err instanceof TurnedDown) || s.turn !== turn) throw err;
+      console.error(`Music: couldn’t get ${row.title}, trying again:`, err.message);
+      return fetchAudio(row, trace);
+    });
     trace.step('download');
   } catch (err) {
     if (s.turn !== turn) return null;
@@ -601,8 +620,21 @@ async function playCurrent(s: Session, fromMs = 0): Promise<string | null> {
       pauseHere(s, err.message);
       return err.message;
     }
-    pauseHere(s, `The music player couldn’t get ${row.title}, so the music paused. Try again in a moment.`);
-    return `The music player couldn’t get ${row.title}. Try again in a moment.`;
+    // A song turned down twice is skipped, so it doesn't hold up the queue. A second in a row is something wider, like
+    // YouTube turning the bot away, so the music pauses there rather than going through the whole queue
+    if (err instanceof TurnedDown && !s.failedInRow) {
+      s.failedInRow = 1;
+      const note = `Couldn’t get ${row.title}, so it was skipped.`;
+      const next = await moveOn(s);
+      if (sessions.get(s.guild.id) !== s) return note;
+      if (next) return next;
+      s.note ??= note;
+      cardChanged(s.guild.id);
+      return null;
+    }
+    const either = err instanceof TurnedDown ? ' either' : '';
+    pauseHere(s, `The music player couldn’t get ${row.title}${either}, so the music paused. Try again in a moment.`);
+    return `The music player couldn’t get ${row.title}${either}. Try again in a moment.`;
   }
   if (s.turn !== turn || sessions.get(s.guild.id) !== s) return null;
   if ('missing' in found) {
@@ -1422,7 +1454,7 @@ export function musicState(guildId: string) {
   };
 }
 
-const time = (ms: number) => `${Math.floor(ms / 60_000)}:${String(Math.floor((ms % 60_000) / 1000)).padStart(2, '0')}`;
+export const time = (ms: number) => `${Math.floor(ms / 60_000)}:${String(Math.floor((ms % 60_000) / 1000)).padStart(2, '0')}`;
 
 // ---------- Discord ----------
 
