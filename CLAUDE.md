@@ -31,6 +31,10 @@ same static ffmpeg as the image and CI. Without ffmpeg the audio tests skip sile
 - Every web UI page in headless Chromium, at computer and phone widths (about 20 s), on the host, since sk-test has no
   browser and skips it: `node --disable-warning=ExperimentalWarning --test test/webui.test.ts` (`CHROME` names another
   browser). CI requires it.
+- Chat's behaviour test runs its answer loop against the real model and Spotify, and checks each answer's tools,
+  pings and length (1 or 2 cents on Haiku, so not in CI). Run it after changing chat's prompt or tools, in sk-test
+  with `ANTHROPIC_API_KEY`, `SPOTIFY_CLIENT_ID` and `SPOTIFY_CLIENT_SECRET` set:
+  `node --disable-warning=ExperimentalWarning scripts/chat-eval.ts [scene | all] [haiku | opus] [runs]`.
 - Web UI by hand: run `web/src/index.ts` against a fake bot (`BOT_URL`) and drive `chromium --headless=new` over CDP.
   Non-GET calls need the header `x-slopkeeper: 1`.
 

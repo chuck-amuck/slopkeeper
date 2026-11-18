@@ -4,15 +4,16 @@
 
 ## What it can do
 
-- **[Music](music.md):** finds songs, albums and artists on Spotify by name and adds them to the queue, starting the music in your voice channel if nothing is playing. An artist adds up to 10 of their best-known songs, and "their new album" looks up their albums by date, so it finds one newer than the model knows of. It also takes links, and skips, pauses, resumes, shuffles and turns Autoplay on or off. "Stop the music" pauses it; it only empties the queue when you ask for that. It can look at the queue ("what's next?", "did you shuffle it?"), and when you say what it just queued was wrong, it takes those songs out before adding the right ones.
+- **[Music](music.md):** finds songs, albums and artists on Spotify by name and adds them to the queue, starting the music in your voice channel if nothing is playing. An artist adds up to 10 of their best-known songs, and "their new album" looks up their albums by date, so it finds one newer than the model knows of. It also takes links, and skips, pauses, resumes, shuffles and turns Autoplay on or off. "Stop the music" pauses it; it only empties the queue when you ask for that. It can look at the queue ("what's next?", "did you shuffle it?"), and when you say what it just queued was wrong, it takes those songs out before adding the right ones. If an album went in shuffled and you'd like another order, it shuffles the queue again.
 - **[Sounds](soundboard.md):** plays a sound from the library in your voice channel, finding it by name.
 - **[Speech](speech.md):** says something in your voice channel, in any voice and effect.
 - **Pinging people:** "tell @Sam happy birthday" pings Sam. It can ping people talking in the channel lately, people you @mention, and people in voice; never anyone else, a role or @everyone.
+- **Pointing you to commands:** for the bot's other features, like picking a game or planning a game night, it tells you the command to use, and you can click it.
 - **Remembering you:** tell it something to remember about you, like what to call you, and it keeps a short note (up to 200 characters) that it reads whenever you ask it something. Only about the person asking. The web UI's **What chat remembers** card lists the notes, with a button to forget each.
 
 It does these as you: only what you could do yourself. With a DJ role set, people without it can't control the music through it either, the text to speech role and cooldown still apply, and sounds and speech need you in a voice channel. Activity shows what you asked, as "Asked in chat", and what it did, under your name. A question gets an answer: "do you know their new album?" doesn't queue it.
 
-Anything else, it just answers, briefly, and it can't edit or delete messages or change settings. It sees the channel's last 20 messages, what's playing, and whether you're in voice, so it can follow along. Past that it remembers only the notes above, and it doesn't read messages that don't @mention it or reply to one of its answers. Replies to its other posts, like hop-on pings and recaps, are left to people.
+Anything else, it just answers, briefly, and it can't edit or delete messages or change settings. It sees the channel's last 20 messages, the date and time, what's playing, whether you're in voice, who's in the server's voice channels and what games people are playing, so it can follow along. Voice channels only some people can see aren't mentioned. Past that it remembers only the notes above, and it doesn't read messages that don't @mention it or reply to one of its answers. Replies to its other posts, like hop-on pings and recaps, are left to people.
 
 ## Settings
 
@@ -26,7 +27,7 @@ The **Chat** card in the web UI's Settings has them all, and says how many answe
 
 ## Privacy and cost
 
-Each answer sends the message, the channel's last 20 messages (with people's display names), what's playing, the names of the people it can ping, the asker's note if they have one, and the server's name to [Anthropic's API](https://www.anthropic.com/legal/commercial-terms). Nothing is sent for messages that don't @mention the bot or reply to one of its answers, so tell people in the server what @mentioning it does. The bot's log notes each thing it does in chat (the action, what it was given and what came back), for working out what went wrong.
+Each answer sends the message, the channel's last 20 messages (with people's display names), what's playing, who's in voice channels everyone can see, the games people are playing, the server's commands, the names of the people it can ping, the asker's note if they have one, and the server's name to [Anthropic's API](https://www.anthropic.com/legal/commercial-terms). Nothing is sent for messages that don't @mention the bot or reply to one of its answers, so tell people in the server what @mentioning it does. The bot's log notes each thing it does in chat (the action, what it was given and what came back), for working out what went wrong.
 
 With Haiku, an answer costs about a twentieth of a cent, or roughly $1.50 a month at 100 answers a day. With Opus it's about 1–2 cents, or roughly $50 a month at that rate.
 

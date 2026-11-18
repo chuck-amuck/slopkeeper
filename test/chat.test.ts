@@ -2,6 +2,7 @@ import './helpers.ts';
 import assert from 'node:assert/strict';
 import { beforeEach, mock, test } from 'node:test';
 import { recentActivity } from '../src/activity.ts';
+import { rememberCommands } from '../src/commandIds.ts';
 import { config } from '../src/config.ts';
 import { db } from '../src/db.ts';
 import { answer, asksBot, chat, chatNote, chatNotes, chatUsage, COOLDOWN_MS, MODELS, noteOf, onMessage, resetChat, useTool, type Turn } from '../src/features/chat.ts';
@@ -446,6 +447,37 @@ test('it can show the queue, and take out what it just queued when that was wron
   clearQueue(guild.id, 'test');
 });
 
+test('queueing the right thing in place of what it queued last takes that out first', async () => {
+  const guild = fakeGuild('g-replace');
+  const member = fakeMember(guild);
+  replies = [
+    turn('tool_use', toolUse('t1', 'queue_music', { ref: `spotify:album:${id22('wall')}`, next: false, shuffle: false, replaces_last: false })),
+    turn('end_turn', text('The Wall, my liege.')),
+  ];
+  await answer(fakeMessage(guild, member, '<@100> play the wall').message, member as never, BOT);
+  // A replacement that finds nothing leaves what was there, and it can still be replaced after
+  replies = [
+    turn('tool_use', toolUse('t2', 'queue_music', { ref: 'nothing by this name', next: false, shuffle: false, replaces_last: true })),
+    turn('end_turn', text('Alas.')),
+  ];
+  await answer(fakeMessage(guild, member, '<@100> no, the other one').message, member as never, BOT);
+  assert.deepEqual(
+    queueOf(guild.id).map((r) => r.title),
+    ['In the Flesh?', 'The Thin Ice'],
+  );
+  replies = [
+    turn('tool_use', toolUse('t3', 'queue_music', { ref: `artist:${id22('TheStrokes')}:The Strokes`, next: false, shuffle: false, replaces_last: true })),
+    turn('end_turn', text('The Strokes instead, my liege.')),
+  ];
+  await answer(fakeMessage(guild, member, '<@100> no, I meant the strokes').message, member as never, BOT);
+  assert.deepEqual(
+    queueOf(guild.id).map((r) => r.title),
+    ['Reptilia', 'Last Nite', 'Someday'],
+  );
+  assert.match(String((sent.at(-1)!.messages.at(-1)!.content as { content: string }[])[0]!.content), /^Took out 2 songs: “In the Flesh\?”, “The Thin Ice”\.[^]*Added/);
+  clearQueue(guild.id, 'test');
+});
+
 test('it remembers what people ask it to about themselves, and tells it to itself when they ask again', async () => {
   const guild = fakeGuild('g-notes');
   const member = fakeMember(guild);
@@ -464,4 +496,29 @@ test('it remembers what people ask it to about themselves, and tells it to itsel
   assert.equal(noteOf(guild.id, member.id)?.length, 200);
   assert.equal(await useTool(member as never, 'remember', { note: '' }), 'Forgot what you remembered about them.');
   assert.equal(noteOf(guild.id, member.id), null);
+});
+
+test('it knows the date, who’s in voice and playing what, and the bot’s commands, which its answers make clickable', async () => {
+  const guild = fakeGuild('g-knows');
+  rememberCommands(guild.id, [
+    { name: 'whatdoweplay', id: '900', description: 'Pick a game everyone in voice can play', type: 1 },
+    { name: 'gamenight', id: '901', description: 'Game nights', type: 1, options: [{ type: 1, name: 'plan', description: 'Plans a game night' }, { type: 1, name: 'list', description: 'Upcoming game nights' }] },
+    { name: 'setup', id: '902', description: 'Server settings', type: 1, defaultMemberPermissions: {}, options: [{ type: 1, name: 'show', description: 'Show settings' }] },
+    { name: 'Compare with me', id: '903', type: 2 },
+  ]);
+  const asker = fakeMember(guild);
+  const sam = fakeMember(guild, '202');
+  Object.assign(sam, { displayName: 'Sam', presence: { activities: [{ type: 0, name: 'Deep Rock Galactic' }] } });
+  Object.assign(fakeMember(guild, '203'), { displayName: 'Alex', presence: { activities: [{ type: 0, name: 'Valheim' }] } });
+  guild.channels.cache.set('v1', { id: 'v1', name: 'Hangout', permissionsFor: () => ({ has: () => true }) });
+  Object.assign(guild, { voiceStates: { cache: new Map([['202', { id: '202', channelId: 'v1' }]]) } });
+  replies = [turn('end_turn', text('Try `/gamenight plan`, or /whatdoweplay, or /setup show. /gamenights is no command, nor is example.com/whatdoweplay.'))];
+  const asked = fakeMessage(guild, asker, '<@100> what should we play friday?');
+  await onMessage(asked.message, client);
+  assert.deepEqual(asked.answers, ['Try </gamenight plan:901>, or </whatdoweplay:900>, or </setup show:902>. /gamenights is no command, nor is example.com/whatdoweplay.']);
+  const context = sent.at(-1)!.messages[0]!.content as string;
+  assert.match(context, /Now: \w+day, \w+ \d+, \d{4} at \d+:\d\d\s[AP]M\./);
+  assert.match(context, /\nIn voice: Hangout: Sam \(playing Deep Rock Galactic\)\. Playing outside voice: Alex \(playing Valheim\)\.\n/);
+  const prompt = (sent.at(-1)!.system as { text: string }[])[0]!.text;
+  assert.match(prompt, /\n\/whatdoweplay: Pick a game everyone in voice can play\n\/gamenight plan: Plans a game night\n\/gamenight list: Upcoming game nights\n\/setup: Server settings \(for server admins\)\nApps on a message or a member [^\n]*: Compare with me$/);
 });
