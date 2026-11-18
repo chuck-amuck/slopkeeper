@@ -128,6 +128,7 @@ Each setting goes by the name `/setup show` and `/setup reset` use. A few are se
 | Default voice | web UI only | `TTS_VOICE` (a voice's id, such as `scottish`, `american-deep` or one added in the web UI) | `southern-man` |
 | Default effect | web UI only | `TTS_EFFECT` (an effect's id, such as `robot`, or `none`) | `none` |
 | Speech speed | `speech` | `TTS_SPEED` | 85% of the voice's natural speed |
+| Pause between sentences | `speech` | `TTS_PAUSE_MS` | 200 ms |
 | Speech volume | `speech` | `TTS_VOLUME` | 100%, about as loud as a sound with even volume on |
 | Longest spoken line | `speech` | `TTS_MAX_CHARS` (up to 6000) | 4000 characters |
 | Wait between spoken lines | `speech` | `TTS_COOLDOWN_SEC` | 5 seconds |

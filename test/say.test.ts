@@ -13,7 +13,7 @@ import { recentActivity } from '../src/activity.ts';
 import { config } from '../src/config.ts';
 import { Mixer } from '../src/mixer.ts';
 import * as perf from '../src/perf.ts';
-import { announceAloud, CURVE_STRETCHES, effects, forgetSpoken, lengthFor, moveEffectVoices, NO_EFFECT, oldEffectVoice, phrases, previewPart, readMessage, removePhrase, savePhrase, say, sayOut, missingVoice, serverEffect, serverVoice, speak, speechFor, voiceGroup, voices } from '../src/features/say.ts';
+import { announceAloud, CURVE_STRETCHES, readable, effects, forgetSpoken, lengthFor, moveEffectVoices, NO_EFFECT, oldEffectVoice, phrases, previewPart, readMessage, removePhrase, savePhrase, say, sayOut, missingVoice, serverEffect, serverVoice, speak, speechFor, voiceGroup, voices } from '../src/features/say.ts';
 import { effectGain, forgetEffectGains, setEffectGain, soundKey } from '../src/features/effectGains.ts';
 import { addVoice, removeVoice, syncVoices, voiceFields, voicesVersion } from '../src/features/voices.ts';
 import { applySpeechVolume, stopPlayback } from '../src/features/voiceAudio.ts';
@@ -193,21 +193,21 @@ test('the built-in voices ask for their own model, speaker and speed', { skip: !
   }
   assert.deepEqual(bodies, [
     // The character curve: 85% speed takes 18% longer, which these models give at 1.25, and the middle curve between
-    { text: 'good news everyone', voice: 'alba', length_scale: 1.25 },
-    { text: 'good news everyone', voice: 'northern', length_scale: 1.31 },
-    { text: 'good news everyone', voice: 'jenny', length_scale: 1.25 },
+    { text: 'good news everyone', voice: 'alba', length_scale: 1.25, sentence_silence: 0.2 },
+    { text: 'good news everyone', voice: 'northern', length_scale: 1.31, sentence_silence: 0.2 },
+    { text: 'good news everyone', voice: 'jenny', length_scale: 1.25, sentence_silence: 0.2 },
     // The accents: KSS 15% slower than the character curve, Dmitri on its own curve, and the German model's neutral speaker
-    { text: 'good news everyone', voice: 'kss', length_scale: 1.44 },
-    { text: 'good news everyone', voice: 'dmitri', length_scale: 1.31 },
-    { text: 'good news everyone', voice: 'davefx', length_scale: 1.25 },
-    { text: 'good news everyone', voice: 'thorsten', speaker_id: 4, length_scale: 1.25 },
+    { text: 'good news everyone', voice: 'kss', length_scale: 1.44, sentence_silence: 0.2 },
+    { text: 'good news everyone', voice: 'dmitri', length_scale: 1.31, sentence_silence: 0.2 },
+    { text: 'good news everyone', voice: 'davefx', length_scale: 1.25, sentence_silence: 0.2 },
+    { text: 'good news everyone', voice: 'thorsten', speaker_id: 4, length_scale: 1.25, sentence_silence: 0.2 },
     // The low-quality model on its own curve, and the speakers picked from models with several
-    { text: 'good news everyone', voice: 'southern_female', length_scale: 1.29 },
-    { text: 'good news everyone', voice: 'southern_male', speaker_id: 0, length_scale: 1.25 },
-    { text: 'good news everyone', voice: 'australian', speaker_id: 7, length_scale: 1.31 },
+    { text: 'good news everyone', voice: 'southern_female', length_scale: 1.29, sentence_silence: 0.2 },
+    { text: 'good news everyone', voice: 'southern_male', speaker_id: 0, length_scale: 1.25, sentence_silence: 0.2 },
+    { text: 'good news everyone', voice: 'australian', speaker_id: 7, length_scale: 1.31, sentence_silence: 0.2 },
     // Effect styles are the default model's speakers, at their own pace
-    { text: 'good news everyone', speaker_id: 499, length_scale: 1.5 },
-    { text: 'good news everyone', speaker_id: 499, length_scale: 1.63 },
+    { text: 'good news everyone', speaker_id: 499, length_scale: 1.5, sentence_silence: 0.2 },
+    { text: 'good news everyone', speaker_id: 499, length_scale: 1.63, sentence_silence: 0.2 },
   ]);
   // Effects take a moment longer to run than the 300 ms above, and longer still with the whole suite running
   for (let tries = 0; leftovers().length && tries < 100; tries++) await sleep(100);
@@ -518,7 +518,7 @@ test('refuses without asking the voice container when a line can’t be said', a
   assert.equal(await say(voice, '🎉🎉 👍🏽 ❤️', undefined, 'x'), 'There’s nothing in that to read out.');
 
   setSetting(id, 'ttsMaxChars', 20);
-  assert.equal(await say(voice, 'x'.repeat(21), undefined, 'x'), 'That’s 21 characters, and the limit here is 20.');
+  assert.equal(await say(voice, `${'xy'.repeat(10)}x`, undefined, 'x'), 'That’s 21 characters, and the limit here is 20.');
 
   setSetting(id, 'tts', false);
   assert.equal(await say(voice, 'hi', undefined, 'x'), 'Text to speech is off in this server.');
@@ -575,13 +575,71 @@ test('reads mentions, emoji and links as words', () => {
   assert.equal(speechFor(guild, 'nice <:big_brain:1234> <a:party:5678> 🎉 👍🏽'), 'nice big brain party');
   assert.equal(speechFor(guild, 'see https://example.test/a?b=1 now'), 'see link now');
   assert.equal(speechFor(guild, '**bold** ~~gone~~ `code` ||secret|| _lean_'), 'bold gone code secret lean');
-  assert.equal(speechFor(guild, '  two\n\n lines  '), 'two. lines');
+  // A capital, as Piper doesn't break a sentence before a small letter
+  assert.equal(speechFor(guild, '  two\n\n lines  '), 'two. Lines');
 });
 
 test('a line break after a heading or unfinished line is a pause, and one after a sentence stays as it was', () => {
   const guild = { members: { cache: new Map() }, roles: { cache: new Map() }, channels: { cache: new Map() } } as never;
   assert.equal(speechFor(guild, 'Preamble\n\nWe the people.\nArticle I. The Council\nAll powers.'), 'Preamble. We the people. Article I. The Council. All powers.');
   assert.equal(speechFor(guild, 'THE BILL (selected)\r\n\r\nI. One, two,\nthree'), 'THE BILL (selected). I. One, two, three');
+});
+
+test('what Piper reads oddly is fixed first', () => {
+  // A full stop breaks a sentence only before a capital, and "..." ran the words together
+  assert.equal(readable('No. stop'), 'No. Stop');
+  assert.equal(readable('wait... what'), 'wait. What');
+  assert.equal(readable('wait…what'), 'wait. What');
+  assert.equal(readable('...and then'), 'and then');
+  assert.equal(readable('really?... ok'), 'really? ok');
+  // But not after a single letter or a stop that isn't an end
+  assert.equal(readable('e.g. this one, apples etc. and cats vs. dogs'), 'e.g. this one, apples etc. and cats vs. dogs');
+  // Money as it's said
+  assert.equal(readable('It costs $5.'), 'It costs 5 dollars.');
+  assert.equal(readable('$5.50 now, $1 then, $0.50 or $1,000.00'), '5 dollars 50 now, 1 dollar then, 50 cents or 1,000 dollars');
+  assert.equal(readable('£20 and €1.01 and £0.01'), '20 pounds and 1 euro 1 and 1 penny');
+  assert.equal(readable('$5.505 stays'), '$5.505 stays');
+  assert.equal(readable('worth $5k, a $2B deal, $1.5m or €3bn'), 'worth 5 thousand dollars, a 2 billion dollars deal, 1.5 million dollars or 3 billion euros');
+  assert.equal(readable("it's $5, ok? $5, $10 or $20"), "it's 5 dollars, ok? 5 dollars, 10 dollars or 20 dollars");
+  assert.equal(readable('$5kg and $5.5'), '$5kg and 5 dollars 50');
+  // Titles don't end a sentence
+  assert.equal(readable('Dr. Smith met Mr. and Mrs. Jones on St. Mark’s'), 'Dr Smith met Mr and Mrs Jones on St Mark’s');
+  assert.equal(readable('Ms. Lee and Ms Park'), 'Miz Lee and Miz Park');
+  assert.equal(readable('the end, Dr.'), 'the end, Dr.');
+  // After a name they're Street and Drive, which can end a sentence
+  assert.equal(readable('I live on Elm St. It is nice'), 'I live on Elm St. It is nice');
+  assert.equal(readable('Elm St. it is nice'), 'Elm St. It is nice');
+  // Stretched words read as the word, with m's kept at two, and Roman numerals left alone
+  assert.equal(readable('nooo yesssss sooo hmmmm NOOO goooood'), 'no yes so hmm NO good');
+  assert.equal(readable('World War III and Rocky VIII, AAA batteries, xxx'), 'World War III and Rocky VIII, AAA batteries, xxx');
+  assert.equal(readable('Schifffahrt und Brennnessel'), 'Schifffahrt und Brennnessel');
+  assert.equal(readable('good cool'), 'good cool');
+  // Short stage directions go, longer asides stay
+  assert.equal(readable('(whispers) come here (sighs heavily). fine'), 'come here. Fine');
+  assert.equal(readable('it was (and I mean this) great'), 'it was (and I mean this) great');
+  assert.equal(readable('take 2 (or 3)'), 'take 2 (or 3)');
+  assert.equal(readable('I am (not) coming, the (blue) one, (yes) (laughing)'), 'I am (not) coming, the (blue) one, (yes)');
+  // A space before a stop stays where nothing was taken out
+  assert.equal(readable('it took .5 seconds to edit the .env file'), 'it took .5 seconds to edit the .env file');
+});
+
+test('the pause between sentences goes with each line and makes it again when changed', { skip: !hasFfmpeg }, async (t) => {
+  const bodies: { sentence_silence?: number }[] = [];
+  t.mock.method(globalThis, 'fetch', async (_url: string, init: RequestInit) => {
+    bodies.push(JSON.parse(init.body as string));
+    return new Response(readFileSync(speechFile));
+  });
+  const voice = channel();
+  t.after(() => setSetting(voice.guild.id, 'ttsPauseMs', undefined));
+  assert.equal(await say(voice, 'One. Two.', 'scottish', 'ana'), null);
+  await sleep(300);
+  setSetting(voice.guild.id, 'ttsPauseMs', 450);
+  assert.equal(await say(voice, 'One. Two.', 'scottish', 'ana'), null);
+  await sleep(300);
+  assert.deepEqual(
+    bodies.map((b) => b.sentence_silence),
+    [0.2, 0.45],
+  );
 });
 
 test('a preview of a long line says its first sentences, or its first words', () => {
@@ -708,7 +766,7 @@ test('skips what can’t or shouldn’t be read', { skip: !hasFfmpeg }, async (t
   const { said } = heard(t);
   const { message, id } = chat();
   setSetting(id, 'ttsMaxChars', 20);
-  for (const content of ['', 'https://example.test/a', '🎉', '||secret||', '```\nconst a = 1;\n```', 'x'.repeat(21)]) await readMessage(message(content));
+  for (const content of ['', 'https://example.test/a', '🎉', '||secret||', '```\nconst a = 1;\n```', `${'xy'.repeat(10)}x`]) await readMessage(message(content));
   await readMessage(message('from a bot', { author: { id: 'b', bot: true } }));
   await readMessage(message('from a webhook', { webhookId: 'w' }));
   await readMessage(message('joined', { system: true }));
@@ -996,7 +1054,7 @@ test('lines can be saved, with limits, separately for each server', () => {
   assert.equal(phrases(guild.id).length, 1, 'saving it twice does nothing');
   assert.equal(phrases(other.id).length, 0);
   assert.match(savePhrase(guild, '🎉')!, /nothing in that/);
-  assert.match(savePhrase(guild, 'x'.repeat(4001))!, /4001 characters/);
+  assert.match(savePhrase(guild, `${'xy'.repeat(2000)}x`)!, /4001 characters/);
   for (let n = 1; n < 25; n++) assert.equal(savePhrase(guild, `line ${n}`), null);
   assert.match(savePhrase(guild, 'one too many')!, /keep 25 lines/);
   assert.equal(savePhrase(guild, 'good game'), null, 'one already saved isn’t refused for being over');

@@ -91,6 +91,7 @@ export const DEFAULTS = {
   ttsEffect: process.env.TTS_EFFECT || 'none',
   // The voices run a little fast at their natural speed
   ttsSpeed: num('TTS_SPEED', 85),
+  ttsPauseMs: num('TTS_PAUSE_MS', 200),
   // 100 is about as loud as a sound with Even volume on
   ttsVolume: num('TTS_VOLUME', 100),
   // Unset reads nothing out
@@ -152,6 +153,7 @@ export const DEFAULT_ENV: Partial<Record<SettingKey, string>> = {
   ttsVoice: 'TTS_VOICE',
   ttsEffect: 'TTS_EFFECT',
   ttsSpeed: 'TTS_SPEED',
+  ttsPauseMs: 'TTS_PAUSE_MS',
   ttsVolume: 'TTS_VOLUME',
   ttsChannelWho: 'TTS_CHANNEL_WHO',
   ttsGreet: 'TTS_GREET',

@@ -8,9 +8,11 @@ The bot reads out what people type, in a voice they pick. It needs the host's [v
 
 - Lines wait their turn, while sounds layer on top. **Stop** ends the line and clears the rest.
 - Mentions are read as names, custom emoji by name, and links as "link". Spoilers and code blocks are skipped when reading a message.
+- There's a short pause between sentences, 0.2 seconds by default.
+- Some text is tidied first, as the voices read it oddly: "$5.50" is said "5 dollars 50" (pounds and euros too), "..." is a pause, "Dr." and "Mr." don't end a sentence, "nooo" is said "no", and short stage directions in brackets, like "(whispers)" or "(sighs heavily)", are left out.
 - A line can be up to 4,000 characters by default (about 5 minutes), and 6,000 at most. A long line takes a few seconds to start.
 - Every line goes in the Activity tab with who said it, cut to its first 200 characters.
-- A line said again within half an hour, in the same voice, effect and speed, plays straight away.
+- A line said again within half an hour, in the same voice, effect, speed and pause, plays straight away.
 
 ## Voices
 
@@ -29,7 +31,7 @@ Any voice can be said through an effect, picked beside the voice: **Demon**, **H
 
 ## Settings
 
-`/setup speech` sets whether it's on, how fast and loud it talks, the longest line, and how long each person waits between lines. The default voice and effect are picked in the web UI's Settings. `/setup speech-role` limits speech to a role, plus people with **Manage Server**, and that covers reading a channel aloud too. The web UI isn't limited by the role, and counts as one person for the wait.
+`/setup speech` sets whether it's on, how fast and loud it talks, the pause between sentences, the longest line, and how long each person waits between lines. The default voice and effect are picked in the web UI's Settings. `/setup speech-role` limits speech to a role, plus people with **Manage Server**, and that covers reading a channel aloud too. The web UI isn't limited by the role, and counts as one person for the wait.
 
 **Greetings:** with `greet` on, the bot says who joined voice, using the **Greeting** setting with `{name}` for the person. It follows the join sound rules: the same cooldown, nothing for moving channels, the bot won't leave another channel for one, and someone with a join sound hears that instead.
 

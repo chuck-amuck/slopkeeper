@@ -50,6 +50,7 @@ export const LIMITS = {
   ttsMaxChars: [20, 6000],
   ttsCooldownSec: [0, 3600],
   ttsSpeed: [50, 150],
+  ttsPauseMs: [0, 2000],
   ttsVolume: [25, 200],
   soundVolume: [0, 200],
   loopVolume: [5, 200],
@@ -113,6 +114,7 @@ export const LABELS: Record<SettingKey, string> = {
   ttsVoice: 'Default voice',
   ttsEffect: 'Default effect',
   ttsSpeed: 'Speech speed',
+  ttsPauseMs: 'Pause between sentences',
   ttsVolume: 'Speech volume',
   soundVolume: 'Soundboard volume',
   loopRoom: 'Looping sound room',
@@ -168,6 +170,7 @@ export function show(key: SettingKey, value: unknown): string {
       return `${value} min`;
     case 'joinSoundDelayMs':
     case 'loopIntroDelayMs':
+    case 'ttsPauseMs':
     case 'loopSoundDelayMs':
     case 'loopTextDelayMs':
       return `${value} ms`;
@@ -281,7 +284,7 @@ export const GROUPS: [string, SettingKey[]][] = [
   ['Soundboard', ['soundVolume', 'evenVolume', 'joinSounds', 'joinSoundDelayMs', 'joinSoundCooldownMin', 'soundManagerRole']],
   ['Music', ['musicVolume', 'musicAutoplay', 'musicDjRole']],
   ['Looping sound room', ['loopRoom', 'loopSound', 'loopVolume', 'loopEvery', 'loopText', 'loopVoice', 'loopEffect', 'loopTextVolume', 'loopTextEvery', 'loopIntro', 'loopIntroDelayMs', 'loopSoundDelayMs', 'loopTextDelayMs']],
-  ['Text to speech', ['tts', 'ttsVoice', 'ttsEffect', 'ttsSpeed', 'ttsVolume', 'ttsChannel', 'ttsChannelWho', 'ttsGreet', 'ttsGreeting', 'ttsNightReminders', 'ttsHopOn', 'ttsRole', 'ttsMaxChars', 'ttsCooldownSec']],
+  ['Text to speech', ['tts', 'ttsVoice', 'ttsEffect', 'ttsSpeed', 'ttsPauseMs', 'ttsVolume', 'ttsChannel', 'ttsChannelWho', 'ttsGreet', 'ttsGreeting', 'ttsNightReminders', 'ttsHopOn', 'ttsRole', 'ttsMaxChars', 'ttsCooldownSec']],
 ];
 
 /** Something that stops the bot doing what its settings ask, and the setting to change, if one will fix it */
@@ -757,6 +760,9 @@ export const setup: Feature = {
             .setDescription('Text to speech: on or off, and the limits on /say. Pick the default voice in the web UI')
             .addBooleanOption((o) => o.setName('enabled').setDescription('Whether /say works here'))
             .addIntegerOption((o) => o.setName('speed').setDescription('How fast it talks, as a percentage of the voice’s natural speed').setMinValue(LIMITS.ttsSpeed[0]).setMaxValue(LIMITS.ttsSpeed[1]))
+            .addIntegerOption((o) =>
+              o.setName('pause_ms').setDescription('Pause between sentences, 200 is a fifth of a second').setMinValue(LIMITS.ttsPauseMs[0]).setMaxValue(LIMITS.ttsPauseMs[1]),
+            )
             .addIntegerOption((o) => o.setName('volume').setDescription('How loud it talks. 100 is about as loud as a sound').setMinValue(LIMITS.ttsVolume[0]).setMaxValue(LIMITS.ttsVolume[1]))
             .addIntegerOption((o) => o.setName('max_characters').setDescription('Longest line').setMinValue(LIMITS.ttsMaxChars[0]).setMaxValue(LIMITS.ttsMaxChars[1]))
             .addIntegerOption((o) => o.setName('wait_seconds').setDescription('Wait between one person’s lines').setMinValue(LIMITS.ttsCooldownSec[0]).setMaxValue(LIMITS.ttsCooldownSec[1]))
@@ -1013,6 +1019,7 @@ export const setup: Feature = {
             ['ttsHopOn', i.options.getBoolean('hop_on')],
             ['tts', i.options.getBoolean('enabled')],
             ['ttsSpeed', i.options.getInteger('speed')],
+            ['ttsPauseMs', i.options.getInteger('pause_ms')],
             ['ttsVolume', i.options.getInteger('volume')],
             ['ttsMaxChars', i.options.getInteger('max_characters')],
             ['ttsCooldownSec', i.options.getInteger('wait_seconds')],

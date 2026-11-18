@@ -152,7 +152,7 @@ async function loopSpeechFile(guild: Guild): Promise<string> {
   const effect = setting(guild.id, 'loopEffect');
   // Keyed on how the voice and effect are made as well as their names, so a voice that's been retuned or removed is made again
   const made = createHash('sha256')
-    .update(JSON.stringify([text, voice, effect, loopVoiceDetails?.(guild, voice, effect), setting(guild.id, 'ttsSpeed')]))
+    .update(JSON.stringify([text, voice, effect, loopVoiceDetails?.(guild, voice, effect), setting(guild.id, 'ttsSpeed'), setting(guild.id, 'ttsPauseMs')]))
     .digest('hex')
     .slice(0, 16);
   const file = path.join(loopSpeechDir(), `${guild.id}-${made}.wav`);
@@ -205,7 +205,7 @@ async function loopable(guildId: string, file: string): Promise<string> {
 }
 
 /** Whether a setting changes what the looping room plays: its own, or the speech voice and speed its speech can follow */
-export const affectsLoopRoom = (key: string) => key.startsWith('loop') || key === 'ttsVoice' || key === 'ttsEffect' || key === 'ttsSpeed' || (!!config.loopBotUrl && key === 'soundVolume');
+export const affectsLoopRoom = (key: string) => key.startsWith('loop') || key === 'ttsVoice' || key === 'ttsEffect' || key === 'ttsSpeed' || key === 'ttsPauseMs' || (!!config.loopBotUrl && key === 'soundVolume');
 
 /** After the looping settings change: stops the loop as it was, then starts it again if it should be playing */
 export function refreshLoopRoom(guild: Guild) {

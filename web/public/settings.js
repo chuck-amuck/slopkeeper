@@ -43,6 +43,7 @@ const FIELDS = {
   ttsVoice: { kind: 'speaker', hint: 'Used when nobody picks one.' },
   ttsEffect: { kind: 'effect', hint: 'Said through when nobody picks one: messages read out, greetings and announcements too. Each effect is matched to each voice’s loudness.' },
   ttsSpeed: { kind: 'number', unit: '%', hint: 'How fast it talks. 100 is the voice’s natural speed, and lower is slower.' },
+  ttsPauseMs: { kind: 'number', unit: 'ms', hint: 'The pause between sentences. 200 is a fifth of a second, and 0 runs them together.' },
   ttsVolume: { kind: 'number', unit: '%', hint: 'How loud it talks. 100 is about as loud as a sound with even volume on. The Speech slider on the Soundboard tab and the Volume button change this too.' },
   ttsChannel: { kind: 'channel', none: 'Off', hint: 'The bot reads out what people type here, in the voice channel they’re in, or else where the bot is or where most people are.' },
   ttsChannelWho: { kind: 'choice', options: [['everyone', 'Everyone'], ['voice', 'Only people in voice']], hint: 'Only people in voice leaves out anyone who’s only typing.' },

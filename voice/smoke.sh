@@ -95,6 +95,22 @@ for label, extra in (("default", {}), ("Spanish accent", {"voice": "davefx"}), (
     print(f"{label}: {seconds:.1f} s, {w.getframerate()} Hz, {loud} loud samples, Server-Timing: {timing}")
     if not 1.5 < seconds < 15 or loud < 1000 or "synth" not in timing:
         sys.exit(f"The {label} line doesn't sound like speech")
+# A pause asked for goes between the two sentences, whole samples of silence, at the default model's 22,050 Hz too, where
+# Piper's own setting would shift the rest into noise. Steadiness at 0 makes each take the same, so only the pause differs
+for label, extra in (("default", {}), ("Spanish accent", {"voice": "davefx"})):
+    takes = []
+    for pause in (0, 0.25):
+        audio, _ = say(**extra, noise_scale=0, noise_w_scale=0, sentence_silence=pause)
+        with wave.open(io.BytesIO(audio)) as w:
+            takes.append((w.getframerate(), w.readframes(w.getnframes())))
+    (rate, plain), (_, paused) = takes
+    added = len(paused) - len(plain)
+    # Where the two part: what's the same at the end of both, taken back to a whole sample
+    same_end = next((n for n in range(len(plain)) if plain[-1 - n] != paused[-1 - n]), len(plain))
+    at = len(plain) - same_end + (len(plain) - same_end) % 2
+    print(f"{label} with a 0.25 s pause: {added // 2} samples longer, from {at / 2 / rate:.2f} s")
+    if added != 2 * round(rate * 0.25) or paused[:at] != plain[:at] or paused[at : at + added] != bytes(added) or paused[at + added :] != plain[at:]:
+        sys.exit(f"The {label} line's pause isn't {round(rate * 0.25)} samples of silence between its sentences")
 # A voice no longer listed is deleted
 if ask("/models", {"version": "smoke-2", "voices": []})["voices"] or ask("/models")["version"] != "smoke-2":
     sys.exit("The added voice wasn't let go")

@@ -1245,7 +1245,7 @@ test('the page’s limits on text to speech', async () => {
   try {
     assert.equal(await post({ channelId: '702', text: 5 }), 'Type something to say.');
     assert.equal(await post({ channelId: 'v1', text: 'hello' }), 'Nobody’s in voice any more.');
-    assert.equal(await post({ channelId: '702', text: 'x'.repeat(4001) }), 'That’s 4001 characters, and the limit here is 4000.');
+    assert.equal(await post({ channelId: '702', text: `${'xy'.repeat(2000)}x` }), 'That’s 4001 characters, and the limit here is 4000.');
     assert.equal(await post({ channelId: '702', text: '🎉' }), 'There’s nothing in that to read out.');
     assert.equal(await post({ channelId: '702', text: 'hello', voice: 'nope' }), 'Pick a voice from the list.');
     assert.equal(await post({ channelId: '702', text: 'hello', voice: 'scottish', effect: 'nope' }), 'Pick an effect from the list.');
@@ -1267,12 +1267,12 @@ test('the page’s lines go through the voice container and show as coming from 
   });
   t.mock.method(console, 'error', () => {});
   await refused(400, `/guilds/${GUILD}/say`, { method: 'POST', json: { channelId: '702', text: 'hello <@123>', voice: 'alien' } });
-  assert.deepEqual(asked, { text: 'hello someone', speaker_id: 0, length_scale: lengthFor(85) });
+  assert.deepEqual(asked, { text: 'hello someone', speaker_id: 0, length_scale: lengthFor(85), sentence_silence: 0.2 });
   // An effect picked beside the voice, which Giant says 20% slower. Straight after, so without the wait between lines
   setSetting(GUILD, 'ttsCooldownSec', 0);
   t.after(() => setSetting(GUILD, 'ttsCooldownSec', undefined));
   await refused(400, `/guilds/${GUILD}/say`, { method: 'POST', json: { channelId: '702', text: 'big', voice: 'american-man', effect: 'giant' } });
-  assert.deepEqual(asked, { text: 'big', speaker_id: 400, length_scale: Math.round(lengthFor(85) * 1.2 * 100) / 100 });
+  assert.deepEqual(asked, { text: 'big', speaker_id: 400, length_scale: Math.round(lengthFor(85) * 1.2 * 100) / 100, sentence_silence: 0.2 });
 });
 
 test('the page saves lines and removes them', async () => {

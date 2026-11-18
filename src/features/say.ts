@@ -450,9 +450,86 @@ function queueFor(guildId: string) {
   return queue;
 }
 
+const CURRENCIES: Record<string, readonly [string, string, string, string]> = {
+  $: ['dollar', 'dollars', 'cent', 'cents'],
+  '£': ['pound', 'pounds', 'penny', 'pence'],
+  '€': ['euro', 'euros', 'cent', 'cents'],
+};
+
+const SCALES: Record<string, string> = { k: 'thousand', m: 'million', b: 'billion', bn: 'billion' };
+
+/** "$5.50" as "5 dollars 50" and "$5k" as "5 thousand dollars", as Piper would say "dollar five point five zero" */
+function money(sign: string, whole: string, part: string | undefined, scale: string | undefined) {
+  const [one, many, oneSmall, manySmall] = CURRENCIES[sign];
+  if (scale) return `${whole}${part ? `.${part}` : ''} ${SCALES[scale.toLowerCase()]} ${many}`;
+  const units = Number(whole.replaceAll(',', ''));
+  const small = part && part !== '00' ? Number(part) : 0;
+  if (units === 0 && small) return `${small} ${small === 1 ? oneSmall : manySmall}`;
+  return `${whole} ${units === 1 ? one : many}${small ? ` ${small}` : ''}`;
+}
+
+/** Words that end in s or ing but don't start a stage direction, so "(yes)" or "(this one)" is still read */
+const NOT_ACTIONS = new Set(['yes', 'this', 'thus', 'plus', 'less', 'unless', 'was', 'has', 'does', 'is', 'his', 'hers', 'its', 'ours', 'yours', 'theirs', 'us', 'thing', 'things', 'nothing', 'something', 'anything', 'everything']);
+
+/** A short aside in brackets that starts with an action, like "(whispers)", "(sighs heavily)" or "(laughing)" */
+const stageDirection = (words: string) => {
+  const first = words.trim().split(/\s+/)[0].toLowerCase();
+  return first.length >= 4 && /(?:s|ing)$/.test(first) && !NOT_ACTIONS.has(first);
+};
+
+/**
+ * "nooo" and "yesss" as the word: a stretch at a word's end goes to one letter (m's to two, as "hm" is spelled). In the
+ * middle, four or more go to two, as in "goooood". Three there can be real German ("Schifffahrt"), so they stay
+ */
+const unstretched = (word: string) =>
+  /^(\p{L})\1*$/u.test(word) || /^[IVXLCDM]+$/.test(word)
+    ? word
+    : word.replace(/(\p{L})\1{2,}/gu, (run: string, letter: string, at: number) => {
+        if (at + run.length === word.length) return letter.toLowerCase() === 'm' ? letter + letter : letter;
+        return run.length >= 4 ? letter + letter : run;
+      });
+
+/** A full stop after these doesn't end a sentence for Piper either, so the next word isn't given a capital */
+const NOT_AN_END = new Set(['etc', 'vs', 'approx']);
+
+/**
+ * Fixes what Piper reads oddly, each found by looking at the sounds it makes of them (the voice container's phonemize):
+ * - a full stop starts a new sentence only before a capital, so "No. stop" ran on. "..." ran the words together
+ * - Dr., Mr., Mrs. and St. end a sentence, though it reads them right (Saint or Street by what's around it) without the stop
+ * - "nooo" came out "noo-oh", and "noo" as "new": one letter reads as the word, except "hm", which it spells, so m's keep two.
+ *   Roman numerals and "AAA" stay as they are
+ * - short stage directions in brackets, like "(whispers)", were read out
+ * - "$5" was "dollar five"
+ */
+export function readable(text: string) {
+  return (
+    text
+      // Just before a stop or comma, the space before it goes too
+      .replace(/\s*\((\s*[\p{L}'’-]+(?:\s+[\p{L}'’-]+){0,2}\s*)\)\s*/gu, (aside: string, words: string, at: number, all: string) =>
+        stageDirection(words) ? (/^[.,!?;:]/.test(all.slice(at + aside.length)) ? '' : ' ') : aside,
+      )
+      .replace(/([$£€])(\d{1,3}(?:,\d{3})+|\d+)(?:\.(\d{1,2}))?(k|m|bn|b)?(?![\d\p{L}]|[.,]\d)/giu, (_, sign: string, whole: string, part?: string, scale?: string) =>
+        money(sign, whole, part?.padEnd(scale ? 1 : 2, '0'), scale),
+      )
+      // Mr. and Mrs. never end one. St. and Dr. after a name are Street and Drive, which can
+      .replace(/\b(Mr|Mrs)\.(?=\s+\S)/g, '$1')
+      .replace(/(?<!\p{Lu}\p{L}*\s+)\b(Dr|St)\.(?=\s+\p{Lu})/gu, '$1')
+      .replace(/\bMs\.?(?=\s+\p{Lu})/gu, 'Miz')
+      .replace(/\s*(?:\.{3,}|…)+\s*/g, '. ')
+      .replace(/([!?])\.(?=\s|$)/g, '$1')
+      // What "..." at the start left
+      .replace(/^\s*\.\s+/, '')
+      .replace(/\p{L}+/gu, unstretched)
+      .replace(/(?<=(?:^|[^\p{L}\p{N}'’])([\p{L}\p{N}'’]+)\.["'’”)\]]*\s+)\p{Ll}/gu, (letter: string, word: string) =>
+        word.length < 2 || NOT_AN_END.has(word.toLowerCase()) ? letter : letter.toUpperCase(),
+      )
+      .trim()
+  );
+}
+
 /** What should be read out. Discord's markup would otherwise come out as long strings of digits */
 export function speechFor(guild: Guild, typed: string) {
-  return typed
+  const plain = typed
     .replace(/<@!?(\d+)>/g, (_, id: string) => guild.members.cache.get(id)?.displayName ?? 'someone')
     .replace(/<@&(\d+)>/g, (_, id: string) => guild.roles.cache.get(id)?.name ?? 'a role')
     .replace(/<#(\d+)>/g, (_, id: string) => {
@@ -466,8 +543,8 @@ export function speechFor(guild: Guild, typed: string) {
     .replace(/_/g, ' ')
     // A heading or a line that doesn't end a sentence gets a pause after it, rather than running into the next
     .replace(/([\p{L}\p{N})])[ \t]*(?:\r?\n\s*)+/gu, '$1. ')
-    .replace(/\s+/g, ' ')
-    .trim();
+    .replace(/\s+/g, ' ');
+  return readable(plain).replace(/\s+/g, ' ').trim();
 }
 
 /**
@@ -480,7 +557,7 @@ async function speakToFile(guild: Guild, typed: string, voiceId: string, effectI
   if (!hasWords(text)) throw new Error('There’s nothing in that to say.');
   const voice = serverVoice(guild.id, voiceId);
   const effect = serverEffect(guild.id, effectId, voiceId);
-  const made = await lineAudio(text, voice, effect, setting(guild.id, 'ttsSpeed'), new AbortController().signal).catch((err: unknown) => {
+  const made = await lineAudio(text, voice, effect, pacing(guild.id), new AbortController().signal).catch((err: unknown) => {
     // Anything else, like ffmpeg failing, says what it is
     throw err instanceof VoiceDown ? new Error('The voice container isn’t answering, so the looping speech can’t be made.') : err;
   });
@@ -497,7 +574,15 @@ export function lengthFor(speed: number, stretches = STRETCHES) {
   return Math.round((fromLength + ((toLength - fromLength) * (stretch - fromStretch)) / (toStretch - fromStretch)) * 100) / 100;
 }
 
-async function speech(text: string, voice: Voice, effect: Effect | null, speed: number, signal: AbortSignal, trace?: perf.Trace) {
+/** How a server's lines are paced: its speed, and the pause between sentences */
+interface Pacing {
+  speed: number;
+  pauseMs: number;
+}
+
+const pacing = (guildId: string): Pacing => ({ speed: setting(guildId, 'ttsSpeed'), pauseMs: setting(guildId, 'ttsPauseMs') });
+
+async function speech(text: string, voice: Voice, effect: Effect | null, { speed, pauseMs }: Pacing, signal: AbortSignal, trace?: perf.Trace) {
   const asked = performance.now();
   // A model the container doesn't have gets its default one instead, with no error, so voice/start.sh fetches every model named here
   const res = await fetch(`${config.voiceUrl}/synthesize`, {
@@ -510,6 +595,8 @@ async function speech(text: string, voice: Voice, effect: Effect | null, speed: 
       length_scale: Math.round(lengthFor(speed, voice.stretches) * (voice.pace ?? 1) * (effect?.pace ?? 1) * 100) / 100,
       noise_scale: voice.noise?.[0],
       noise_w_scale: voice.noise?.[1],
+      // The voice container's own, as Piper's would turn some lengths into noise (voice/serve.py)
+      sentence_silence: pauseMs / 1000,
     }),
     signal: AbortSignal.any([signal, AbortSignal.timeout(SPEAK_TIMEOUT_MS + text.length * SPEAK_TIMEOUT_PER_CHAR_MS)]),
   });
@@ -568,12 +655,12 @@ function keepLine(key: string, audio: Buffer) {
 /** The ffmpeg filters a line goes through before levelling: the voice's own, then the effect's, turned up or down for this voice */
 const filtersFor = (voice: Voice, effect: Effect | null, gain: number) => [voice.effects, effect && `${effect.effects},volume=${gain}dB`].filter(Boolean).join(',') || undefined;
 
-async function makeLine(text: string, voice: Voice, effect: Effect | null, gain: number, speed: number, trace?: perf.Trace): Promise<Buffer> {
+async function makeLine(text: string, voice: Voice, effect: Effect | null, gain: number, paced: Pacing, trace?: perf.Trace): Promise<Buffer> {
   folder ??= mkdtempSync(path.join(tmpdir(), 'slopkeeper-say-'));
   const file = path.join(folder, `made-${randomUUID()}.wav`);
   const unlevelled = `${file}.raw.wav`;
   try {
-    const raw = await speech(text, voice, effect, speed, new AbortController().signal, trace).catch((err: unknown) => {
+    const raw = await speech(text, voice, effect, paced, new AbortController().signal, trace).catch((err: unknown) => {
       throw new VoiceDown(err instanceof Error ? err.message : String(err));
     });
     writeFileSync(unlevelled, raw);
@@ -591,11 +678,11 @@ async function makeLine(text: string, voice: Voice, effect: Effect | null, gain:
  * A line levelled and ready to play, made again only if it isn't one of the lines lately made or being made. `trace`
  * hears how it was made, if this is the ask that makes it
  */
-async function lineAudio(text: string, voice: Voice, effect: Effect | null, speed: number, signal: AbortSignal, trace?: perf.Trace): Promise<Buffer> {
+async function lineAudio(text: string, voice: Voice, effect: Effect | null, paced: Pacing, signal: AbortSignal, trace?: perf.Trace): Promise<Buffer> {
   // The effect's correction too, which changes once the pair is measured
   const gain = effect ? effectGain(voice, effect) : 0;
   // An added voice's settings too, as they can change, and a preview can try ones not saved yet
-  const key = JSON.stringify([voice.key ?? voice.id, effect?.id ?? null, gain, speed, text]);
+  const key = JSON.stringify([voice.key ?? voice.id, effect?.id ?? null, gain, paced.speed, paced.pauseMs, text]);
   const kept = spoken.get(key);
   if (kept && Date.now() - kept.at < KEEP_SPOKEN_MS) {
     // To the newest end, so lines said often are the last to go
@@ -613,7 +700,7 @@ async function lineAudio(text: string, voice: Voice, effect: Effect | null, spee
     // Made for whoever asks for it meanwhile, so one caller's Stop doesn't fail the others. A stopped line is still
     // finished and kept, as it's often said again straight after
     const from = performance.now();
-    made = makeLine(text, voice, effect, gain, speed, trace).then((audio) => {
+    made = makeLine(text, voice, effect, gain, paced, trace).then((audio) => {
       perf.time('speech_make_seconds', (performance.now() - from) / 1000, { length: text.length > SHORT_LINE ? 'long' : 'short' });
       keepLine(key, audio);
       return audio;
@@ -653,7 +740,7 @@ export async function previewSpeech(guild: Guild, typed: string, chosen: string 
   previewsAt.set(guild.id, [...recent, now]);
   const text = typed.trim() ? previewPart(speechFor(guild, typed).slice(0, setting(guild.id, 'ttsMaxChars'))) : `Hi, this is ${voice.name}.`;
   if (!hasWords(text)) throw new Error('There’s nothing in that to say.');
-  return lineAudio(text, voice, effect, setting(guild.id, 'ttsSpeed'), new AbortController().signal);
+  return lineAudio(text, voice, effect, pacing(guild.id), new AbortController().signal);
 }
 
 /** The start of a long line, up to the end of a sentence or else a word */
@@ -681,7 +768,7 @@ async function sayLine(queue: Queue, { channel, text, voice, effect, started, tr
   // Each line has its own file, as the mixer takes a file it's already playing to be a restart
   const file = path.join(folder, `${randomUUID()}.wav`);
   try {
-    writeFileSync(file, await lineAudio(text, voice, effect, setting(guildId, 'ttsSpeed'), cancel.signal, trace));
+    writeFileSync(file, await lineAudio(text, voice, effect, pacing(guildId), cancel.signal, trace));
     cancel.signal.throwIfAborted();
     trace.step('making');
     const heard = () => {

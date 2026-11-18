@@ -17,11 +17,16 @@ treated as having one speaker.
 The voices added in the web UI are kept by models.py: the bot sends their list to POST /models, and GET /models says how each
 one's download is going. /stats carries the list's version, so the bot sends it again if the container lost it.
 
+Piper can put silence between sentences only for every line at once, set when it starts, and works it out in bytes: 0.25 s at
+22,050 Hz is 11,025 bytes, half a sample, which shifts everything after it into noise. So each line can ask for its own pause,
+`sentence_silence` in seconds (up to 2), counted in whole samples.
+
 For the bot's health numbers, each line's answer says in a Server-Timing header how long went on loading a model, turning the words
 into sounds and saying them, and GET /stats says how much memory and CPU the container uses and how many models it holds.
 """
 
 import ctypes
+import dataclasses
 import gc
 import logging
 import os
@@ -32,6 +37,7 @@ import threading
 import time
 
 import flask
+import numpy as np
 import onnxruntime
 from piper import PiperVoice
 
@@ -70,6 +76,32 @@ def _phonemize_accented(self, text):
         return accent.phonemize(self, text, _phonemize)
     finally:
         _took("phonemize", time.monotonic() - started)
+
+
+_synthesize = PiperVoice.synthesize
+MOST_SILENCE_S = 2.0
+
+
+def _asked_silence():
+    """The pause the line being answered asks for after each sentence, in seconds"""
+    if not flask.has_request_context():
+        return 0.0
+    asked = (flask.request.get_json(silent=True) or {}).get("sentence_silence")
+    if isinstance(asked, bool) or not isinstance(asked, (int, float)):
+        return 0.0
+    return min(max(float(asked), 0.0), MOST_SILENCE_S)
+
+
+def _synthesize_with_pauses(self, text, syn_config=None, include_alignments=False):
+    silence = _asked_silence()
+    for i, chunk in enumerate(_synthesize(self, text, syn_config, include_alignments)):
+        if i > 0 and silence > 0:
+            # Before each sentence after the first, so the line doesn't end on one
+            quiet = np.zeros(round(chunk.sample_rate * silence), dtype=np.float32)
+            chunk = dataclasses.replace(
+                chunk, audio_float_array=np.concatenate([quiet, chunk.audio_float_array]), _audio_int16_array=None, _audio_int16_bytes=None
+            )
+        yield chunk
 
 
 def _number(name, default, kind=float):
@@ -317,6 +349,7 @@ onnxruntime.InferenceSession = _session
 PiperVoice.phonemize = _phonemize_accented
 PiperVoice.load = staticmethod(_load_tracked)
 PiperVoice.phoneme_ids_to_audio = _to_audio_tracked
+PiperVoice.synthesize = _synthesize_with_pauses
 flask.Flask.run = _run_measured
 if IDLE_S > 0:
     threading.Thread(target=_let_go_of_idle, daemon=True).start()
