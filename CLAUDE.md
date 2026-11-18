@@ -38,6 +38,10 @@ same static ffmpeg as the image and CI. Without ffmpeg the audio tests skip sile
   `node --disable-warning=ExperimentalWarning scripts/chat-eval.ts [scene | all] [haiku | sonnet | opus] [runs]`.
   Spotify's answers are kept in `.eval-cache/` (ignored by git) for 30 days, so reruns don't use up the rate limit the
   live bot shares: make that folder and mount it writable when the repo is mounted read-only.
+  To run it on YouTube Music, start the music image (`docker build -q -t sk-music-test music && docker run -d --rm
+  --name sk-music-eval -e MUSIC_TOKEN=eval sk-music-test`) and add `--network container:sk-music-eval -e
+  EVAL_MUSIC_URL=http://127.0.0.1:7700 -e EVAL_MUSIC_TOKEN=eval -e EVAL_SEARCH=youtube-music` to the eval's
+  `docker run`. Its answers are kept in `.eval-cache/` too.
 - Web UI by hand: run `web/src/index.ts` against a fake bot (`BOT_URL`) and drive `chromium --headless=new` over CDP.
   Non-GET calls need the header `x-slopkeeper: 1`.
 

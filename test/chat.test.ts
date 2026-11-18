@@ -34,6 +34,8 @@ let replies: Record<string, unknown>[] = [];
 let sent: { model: string; system: { text: string }[]; tools?: { name: string }[]; tool_choice?: unknown; messages: { role: string; content: unknown }[]; output_config?: unknown }[] = [];
 let apiDown = false;
 const spotifyAsked: string[] = [];
+// What the music container was asked to search on YouTube Music
+const ytmAsked: Record<string, string>[] = [];
 
 mock.method(globalThis, 'fetch', async (input: string | URL | Request, init: RequestInit = {}) => {
   const url = String(input instanceof Request ? input.url : input);
@@ -83,6 +85,20 @@ mock.method(globalThis, 'fetch', async (input: string | URL | Request, init: Req
     }
     if (where.startsWith(`/albums/${id22('wall')}`)) return Response.json({ name: 'The Wall', images: [], tracks: { items: [song(10, 'Pink Floyd', 'In the Flesh?'), song(11, 'Pink Floyd', 'The Thin Ice')], next: null } });
     if (where.startsWith(`/albums/${id22('ep')}`)) return Response.json({ name: 'Wall Demos', images: [], tracks: { items: [song(12, 'Pink Floyd', 'Demo')], next: null } });
+  }
+  // YouTube Music, through the music container, for servers that search it
+  if (url === 'http://music.test/search') {
+    const body = JSON.parse(init.body as string) as Record<string, string>;
+    ytmAsked.push(body);
+    const ytmSong = (id: string, title: string, artist: string) => ({ id, title, artists: [artist], album: 'Room On Fire', seconds: 200, cover: null });
+    if (body.kind === 'album') return Response.json({ results: [{ id: 'MPREb_wall', title: 'The Wall', artists: ['Pink Floyd'], year: '1979', type: 'Album' }, { id: 'MPREb_ep', title: 'Wall EP', artists: ['Pink Floyd'], year: '2011', type: 'EP' }] });
+    if (body.kind === 'artist') return Response.json({ results: [{ id: 'UCnotThem', name: 'The Strokes Tribute' }, { id: 'UCstrokes', name: 'The Strokes' }] });
+    if (body.kind === 'song') return Response.json({ results: [ytmSong('aaaaaaaaaa1', 'Reptilia', 'The Strokes'), ytmSong('aaaaaaaaaa2', 'Tribute', 'The Strokes Tribute'), ytmSong('aaaaaaaaaa3', 'Reptilia', 'The Strokes'), ytmSong('aaaaaaaaaa4', 'Someday', 'The Strokes')] });
+    if (body.artist === 'UCstrokes') {
+      return Response.json({ id: 'UCstrokes', name: 'The Strokes', songs: [], singles: [], albums: [{ id: 'MPREb_iti', title: 'Is This It', artists: ['The Strokes'], year: '2001' }, { id: 'MPREb_ra', title: 'Reality Awaits', artists: ['The Strokes'], year: '2026' }, { id: 'MPREb_s', title: 'The Singles - Volume 01', artists: ['The Strokes'], year: '2023' }] });
+    }
+    if (body.album === 'MPREb_wall') return Response.json({ id: 'MPREb_wall', title: 'The Wall', songs: [ytmSong('bbbbbbbbbb1', 'In the Flesh?', 'Pink Floyd'), ytmSong('bbbbbbbbbb2', 'The Thin Ice', 'Pink Floyd')] });
+    return Response.json({ error: 'YouTube Music’s page didn’t have what was expected' }, { status: 502 });
   }
   // Images people attach, as Discord's CDN serves them
   if (url.startsWith('https://cdn.test/')) return new Response(new Uint8Array([137, 80, 78, 71]));
@@ -266,6 +282,47 @@ test('an artist adds their best-known songs, and only theirs', async () => {
   clearQueue(guild.id, 'test');
 });
 
+test('a server that searches YouTube Music finds, lists and queues from there, and Spotify’s artists fall back to it by name', async (t) => {
+  config.musicToken = 'music-token';
+  const guild = fakeGuild('g-ytm');
+  const member = fakeMember(guild);
+  t.after(() => {
+    config.musicToken = null;
+    clearQueue(guild.id, 'test');
+  });
+  setSetting(guild.id, 'musicSearch', 'youtube-music');
+  assert.equal(
+    await useTool(member as never, 'find_music', { query: 'the wall', kind: 'album' }),
+    'album: “The Wall” by Pink Floyd, 1979 (ref ytm:album:MPREb_wall)\nsingle or EP: “Wall EP” by Pink Floyd, 2011 (ref ytm:album:MPREb_ep)',
+  );
+  const artists = await useTool(member as never, 'find_music', { query: 'the strokes', kind: 'artist' });
+  assert.ok(artists.includes('artist: “The Strokes” (ref ytm:artist:UCstrokes:The Strokes)'), artists);
+  // Newest first, with compilations there for the model to pass over
+  assert.deepEqual(
+    (await useTool(member as never, 'artist_albums', { ref: 'ytm:artist:UCstrokes:The Strokes' })).split('\n').map((l) => /“(.+?)”/.exec(l)?.[1] ?? l),
+    ['Newest first:', 'Reality Awaits', 'The Singles - Volume 01', 'Is This It'],
+  );
+  assert.match(await useTool(member as never, 'queue_music', { ref: 'ytm:album:MPREb_wall', next: false, shuffle: false }), /^Added 2 songs from The Wall\./);
+  // Their songs, each once, not a tribute band's
+  assert.match(await useTool(member as never, 'queue_music', { ref: 'ytm:artist:UCstrokes:The Strokes', next: false, shuffle: false }), /^Added 2 songs by The Strokes\./);
+  assert.deepEqual(
+    queueOf(guild.id).map((r) => [r.title, r.uri]),
+    [
+      ['In the Flesh?', 'https://music.youtube.com/watch?v=bbbbbbbbbb1'],
+      ['The Thin Ice', 'https://music.youtube.com/watch?v=bbbbbbbbbb2'],
+      ['Reptilia', 'https://music.youtube.com/watch?v=aaaaaaaaaa1'],
+      ['Someday', 'https://music.youtube.com/watch?v=aaaaaaaaaa4'],
+    ],
+  );
+
+  // On a Spotify server, an artist Spotify can't list is found on YouTube Music by name, the one called exactly that
+  setSetting(guild.id, 'musicSearch', undefined);
+  ytmAsked.length = 0;
+  const albums = await useTool(member as never, 'artist_albums', { ref: `artist:${id22('Gone')}:The Strokes` });
+  assert.match(albums, /^Newest first:\nalbum: “Reality Awaits” by The Strokes, 2026 \(ref ytm:album:MPREb_ra\)/);
+  assert.deepEqual(ytmAsked, [{ search: 'The Strokes', kind: 'artist', limit: 5 }, { artist: 'UCstrokes' }]);
+});
+
 test('it can only do what the person asking could do themselves', async (t) => {
   const guild = fakeGuild('g-dj');
   const member = fakeMember(guild);
@@ -390,7 +447,9 @@ test('albums come with their years, and an artist’s albums newest first, for �
     ['Newest first:', 'Reality Awaits', 'The New Abnormal', 'Is This It'],
   );
   assert.match(albums, /“Reality Awaits” by The Strokes, 2026/);
-  assert.equal(await useTool(member as never, 'artist_albums', { ref: 'artist:The Strokes' }), 'Give an artist’s ref from find_music.');
+  // A ref with only their name finds them by it
+  assert.equal(await useTool(member as never, 'artist_albums', { ref: 'artist:The Strokes' }), albums);
+  assert.equal(await useTool(member as never, 'artist_albums', { ref: 'the strokes' }), 'Give an artist’s ref from find_music.');
 });
 
 test('Answer in voice: voice only posts the answer after all when it can’t be said, and the old switch carries over', async () => {

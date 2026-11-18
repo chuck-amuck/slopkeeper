@@ -1,5 +1,6 @@
 // The chat behaviour test: chat's real answer loop against the real model and real Spotify search, in a throwaway
-// database, with a fake Discord server and no music or voice container. Each scene is a short conversation in
+// database, with a fake Discord server and no music or voice container. With EVAL_MUSIC_URL and EVAL_MUSIC_TOKEN naming
+// a music container, searches can go to YouTube Music through it too, and EVAL_SEARCH=youtube-music searches it first. Each scene is a short conversation in
 // #general, and each of its turns is checked: which tools it used or didn't, who it pinged, how long the answer was,
 // and that it doesn't end by offering more. Then it prints what it cost.
 //
@@ -26,9 +27,12 @@ const modelKey = (process.argv[3] ?? 'haiku') as keyof typeof MODELS;
 const runs = Number(process.argv[4] ?? 1);
 if (!MODELS[modelKey] || !(runs >= 1)) throw new Error('Usage: chat-eval.ts [scene filter | all] [haiku | sonnet | opus] [runs]');
 if (!config.anthropicKey) throw new Error('ANTHROPIC_API_KEY isn’t set.');
-if (!process.env.SPOTIFY_CLIENT_ID) console.log('SPOTIFY_CLIENT_ID isn’t set, so finding music will fail.');
+if (!process.env.SPOTIFY_CLIENT_ID && !process.env.EVAL_MUSIC_URL) console.log('Neither SPOTIFY_CLIENT_ID nor EVAL_MUSIC_URL is set, so finding music will fail.');
+const searchFirst = process.env.EVAL_SEARCH === 'youtube-music' ? 'youtube-music' : 'spotify';
+if (searchFirst === 'youtube-music' && !process.env.EVAL_MUSIC_URL) throw new Error('EVAL_SEARCH=youtube-music needs EVAL_MUSIC_URL and EVAL_MUSIC_TOKEN.');
 
-// Nothing plays: the music and voice containers aren't there, so starting music or speech says why
+// Nothing plays: the music and voice containers aren't there, so starting music or speech says why. Only searching
+// YouTube Music goes to a real music container, when there is one
 config.musicUrl = 'http://music.test';
 config.musicToken = 'eval';
 config.voiceUrl = 'http://voice.test';
@@ -283,15 +287,17 @@ let turnStarted = Date.now();
 const at = () => `${((Date.now() - turnStarted) / 1000).toFixed(1)} s`;
 const realFetch = globalThis.fetch;
 
-// Spotify's answers are kept and used again, so running scenes over and over doesn't use up its rate limit, which the
-// live bot shares. A scene's first run asks Spotify, and later runs for 30 days read what it said. Only good answers are
-// kept, and getting a token always asks
+// Spotify's and YouTube Music's answers are kept and used again, so running scenes over and over doesn't use up Spotify's
+// rate limit, which the live bot shares. A scene's first run asks them, and later runs for 30 days read what they said.
+// Only good answers are kept, and getting a token always asks. YouTube Music's are kept by what was asked, wherever the
+// music container is
 const SAVED_DIR = process.env.EVAL_CACHE || '.eval-cache';
 const SAVED_FOR = 30 * 24 * 3_600_000;
 const SAVED_FROM = /^https:\/\/(api|open)\.spotify\.com\//;
 const outside = { reused: 0, asked: 0 };
 let saving = true;
 async function savedOrAsked(url: string, input: string | URL | Request, init?: RequestInit): Promise<Response> {
+  // Kept by `url`, and asked of `input`
   const method = init?.method ?? (input instanceof Request ? input.method : 'GET');
   const key = createHash('sha256').update(`${method} ${url} ${typeof init?.body === 'string' ? init.body : ''}`).digest('hex').slice(0, 32);
   const file = path.join(SAVED_DIR, `${key}.json`);
@@ -312,7 +318,7 @@ async function savedOrAsked(url: string, input: string | URL | Request, init?: R
       writeFileSync(file, JSON.stringify({ at: Date.now(), url, status: res.status, type: res.headers.get('content-type') ?? '', body: await res.clone().text() }));
     } catch (err) {
       saving = false;
-      console.warn(`Spotify’s answers can’t be kept in ${SAVED_DIR}, so every run asks it: ${(err as Error).message}`);
+      console.warn(`Answers can’t be kept in ${SAVED_DIR}, so every run asks Spotify and YouTube Music: ${(err as Error).message}`);
     }
   }
   return res;
@@ -320,6 +326,10 @@ async function savedOrAsked(url: string, input: string | URL | Request, init?: R
 
 globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
   const url = String(input instanceof Request ? input.url : input);
+  if (url === 'http://music.test/search' && process.env.EVAL_MUSIC_URL) {
+    const headers = { authorization: `Bearer ${process.env.EVAL_MUSIC_TOKEN}`, 'content-type': 'application/json' };
+    return savedOrAsked(url, `${process.env.EVAL_MUSIC_URL}/search`, { ...init, headers });
+  }
   if (url.startsWith('http://music.test') || url.startsWith('http://voice.test')) return new Response('{}', { status: 503 });
   if (url.startsWith('https://cdn.eval/')) return new Response(readFileSync(url.slice('https://cdn.eval/'.length)));
   if (SAVED_FROM.test(url)) return savedOrAsked(url, input, init);
@@ -451,6 +461,7 @@ function server(scene: Scene) {
   for (const name of ['airhorn', 'bruh', 'vine boom', 'sad trombone', 'wilhelm scream']) writeFileSync(path.join(dir, `${name}.mp3`), '');
   setSetting(id, 'tts', true);
   setSetting(id, 'chatModel', modelKey);
+  setSetting(id, 'musicSearch', searchFirst);
   rememberCommands(id, registered);
 
   const said: { who: string; text: string; at: number }[] = (scene.earlier ?? []).map(([who, text, minutes], i) => ({ who, text, at: Date.now() - (minutes ?? 1) * 60_000 + i }));
@@ -544,5 +555,5 @@ const price = MODELS[modelKey];
 const cost = ((tokens.input + tokens.write * 1.25) * price.input + tokens.read * price.cacheRead + tokens.output * price.output) / 1e6 + tokens.searches * SEARCH_COST;
 realLog(`\n${passed} of ${turns} turns passed.`);
 for (const [name, t] of tally) if (t.passed < t.turns) realLog(`  ✗ ${name}: ${t.passed} of ${t.turns}`);
-realLog(`${calls} calls on ${price.id}, about $${cost.toFixed(4)}: ${tokens.input} tokens in, ${tokens.write} written to the cache, ${tokens.read} read from it, ${tokens.output} out, ${tokens.searches} web searches. Spotify: ${outside.reused} answers reused, ${outside.asked} asked.`);
+realLog(`${calls} calls on ${price.id}, about $${cost.toFixed(4)}: ${tokens.input} tokens in, ${tokens.write} written to the cache, ${tokens.read} read from it, ${tokens.output} out, ${tokens.searches} web searches. Searching ${searchFirst === 'spotify' ? 'Spotify' : 'YouTube Music'} first; ${outside.reused} answers reused, ${outside.asked} asked.`);
 process.exit(passed === turns ? 0 : 1);

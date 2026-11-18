@@ -26,8 +26,8 @@ import { db, getKv, setKv, transaction } from '../db.ts';
 import { durationOf, hasAudio, tagsOf } from '../discordSounds.ts';
 import * as perf from '../perf.ts';
 import { idSetting, setSetting, setting } from '../settings.ts';
-import { artistSongs, coverFor, isShortLink, MOST_FROM_LINK, myPlaylists, parseLink, pick, playlistsReady, RateLimited, SpotifyError, tracksFor, type Track } from '../spotify.ts';
-import { knownTrack, searchReady, searchSongs, searchSource, sourceNames } from '../musicSearch.ts';
+import { coverFor, isShortLink, MOST_FROM_LINK, myPlaylists, parseLink, pick, playlistsReady, RateLimited, SpotifyError, tracksFor, type Track } from '../spotify.ts';
+import { artistSongsFor, knownTrack, searchReady, searchSongs, searchSource, sourceNames, YTM_ALBUM_REF, ytmAlbumTracks } from '../musicSearch.ts';
 import type { Feature } from '../types.ts';
 import { humansIn } from '../util.ts';
 import { botChannelId, onMusicCheck, onPlaybackStop, playLong } from './voiceAudio.ts';
@@ -1402,6 +1402,9 @@ export async function resolve(guildId: string, input: string, shuffle = false): 
   // One of /music play's suggestions, as it was found
   const known = knownTrack(input);
   if (known) return { name: songName(known), tracks: [known] };
+  // An album chat found on YouTube Music
+  const album = YTM_ALBUM_REF.exec(input.trim());
+  if (album) return ytmAlbumTracks(album[1], shuffle);
   if (isShortLink(input)) throw new SpotifyError('Short spotify.link links can’t be read. Open it and copy the open.spotify.com link instead.');
   const link = parseLink(input);
   if (link) return tracksFor(link, shuffle);
@@ -1483,13 +1486,14 @@ export async function queueFrom(guildId: string, input: string, who: string, nex
   return `Added ${what}${cut}.`;
 }
 
-/** Adds an artist's best-known songs, for asking in chat. Returns what was added, or throws a SpotifyError saying why not */
-export async function queueArtist(guildId: string, artist: string, who: string, next: boolean, shuffle = false, artistId?: string): Promise<string> {
-  const tracks = pick(await artistSongs(artist, artistId), shuffle);
-  if (!tracks.length) throw new SpotifyError(`Spotify has no songs by **${artist}**.`);
+/** Adds an artist's best-known songs, by their ref from chat's find_music. Returns what was added, or throws a SpotifyError saying why not */
+export async function queueArtist(guildId: string, ref: string, who: string, next: boolean, shuffle = false): Promise<string> {
+  const { found, answered, failed, name: artist } = await artistSongsFor(guildId, ref);
+  const tracks = pick(found, shuffle);
+  if (!tracks.length) throw new SpotifyError(`No songs by **${artist}** on ${sourceNames(answered)}.${failed ? ` ${failed}` : ''}`);
   const added = addTracks(guildId, tracks, who, next);
   if (!added) throw new SpotifyError(`The queue is full (${MOST_QUEUED} songs).`);
-  // As Spotify spells it, rather than every artist on the first song
+  // As the service spells it, rather than every artist on the first song
   const named = tracks[0].artist.split(', ').find((a) => a.toLowerCase() === artist.trim().toLowerCase()) ?? artist.trim();
   const what = `${added} song${added === 1 ? '' : 's'} by **${named}**`;
   logActivity(guildId, who, `Added ${what} to the music queue${next ? ' to play next' : ''}`);
