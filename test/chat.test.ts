@@ -50,6 +50,10 @@ mock.method(globalThis, 'fetch', async (input: string | URL | Request, init: Req
     if (where.startsWith('/search?type=track') && q.startsWith('artist:')) {
       return Response.json({ tracks: { items: [song(1, 'The Strokes', 'Last Nite'), song(2, 'The Strokes Tribute Band'), song(3, 'The Strokes', 'Someday'), song(4, 'The Strokes', 'A Namesake’s Song', id22('namesake'))], next: null } });
     }
+    // A search by the name alone finds more of their songs, and some of the same
+    if (where.startsWith('/search?type=track') && q.toLowerCase() === 'the strokes') {
+      return Response.json({ tracks: { items: [song(5, 'The Strokes', 'Reptilia'), song(6, 'The Strokes', 'Last Nite')], next: null } });
+    }
     if (where.startsWith(`/albums/${id22('wall')}`)) return Response.json({ name: 'The Wall', images: [], tracks: { items: [song(10, 'Pink Floyd', 'In the Flesh?'), song(11, 'Pink Floyd', 'The Thin Ice')], next: null } });
   }
   // Covers and the music container aren't needed here
@@ -210,18 +214,19 @@ test('an artist adds their best-known songs, and only theirs', async () => {
   assert.ok((await useTool(member as never, 'find_music', { query: 'the strokes', kind: 'artist' })).includes(`artist: “The Strokes” (ref ${ref})`));
   // By their id, so not another band's of the same name, nor a tribute band's
   const added = await useTool(member as never, 'queue_music', { ref, next: false, shuffle: false });
-  assert.match(added, /^Added 2 songs by The Strokes\./);
+  assert.match(added, /^Added 3 songs by The Strokes\./);
   assert.ok(spotifyAsked.some((a) => a.includes('q=artist:"The Strokes"')));
+  // The name search's first, then the artist search's, each song once
   assert.deepEqual(
     queueOf(guild.id).map((r) => r.title),
-    ['Last Nite', 'Someday'],
+    ['Reptilia', 'Last Nite', 'Someday'],
   );
   clearQueue(guild.id, 'test');
-  // A ref it made up from a name goes by the name
+  // A ref it made up from a name goes by the name, so a namesake's songs can come too
   await useTool(member as never, 'queue_music', { ref: 'artist:the strokes', next: false, shuffle: false });
   assert.deepEqual(
     queueOf(guild.id).map((r) => r.title),
-    ['Last Nite', 'Someday', 'A Namesake’s Song'],
+    ['Reptilia', 'Last Nite', 'Someday', 'A Namesake’s Song'],
   );
   clearQueue(guild.id, 'test');
 });

@@ -165,16 +165,27 @@ export async function searchFor(query: string, kind: Found['kind'], most = 5): P
 }
 
 /**
- * An artist's best-known songs, as many as a search gives: Spotify doesn't let apps like this one read an artist's top
- * songs, but searching by artist lists them most-played first. Only songs that are theirs: by their id when it's known,
- * so a namesake's aren't added, or else by their name
+ * An artist's best-known songs, up to SEARCH_LIMIT: Spotify doesn't let apps like this one read an artist's top songs,
+ * but searching lists them most-played first. A search by their name finds the most, and one by artist (which stops at
+ * five) fills in for a name that's also a common phrase. Only songs that are theirs: by their id when it's known, so a
+ * namesake's aren't added, or else by their name. A song found twice, or under the same title, is added once
  */
 export async function artistSongs(artist: string, id?: string): Promise<Track[]> {
-  const name = artist.trim().slice(0, 100);
+  const name = artist.trim().replaceAll('"', '').slice(0, 100);
   if (!name) return [];
-  const body = await get<{ tracks: Page<ApiTrack> }>(`/search?type=track&limit=${SEARCH_LIMIT}&market=${config.spotifyMarket}&q=${encodeURIComponent(`artist:"${name.replaceAll('"', '')}"`)}`);
+  const found = await Promise.all(
+    [name, `artist:"${name}"`].map((q) => get<{ tracks: Page<ApiTrack> }>(`/search?type=track&limit=${SEARCH_LIMIT}&market=${config.spotifyMarket}&q=${encodeURIComponent(q)}`)),
+  );
   const theirs = (t: ApiTrack) => t.artists.some((a) => (id ? a.id === id : a.name.toLowerCase() === name.toLowerCase()));
-  return body.tracks.items.filter((t) => playable(t) && theirs(t)).map((t) => toTrack(t));
+  const titles = new Set<string>();
+  const songs: Track[] = [];
+  for (const t of found.flatMap((b) => b.tracks.items)) {
+    const title = t.name.toLowerCase();
+    if (!playable(t) || !theirs(t) || titles.has(title)) continue;
+    titles.add(title);
+    songs.push(toTrack(t));
+  }
+  return songs.slice(0, SEARCH_LIMIT);
 }
 
 export type LinkKind = 'track' | 'album' | 'playlist';

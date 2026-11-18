@@ -4,7 +4,7 @@
 
 ## What it can do
 
-- **[Music](music.md):** finds songs, albums and artists on Spotify by name and adds them to the queue, starting the music in your voice channel if nothing is playing. An artist adds their best-known songs. It also takes links, and skips, pauses, resumes, stops, shuffles and turns Autoplay on or off.
+- **[Music](music.md):** finds songs, albums and artists on Spotify by name and adds them to the queue, starting the music in your voice channel if nothing is playing. An artist adds up to 10 of their best-known songs. It also takes links, and skips, pauses, resumes, shuffles and turns Autoplay on or off. "Stop the music" pauses it; it only empties the queue when you ask for that.
 - **[Sounds](soundboard.md):** plays a sound from the library in your voice channel, finding it by name.
 - **[Speech](speech.md):** says something in your voice channel, in any voice and effect.
 
