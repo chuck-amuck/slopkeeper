@@ -1,0 +1,533 @@
+import type Anthropic from '@anthropic-ai/sdk';
+import type { Guild, GuildMember } from 'discord.js';
+import { plain, Refused } from '../api/common.ts';
+import { compareFromWeb, gameList, pickFromWeb, steamDown } from '../api/games.ts';
+import { config } from '../config.ts';
+import { db } from '../db.ts';
+import { gameKey, gameName } from '../gameNames.ts';
+import { setting } from '../settings.ts';
+import { formatDuration, humansIn, listNames } from '../util.ts';
+import { achievementProgress } from './achievements.ts';
+import { dealBundles } from './deals.ts';
+import { reviewGiveaways } from './freegames.ts';
+import { searchSteam } from './gamefacts.ts';
+import { allGames, memberGames, ownersOfApp } from './games.ts';
+import { checkpoint, PERIODS, playedByKey, plural, sessionCount, stats } from './gamestats.ts';
+import { AUTOPLAY } from './music.ts';
+import { dealText, lowestPrice, money, onSale, priceCheck, saleName, saleReasons, salePrices } from './sales.ts';
+import { checkpointVoice, voiceTotals } from './sessions.ts';
+import { DECK_PLAYABLE, DECK_VERIFIED, patchNotesAtLength } from './steam.ts';
+
+// What chat can look up for anyone in the server, read-only, from the same functions as the slash commands and the web
+// UI, so it gives the same answers: games to play, a game's owners, play stats, deals, music played before, patch notes
+// and achievements. Results name people and games, never their IDs
+
+/** Rows in one answer, so a big server's lists don't fill the model's context */
+const MOST_ROWS = 25;
+const MOST_ALMOST = 8;
+/** People or games listed when a name matches more than one */
+const MOST_CHOICES = 8;
+/** Each patch note, so three of them are about a thousand tokens */
+const LONGEST_NOTE = 1500;
+
+const object = (properties: Record<string, unknown>) => ({ type: 'object' as const, properties, required: Object.keys(properties), additionalProperties: false });
+const PEOPLE = {
+  type: 'array',
+  items: { type: 'string' },
+  description: 'People by display name, or “me” for the person asking. Empty for everyone in their voice channel',
+};
+const GAME = { type: 'string', description: 'The game’s name as they said it' };
+
+/** The lookup tools: achievements only with a Steam key, and songs played before only with music */
+export function lookupTools(): Anthropic.Tool[] {
+  return [
+    {
+      name: 'games_for',
+      description:
+        'Which multiplayer games a group can play together, as /whatdoweplay picks from: what they all own (on Steam, marked in the library, or through family sharing), co-op or PvP, Steam Deck support, time played here and on Steam, and games one purchase away. For “what should we play?” or “what do Sam and I both have?”.',
+      strict: true,
+      input_schema: object({
+        people: PEOPLE,
+        kind: { type: 'string', enum: ['any', 'coop', 'pvp'] },
+        steam_deck: { type: 'string', enum: ['any', 'playable', 'verified'], description: 'Only games that work on Steam Deck' },
+      }),
+    },
+    {
+      name: 'game_info',
+      description:
+        'One game people here have or play: who owns it (and through family sharing), who still needs it or wants it, its player limit, whether it’s on sale, and how long it’s been played here and by whom.',
+      strict: true,
+      input_schema: object({ game: GAME }),
+    },
+    {
+      name: 'play_stats',
+      description:
+        'Games played in voice here and time in voice, as /gamestats and /compare show: the server’s most played games and biggest players, one person’s games, one game’s players, one person and one game, or two people compared (over all time).',
+      strict: true,
+      input_schema: object({
+        period: { type: 'string', enum: ['week', 'month', 'year', 'all'], description: 'The past week, month or year, or all time. A month unless they say' },
+        person: { type: 'string', description: 'One person, or “me”. Empty for the whole server' },
+        game: { type: 'string', description: 'One game. Empty for every game' },
+        compare_with: { type: 'string', description: 'A second person to compare the first with (or with the person asking). Empty otherwise' },
+      }),
+    },
+    {
+      name: 'deals',
+      description:
+        'Game deals: what the server plays or wants that’s on sale (as /sales), bundles with games for the server, free games worth grabbing, or the price of any game on Steam with the cheapest official store selling its key and its lowest price ever.',
+      strict: true,
+      input_schema: object({
+        kind: { type: 'string', enum: ['sales', 'bundles', 'free_games', 'price'] },
+        game: { type: 'string', description: 'For a price, the game. Empty otherwise' },
+      }),
+    },
+    ...(config.musicUrl
+      ? [
+          {
+            name: 'music_history',
+            description:
+              'Songs played here before, newest first, with who added each and when, or the most played. Each has a ref queue_music takes, to play it again.',
+            strict: true,
+            input_schema: object({
+              search: { type: 'string', description: 'Words in the song’s title or artist. Empty for any' },
+              person: { type: 'string', description: 'Only songs this person added, or “me”. Empty for anyone' },
+              most_played: { type: 'boolean', description: 'True for the most played songs rather than the latest' },
+            }),
+          },
+        ]
+      : []),
+    {
+      name: 'patch_notes',
+      description: 'A game’s latest patch notes from Steam, newest first, to sum up what changed.',
+      strict: true,
+      input_schema: object({ game: GAME }),
+    },
+    ...(config.steamApiKey
+      ? [
+          {
+            name: 'achievements',
+            description:
+              'How people are getting on with a Steam game’s achievements: how many each has, and the easiest ones none of them has yet. Needs linked Steam accounts with public game details.',
+            strict: true,
+            input_schema: object({ game: GAME, people: { ...PEOPLE, description: `${PEOPLE.description}, or just them when they aren’t in one` } }),
+          },
+        ]
+      : []),
+  ];
+}
+
+const LOOKUPS = new Set(['games_for', 'game_info', 'play_stats', 'deals', 'music_history', 'patch_notes', 'achievements']);
+
+/** What a lookup found, as the model is told it, or null if `name` isn't one */
+export async function lookUp(member: GuildMember, name: string, input: Record<string, unknown>): Promise<string | null> {
+  if (!LOOKUPS.has(name)) return null;
+  // Those offered only with what they need, in case the model asks for one anyway
+  if (name === 'achievements' && !config.steamApiKey) return 'Steam isn’t set up on this bot, so achievements can’t be looked up.';
+  if (name === 'music_history' && !config.musicUrl) return 'Music isn’t set up on this bot.';
+  const { guild } = member;
+  const text = (key: string) => String(input[key] ?? '').trim();
+  try {
+    switch (name) {
+      case 'games_for':
+        return await gamesFor(member, input.people, text('kind'), text('steam_deck'));
+      case 'game_info':
+        return await gameInfo(guild, text('game'));
+      case 'play_stats':
+        return await playStats(member, text('period'), text('person'), text('game'), text('compare_with'));
+      case 'deals':
+        return await deals(guild, text('kind'), text('game'));
+      case 'music_history':
+        return musicHistory(member, text('search'), text('person'), input.most_played === true);
+      case 'patch_notes':
+        return await patchNotes(guild, text('game'));
+      case 'achievements':
+        return await achievements(member, text('game'), input.people);
+      default:
+        return null;
+    }
+  } catch (err) {
+    // The web UI's refusals say what's wrong in words, like Steam being down
+    if (err instanceof Refused) return plain(guild, err.message);
+    throw err;
+  }
+}
+
+const SELF = new Set(['me', 'i', 'myself', 'my', 'mine']);
+const humans = (guild: Guild) => [...guild.members.cache.values()].filter((m) => !m.user?.bot);
+const namesOf = (m: GuildMember) => [m.displayName, m.user?.globalName, m.user?.username].flatMap((n) => (n ? [n.toLowerCase()] : []));
+
+/** Someone by what they're called here, a mention, or “me”: exactly, or the only one whose name has it in it */
+function personNamed(asker: GuildMember, said: string): GuildMember | string {
+  const { guild } = asker;
+  const mention = /^<@!?(\d+)>$/.exec(said.trim());
+  if (mention) {
+    const found = guild.members.cache.get(mention[1]!);
+    return found && !found.user?.bot ? found : 'They aren’t in this server.';
+  }
+  const name = said.trim().replace(/^@/, '').toLowerCase();
+  if (!name) return 'Say who.';
+  if (SELF.has(name)) return asker;
+  const exact = humans(guild).filter((m) => namesOf(m).includes(name));
+  const close = exact.length ? exact : humans(guild).filter((m) => namesOf(m).some((n) => n.includes(name)));
+  if (close.length === 1) return close[0]!;
+  if (!close.length) return `Nobody here is called “${said.trim()}”.`;
+  return `More than one person here matches “${said.trim()}”: ${listNames(close.slice(0, MOST_CHOICES).map((m) => m.displayName))}. Ask which one.`;
+}
+
+/** The people named, without repeats, or null when none were: the caller says who it's for then */
+function peopleNamed(asker: GuildMember, said: unknown): GuildMember[] | string | null {
+  const names = Array.isArray(said) ? said.map((n) => String(n)).filter((n) => n.trim()) : [];
+  if (!names.length) return null;
+  const found = new Map<string, GuildMember>();
+  for (const name of names) {
+    const person = personNamed(asker, name);
+    if (typeof person === 'string') return person;
+    found.set(person.id, person);
+  }
+  return [...found.values()];
+}
+
+const inVoiceWith = (member: GuildMember) => (member.voice?.channel ? humansIn(member.voice.channel) : []);
+
+interface GameHit {
+  name: string;
+  appid: number | null;
+  /** Steam's closest match, as nothing here or on Steam has the name asked for */
+  closest?: boolean;
+}
+
+/** Every game people here have or have played, the library's first, then Steam libraries, then games only played */
+function knownGames(guild: Guild): GameHit[] {
+  checkpoint();
+  const found = new Map<string, GameHit>();
+  const add = (name: string, appid: number | null) => {
+    const key = gameKey(name);
+    const had = found.get(key);
+    if (!had) found.set(key, { name, appid });
+    else had.appid ??= appid;
+  };
+  for (const g of allGames(guild.id)) add(g.name, g.steam_appid);
+  for (const g of memberGames(guild)) add(g.name, g.appid);
+  for (const g of stats(guild.id, 0, 'none', 'game')) add(g.key, null);
+  return [...found.values()];
+}
+
+/**
+ * A game by name: one people here have or play, exactly or the only one with the name in it. With `anywhere`, one
+ * nobody here has is looked up on Steam too
+ */
+async function gameNamed(guild: Guild, said: string, anywhere: boolean): Promise<GameHit | string> {
+  if (!said) return 'Say which game.';
+  const key = gameKey(said);
+  const games = knownGames(guild);
+  const exact = games.find((g) => gameKey(g.name) === key);
+  if (exact) return exact;
+  // Steam's game of that very name comes before one here with the name in it, so “Portal” isn't taken for Portal 2
+  const onSteam = anywhere ? await searchSteam(said).catch(steamDown) : [];
+  const steamExact = onSteam.find((item) => gameKey(item.name) === key);
+  if (steamExact) return { name: steamExact.name, appid: steamExact.id };
+  const close = games.filter((g) => gameKey(g.name).includes(key));
+  if (close.length === 1) return close[0]!;
+  if (close.length > 1) return `More than one game here matches “${said}”: ${listNames(close.slice(0, MOST_CHOICES).map((g) => g.name))}. Ask which one.`;
+  if (!anywhere) return `Nobody here has or has played a game called “${said}”.`;
+  return onSteam[0] ? { name: onSteam[0].name, appid: onSteam[0].id, closest: true } : `Steam has no game called “${said}”.`;
+}
+
+/** Says when a game is only Steam's closest match, so the answer doesn't pass it off as the one asked for */
+const closestNote = (hit: GameHit, said: string) => (hit.closest ? `Steam has no game called exactly “${said}”. Its closest match is ${hit.name}:\n` : '');
+
+/** How long ago, in words, as the model is better at reading that than at working it out */
+export function ago(at: number, now = Date.now()) {
+  const minutes = Math.max(0, Math.round((now - at) / 60_000));
+  if (minutes < 2) return 'just now';
+  if (minutes < 90) return `${minutes} minutes ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 36) return `${hours} hours ago`;
+  const days = Math.round(hours / 24);
+  if (days < 60) return `${days} days ago`;
+  const months = Math.round(days / 30);
+  return months < 24 ? `${months} months ago` : `${Math.round(days / 365)} years ago`;
+}
+
+const dateOf = (guild: Guild, at: number) => new Date(at).toLocaleDateString('en-US', { timeZone: setting(guild.id, 'timezone'), month: 'long', day: 'numeric', year: 'numeric' });
+const nameOf = (guild: Guild, id: string) => (id === AUTOPLAY ? 'Autoplay' : (guild.members.cache.get(id)?.displayName ?? 'someone who left'));
+const more = (rows: unknown[], shown: number) => (rows.length > shown ? `\n…and ${rows.length - shown} more.` : '');
+
+async function gamesFor(asker: GuildMember, said: unknown, kind: string, deck: string) {
+  const { guild } = asker;
+  const named = peopleNamed(asker, said);
+  if (typeof named === 'string') return named;
+  const people = named ?? inVoiceWith(asker);
+  if (!people.length) return 'They aren’t in a voice channel and didn’t say who’s playing, so ask who it’s for.';
+  const url = new URL('http://chat/');
+  url.searchParams.set('users', people.map((m) => m.id).join(','));
+  const picked = await pickFromWeb(guild, url);
+  const fits = (r: (typeof picked.ready)[number]) =>
+    (kind !== 'coop' || r.coop) && (kind !== 'pvp' || r.pvp) && r.deck >= (deck === 'verified' ? DECK_VERIFIED : deck === 'playable' ? DECK_PLAYABLE : 0);
+  // What they've played most together first, then what they've put most time into on Steam
+  const byPlayed = (a: (typeof picked.ready)[number], b: (typeof picked.ready)[number]) => b.playedMs - a.playedMs || b.steamMinutes - a.steamMinutes;
+  const ready = picked.ready.filter(fits).sort(byPlayed);
+  const almost = picked.almost.filter(fits).sort(byPlayed);
+  const line = (r: (typeof picked.ready)[number]) => {
+    const facts = [
+      r.coop && r.pvp ? 'co-op and PvP' : r.coop ? 'co-op' : r.pvp ? 'PvP' : null,
+      r.deck >= DECK_VERIFIED ? 'Steam Deck verified' : r.deck >= DECK_PLAYABLE ? 'playable on Steam Deck' : null,
+      r.playedMs ? `${formatDuration(r.playedMs)} played here between them${r.last ? `, last ${ago(r.last)}` : ''}` : 'not played here yet',
+      r.steamMinutes ? `${formatDuration(r.steamMinutes * 60_000)} on Steam between them` : null,
+      r.borrowed.length ? `${listNames(r.borrowed)} through family sharing` : null,
+      r.missing.length ? `${listNames(r.missing)} doesn’t have it` : null,
+    ];
+    return `- ${r.name}: ${facts.filter(Boolean).join('; ')}`;
+  };
+  const filtered = kind !== 'any' || deck !== 'any' ? ' like that' : '';
+  return [
+    `For ${listNames(people.map((m) => m.displayName))}: ${picked.counted} of ${picked.people} have games the bot knows about.`,
+    ...picked.notes,
+    ready.length ? `Games they all have${filtered}, most played here first:` : `No multiplayer game${filtered} is owned by all of them and fits ${people.length} players.`,
+    ...ready.slice(0, MOST_ROWS).map(line),
+    more(ready, MOST_ROWS),
+    ...(almost.length ? ['One purchase away:', ...almost.slice(0, MOST_ALMOST).map(line)] : []),
+  ]
+    .filter(Boolean)
+    .join('\n');
+}
+
+async function gameInfo(guild: Guild, said: string) {
+  const hit = await gameNamed(guild, said, false);
+  if (typeof hit === 'string') return hit;
+  const listed = gameList(guild).games.find((g) => gameKey(g.name) === gameKey(hit.name) || (hit.appid !== null && g.appid === hit.appid));
+  const names = (people: { name: string }[]) => listNames(people.map((p) => p.name));
+  const owners = listed ? listed.owners : hit.appid === null ? [] : [...ownersOfApp(guild, hit.appid)].map((id) => ({ name: nameOf(guild, id) }));
+  const sale = hit.appid === null ? undefined : salePrices(guild.id).get(hit.appid);
+  const played = playedByKey(guild.id).get(gameKey(gameName(guild.id, hit.name)));
+  const playedName = stats(guild.id, 0, 'none', 'game').find((g) => gameKey(g.key) === gameKey(hit.name))?.key;
+  const players = playedName ? stats(guild.id, 0, 'game', 'user_id', undefined, playedName).filter((p) => guild.members.cache.has(p.key)) : [];
+  const low = sale && lowestPrice(sale, sale.lowest);
+  return [
+    `${hit.name}${listed?.maxPlayers ? `, for up to ${listed.maxPlayers} players` : ''}. ${listed ? 'It’s in the server’s game library.' : 'It isn’t in the server’s game library.'}`,
+    owners.length ? `Owned by ${names(owners)}.` : 'Nobody here owns it, that the bot knows of.',
+    listed?.family.length ? `Can play it through family sharing: ${names(listed.family)}.` : '',
+    listed ? (listed.needs.length ? `Still needs it: ${names(listed.needs)}.` : 'Everyone in the group has it.') : '',
+    listed?.wanted.length ? `Wanted by ${names(listed.wanted)}.` : '',
+    sale ? `On sale: ${dealText(sale)}${low ? ` ${low.text}.` : ''}` : 'Not on sale at the last price check.',
+    played ? `Played in voice here for ${formatDuration(played.ms)} in all, last ${ago(played.last)}.` : 'Not played in voice here yet.',
+    players.length ? `Most played by: ${players.slice(0, 5).map((p) => `${nameOf(guild, p.key)} ${formatDuration(p.ms)}`).join(', ')}.` : '',
+  ]
+    .filter(Boolean)
+    .join('\n');
+}
+
+async function playStats(asker: GuildMember, periodName: string, personSaid: string, gameSaid: string, otherSaid: string) {
+  const { guild } = asker;
+  const period = PERIODS[(Object.hasOwn(PERIODS, periodName) ? periodName : 'month') as keyof typeof PERIODS];
+  const since = Number.isFinite(period.ms) ? Date.now() - period.ms : 0;
+  const person = personSaid ? personNamed(asker, personSaid) : null;
+  if (typeof person === 'string') return person;
+  const other = otherSaid ? personNamed(asker, otherSaid) : null;
+  if (typeof other === 'string') return other;
+  checkpoint();
+  checkpointVoice();
+  const isMember = (id: string) => guild.members.cache.has(id);
+  const time = (rows: { key: string; ms: number }[], label: (key: string) => string) => rows.slice(0, MOST_ROWS).map((r) => `${label(r.key)} ${formatDuration(r.ms)}`).join(', ');
+  const who = (id: string) => nameOf(guild, id);
+
+  if (other) {
+    const first = person ?? asker;
+    if (first.id === other.id) return 'Pick two different people.';
+    const url = new URL('http://chat/');
+    url.searchParams.set('a', first.id);
+    url.searchParams.set('b', other.id);
+    const c = compareFromWeb(guild, url);
+    return [
+      `${first.displayName} and ${other.displayName}, over all time:`,
+      `Games played together in voice: ${formatDuration(c.togetherMs)}${c.games.length ? ` (${c.games.map((g) => `${g.name} ${formatDuration(g.ms)}`).join(', ')})` : ''}.`,
+      `In voice together ${c.voice.sessions} times, for ${formatDuration(c.voice.ms)}.`,
+      `Games played in voice in all: ${c.people.map((p) => `${p.name} ${formatDuration(p.ms)}`).join(', ')}.`,
+      c.shared.length
+        ? `Games they both own (${c.shared.length}): ${c.shared.slice(0, MOST_ROWS).join(', ')}${c.shared.length > MOST_ROWS ? ', and more' : ''}.`
+        : 'They don’t both own any game the bot knows of.',
+    ].join('\n');
+  }
+
+  let game: string | null = null;
+  if (gameSaid) {
+    const hit = await gameNamed(guild, gameSaid, false);
+    if (typeof hit === 'string') return hit;
+    // As Stats has it written, which may not be how the library writes it
+    game = stats(guild.id, 0, 'none', 'game').find((g) => gameKey(g.key) === gameKey(hit.name))?.key ?? hit.name;
+  }
+  const label = `(${period.label}, games played in voice)`;
+
+  if (person && game) {
+    const players = stats(guild.id, since, 'game', 'user_id', undefined, game).filter((r) => isMember(r.key));
+    const place = players.findIndex((r) => r.key === person.id);
+    if (place < 0) return `${person.displayName} hasn’t played ${game} in voice ${period.ms === Infinity ? 'here' : `in the ${period.label}`}.`;
+    const mine = players[place]!;
+    return `${person.displayName} played ${game} for ${formatDuration(mine.ms)} over ${plural(sessionCount(guild.id, person.id, game, since), 'session')}, last ${ago(mine.last)}: number ${place + 1} of ${players.length} players here ${label}.`;
+  }
+  if (person) {
+    const games = stats(guild.id, since, 'user', 'game', person.id);
+    const voice = voiceTotals(guild.id, since).find((v) => v.userId === person.id);
+    return [
+      `${person.displayName} ${label}:`,
+      voice ? `In voice for ${formatDuration(voice.secs * 1000)} on ${voice.nights} days.` : 'Not in voice.',
+      games.length ? `Games: ${time(games, (key) => key)}.` : 'No games played in voice.',
+    ].join('\n');
+  }
+  if (game) {
+    const players = stats(guild.id, since, 'game', 'user_id', undefined, game).filter((r) => isMember(r.key));
+    if (!players.length) return `Nobody played ${game} in voice ${label}.`;
+    const total = stats(guild.id, since, 'game', 'game', undefined, game).reduce((sum, g) => sum + g.ms, 0);
+    return `${game} ${label}: played for ${formatDuration(total)} by ${players.length === 1 ? '1 person' : `${players.length} people`}: ${time(players, who)}.`;
+  }
+  const games = stats(guild.id, since, 'none', 'game');
+  const players = stats(guild.id, since, 'none', 'user_id').filter((r) => isMember(r.key));
+  const voice = voiceTotals(guild.id, since).filter((v) => isMember(v.userId));
+  if (!games.length && !voice.length) return `Nothing played in voice ${label}.`;
+  return [
+    `The server ${label}: ${formatDuration(games.reduce((sum, g) => sum + g.ms, 0))} across ${plural(games.length, 'game')} by ${players.length === 1 ? '1 person' : `${players.length} people`}.`,
+    games.length ? `Most played games: ${time(games, (key) => key)}.` : '',
+    players.length ? `Biggest players: ${time(players, who)}.` : '',
+    voice.length ? `Most time in voice: ${voice.slice(0, MOST_ROWS).map((v) => `${who(v.userId)} ${formatDuration(v.secs * 1000)}`).join(', ')}.` : '',
+  ]
+    .filter(Boolean)
+    .join('\n');
+}
+
+async function deals(guild: Guild, kind: string, gameSaid: string) {
+  const who = (id: string) => nameOf(guild, id);
+  if (kind === 'price') {
+    const hit = await gameNamed(guild, gameSaid, true);
+    if (typeof hit === 'string') return hit;
+    if (hit.appid === null) return `${hit.name} isn’t on Steam, so its price can’t be checked.`;
+    const { steam, store } = await priceCheck(hit.appid, setting(guild.id, 'steamCountry')).catch(steamDown);
+    const owners = [...ownersOfApp(guild, hit.appid)].map(who);
+    const steamLine = !steam
+      ? `${hit.name} isn’t sold on Steam right now, or it’s free.`
+      : steam.discount_percent
+        ? `${hit.name} on Steam: ${steam.discount_percent}% off, ${steam.final_formatted}, normally ${steam.initial_formatted}.`
+        : `${hit.name} on Steam: ${steam.final_formatted}, not on sale.`;
+    const lines = [
+      steamLine,
+      store?.now != null && store.shop ? `Cheapest official store selling it as a Steam key: ${store.shop}, ${money(store.now, store.currency)}.` : '',
+      store?.lowest != null ? `Lowest price a Steam key has ever had: ${money(store.lowest, store.currency)}.` : '',
+      owners.length ? `Owned here by ${listNames(owners)}.` : 'Nobody here owns it, that the bot knows of.',
+    ];
+    return closestNote(hit, gameSaid) + lines.filter(Boolean).join('\n');
+  }
+  if (kind === 'bundles') {
+    if (!config.itadKey) return 'Bundles need an IsThereAnyDeal key on the bot.';
+    if (!setting(guild.id, 'bundleAlerts')) return 'Bundles are turned off for this server.';
+    const kept = dealBundles(guild.id);
+    if (!kept) return 'The bundles haven’t been looked through yet.';
+    if (!kept.bundles.length) return 'No running bundle has games for this server.';
+    return kept.bundles
+      .slice(0, MOST_ROWS)
+      .map((b) => {
+        const games = b.games.map((m) => `${m.title} ${m.where}${m.wanted ? ` (${saleReasons(m.wanted, who)})` : m.like ? ` (${m.like})` : ''}`);
+        return `- ${b.title} on ${b.site}${b.from ? `, from ${b.from}` : ''}${b.expiry ? `, until ${dateOf(guild, Date.parse(b.expiry))}` : ''}: ${games.join('; ')}`;
+      })
+      .join('\n');
+  }
+  if (kind === 'free_games') {
+    const all = await reviewGiveaways(guild).catch((err) => {
+      console.error(err);
+      throw new Refused(502, 'The free game list couldn’t be read just now.');
+    });
+    const shown = all.filter((g) => g.show);
+    const skipped = all.length - shown.length ? `${all.length - shown.length} others didn’t fit this server’s free game settings.` : '';
+    if (!shown.length) return `No free game right now fits this server. ${skipped}`.trim();
+    return [
+      'Free to keep now:',
+      ...shown.slice(0, MOST_ROWS).map((g) => `- ${g.title} on ${g.platforms}${g.worth ? `, normally ${g.worth}` : ''}${g.reason ? `: ${g.reason}` : ''}`),
+      skipped,
+    ]
+      .filter(Boolean)
+      .join('\n');
+  }
+  const games = await onSale(guild);
+  if (!games.length) return 'Nothing the server plays or wants is on sale, as of the last price check.';
+  return [
+    'On sale at the last price check, most wanted first:',
+    ...games.slice(0, MOST_ROWS).map((g) => {
+      const low = lowestPrice(g, g.lowest);
+      return `- ${saleName(g)}: ${dealText(g)}${low ? ` ${low.text}.` : ''} ${saleReasons(g, who)}`.trim();
+    }),
+    more(games, MOST_ROWS),
+  ]
+    .filter(Boolean)
+    .join('\n');
+}
+
+function musicHistory(asker: GuildMember, search: string, personSaid: string, most: boolean) {
+  const { guild } = asker;
+  const person = personSaid ? personNamed(asker, personSaid) : null;
+  if (typeof person === 'string') return person;
+  // Each word in the title or the artist, so “killers brightside” finds Mr. Brightside by The Killers
+  const likes = search
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((word) => `%${word.replace(/[\\%_]/g, (c) => `\\${c}`)}%`);
+  const where = `guild_id = ?${likes.map(() => " AND (title LIKE ? ESCAPE '\\' OR artist LIKE ? ESCAPE '\\')").join('')}${person ? ' AND added_by = ?' : ''}`;
+  const args = [guild.id, ...likes.flatMap((like) => [like, like]), ...(person ? [person.id] : [])];
+  // A link or Spotify song can go back in the queue; an uploaded file may be gone
+  const ref = (uri: string) => (/^(spotify:track:|https?:\/\/)/.test(uri) ? ` (ref ${uri})` : '');
+  if (most) {
+    const rows = db
+      .prepare(`SELECT title, artist, MAX(uri) AS uri, COUNT(*) AS n, MAX(at) AS last FROM music_plays WHERE ${where} GROUP BY lower(title), lower(artist) ORDER BY n DESC, last DESC LIMIT ${MOST_ROWS}`)
+      .all(...args) as { title: string; artist: string; uri: string; n: number; last: number }[];
+    if (!rows.length) return 'Nothing like that has been played here.';
+    return ['Most played here:', ...rows.map((r) => `- “${r.title}” by ${r.artist}: ${r.n} ${r.n === 1 ? 'time' : 'times'}, last ${ago(r.last)}${ref(r.uri)}`)].join('\n');
+  }
+  const rows = db
+    .prepare(`SELECT title, artist, uri, added_by AS addedBy, at, skipped FROM music_plays WHERE ${where} ORDER BY at DESC LIMIT ${MOST_ROWS}`)
+    .all(...args) as { title: string; artist: string; uri: string; addedBy: string; at: number; skipped: number }[];
+  if (!rows.length) return 'Nothing like that has been played here.';
+  return ['Played here, newest first:', ...rows.map((r) => `- “${r.title}” by ${r.artist}, added by ${nameOf(guild, r.addedBy)}, ${ago(r.at)}${r.skipped ? ', skipped' : ''}${ref(r.uri)}`)].join('\n');
+}
+
+async function patchNotes(guild: Guild, said: string) {
+  const hit = await gameNamed(guild, said, true);
+  if (typeof hit === 'string') return hit;
+  if (hit.appid === null) return `${hit.name} isn’t on Steam, so there are no patch notes to read.`;
+  // Steam's, as what the patch notes feature kept stops when a game is no longer played. Those stand in if Steam is down
+  const fromSteam = await patchNotesAtLength(hit.appid).catch((err) => (console.error(err), null));
+  const notes = (
+    fromSteam ??
+    (db.prepare('SELECT title, url, date, text FROM patch_posts WHERE guild_id = ? AND appid = ? ORDER BY date DESC LIMIT 3').all(guild.id, hit.appid) as {
+      title: string;
+      url: string;
+      date: number;
+      text: string;
+    }[])
+  ).slice(0, 3);
+  if (!notes.length) return fromSteam ? `Steam has no recent patch notes for ${hit.name}.` : 'Steam couldn’t be reached just now. Try again in a bit.';
+  const short = (text: string) => (text.length > LONGEST_NOTE ? `${text.slice(0, LONGEST_NOTE - 1)}…` : text);
+  return (
+    closestNote(hit, said) +
+    [`${hit.name}’s latest patch notes, newest first:`, ...notes.map((n) => `- “${n.title}”, ${dateOf(guild, n.date)} (${n.url}): ${short(n.text)}`)].join('\n')
+  );
+}
+
+async function achievements(asker: GuildMember, said: string, peopleSaid: unknown) {
+  const { guild } = asker;
+  const hit = await gameNamed(guild, said, true);
+  if (typeof hit === 'string') return hit;
+  if (hit.appid === null) return `${hit.name} isn’t on Steam, so it has no achievements to check.`;
+  const named = peopleNamed(asker, peopleSaid);
+  if (typeof named === 'string') return named;
+  const voice = inVoiceWith(asker);
+  const people = named ?? (voice.length ? voice : [asker]);
+  const { total, people: done, skipped, goals } = await achievementProgress(hit.appid, people.map((m) => m.id)).catch(steamDown);
+  if (!total) return `${hit.name} has no achievements on Steam.`;
+  const who = (id: string) => nameOf(guild, id);
+  const lines = [
+    `${hit.name} has ${total} achievements.`,
+    done.length ? `Unlocked: ${done.map((p) => `${who(p.id)} ${p.done}`).join(', ')}.` : '',
+    skipped.length ? `Can’t see ${listNames(skipped.map(who))}: no linked Steam account, or their game details are private.` : '',
+    goals.length
+      ? `None of them has these yet, most common first: ${goals.map((g) => `${g.name}${g.description ? ` (${g.description})` : ''}${g.percent !== null ? `, ${g.percent}% of players` : ''}`).join('; ')}.`
+      : '',
+  ];
+  return closestNote(hit, said) + lines.filter(Boolean).join('\n');
+}

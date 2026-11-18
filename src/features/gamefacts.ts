@@ -34,10 +34,15 @@ async function getJson(url: string) {
   return (await res.json()) as Record<string, any>;
 }
 
+/** What Steam's store search finds for a name, best match first */
+export async function searchSteam(title: string) {
+  const { items = [] } = await getJson(`https://store.steampowered.com/api/storesearch/?term=${encodeURIComponent(title)}&l=english&cc=US`);
+  return items as { id: number; name: string }[];
+}
+
 /** The Steam game with this exact name, ignoring case and punctuation */
 export async function findOnSteam(title: string) {
-  const { items = [] } = await getJson(`https://store.steampowered.com/api/storesearch/?term=${encodeURIComponent(title)}&l=english&cc=US`);
-  return (items as { id: number; name: string }[]).find((item) => gameKey(item.name) === gameKey(title)) ?? null;
+  return (await searchSteam(title)).find((item) => gameKey(item.name) === gameKey(title)) ?? null;
 }
 
 let tagNames: { at: number; names: Map<number, string> } | null = null;

@@ -11,6 +11,7 @@ import type { Feature } from '../types.ts';
 import { asksBot, canSee, isAnswer, listNames, playingGames } from '../util.ts';
 import { AUTOPLAY, canControl, time, musicPlaying, musicState, OUTSIDE_DJ, pauseMusic, queueArtist, queueFrom, queueOf, removeTracks, setAutoplay, shuffleQueue, skipMusic, startMusic, stopMusic } from './music.ts';
 import { busyElsewhere, effects, maySpeak, NO_EFFECT, say, sayOut, voices } from './say.ts';
+import { lookUp, lookupTools } from './chatLookups.ts';
 import { CHAT_MODELS } from './setup.ts';
 import { findSound, listSounds, recordPlay, soundGain } from './soundLibrary.ts';
 import { play } from './voiceAudio.ts';
@@ -276,6 +277,8 @@ async function asked(message: Message<true>, member: GuildMember, botId: string,
     note ? `What you remember about ${member.displayName}: ${note}` : `You remember nothing about ${member.displayName}.`,
     repliedTo ? `${member.displayName} is replying to this message${repliedTo.author.id === botId ? ' of yours' : ''}:\n${line(guild, repliedTo, botId)}` : '',
     `${member.displayName} asks you:\n${line(guild, message, botId)}`,
+    // Last, where it weighs most: a butler's personality otherwise ends nearly every answer offering to be of service
+    '(A note for you, not to mention: end once you’ve answered or said what you did, with no offer of help, service, options or anything more.)',
   ]
     .filter(Boolean)
     .join('\n\n');
@@ -289,12 +292,13 @@ function system(guild: Guild, botName: string) {
     `Your personality: ${setting(guild.id, 'chatPersonality')}`,
     'How to answer:',
     '- Stay in character, but be brief: one or two short sentences unless they ask for more. Plain text; Discord markdown is fine, headings aren’t.',
-    '- End once you’ve answered or said what you did. Never add an offer of something else (“I can, however, …”, “Shall I…?”, “if you’d like…”, “just say the word”): if they want more, they’ll ask. No question unless you need an answer to do what they asked. One short apology at most; don’t grovel.',
+    '- End once you’ve answered or said what you did. Never add an offer of something else (“I can, however, …”, “Shall I…?”, “How may I serve you?”, “if you’d like…”, “just say the word”): if they want more, they’ll ask. No question unless you need an answer to do what they asked. One short apology at most; don’t grovel.',
     '- If they tell you to stop, to be quiet or that you talk too much, answer in a few words and do nothing else.',
     '- Vary how you start and how you address people: don’t open every answer with a greeting or their name.',
     '- Don’t assume anyone’s gender: no “sir” or “madam”, unless they’ve asked to be called that.',
     '- Act only when they ask you to do something. A question gets an answer, not an action: “do you know X?” isn’t “play X”. Looking things up to answer is fine (find_music, artist_albums, show_queue), and better than guessing.',
-    '- What you can do is what your tools do: music, soundboard sounds, speech, and remembering things about the person asking. You can’t edit or delete messages, change settings, or see more than this channel’s recent messages, so don’t offer to. For the bot’s other features, point them to its command (see below).',
+    '- What you can do is what your tools do: music, soundboard sounds, speech, remembering things about the person asking, and looking up the server’s games, play stats, deals, songs played before, patch notes and achievements. You can’t edit or delete messages, change settings, or see more than this channel’s recent messages, so don’t offer to. For the bot’s other features, point them to its command (see below).',
+    '- When they ask about games, stats, deals or what was played, look it up rather than guessing or sending them to a command, and answer from what you found: pick out what answers them, as a short list at most, not everything. If a lookup says a name matches more than one person or game, ask which.',
     '- When someone asks for music, a sound or speech, use the tools rather than saying you will, then say briefly what happened.',
     '- If a tool says it couldn’t do something, don’t try it again in this answer: tell them why, and what they can do about it.',
     '- What’s playing is in the “Now” line, and show_queue has the rest. Don’t say music is playing unless it says so, or you just started it.',
@@ -411,6 +415,7 @@ function tools(guild: Guild): Anthropic.Tool[] {
       }),
     });
   }
+  list.push(...lookupTools());
   return list;
 }
 
@@ -483,6 +488,8 @@ export async function useTool(member: GuildMember, name: string, input: Record<s
   const key = `${guild.id}:${member.id}`;
   const text = (key: string) => String(input[key] ?? '').trim();
   try {
+    const found = await lookUp(member, name, input);
+    if (found !== null) return found;
     switch (name) {
       case 'find_music': {
         if (!searchReady()) return 'Spotify search isn’t set up on this bot, so only links work.';

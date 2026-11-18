@@ -157,17 +157,31 @@ export function storePrice(deals: ItadDeal[]): StorePrice | null {
   };
 }
 
-async function fetchStorePrices(appids: number[], country: string) {
+/** Pauses after each batch, so the next caller can ask straight away, unless `pauseAfter` is false: then only between them */
+async function fetchStorePrices(appids: number[], country: string, pauseAfter = true) {
   const ids = await itadIds(appids);
   const found = new Map<string, StorePrice | null>();
   const wanted = [...new Set(ids.values())];
   for (let idx = 0; idx < wanted.length; idx += ITAD_BATCH) {
     const games = (await itad('/games/prices/v3', { country: country.toUpperCase() }, wanted.slice(idx, idx + ITAD_BATCH))) as { id: string; deals: ItadDeal[] }[];
     for (const game of games) found.set(game.id, storePrice(game.deals));
-    await sleep(pauses.itadMs);
+    if (pauseAfter || idx + ITAD_BATCH < wanted.length) await sleep(pauses.itadMs);
   }
   // A game IsThereAnyDeal doesn't know, or knows no prices for, has no other stores
   return new Map(appids.map((appid) => [appid, found.get(ids.get(appid) ?? '') ?? null]));
+}
+
+/**
+ * What a game costs now in a store region, for chat's price check of any game: Steam's price (null when it's free or
+ * not sold), and other official stores selling a Steam key with the lowest price ever, if IsThereAnyDeal is set up
+ */
+export async function priceCheck(appid: number, country: string) {
+  // Both at once, and no pause after, as someone is waiting on the answer
+  const [steam, stores] = await Promise.all([
+    fetchPrices([appid], country),
+    config.itadKey ? fetchStorePrices([appid], country, false).catch((err) => (console.error(err), null)) : null,
+  ]);
+  return { steam: steam.get(appid) ?? null, store: stores?.get(appid) ?? null };
 }
 
 async function fetchKeyshops(appids: number[], region: string) {

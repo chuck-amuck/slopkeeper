@@ -12,6 +12,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { rememberCommands } from '../src/commandIds.ts';
 import { config } from '../src/config.ts';
+import { db } from '../src/db.ts';
 import { features } from '../src/features/all.ts';
 import { answer, MODELS, withPings } from '../src/features/chat.ts';
 import { setSetting } from '../src/settings.ts';
@@ -44,6 +45,8 @@ interface Turn {
   longest?: number;
   says?: RegExp;
   saysNot?: RegExp;
+  /** It should ask them something back, like which of two people they meant */
+  asks?: boolean;
 }
 
 interface Scene {
@@ -82,7 +85,7 @@ const SCENES: Scene[] = [
     name: 'did you shuffle it',
     turns: [
       { say: '@bot play reality awaits by the strokes, shuffled', uses: [['queue_music', { shuffle: true }]] },
-      { say: 'you didn’t shuffle it', uses: ['show_queue'], avoids: ['undo_queue', 'queue_music'] },
+      { say: 'you didn’t shuffle it', avoids: ['undo_queue', 'queue_music'], says: /shuffl|random/i },
     ],
   },
   {
@@ -163,8 +166,22 @@ const SCENES: Scene[] = [
   // What it knows of the server and the bot
   { name: 'the date', turns: [{ say: '@bot what’s the date today?', avoids: 'all', says: new RegExp(month) }] },
   { name: 'who’s playing what', turns: [{ say: '@bot what’s Alex playing?', avoids: 'all', says: /Deep Rock Galactic/ }] },
-  { name: 'points to a command', turns: [{ say: '@bot what should we play tonight?', says: /\/whatdoweplay|\/gamevote/ }] },
   { name: 'plan a night', turns: [{ say: '@bot set up a game night for valheim friday at 9', says: /\/gamenight plan/ }] },
+  { name: 'add a game', turns: [{ say: '@bot add Valheim to our game library', says: /\/game add/ }] },
+
+  // Looking things up
+  { name: 'what can we play', inVoice: true, turns: [{ say: '@bot what should we play tonight?', uses: ['games_for'] }] },
+  { name: 'what we both have', turns: [{ say: '@bot what co-op games do Sam and I both own?', uses: [{ oneOf: ['games_for', ['play_stats', { compare_with: 'Sam' }]] }], says: /Valheim/ }] },
+  { name: 'who owns a game', turns: [{ say: '@bot who has deep rock?', uses: ['game_info'], says: /Alex/ }] },
+  { name: 'who plays most', turns: [{ say: '@bot who played the most games this month?', uses: ['play_stats'], says: /Robin/ }] },
+  { name: 'my own stats', turns: [{ say: '@bot what have I played this month?', uses: [['play_stats', { person: 'me' }]], says: /Deep Rock/ }] },
+  { name: 'which person', turns: [{ say: '@bot how long has sa played this month?', avoids: ['remember'], asks: true, says: /Sam/ }] },
+  { name: 'what’s on sale', turns: [{ say: '@bot anything on sale for us?', uses: [['deals', { kind: 'sales' }]], says: /Deep Rock/ }] },
+  { name: 'a price check', turns: [{ say: '@bot how much is Hades II right now?', uses: [['deals', { kind: 'price' }]], says: /\$/ }] },
+  { name: 'free games', turns: [{ say: '@bot any free games going?', uses: [['deals', { kind: 'free_games' }]], longest: 700 }] },
+  { name: 'a song from before', inVoice: true, turns: [{ say: '@bot play that killers song from the other day again', uses: ['music_history', 'queue_music'] }] },
+  // Steam's real notes, so the answer can only be checked for not giving up on them
+  { name: 'patch notes', turns: [{ say: '@bot what changed in the last valheim patch?', uses: ['patch_notes'], saysNot: /cut off|can(’|')?t (list|see)/i }] },
 ];
 
 // The bot's real commands, as Discord would list them
@@ -207,11 +224,54 @@ const realLog = console.log;
 console.log = (...args: unknown[]) => void (String(args[0]).startsWith('Chat in server') || realLog(...args));
 console.error = () => {};
 
-const PEOPLE: Record<string, string> = { Robin: '201', Sam: '301', Alex: '302', Jordan: '303', Slopkeeper: BOT };
+const PEOPLE: Record<string, string> = { Robin: '201', Sam: '301', Alex: '302', Jordan: '303', Sasha: '304', Slopkeeper: BOT };
 const nameOf = (id: string) => Object.keys(PEOPLE).find((k) => PEOPLE[k] === id) ?? id;
 let servers = 0;
 
-/** A server where Robin asks, Sam has been talking, Alex is in voice playing Deep Rock Galactic and Jordan is around */
+/**
+ * What the server has: games owned and played, a sale, songs played before and patch notes. Steam's app details are
+ * filled in, so picking a game doesn't ask Steam. The store's prices are global, so they're set for every server
+ */
+function seed(guildId: string) {
+  const ago = (days: number) => Date.now() - days * 86_400_000;
+  const games: [string, number, string[], string[], number, number][] = [
+    // name, appid, owners, who wants it, PvP, Steam Deck
+    ['Deep Rock Galactic', 548430, ['201', '302'], ['301'], 0, 3],
+    ['Valheim', 892970, ['201', '301', '302'], [], 1, 2],
+    ['Lethal Company', 1966720, ['201', '302'], [], 0, 2],
+  ];
+  for (const [name, appid, owners, wanted, pvp, deck] of games) {
+    const id = Number(db.prepare("INSERT INTO games (guild_id, name, steam_appid, added_by) VALUES (?, ?, ?, '201')").run(guildId, name, appid).lastInsertRowid);
+    for (const user of owners) db.prepare('INSERT INTO game_owners (game_id, user_id) VALUES (?, ?)').run(id, user);
+    for (const user of wanted) db.prepare('INSERT INTO game_wants (game_id, user_id) VALUES (?, ?)').run(id, user);
+    db.prepare('INSERT OR REPLACE INTO app_info (appid, name, multiplayer, coop, pvp, deck, shareable, read_at) VALUES (?, ?, 1, 1, ?, ?, 1, ?)').run(appid, name, pvp, deck, Date.now());
+  }
+  const plays: [string, string, number, number][] = [
+    ['201', 'Deep Rock Galactic', 2, 3],
+    ['302', 'Deep Rock Galactic', 2, 2],
+    ['201', 'Valheim', 10, 2],
+    ['301', 'Valheim', 10, 2],
+    ['302', 'Valheim', 10, 2],
+    ['301', 'Lethal Company', 1, 1],
+  ];
+  for (const [user, game, days, hours] of plays) {
+    db.prepare("INSERT INTO game_plays (guild_id, user_id, game, channel_id, started_at, ended_at) VALUES (?, ?, ?, 'v1', ?, ?)").run(guildId, user, game, ago(days), ago(days) + hours * 3_600_000);
+  }
+  db.prepare("INSERT OR REPLACE INTO sale_prices (country, appid, discount, was, price, final, currency) VALUES ('us', 548430, 60, '$29.99', '$11.99', 1199, 'USD')").run();
+  const songs: [number, string, string, string, string][] = [
+    [2, 'spotify:track:003vvx7Niy0yvhvHt4a68B', 'Mr. Brightside', 'The Killers', '201'],
+    [1, 'spotify:track:0eC8Wl0dMnPkKBKw6AKXhR', 'Reptilia', 'The Strokes', '301'],
+    [0.1, 'spotify:track:6wSHZSnYJ1ohc6NM7oclBr', 'Last Nite', 'The Strokes', 'autoplay'],
+  ];
+  for (const [days, uri, title, artist, by] of songs) {
+    db.prepare('INSERT INTO music_plays (guild_id, at, uri, title, artist, source, duration_ms, added_by) VALUES (?, ?, ?, ?, ?, NULL, 200000, ?)').run(guildId, ago(days), uri, title, artist, by);
+  }
+  db.prepare(
+    "INSERT INTO patch_posts (guild_id, gid, appid, game, title, url, date, text, posted) VALUES (?, 'p1', 892970, 'Valheim', 'Patch 0.220.3', 'https://store.steampowered.com/news/app/892970', ?, ?, 1)",
+  ).run(guildId, ago(3), 'Fixed a crash when sailing in the Ashlands. Boats no longer sink when docked. Better performance in large bases.');
+}
+
+/** A server where Robin asks, Sam has been talking, Alex is in voice playing Deep Rock Galactic, and Jordan and Sasha are around */
 function server(scene: Scene) {
   const id = `9${String(++servers).padStart(4, '0')}`;
   const me = { id: BOT, displayName: 'Slopkeeper', roles: { botRole: null }, user: { bot: true } };
@@ -235,8 +295,10 @@ function server(scene: Scene) {
     voice: { channel: name === 'Alex' || (name === 'Robin' && scene.inVoice) ? voice : null },
     presence: name === 'Alex' ? { activities: [{ type: 0, name: 'Deep Rock Galactic' }] } : null,
   });
-  for (const name of ['Robin', 'Sam', 'Alex', 'Jordan']) guild.members.cache.set(PEOPLE[name]!, person(name));
+  for (const name of ['Robin', 'Sam', 'Alex', 'Jordan', 'Sasha']) guild.members.cache.set(PEOPLE[name]!, person(name));
+  for (const name of ['Alex', ...(scene.inVoice ? ['Robin'] : [])]) voice.members.set(PEOPLE[name]!, guild.members.cache.get(PEOPLE[name]!));
   const robin = guild.members.cache.get('201');
+  seed(id);
   const dir = path.join(config.dataDir, 'sounds', id);
   mkdirSync(dir, { recursive: true });
   for (const name of ['airhorn', 'bruh', 'vine boom', 'sad trombone', 'wilhelm scream']) writeFileSync(path.join(dir, `${name}.mp3`), '');
@@ -297,7 +359,7 @@ function problems(turn: Turn, reply: string, pinged: string[]) {
   if (reply.length > (turn.longest ?? 500)) wrong.push(`${reply.length} characters long`);
   if (turn.says && !turn.says.test(reply)) wrong.push(`didn’t say ${turn.says}`);
   if (turn.saysNot?.test(reply)) wrong.push(`said ${turn.saysNot}`);
-  if (OFFER.test(reply)) wrong.push('ended with an offer or a question');
+  if (turn.asks ? !/\?/.test(reply) : OFFER.test(reply)) wrong.push(turn.asks ? 'didn’t ask' : 'ended with an offer or a question');
   if (reply.startsWith('ERROR')) wrong.push('failed');
   return wrong;
 }

@@ -142,17 +142,21 @@ const playerAchievements = cached(HOUR_MS, async (key: string) => {
 /** The achievements someone has in a game, or null if Steam won't show them */
 export const unlockedBy = (steamId: string, appid: number) => playerAchievements(`${steamId}:${appid}`);
 
-/** A game's latest posts its developers tagged as patch notes, newest first */
-export const patchNotes = cached(PATCH_NOTES_LAST_MS, async (appid: number) => {
+async function readPatchNotes(appid: number, count: number, maxLength: number) {
   const body = await steamGet<{ appnews?: { newsitems?: { gid: string; title: string; url: string; date: number; contents?: string }[] } }>('/ISteamNews/GetNewsForApp/v2/', {
     appid: String(appid),
-    count: '5',
-    maxlength: '300',
+    count: String(count),
+    maxlength: String(maxLength),
     tags: 'patchnotes',
     format: 'json',
   });
   return (body.appnews?.newsitems ?? []).map((n) => ({ gid: n.gid, title: n.title, url: n.url, date: n.date * 1000, text: plainNews(n.contents ?? '') }));
-});
+}
+
+/** A game's latest posts its developers tagged as patch notes, newest first, each as long as a post's summary */
+export const patchNotes = cached(PATCH_NOTES_LAST_MS, (appid: number) => readPatchNotes(appid, 5, 300));
+/** The latest three at more length, for chat to sum up what changed */
+export const patchNotesAtLength = cached(PATCH_NOTES_LAST_MS, (appid: number) => readPatchNotes(appid, 3, 2000));
 
 /** Steam news is written in BBCode, with its own image placeholders */
 const plainNews = (text: string) => text.replace(/\[[^\]]*\]/g, ' ').replace(/\{STEAM_CLAN_IMAGE\}\S*/g, ' ').replace(/\s+/g, ' ').trim();
