@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { beforeEach, test, type TestContext } from 'node:test';
 import { config } from '../src/config.ts';
 import { db } from '../src/db.ts';
-import { ago, lookUp, lookupTools } from '../src/features/chatLookups.ts';
+import { ago, lookUp, lookupTools, unquoted } from '../src/features/chatLookups.ts';
 
 const GUILD = 'g-lookups';
 const HOUR = 3_600_000;
@@ -76,6 +76,8 @@ test('it finds people and games by name, and asks which one when a name fits mor
   // A game only played, not in the library
   assert.match(await ask(robin, 'game_info', { game: 'VALHEIM' }), /^Valheim\. It isn’t in the server’s game library\./);
   assert.equal(await ask(robin, 'game_info', { game: 'Halo' }), 'Nobody here has or has played a game called “Halo”.');
+  played('201', 'RV There Yet?', 1, 1);
+  assert.match(await ask(robin, 'game_info', { game: 'rv there yet' }), /^RV There Yet\? It isn’t/);
 });
 
 test('games_for: what the people in voice, or those named, can play together, and what’s one purchase away', async () => {
@@ -88,7 +90,7 @@ test('games_for: what the people in voice, or those named, can play together, an
     await ask(robin, 'games_for', { people: [], ...any }),
     [
       'For Robin and Sam: 2 of 2 have games the bot knows about.',
-      'Games they all have, most played here first:',
+      'Games they both have, most played here first:',
       '- Valheim: 3h played here between them, last 2 days ago',
       'One purchase away:',
       '- Lethal Company: not played here yet; Sam doesn’t have it',
@@ -96,7 +98,7 @@ test('games_for: what the people in voice, or those named, can play together, an
   );
   // Alex has no games the bot knows of, so isn't counted
   assert.match(await ask(robin, 'games_for', { people: ['Alex', 'me'], ...any }), /^For Alex and Robin: 1 of 2 have games the bot knows about\.\nNot counted \(no Steam linked\): Alex\n/);
-  assert.match(await ask(robin, 'games_for', { people: [], kind: 'coop', steam_deck: 'any' }), /No multiplayer game like that is owned by all of them and fits 2 players\./);
+  assert.match(await ask(robin, 'games_for', { people: [], kind: 'coop', steam_deck: 'any' }), /No multiplayer game like that is owned by both of them and fits 2 players\./);
   assert.equal(await ask(sasha, 'games_for', { people: [], ...any }), 'They aren’t in a voice channel and didn’t say who’s playing, so ask who it’s for.');
 });
 
@@ -115,7 +117,7 @@ test('game_info: who owns it, needs it and wants it, its sale, and who has playe
       'Wanted by Sasha.',
       'On sale: 50% off, $10.00, was $20.00.',
       'Played in voice here for 3h in all, last 2 days ago.',
-      'Most played by: Robin 2h, Sam 1h.',
+      'Most played by: Robin (2h), Sam (1h).',
     ].join('\n'),
   );
 });
@@ -126,26 +128,29 @@ test('play_stats: the server, a person, a game, both, and two people compared', 
   played('201', 'Deep Rock Galactic', 40, 1);
   assert.equal(
     await stats({}),
-    'The server (past month, games played in voice): 3h across 1 game by 2 people.\nMost played games: Valheim 3h.\nBiggest players: Robin 2h, Sam 1h.',
+    'The server (past month, games played in voice): 3h across 1 game by 2 people.\nMost played games: Valheim (3h).\nBiggest players: Robin (2h), Sam (1h).',
   );
-  assert.equal(await stats({ person: 'me', period: 'year' }), 'Robin (past year, games played in voice):\nNot in voice.\nGames: Valheim 2h, Deep Rock Galactic 1h.');
-  assert.equal(await stats({ game: 'valheim' }), 'Valheim (past month, games played in voice): played for 3h by 2 people: Robin 2h, Sam 1h.');
+  assert.equal(await stats({ person: 'me', period: 'year' }), 'Robin (past year, games played in voice):\nNot in voice.\nGames: Valheim (2h), Deep Rock Galactic (1h).');
+  assert.equal(await stats({ game: 'valheim' }), 'Valheim (past month, games played in voice): played for 3h by 2 people: Robin (2h), Sam (1h).');
   assert.equal(await stats({ person: 'Sam', game: 'Valheim' }), 'Sam played Valheim for 1h over 1 session, last 5 days ago: number 2 of 2 players here (past month, games played in voice).');
   assert.equal(await stats({ person: 'Sam', game: 'Deep Rock Galactic' }), 'Sam hasn’t played Deep Rock Galactic in voice in the past month.');
-  assert.match(await stats({ compare_with: 'Sam' }), /^Robin and Sam, over all time:\nGames played together in voice: 0m\.\nIn voice together 0 times, for 0m\.\nGames played in voice in all: Robin 3h, Sam 1h\./);
+  assert.match(await stats({ compare_with: 'Sam' }), /^Robin and Sam, over all time:\nGames played together in voice: 0m\.\nIn voice together 0 times, for 0m\.\nGames played in voice in all: Robin \(3h\), Sam \(1h\)\./);
   assert.equal(await stats({ compare_with: 'me' }), 'Pick two different people.');
 });
 
 test('deals: what’s on sale here, a price check of any game, and why bundles or free games can’t be listed', async (t) => {
   addGame('Discounted', 9001, [], ['203']);
   db.prepare(`INSERT INTO sale_prices (country, appid, discount, was, price, final) VALUES ('us', 9001, 50, '$20.00', '$10.00', 1000)`).run();
-  assert.equal(await ask(robin, 'deals', { kind: 'sales', game: '' }), 'On sale at the last price check, most wanted first:\n- Discounted: 50% off, $10.00, was $20.00. Wanted by Sasha');
+  const deal = (input: Record<string, string>) => ask(robin, 'deals', { kind: 'sales', game: '', person: '', ...input });
+  assert.equal(await deal({}), 'On sale at the last price check, most wanted first:\n- Discounted: 50% off, $10.00, was $20.00. Wanted by Sasha');
+  assert.equal(await deal({ person: 'sasha' }), 'On sale at the last price check, that Sasha wants, most wanted first:\n- Discounted: 50% off, $10.00, was $20.00. Wanted by Sasha');
+  assert.equal(await deal({ person: 'me' }), 'Nothing Robin wants or has on their Steam wishlist is on sale, as of the last price check.');
 
   const fetched = fakeWeb(t, {
     'storesearch/?term=hades': { items: [{ id: 1145360, name: 'Hades' }, { id: 1145350, name: 'Hades II' }] },
     'appdetails?appids=1145360': { 1145360: { success: true, data: { price_overview: { currency: 'USD', initial: 2499, final: 1249, discount_percent: 50, initial_formatted: '$24.99', final_formatted: '$12.49' } } } },
   });
-  assert.equal(await ask(robin, 'deals', { kind: 'price', game: 'hades' }), 'Hades on Steam: 50% off, $12.49, normally $24.99.\nNobody here owns it, that the bot knows of.');
+  assert.equal(await ask(robin, 'deals', { kind: 'price', game: 'hades', person: '' }), 'Hades on Steam: 50% off, $12.49, normally $24.99.\nNobody here owns it, that the bot knows of.');
   assert.match(String(fetched.mock.calls.at(-1)!.arguments[0]), /&cc=us&/);
 
   // Steam's game of that very name, not one here with the name in it; and a guess is said to be one
@@ -156,14 +161,14 @@ test('deals: what’s on sale here, a price check of any game, and why bundles o
     'storesearch/?term=hades%20silk': { items: [{ id: 1145360, name: 'Hades' }] },
     'appdetails?appids=1145360': { 1145360: { success: true, data: [] } },
   });
-  assert.equal(await ask(robin, 'deals', { kind: 'price', game: 'portal' }), 'Portal on Steam: $9.99, not on sale.\nNobody here owns it, that the bot knows of.');
+  assert.equal(await ask(robin, 'deals', { kind: 'price', game: 'portal', person: '' }), 'Portal on Steam: $9.99, not on sale.\nNobody here owns it, that the bot knows of.');
   assert.equal(
-    await ask(robin, 'deals', { kind: 'price', game: 'hades silk' }),
+    await ask(robin, 'deals', { kind: 'price', game: 'hades silk', person: '' }),
     'Steam has no game called exactly “hades silk”. Its closest match is Hades:\nHades isn’t sold on Steam right now, or it’s free.\nNobody here owns it, that the bot knows of.',
   );
 
-  assert.equal(await ask(robin, 'deals', { kind: 'bundles', game: '' }), 'Bundles need an IsThereAnyDeal key on the bot.');
-  assert.equal(await ask(robin, 'deals', { kind: 'free_games', game: '' }), 'The free game list couldn’t be read just now.');
+  assert.equal(await ask(robin, 'deals', { kind: 'bundles', game: '', person: '' }), 'Bundles need an IsThereAnyDeal key on the bot.');
+  assert.equal(await ask(robin, 'deals', { kind: 'free_games', game: '', person: '' }), 'The free game list couldn’t be read just now.');
 });
 
 test('music_history: the latest songs or the most played, by words or by who added them, with refs to play them again', async (t) => {
@@ -242,4 +247,9 @@ test('how long ago, in words', () => {
     [0, 30 * 60_000, 5 * HOUR, 3 * DAY, 90 * DAY, 800 * DAY].map((ms) => ago(now - ms, now)),
     ['just now', '30 minutes ago', '5 hours ago', '3 days ago', '3 months ago', '2 years ago'],
   );
+});
+
+test('what the model sends for nothing is nothing, and quotes round a name go', () => {
+  assert.deepEqual(['', '""', '`', '``', " '' ", '“”'].map(unquoted), ['', '', '', '', '', '']);
+  assert.deepEqual(['"Sam"', '“Mr. Brightside”', "Don't Stop", '"Weird" Al', 'Sam'].map(unquoted), ['Sam', 'Mr. Brightside', "Don't Stop", '"Weird" Al', 'Sam']);
 });

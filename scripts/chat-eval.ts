@@ -180,6 +180,25 @@ const SCENES: Scene[] = [
   { name: 'a price check', turns: [{ say: '@bot how much is Hades II right now?', uses: [['deals', { kind: 'price' }]], says: /\$/ }] },
   { name: 'free games', turns: [{ say: '@bot any free games going?', uses: [['deals', { kind: 'free_games' }]], longest: 700 }] },
   { name: 'a song from before', inVoice: true, turns: [{ say: '@bot play that killers song from the other day again', uses: ['music_history', 'queue_music'] }] },
+  {
+    name: 'narrowing it down',
+    inVoice: true,
+    turns: [
+      { say: '@bot what can we play?', uses: ['games_for'] },
+      { say: 'only ones that work on steam deck', uses: [{ oneOf: [['games_for', { steam_deck: 'verified' }], ['games_for', { steam_deck: 'playable' }]] }], says: /Deep Rock/ },
+    ],
+  },
+  {
+    name: 'and someone else',
+    turns: [
+      { say: '@bot how much did I play this month?', uses: [['play_stats', { person: 'me' }]] },
+      { say: '@bot what about Sam?', uses: [['play_stats', { person: 'Sam' }]], says: /Valheim|Lethal/ },
+    ],
+  },
+  { name: 'my wishlist', turns: [{ say: '@bot is anything I want on sale?', uses: [['deals', { kind: 'sales', person: 'me' }]] }] },
+  { name: 'their wishlist', turns: [{ say: '@bot is anything Sam wants on sale?', uses: [['deals', { kind: 'sales' }]], says: /Deep Rock/ }] },
+  { name: 'the song someone added', inVoice: true, turns: [{ say: '@bot play the song Sam put on yesterday', uses: [['music_history', { person: 'Sam' }], 'queue_music'] }] },
+  { name: 'most played song', turns: [{ say: '@bot what song gets played most here?', uses: [['music_history', { most_played: true }]] }] },
   // Steam's real notes, so the answer can only be checked for not giving up on them
   { name: 'patch notes', turns: [{ say: '@bot what changed in the last valheim patch?', uses: ['patch_notes'], saysNot: /cut off|can(’|')?t (list|see)/i }] },
 ];
@@ -194,6 +213,9 @@ let calls = 0;
 const tokens = { input: 0, write: 0, read: 0, output: 0 };
 let made: { name: string; input: Record<string, unknown> }[] = [];
 let log: string[] = [];
+/** When the turn started, for how long each call and tool took */
+let turnStarted = Date.now();
+const at = () => `${((Date.now() - turnStarted) / 1000).toFixed(1)} s`;
 const realFetch = globalThis.fetch;
 globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
   const url = String(input instanceof Request ? input.url : input);
@@ -202,7 +224,7 @@ globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) =>
   if (url.startsWith('https://api.anthropic.com/')) {
     calls++;
     const body = JSON.parse(init!.body as string);
-    for (const r of body.messages.at(-1).content) if (typeof r === 'object' && r.type === 'tool_result') log.push(`      ← ${String(r.content).replace(/\n/g, ' | ').slice(0, 240)}`);
+    for (const r of body.messages.at(-1).content) if (typeof r === 'object' && r.type === 'tool_result') log.push(`      ← ${String(r.content).replace(/\n/g, ' | ').slice(0, 240)} (by ${at()})`);
     const out = await res.clone().json();
     if (out.usage) {
       tokens.input += out.usage.input_tokens;
@@ -213,7 +235,7 @@ globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) =>
     for (const b of out.content ?? []) {
       if (b.type !== 'tool_use') continue;
       made.push({ name: b.name, input: b.input });
-      log.push(`      → ${b.name} ${JSON.stringify(b.input)}`);
+      log.push(`      → ${b.name} ${JSON.stringify(b.input)} (at ${at()})`);
     }
     if (!res.ok) log.push(`      ! ${res.status} ${JSON.stringify(out).slice(0, 300)}`);
   }
@@ -259,8 +281,8 @@ function seed(guildId: string) {
   }
   db.prepare("INSERT OR REPLACE INTO sale_prices (country, appid, discount, was, price, final, currency) VALUES ('us', 548430, 60, '$29.99', '$11.99', 1199, 'USD')").run();
   const songs: [number, string, string, string, string][] = [
-    [2, 'spotify:track:003vvx7Niy0yvhvHt4a68B', 'Mr. Brightside', 'The Killers', '201'],
-    [1, 'spotify:track:0eC8Wl0dMnPkKBKw6AKXhR', 'Reptilia', 'The Strokes', '301'],
+    [2, 'spotify:track:0eC8Wl0dMnPkKBKw6AKXhR', 'Reptilia', 'The Strokes', '201'],
+    [1, 'spotify:track:003vvx7Niy0yvhvHt4a68B', 'Mr. Brightside', 'The Killers', '301'],
     [0.1, 'spotify:track:6wSHZSnYJ1ohc6NM7oclBr', 'Last Nite', 'The Strokes', 'autoplay'],
   ];
   for (const [days, uri, title, artist, by] of songs) {
@@ -373,6 +395,7 @@ for (const scene of SCENES) {
     for (const turn of scene.turns) {
       made = [];
       log = [];
+      turnStarted = Date.now();
       const { reply, pinged, seconds } = await ask(turn);
       const wrong = problems(turn, reply, pinged);
       const t = tally.get(scene.name) ?? { passed: 0, turns: 0 };
@@ -391,5 +414,5 @@ const price = MODELS[modelKey];
 const cost = ((tokens.input + tokens.write * 1.25) * price.input + tokens.read * price.cacheRead + tokens.output * price.output) / 1e6;
 realLog(`\n${passed} of ${turns} turns passed.`);
 for (const [name, t] of tally) if (t.passed < t.turns) realLog(`  ✗ ${name}: ${t.passed} of ${t.turns}`);
-realLog(`${calls} calls on ${price.id}, about $${cost.toFixed(4)}.`);
+realLog(`${calls} calls on ${price.id}, about $${cost.toFixed(4)}: ${tokens.input} tokens in, ${tokens.write} written to the cache, ${tokens.read} read from it, ${tokens.output} out.`);
 process.exit(passed === turns ? 0 : 1);

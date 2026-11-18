@@ -12,7 +12,7 @@
   - what a group can play together, as [/whatdoweplay](games.md) picks from: the people in your voice channel, or whoever you name, co-op or PvP, Steam Deck, and games one purchase away;
   - one game: who owns it, needs it or wants it, whether it's on sale, and who has played it most;
   - [play stats](stats.md) for the server, a person, a game or two people compared, over the past week, month or year, or all time;
-  - [deals](deals.md): what's on sale that the server plays or wants, bundles, free games, and the price of any game on Steam, with the cheapest official store selling its key and its lowest price ever;
+  - [deals](deals.md): what's on sale that the server plays or wants (or just what you want), bundles, free games, and the price of any game on Steam, with the cheapest official store selling its key and its lowest price ever;
   - songs played here before, newest or most played;
   - a game's latest patch notes, summed up;
   - how people are getting on with a game's [achievements](games.md), with linked Steam accounts.
@@ -39,7 +39,7 @@ The **Chat** card in the web UI's Settings has them all, and says how many answe
 
 Each answer sends the message, the channel's last 20 messages (with people's display names), what's playing, who's in voice channels everyone can see, the games people are playing, the server's commands, what it looks up for that answer (like people's games, play time, deals or songs played), the names of the people it can ping, the asker's note if they have one, and the server's name to [Anthropic's API](https://www.anthropic.com/legal/commercial-terms). Nothing is sent for messages that don't @mention the bot or reply to one of its answers, so tell people in the server what @mentioning it does. The bot's log notes each thing it does in chat (the action, what it was given and what came back), for working out what went wrong.
 
-With Haiku, an answer costs about a twentieth of a cent, or roughly $1.50 a month at 100 answers a day. With Opus it's about 1–2 cents, or roughly $50 a month at that rate.
+With Haiku, an answer costs about a twentieth of a cent while people are chatting with it, and up to a tenth of a cent when answers are spread out, as its instructions are kept ready for 5 minutes at a time: roughly $1.50–3 a month at 100 answers a day. With Opus it's about 2–4 cents, or roughly $60–120 a month at that rate. The Chat card shows what it has actually cost.
 
 ## Setting it up
 

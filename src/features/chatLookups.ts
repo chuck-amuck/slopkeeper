@@ -79,6 +79,7 @@ export function lookupTools(): Anthropic.Tool[] {
       input_schema: object({
         kind: { type: 'string', enum: ['sales', 'bundles', 'free_games', 'price'] },
         game: { type: 'string', description: 'For a price, the game. Empty otherwise' },
+        person: { type: 'string', description: 'For sales, only what this person wants or has on their Steam wishlist, or “me”. Empty for everyone' },
       }),
     },
     ...(config.musicUrl
@@ -125,7 +126,7 @@ export async function lookUp(member: GuildMember, name: string, input: Record<st
   if (name === 'achievements' && !config.steamApiKey) return 'Steam isn’t set up on this bot, so achievements can’t be looked up.';
   if (name === 'music_history' && !config.musicUrl) return 'Music isn’t set up on this bot.';
   const { guild } = member;
-  const text = (key: string) => String(input[key] ?? '').trim();
+  const text = (key: string) => unquoted(String(input[key] ?? ''));
   try {
     switch (name) {
       case 'games_for':
@@ -135,7 +136,7 @@ export async function lookUp(member: GuildMember, name: string, input: Record<st
       case 'play_stats':
         return await playStats(member, text('period'), text('person'), text('game'), text('compare_with'));
       case 'deals':
-        return await deals(guild, text('kind'), text('game'));
+        return await deals(member, text('kind'), text('game'), text('person'));
       case 'music_history':
         return musicHistory(member, text('search'), text('person'), input.most_played === true);
       case 'patch_notes':
@@ -151,6 +152,13 @@ export async function lookUp(member: GuildMember, name: string, input: Record<st
     throw err;
   }
 }
+
+/** What the model gave, without the quotes it sometimes puts round a name, or sends for nothing: "", `` or a lone ` */
+export const unquoted = (said: string) => {
+  const text = said.trim();
+  if (/^[\s"'`“”‘’]*$/.test(text)) return '';
+  return text.replace(/^(["'`“”‘’])(.+)(["'`“”‘’])$/s, '$2').trim();
+};
 
 const SELF = new Set(['me', 'i', 'myself', 'my', 'mine']);
 const humans = (guild: Guild) => [...guild.members.cache.values()].filter((m) => !m.user?.bot);
@@ -176,7 +184,7 @@ function personNamed(asker: GuildMember, said: string): GuildMember | string {
 
 /** The people named, without repeats, or null when none were: the caller says who it's for then */
 function peopleNamed(asker: GuildMember, said: unknown): GuildMember[] | string | null {
-  const names = Array.isArray(said) ? said.map((n) => String(n)).filter((n) => n.trim()) : [];
+  const names = Array.isArray(said) ? said.map((n) => unquoted(String(n))).filter(Boolean) : [];
   if (!names.length) return null;
   const found = new Map<string, GuildMember>();
   for (const name of names) {
@@ -251,7 +259,11 @@ export function ago(at: number, now = Date.now()) {
 
 const dateOf = (guild: Guild, at: number) => new Date(at).toLocaleDateString('en-US', { timeZone: setting(guild.id, 'timezone'), month: 'long', day: 'numeric', year: 'numeric' });
 const nameOf = (guild: Guild, id: string) => (id === AUTOPLAY ? 'Autoplay' : (guild.members.cache.get(id)?.displayName ?? 'someone who left'));
-const more = (rows: unknown[], shown: number) => (rows.length > shown ? `\n…and ${rows.length - shown} more.` : '');
+const more = (rows: unknown[], shown: number) => (rows.length > shown ? `…and ${rows.length - shown} more.` : '');
+/** A name as a sentence, without a second stop after “RV There Yet?” */
+const sentence = (text: string) => (/[.!?]$/.test(text) ? text : `${text}.`);
+/** Names with times, like “Valheim (3h), Deep Rock Galactic (1h)”, as a number after a name can read as part of it */
+const timed = (rows: { name: string; ms: number }[]) => rows.map((r) => `${r.name} (${formatDuration(r.ms)})`).join(', ');
 
 async function gamesFor(asker: GuildMember, said: unknown, kind: string, deck: string) {
   const { guild } = asker;
@@ -280,10 +292,11 @@ async function gamesFor(asker: GuildMember, said: unknown, kind: string, deck: s
     return `- ${r.name}: ${facts.filter(Boolean).join('; ')}`;
   };
   const filtered = kind !== 'any' || deck !== 'any' ? ' like that' : '';
+  const all = picked.counted === 2 ? 'both' : 'all';
   return [
     `For ${listNames(people.map((m) => m.displayName))}: ${picked.counted} of ${picked.people} have games the bot knows about.`,
     ...picked.notes,
-    ready.length ? `Games they all have${filtered}, most played here first:` : `No multiplayer game${filtered} is owned by all of them and fits ${people.length} players.`,
+    ready.length ? `Games they ${all} have${filtered}, most played here first:` : `No multiplayer game${filtered} is owned by ${all} of them and fits ${people.length} players.`,
     ...ready.slice(0, MOST_ROWS).map(line),
     more(ready, MOST_ROWS),
     ...(almost.length ? ['One purchase away:', ...almost.slice(0, MOST_ALMOST).map(line)] : []),
@@ -304,14 +317,14 @@ async function gameInfo(guild: Guild, said: string) {
   const players = playedName ? stats(guild.id, 0, 'game', 'user_id', undefined, playedName).filter((p) => guild.members.cache.has(p.key)) : [];
   const low = sale && lowestPrice(sale, sale.lowest);
   return [
-    `${hit.name}${listed?.maxPlayers ? `, for up to ${listed.maxPlayers} players` : ''}. ${listed ? 'It’s in the server’s game library.' : 'It isn’t in the server’s game library.'}`,
+    `${sentence(`${hit.name}${listed?.maxPlayers ? `, for up to ${listed.maxPlayers} players` : ''}`)} ${listed ? 'It’s in the server’s game library.' : 'It isn’t in the server’s game library.'}`,
     owners.length ? `Owned by ${names(owners)}.` : 'Nobody here owns it, that the bot knows of.',
     listed?.family.length ? `Can play it through family sharing: ${names(listed.family)}.` : '',
     listed ? (listed.needs.length ? `Still needs it: ${names(listed.needs)}.` : 'Everyone in the group has it.') : '',
     listed?.wanted.length ? `Wanted by ${names(listed.wanted)}.` : '',
     sale ? `On sale: ${dealText(sale)}${low ? ` ${low.text}.` : ''}` : 'Not on sale at the last price check.',
     played ? `Played in voice here for ${formatDuration(played.ms)} in all, last ${ago(played.last)}.` : 'Not played in voice here yet.',
-    players.length ? `Most played by: ${players.slice(0, 5).map((p) => `${nameOf(guild, p.key)} ${formatDuration(p.ms)}`).join(', ')}.` : '',
+    players.length ? `Most played by: ${timed(players.slice(0, 5).map((p) => ({ name: nameOf(guild, p.key), ms: p.ms })))}.` : '',
   ]
     .filter(Boolean)
     .join('\n');
@@ -328,7 +341,7 @@ async function playStats(asker: GuildMember, periodName: string, personSaid: str
   checkpoint();
   checkpointVoice();
   const isMember = (id: string) => guild.members.cache.has(id);
-  const time = (rows: { key: string; ms: number }[], label: (key: string) => string) => rows.slice(0, MOST_ROWS).map((r) => `${label(r.key)} ${formatDuration(r.ms)}`).join(', ');
+  const time = (rows: { key: string; ms: number }[], label: (key: string) => string) => timed(rows.slice(0, MOST_ROWS).map((r) => ({ name: label(r.key), ms: r.ms })));
   const who = (id: string) => nameOf(guild, id);
 
   if (other) {
@@ -340,9 +353,9 @@ async function playStats(asker: GuildMember, periodName: string, personSaid: str
     const c = compareFromWeb(guild, url);
     return [
       `${first.displayName} and ${other.displayName}, over all time:`,
-      `Games played together in voice: ${formatDuration(c.togetherMs)}${c.games.length ? ` (${c.games.map((g) => `${g.name} ${formatDuration(g.ms)}`).join(', ')})` : ''}.`,
-      `In voice together ${c.voice.sessions} times, for ${formatDuration(c.voice.ms)}.`,
-      `Games played in voice in all: ${c.people.map((p) => `${p.name} ${formatDuration(p.ms)}`).join(', ')}.`,
+      `Games played together in voice: ${formatDuration(c.togetherMs)}${c.games.length ? `: ${timed(c.games)}` : ''}.`,
+      `In voice together ${plural(c.voice.sessions, 'time')}, for ${formatDuration(c.voice.ms)}.`,
+      `Games played in voice in all: ${timed(c.people)}.`,
       c.shared.length
         ? `Games they both own (${c.shared.length}): ${c.shared.slice(0, MOST_ROWS).join(', ')}${c.shared.length > MOST_ROWS ? ', and more' : ''}.`
         : 'They don’t both own any game the bot knows of.',
@@ -388,13 +401,14 @@ async function playStats(asker: GuildMember, periodName: string, personSaid: str
     `The server ${label}: ${formatDuration(games.reduce((sum, g) => sum + g.ms, 0))} across ${plural(games.length, 'game')} by ${players.length === 1 ? '1 person' : `${players.length} people`}.`,
     games.length ? `Most played games: ${time(games, (key) => key)}.` : '',
     players.length ? `Biggest players: ${time(players, who)}.` : '',
-    voice.length ? `Most time in voice: ${voice.slice(0, MOST_ROWS).map((v) => `${who(v.userId)} ${formatDuration(v.secs * 1000)}`).join(', ')}.` : '',
+    voice.length ? `Most time in voice: ${timed(voice.slice(0, MOST_ROWS).map((v) => ({ name: who(v.userId), ms: v.secs * 1000 })))}.` : '',
   ]
     .filter(Boolean)
     .join('\n');
 }
 
-async function deals(guild: Guild, kind: string, gameSaid: string) {
+async function deals(asker: GuildMember, kind: string, gameSaid: string, personSaid: string) {
+  const { guild } = asker;
   const who = (id: string) => nameOf(guild, id);
   if (kind === 'price') {
     const hit = await gameNamed(guild, gameSaid, true);
@@ -435,8 +449,9 @@ async function deals(guild: Guild, kind: string, gameSaid: string) {
       throw new Refused(502, 'The free game list couldn’t be read just now.');
     });
     const shown = all.filter((g) => g.show);
-    const skipped = all.length - shown.length ? `${all.length - shown.length} others didn’t fit this server’s free game settings.` : '';
-    if (!shown.length) return `No free game right now fits this server. ${skipped}`.trim();
+    const left = all.length - shown.length;
+    if (!shown.length) return left ? `${left === 1 ? 'The 1 free game going now doesn’t' : `The ${left} free games going now don’t`} fit this server’s free game settings.` : 'No games are free to keep right now.';
+    const skipped = left ? `${left} more didn’t fit this server’s free game settings.` : '';
     return [
       'Free to keep now:',
       ...shown.slice(0, MOST_ROWS).map((g) => `- ${g.title} on ${g.platforms}${g.worth ? `, normally ${g.worth}` : ''}${g.reason ? `: ${g.reason}` : ''}`),
@@ -445,10 +460,12 @@ async function deals(guild: Guild, kind: string, gameSaid: string) {
       .filter(Boolean)
       .join('\n');
   }
-  const games = await onSale(guild);
-  if (!games.length) return 'Nothing the server plays or wants is on sale, as of the last price check.';
+  const person = personSaid ? personNamed(asker, personSaid) : null;
+  if (typeof person === 'string') return person;
+  const games = (await onSale(guild)).filter((g) => !person || g.wanted.includes(person.id) || g.wishlisted.includes(person.id));
+  if (!games.length) return person ? `Nothing ${person.displayName} wants or has on their Steam wishlist is on sale, as of the last price check.` : 'Nothing the server plays or wants is on sale, as of the last price check.';
   return [
-    'On sale at the last price check, most wanted first:',
+    `On sale at the last price check${person ? `, that ${person.displayName} wants` : ''}, most wanted first:`,
     ...games.slice(0, MOST_ROWS).map((g) => {
       const low = lowestPrice(g, g.lowest);
       return `- ${saleName(g)}: ${dealText(g)}${low ? ` ${low.text}.` : ''} ${saleReasons(g, who)}`.trim();

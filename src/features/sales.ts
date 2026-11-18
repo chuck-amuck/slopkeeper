@@ -505,7 +505,12 @@ export function salePrices(guildId: string) {
 export async function onSale(guild: Guild): Promise<Sale[]> {
   const prices = salePrices(guild.id);
   const games = await watched(guild);
-  return games.flatMap((g) => (prices.has(g.appid) ? [{ ...g, ...prices.get(g.appid)! }] : [])).sort(byInterest);
+  const found = games.flatMap((g) => (prices.has(g.appid) ? [{ ...g, ...prices.get(g.appid)! }] : [])).sort(byInterest);
+  // Wishlisted games have no name until Steam's asked about them, so they'd show as "App 892970"
+  const info = appInfo();
+  const unnamed = found.filter((g) => !g.name && !info.has(g.appid)).map((g) => g.appid);
+  if (unnamed.length) await ensureAppInfo(unnamed).catch(console.error);
+  return found;
 }
 
 const alerted = (guildId: string, appid: number) =>

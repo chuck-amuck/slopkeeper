@@ -314,7 +314,7 @@ function system(guild: Guild, botName: string) {
     ...(commands.length
       ? [
           '',
-          'The bot’s slash commands, for what your tools don’t do. When someone wants one of these, tell them the command, written as /name like /whatdoweplay, rather than saying it can’t be done or pretending to do it:',
+          'The bot’s slash commands, for what your tools don’t do. When someone wants one of these, tell them the command, written as /name like /gamenight plan, rather than saying it can’t be done or pretending to do it:',
           ...commands,
         ]
       : []),
