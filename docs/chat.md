@@ -1,6 +1,6 @@
 # Chat
 
-@mention the bot, or reply to one of its messages, and it answers in character. It also does what you ask, in plain English: "queue the strokes", "play the wall", "skip this", "play the airhorn", "say happy birthday in the GLaDOS voice". It needs an Anthropic API key on the host (see [Setting it up](#setting-it-up)).
+@mention the bot (or its role), or reply to one of its answers, and it answers in character. It also does what you ask, in plain English: "queue the strokes", "play the wall", "skip this", "play the airhorn", "say happy birthday in the GLaDOS voice". It needs an Anthropic API key on the host (see [Setting it up](#setting-it-up)).
 
 ## What it can do
 
@@ -10,7 +10,7 @@
 
 It does these as you: only what you could do yourself. With a DJ role set, people without it can't control the music through it either, the text to speech role and cooldown still apply, and sounds and speech need you in a voice channel. Activity shows what you asked, as "Asked in chat", and what it did, under your name.
 
-Anything else, it just answers. It sees the channel's last 20 messages, what's playing, and whether you're in voice, so it can follow along. It doesn't remember earlier conversations past that, and it doesn't read messages that don't @mention it or reply to it.
+Anything else, it just answers. It sees the channel's last 20 messages, what's playing, and whether you're in voice, so it can follow along. It doesn't remember earlier conversations past that, and it doesn't read messages that don't @mention it or reply to one of its answers. Replies to its other posts, like hop-on pings and recaps, are left to people.
 
 ## Settings
 
@@ -24,7 +24,7 @@ The **Chat** card in the web UI's Settings has them all, and says how many answe
 
 ## Privacy and cost
 
-Each answer sends the message, the channel's last 20 messages (with people's display names), what's playing and the server's name to [Anthropic's API](https://www.anthropic.com/legal/commercial-terms). Nothing is sent for messages that don't @mention the bot or reply to it, so tell people in the server what @mentioning it does.
+Each answer sends the message, the channel's last 20 messages (with people's display names), what's playing and the server's name to [Anthropic's API](https://www.anthropic.com/legal/commercial-terms). Nothing is sent for messages that don't @mention the bot or reply to one of its answers, so tell people in the server what @mentioning it does.
 
 With Haiku, an answer costs about a twentieth of a cent, or roughly $1.50 a month at 100 answers a day. With Opus it's about 1–2 cents, or roughly $50 a month at that rate.
 
@@ -32,4 +32,4 @@ With Haiku, an answer costs about a twentieth of a cent, or roughly $1.50 a mont
 
 1. Make an account at [console.anthropic.com](https://console.anthropic.com), add some credit, and create an API key.
 2. Set `ANTHROPIC_API_KEY` on the bot (see [Self-hosting](self-hosting.md#configuration)) and restart it. Music needs the [music container](self-hosting.md#the-music-container), with Spotify for finding things by name, and speech the [voice container](self-hosting.md#the-voice-container).
-3. The bot needs **Read Message History** in a channel to see what came before, and **Send Messages** to answer.
+3. The bot answers in channels where it has **Send Messages** and **Read Message History** (an answer is a reply, and it reads what came before). Private channels mentioned in a message are sent as "a channel", not by name.

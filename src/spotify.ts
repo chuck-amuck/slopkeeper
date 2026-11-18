@@ -99,7 +99,7 @@ interface ApiTrack {
   is_local?: boolean;
   is_playable?: boolean;
   duration_ms: number;
-  artists: { name: string }[];
+  artists: { id?: string; name: string }[];
   album?: ApiAlbum;
 }
 interface Page<T> {
@@ -139,6 +139,7 @@ export interface Found {
 }
 
 interface ApiNamed {
+  id: string;
   uri: string;
   name: string;
   artists?: { name: string }[];
@@ -158,19 +159,21 @@ export async function searchFor(query: string, kind: Found['kind'], most = 5): P
       kind,
       name: x.name,
       artist: kind === 'album' ? (x.artists?.map((a) => a.name).join(', ') ?? null) : null,
-      ref: kind === 'album' ? x.uri : `artist:${x.name}`,
+      // The artist's id too, so a namesake's songs aren't taken for theirs
+      ref: kind === 'album' ? x.uri : `artist:${x.id}:${x.name}`,
     }));
 }
 
 /**
  * An artist's best-known songs, as many as a search gives: Spotify doesn't let apps like this one read an artist's top
- * songs, but searching by artist lists them most-played first. Only songs that are theirs, so a namesake's aren't added
+ * songs, but searching by artist lists them most-played first. Only songs that are theirs: by their id when it's known,
+ * so a namesake's aren't added, or else by their name
  */
-export async function artistSongs(artist: string): Promise<Track[]> {
+export async function artistSongs(artist: string, id?: string): Promise<Track[]> {
   const name = artist.trim().slice(0, 100);
   if (!name) return [];
   const body = await get<{ tracks: Page<ApiTrack> }>(`/search?type=track&limit=${SEARCH_LIMIT}&market=${config.spotifyMarket}&q=${encodeURIComponent(`artist:"${name.replaceAll('"', '')}"`)}`);
-  const theirs = (t: ApiTrack) => t.artists.some((a) => a.name.toLowerCase() === name.toLowerCase());
+  const theirs = (t: ApiTrack) => t.artists.some((a) => (id ? a.id === id : a.name.toLowerCase() === name.toLowerCase()));
   return body.tracks.items.filter((t) => playable(t) && theirs(t)).map((t) => toTrack(t));
 }
 

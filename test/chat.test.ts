@@ -17,7 +17,13 @@ config.spotifyClientSecret = 'spotify-secret';
 
 const BOT = '100';
 const id22 = (n: number | string) => String(n).padStart(22, '0');
-const song = (n: number, artist: string, name = `Song ${n}`) => ({ uri: `spotify:track:${id22(n)}`, name, duration_ms: 200_000, artists: [{ name: artist }], album: { name: 'An Album', images: [] } });
+const song = (n: number, artist: string, name = `Song ${n}`, artistId = id22(artist.replace(/\W/g, ''))) => ({
+  uri: `spotify:track:${id22(n)}`,
+  name,
+  duration_ms: 200_000,
+  artists: [{ id: artistId, name: artist }],
+  album: { name: 'An Album', images: [] },
+});
 
 // What the model answers, in turn, and what was sent to it
 let replies: Record<string, unknown>[] = [];
@@ -28,7 +34,7 @@ const spotifyAsked: string[] = [];
 mock.method(globalThis, 'fetch', async (input: string | URL | Request, init: RequestInit = {}) => {
   const url = String(input instanceof Request ? input.url : input);
   if (url.startsWith('https://api.anthropic.com/v1/messages')) {
-    if (apiDown) return Response.json({ type: 'error', error: { type: 'overloaded_error', message: 'Overloaded' } }, { status: 529 });
+    if (apiDown || (replies[0] as { down?: boolean } | undefined)?.down) return Response.json({ type: 'error', error: { type: 'overloaded_error', message: 'Overloaded' } }, { status: 529 });
     sent.push(JSON.parse(init.body as string));
     const next = replies.shift();
     assert.ok(next, 'asked the model more often than expected');
@@ -40,9 +46,9 @@ mock.method(globalThis, 'fetch', async (input: string | URL | Request, init: Req
     spotifyAsked.push(decodeURIComponent(where));
     const q = new URL(url).searchParams.get('q') ?? '';
     if (where.startsWith('/search?type=album')) return Response.json({ albums: { items: [{ uri: `spotify:album:${id22('wall')}`, name: 'The Wall', artists: [{ name: 'Pink Floyd' }] }], next: null } });
-    if (where.startsWith('/search?type=artist')) return Response.json({ artists: { items: [{ uri: 'spotify:artist:x', name: 'The Strokes' }], next: null } });
+    if (where.startsWith('/search?type=artist')) return Response.json({ artists: { items: [{ id: id22('TheStrokes'), uri: `spotify:artist:${id22('TheStrokes')}`, name: 'The Strokes' }], next: null } });
     if (where.startsWith('/search?type=track') && q.startsWith('artist:')) {
-      return Response.json({ tracks: { items: [song(1, 'The Strokes', 'Last Nite'), song(2, 'The Strokes Tribute Band'), song(3, 'The Strokes', 'Someday')], next: null } });
+      return Response.json({ tracks: { items: [song(1, 'The Strokes', 'Last Nite'), song(2, 'The Strokes Tribute Band'), song(3, 'The Strokes', 'Someday'), song(4, 'The Strokes', 'A Namesake’s Song', id22('namesake'))], next: null } });
     }
     if (where.startsWith(`/albums/${id22('wall')}`)) return Response.json({ name: 'The Wall', images: [], tracks: { items: [song(10, 'Pink Floyd', 'In the Flesh?'), song(11, 'Pink Floyd', 'The Thin Ice')], next: null } });
   }
@@ -56,7 +62,7 @@ const turn = (stop: string, ...content: unknown[]) => ({ stop_reason: stop, cont
 
 function fakeGuild(id: string) {
   const roles = new Map([['300', { id: '300', name: 'DJ' }]]);
-  const me = { id: BOT, displayName: 'Slopkeeper' };
+  const me = { id: BOT, displayName: 'Slopkeeper', roles: { botRole: { id: '400' } } };
   return { id, name: 'Test Server', members: { me, cache: new Map<string, unknown>([[BOT, me]]), fetch: async () => null }, roles: { cache: roles }, channels: { cache: new Map() } };
 }
 
@@ -67,7 +73,7 @@ function fakeMember(guild: ReturnType<typeof fakeGuild>, id = '201', roleIds: st
 }
 
 /** A message in a channel, recording what the bot replies and reacts */
-function fakeMessage(guild: ReturnType<typeof fakeGuild>, member: ReturnType<typeof fakeMember>, content: string, opts: { mentions?: string[]; repliedTo?: string; bot?: boolean } = {}) {
+function fakeMessage(guild: ReturnType<typeof fakeGuild>, member: ReturnType<typeof fakeMember>, content: string, opts: { mentions?: string[]; repliedTo?: { id: string; author: { id: string; displayName: string }; type: number; content: string }; bot?: boolean } = {}) {
   const answers: string[] = [];
   const reactions: string[] = [];
   const earlier = new Map([['m0', { id: 'm0', author: { id: '202', displayName: 'Friend' }, member: { displayName: 'Friend' }, content: 'we should listen to <@201>’s album later', attachments: new Map() }]]);
@@ -89,7 +95,10 @@ function fakeMessage(guild: ReturnType<typeof fakeGuild>, member: ReturnType<typ
     system: false,
     attachments: new Map(),
     inGuild: () => true,
-    mentions: { users: new Map((opts.mentions ?? [BOT]).map((u) => [u, {}])), repliedUser: opts.repliedTo ? { id: opts.repliedTo } : null },
+    // Discord lists whoever a reply replies to among the mentions too
+    mentions: { users: new Map([...(opts.mentions ?? []), ...(opts.repliedTo ? [opts.repliedTo.author.id] : [])].map((u) => [u, {}])), repliedUser: opts.repliedTo ? opts.repliedTo.author : null },
+    reference: opts.repliedTo ? { messageId: opts.repliedTo.id } : null,
+    fetchReference: async () => ({ ...opts.repliedTo, member: null, attachments: new Map() }),
     reply: async (m: { content: string; allowedMentions: unknown }) => {
       assert.deepEqual(m.allowedMentions, { parse: [], repliedUser: false }, 'an answer never pings anyone');
       answers.push(m.content);
@@ -110,15 +119,43 @@ beforeEach(() => {
   resetSpotify();
 });
 
-test('only a message that @mentions the bot or replies to it asks it something', () => {
+// A reply, as the bot's answers are, and a post of its own that isn't one
+const REPLY = 19;
+const answerOfBot = { id: 'a1', author: { id: BOT, displayName: 'Slopkeeper' }, type: REPLY, content: 'Your music awaits, my liege!' };
+const hopOnPing = { id: 'p1', author: { id: BOT, displayName: 'Slopkeeper' }, type: 0, content: '🎮 Sam and Alex are in voice. Hop on!' };
+
+test('only a message that @mentions the bot, or replies to one of its answers, asks it something', async () => {
   const guild = fakeGuild('g-asks');
   const member = fakeMember(guild);
-  assert.equal(asksBot(fakeMessage(guild, member, 'hey <@100>').message, BOT), true);
-  assert.equal(asksBot(fakeMessage(guild, member, 'thanks', { mentions: [], repliedTo: BOT }).message, BOT), true);
+  assert.equal(asksBot(fakeMessage(guild, member, 'hey <@100>').message, BOT), 'mention');
+  assert.equal(asksBot(fakeMessage(guild, member, 'thanks', { repliedTo: answerOfBot }).message, BOT), 'reply');
   // @everyone, someone else, a reply to someone else, and other bots don't
-  assert.equal(asksBot(fakeMessage(guild, member, '@everyone hi', { mentions: [] }).message, BOT), false);
-  assert.equal(asksBot(fakeMessage(guild, member, 'hey <@202>', { mentions: ['202'], repliedTo: '202' }).message, BOT), false);
-  assert.equal(asksBot(fakeMessage(guild, member, 'hey <@100>', { bot: true }).message, BOT), false);
+  assert.equal(asksBot(fakeMessage(guild, member, '@everyone hi').message, BOT), null);
+  assert.equal(asksBot(fakeMessage(guild, member, 'hey <@202>', { mentions: ['202'], repliedTo: { ...answerOfBot, author: { id: '202', displayName: 'Friend' } } }).message, BOT), null);
+  assert.equal(asksBot(fakeMessage(guild, member, 'hey <@100>', { bot: true }).message, BOT), null);
+  // The bot's own role, which Discord's @ list offers beside it, asks it too; other roles don't
+  assert.equal(asksBot(fakeMessage(guild, member, 'hey <@&400>').message, BOT), 'mention');
+  assert.equal(asksBot(fakeMessage(guild, member, 'hey <@&300>').message, BOT), null);
+
+  // A reply to its hop-on ping is people talking to each other, though Discord counts it as mentioning the bot
+  const omw = fakeMessage(guild, member, 'omw', { repliedTo: hopOnPing });
+  await onMessage(omw.message, client);
+  assert.deepEqual([omw.answers, sent.length], [[], 0]);
+  // A reply to one of its answers is answered, knowing what it's replying to
+  replies = [turn('end_turn', text('Most gracious of you!'))];
+  const thanks = fakeMessage(guild, member, 'thanks!', { repliedTo: answerOfBot });
+  await onMessage(thanks.message, client);
+  assert.deepEqual(thanks.answers, ['Most gracious of you!']);
+  assert.match(sent[0].messages[0].content as string, /Person 201 is replying to this message of yours:\nYou: Your music awaits, my liege!/);
+
+  // An @mention in a reply to someone else is answered, and the message it replies to is theirs, not the bot's
+  sent = [];
+  replies = [turn('end_turn', text('A fine link indeed.'))];
+  const link = { id: 'l1', author: { id: '202', displayName: 'Friend' }, type: 0, content: 'https://youtu.be/abc' };
+  const queueThis = fakeMessage(guild, fakeMember(guild, '203'), '<@100> queue this', { repliedTo: link });
+  await onMessage(queueThis.message, client);
+  assert.deepEqual(queueThis.answers, ['A fine link indeed.']);
+  assert.match(sent[0].messages[0].content as string, /Person 203 is replying to this message:\nFriend: https:\/\/youtu\.be\/abc/);
 });
 
 test('“play the wall” finds the album and queues it, answering in character', async () => {
@@ -169,13 +206,22 @@ test('“play the wall” finds the album and queues it, answering in character'
 test('an artist adds their best-known songs, and only theirs', async () => {
   const guild = fakeGuild('g-artist');
   const member = fakeMember(guild);
-  assert.match(await useTool(member as never, 'find_music', { query: 'the strokes', kind: 'artist' }), /artist: “The Strokes” \(ref artist:The Strokes\)/);
-  const added = await useTool(member as never, 'queue_music', { ref: 'artist:The Strokes', next: false, shuffle: false });
+  const ref = `artist:${id22('TheStrokes')}:The Strokes`;
+  assert.ok((await useTool(member as never, 'find_music', { query: 'the strokes', kind: 'artist' })).includes(`artist: “The Strokes” (ref ${ref})`));
+  // By their id, so not another band's of the same name, nor a tribute band's
+  const added = await useTool(member as never, 'queue_music', { ref, next: false, shuffle: false });
   assert.match(added, /^Added 2 songs by The Strokes\./);
   assert.ok(spotifyAsked.some((a) => a.includes('q=artist:"The Strokes"')));
   assert.deepEqual(
     queueOf(guild.id).map((r) => r.title),
     ['Last Nite', 'Someday'],
+  );
+  clearQueue(guild.id, 'test');
+  // A ref it made up from a name goes by the name
+  await useTool(member as never, 'queue_music', { ref: 'artist:the strokes', next: false, shuffle: false });
+  assert.deepEqual(
+    queueOf(guild.id).map((r) => r.title),
+    ['Last Nite', 'Someday', 'A Namesake’s Song'],
   );
   clearQueue(guild.id, 'test');
 });
@@ -242,6 +288,17 @@ test('it stays quiet when chat is off or there’s no key, and says so when the 
   assert.deepEqual(down.answers, ['I can’t answer right now. Try again in a moment.']);
   // A failed answer isn't counted
   assert.equal(chatUsage(guild.id).replies, 0);
+  apiDown = false;
+
+  // Failing after it's queued something, it says it's done it, so nobody asks again and gets it twice
+  replies = [turn('tool_use', toolUse('t1', 'queue_music', { ref: `spotify:album:${id22('wall')}`, next: false, shuffle: false })), { down: true }];
+  const midway = fakeMessage(guild, fakeMember(guild, '218'), '<@100> play the wall');
+  await onMessage(midway.message, client);
+  replies = [];
+  assert.deepEqual(midway.answers, ['Done as you asked, though my words have deserted me. Do check what I did before asking again.']);
+  assert.equal(queueOf(guild.id).length, 2);
+  assert.equal(chatUsage(guild.id).replies, 1);
+  clearQueue(guild.id, 'test');
 });
 
 test('a refusal is declined politely, and the last round has to answer', async () => {

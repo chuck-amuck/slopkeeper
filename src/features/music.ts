@@ -1383,8 +1383,8 @@ export async function queueFrom(guildId: string, input: string, who: string, nex
 }
 
 /** Adds an artist's best-known songs, for asking in chat. Returns what was added, or throws a SpotifyError saying why not */
-export async function queueArtist(guildId: string, artist: string, who: string, next: boolean, shuffle = false): Promise<string> {
-  const tracks = pick(await artistSongs(artist), shuffle);
+export async function queueArtist(guildId: string, artist: string, who: string, next: boolean, shuffle = false, artistId?: string): Promise<string> {
+  const tracks = pick(await artistSongs(artist, artistId), shuffle);
   if (!tracks.length) throw new SpotifyError(`Spotify has no songs by **${artist}**.`);
   const added = addTracks(guildId, tracks, who, next);
   if (!added) throw new SpotifyError(`The queue is full (${MOST_QUEUED} songs).`);

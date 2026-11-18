@@ -941,12 +941,13 @@ export function sayOut(channel: VoiceBasedChannel, line: string): Promise<string
   return queueLine(channel, text, voice, serverEffect(guild.id), null, 'announcement');
 }
 
-/** Says an announcement to the people in a channel, unless that means leaving people in another */
 /** Whether the bot is in another voice channel, which speaking here would take it, and any music, away from */
 export function busyElsewhere(channel: VoiceBasedChannel) {
   const botChannel = getVoiceConnection(channel.guild.id)?.joinConfig.channelId;
   return !!botChannel && botChannel !== channel.id;
 }
+
+/** Says an announcement to the people in a channel, unless that means leaving people in another */
 
 export async function announceAloud(channel: VoiceBasedChannel, line: string, key: 'ttsNightReminders' | 'ttsHopOn') {
   const { guild } = channel;
