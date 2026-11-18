@@ -118,13 +118,20 @@ export const achievementList = cached(DAY_MS, async (appid: number) => {
   }
 });
 
-/** How many players worldwide have each achievement, in percent. Only used for ordering, so it's fine without */
-export const achievementRarity = cached(DAY_MS, async (appid: number) => {
-  const body = await steamGet<{ achievementpercentages?: { achievements?: { name: string; percent: string | number }[] } }>('/ISteamUserStats/GetGlobalAchievementPercentagesForApp/v2/', { gameid: String(appid) }).catch(
-    (err) => (console.error(err), null),
-  );
-  return new Map((body?.achievementpercentages?.achievements ?? []).map((a) => [a.name, Math.round(Number(a.percent))]));
+const rarityKept = cached(DAY_MS, async (appid: number) => {
+  const body = await steamGet<{ achievementpercentages?: { achievements?: { name: string; percent: string | number }[] } }>('/ISteamUserStats/GetGlobalAchievementPercentagesForApp/v2/', { gameid: String(appid) });
+  return new Map((body.achievementpercentages?.achievements ?? []).map((a) => [a.name, Math.round(Number(a.percent))]));
 });
+
+/**
+ * How many players worldwide have each achievement, in percent. Only used for ordering and as a hint, so it's empty
+ * when Steam fails, and asked again next time rather than kept empty for a day
+ */
+export const achievementRarity = (appid: number) =>
+  rarityKept(appid).catch((err: unknown) => {
+    console.error(err);
+    return new Map<string, number>();
+  });
 
 const playerAchievements = cached(HOUR_MS, async (key: string) => {
   const [steamid, appid] = key.split(':');

@@ -56,9 +56,9 @@ test('the lookup tools: achievements need a Steam key, and songs played before n
   const keys = { steam: config.steamApiKey, music: config.musicUrl };
   t.after(() => Object.assign(config, { steamApiKey: keys.steam, musicUrl: keys.music }));
   Object.assign(config, { steamApiKey: null, musicUrl: null });
-  assert.deepEqual(lookupTools().map((tool) => tool.name), ['games_for', 'pick_game', 'game_info', 'play_stats', 'deals', 'patch_notes']);
+  assert.deepEqual(lookupTools().map((tool) => tool.name), ['games_for', 'pick_game', 'game_info', 'play_stats', 'about_person', 'deals', 'patch_notes']);
   Object.assign(config, { steamApiKey: 'key', musicUrl: 'http://music' });
-  assert.deepEqual(lookupTools().map((tool) => tool.name), ['games_for', 'pick_game', 'game_info', 'play_stats', 'deals', 'music_history', 'patch_notes', 'achievements']);
+  assert.deepEqual(lookupTools().map((tool) => tool.name), ['games_for', 'pick_game', 'game_info', 'play_stats', 'about_person', 'deals', 'music_history', 'patch_notes', 'achievements']);
   assert.equal(lookUp(robin, 'queue_music', {}) instanceof Promise, true);
 });
 
@@ -263,6 +263,35 @@ test('achievements: how the people in voice are getting on, and what none of the
       'Unlocked: Robin 1.',
       'Can’t see Sam: no linked Steam account, or their game details are private.',
       'None of them has these yet, most common first: Common (Easy), 92% of players; Rare (Hard), 4% of players.',
+    ].join('\n'),
+  );
+});
+
+test('about a person: their top games here and on Steam, and the ones they never played, without asking Steam', async (t) => {
+  t.after(() => db.exec('DELETE FROM steam_owned'));
+  db.exec('DELETE FROM steam_owned');
+  played('201', 'Deep Rock Galactic', 2, 3);
+  played('201', 'Valheim', 3, 1);
+  // Nothing linked, or details private
+  assert.equal(await ask(robin, 'about_person', { person: 'me' }), ['Robin:', 'Most played in voice here: Deep Rock Galactic (3h), Valheim (1h).', 'No Steam account linked.'].join('\n'));
+  db.prepare(`INSERT INTO steam_links (user_id, steam_id, private) VALUES ('203', 's3', 1)`).run();
+  assert.equal(await ask(robin, 'about_person', { person: 'sasha' }), ['Sasha:', 'No games played in voice here.', 'Their Steam game details are private.'].join('\n'));
+  assert.match(await ask(robin, 'about_person', { person: 'nobody' }), /Nobody here is called “nobody”/);
+
+  db.prepare(`INSERT INTO steam_links (user_id, steam_id) VALUES ('201', 's1')`).run();
+  assert.match(await ask(robin, 'about_person', { person: '' }), /Their Steam games haven’t been read yet/);
+  const own = db.prepare('INSERT INTO steam_owned (steam_id, appid, name, playtime) VALUES (?, ?, ?, ?)');
+  own.run('s1', 548430, 'Deep Rock Galactic', 72_000);
+  own.run('s1', 892970, 'Valheim', 600);
+  own.run('s1', 1, 'Shovelware', 0);
+  own.run('s1', 2, 'Bundle Filler', 0);
+  assert.equal(
+    await ask(sasha, 'about_person', { person: 'robin' }),
+    [
+      'Robin:',
+      'Most played in voice here: Deep Rock Galactic (3h), Valheim (1h).',
+      'Owns 4 games on Steam, 2 never played.',
+      'Most played on Steam: Deep Rock Galactic (1200h), Valheim (10h).',
     ].join('\n'),
   );
 });

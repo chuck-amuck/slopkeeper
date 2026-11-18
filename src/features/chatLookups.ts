@@ -16,11 +16,11 @@ import { checkpoint, PERIODS, playsIn, plural, sessionCount, stats, totalsBy } f
 import { AUTOPLAY } from './music.ts';
 import { dealText, lowestPrice, money, onSale, priceCheck, saleName, saleReasons, salePrices } from './sales.ts';
 import { checkpointVoice, voiceTotals } from './sessions.ts';
-import { DECK_PLAYABLE, DECK_VERIFIED, patchNotesAtLength } from './steam.ts';
+import { DECK_PLAYABLE, DECK_VERIFIED, linkFor, ownedSteamGames, patchNotesAtLength } from './steam.ts';
 
 // What chat can look up for anyone in the server, read-only, from the same functions as the slash commands and the web
 // UI, so it gives the same answers: games to play, a game's owners, play stats, deals, music played before, patch notes
-// and achievements. Results name people and games, never their IDs
+// and achievements, and what's known about one person's gaming. Results name people and games, never their IDs
 
 /** Rows in one answer, so a big server's lists don't fill the model's context */
 const MOST_ROWS = 25;
@@ -29,6 +29,8 @@ const MOST_ALMOST = 8;
 const MOST_CHOICES = 8;
 /** People whose last random pick it remembers, so “reroll” picks another */
 const MOST_PICKS_KEPT = 500;
+/** Someone's most played games listed, on Steam and here */
+const TOP_GAMES = 3;
 /** Each patch note, so three of them are about a thousand tokens */
 const LONGEST_NOTE = 1500;
 
@@ -86,6 +88,13 @@ export function lookupTools(): Anthropic.Tool[] {
       }),
     },
     {
+      name: 'about_person',
+      description:
+        'What the bot knows about someone’s gaming, for “what do you know about me?” or to roast them: their most played games on Steam and in voice here, with hours, and how many games they own and have never played.',
+      strict: true,
+      input_schema: object({ person: { type: 'string', description: 'Who, by display name, or “me” for the person asking' } }),
+    },
+    {
       name: 'deals',
       description:
         'Game deals: what the server plays or wants that’s on sale (as /sales), bundles with games for the server, free games worth grabbing, or the price of any game on Steam with the cheapest official store selling its key and its lowest price ever.',
@@ -131,7 +140,7 @@ export function lookupTools(): Anthropic.Tool[] {
   ];
 }
 
-const LOOKUPS = new Set(['games_for', 'pick_game', 'game_info', 'play_stats', 'deals', 'music_history', 'patch_notes', 'achievements']);
+const LOOKUPS = new Set(['games_for', 'pick_game', 'game_info', 'play_stats', 'about_person', 'deals', 'music_history', 'patch_notes', 'achievements']);
 
 /** What a lookup found, as the model is told it, or null if `name` isn't one */
 export async function lookUp(member: GuildMember, name: string, input: Record<string, unknown>): Promise<string | null> {
@@ -151,6 +160,8 @@ export async function lookUp(member: GuildMember, name: string, input: Record<st
         return await gameInfo(guild, text('game'));
       case 'play_stats':
         return await playStats(member, text('period'), text('person'), text('game'), text('compare_with'));
+      case 'about_person':
+        return aboutPerson(member, text('person'));
       case 'deals':
         return await deals(member, text('kind'), text('game'), text('person'));
       case 'music_history':
@@ -303,6 +314,42 @@ const more = (rows: unknown[], shown: number) => (rows.length > shown ? `…and 
 const sentence = (text: string) => (/[.!?]$/.test(text) ? text : `${text}.`);
 /** Names with times, like “Valheim (3h), Deep Rock Galactic (1h)”, as a number after a name can read as part of it */
 const timed = (rows: { name: string; ms: number }[]) => rows.map((r) => `${r.name} (${formatDuration(r.ms)})`).join(', ');
+
+/**
+ * What's known about one person's gaming: their most played games here and on Steam, and the games they own and never
+ * played. Never what chat remembers about them, which stays with their own questions. Their achievements are the
+ * achievements lookup's, so a roast reaches for them only when it has nothing better
+ */
+function aboutPerson(asker: GuildMember, said: string): string {
+  const { guild } = asker;
+  const person = personNamed(asker, said || 'me');
+  if (typeof person === 'string') return person;
+  checkpoint();
+  checkpointVoice();
+  const games = stats(guild.id, 0, 'user', 'game', person.id);
+  const voice = voiceTotals(guild.id, 0).find((v) => v.userId === person.id);
+  const lines = [
+    `${person.displayName}:`,
+    games.length ? `Most played in voice here: ${timed(games.slice(0, TOP_GAMES).map((g) => ({ name: g.key, ms: g.ms })))}.` : 'No games played in voice here.',
+    voice ? `In voice here for ${formatDuration(voice.secs * 1000)} on ${plural(voice.nights, 'day')}.` : '',
+    ...onSteam(person),
+  ];
+  return lines.filter(Boolean).join('\n');
+}
+
+function onSteam(person: GuildMember): string[] {
+  const link = linkFor(person.id);
+  if (!link) return ['No Steam account linked.'];
+  if (link.private) return ['Their Steam game details are private.'];
+  const owned = [...ownedSteamGames(person.id)].map(([appid, g]) => ({ appid, name: g.name, minutes: g.playtime }));
+  if (!owned.length) return ['Their Steam games haven’t been read yet.'];
+  const top = owned.filter((g) => g.minutes > 0 && g.name).sort((a, b) => b.minutes - a.minutes);
+  const never = owned.filter((g) => g.minutes === 0).length;
+  return [
+    `Owns ${plural(owned.length, 'game')} on Steam, ${never} never played.`,
+    top.length ? `Most played on Steam: ${timed(top.slice(0, TOP_GAMES).map((g) => ({ name: g.name!, ms: g.minutes * 60_000 })))}.` : '',
+  ];
+}
 
 type GroupGame = Awaited<ReturnType<typeof pickFromWeb>>['ready'][number];
 

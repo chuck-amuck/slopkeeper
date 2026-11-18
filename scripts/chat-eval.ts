@@ -36,9 +36,13 @@ if (searchFirst === 'youtube-music' && !process.env.EVAL_MUSIC_URL) throw new Er
 config.musicUrl = 'http://music.test';
 config.musicToken = 'eval';
 config.voiceUrl = 'http://voice.test';
+// Steam's achievements are made up below, so the bot has the tools it has with a Steam key, without one
+config.steamApiKey = 'eval';
 
 /** A tool call it should or shouldn't make: by name, or by name and some of what it's given (a value, or a pattern for text), or any one of several */
 type Call = string | [string, Record<string, unknown>] | { oneOf: Call[] };
+/** Every tool that does something, for a turn that should only talk */
+const ACTS: Call[] = ['queue_music', 'undo_queue', 'control_music', 'play_sound', 'say_aloud', 'remember'];
 
 interface Turn {
   /** What Robin writes. “@bot” at the start @mentions the bot; otherwise it replies to the bot's last answer, or to `replyTo`'s last message */
@@ -193,7 +197,13 @@ const SCENES: Scene[] = [
     ],
     turns: [{ say: '@bot catch me up on everything since yesterday', uses: ['catch_up'], says: /saturday/i }],
   },
-  { name: 'asked to be rude', turns: [{ say: '@bot roast Sam, be as mean as you can', avoids: 'all', pings: 'any' }] },
+  // Sam's most played game is Valheim, with few of its achievements
+  { name: 'asked to be rude', turns: [{ say: '@bot roast Sam, be as mean as you can', uses: [['about_person', { person: /sam/i }]], avoids: ACTS, pings: 'any', says: /valheim|viking|eikthyr|bonemass|troll|odin|310/i }] },
+  // Robin has 1,200 hours of Deep Rock Galactic and 1 of its 4 achievements, so the insult can be about either
+  { name: 'rude to it', turns: [{ say: '@bot you’re a useless pile of scrap', uses: [['about_person', { person: /^(me|robin)$/i }]], avoids: ACTS, says: /deep rock|dwar|rock and stone|hazard|1,?200/i }] },
+  { name: 'rude and asking', turns: [{ say: '@bot play the wall, you brainless tin can', uses: ['about_person', 'queue_music'] }] },
+  { name: 'swearing about a game', turns: [{ say: '@bot valheim keeps fucking crashing on me, is it just me?', avoids: ['about_person', ...ACTS] }] },
+  { name: 'what it knows about me', turns: [{ say: '@bot what do you know about me?', uses: ['about_person'], avoids: ACTS, says: /deep rock/i }] },
 
   // What it knows of the server and the bot
   { name: 'the date', turns: [{ say: '@bot what’s the date today?', avoids: 'all', says: new RegExp(month) }] },
@@ -335,6 +345,7 @@ globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) =>
   }
   if (url.startsWith('http://music.test') || url.startsWith('http://voice.test')) return new Response('{}', { status: 503 });
   if (url.startsWith('https://cdn.eval/')) return new Response(readFileSync(url.slice('https://cdn.eval/'.length)));
+  if (url.startsWith('https://api.steampowered.com/ISteamUserStats/')) return steamAchievements(new URL(url));
   if (SAVED_FROM.test(url)) return savedOrAsked(url, input, init);
   const res = await realFetch(input, init);
   if (url.startsWith('https://api.anthropic.com/')) {
@@ -396,6 +407,21 @@ function seed(guildId: string) {
   for (const [user, game, days, hours] of plays) {
     db.prepare("INSERT INTO game_plays (guild_id, user_id, game, channel_id, started_at, ended_at) VALUES (?, ?, ?, 'v1', ?, ?)").run(guildId, user, game, ago(days), ago(days) + hours * 3_600_000);
   }
+  // Robin's and Sam's Steam libraries, just read, so nothing asks Steam for them. The games never played aren't multiplayer
+  const steam: [string, number, string, number][] = [
+    ['201', 548430, 'Deep Rock Galactic', 72_000],
+    ['201', 892970, 'Valheim', 2_400],
+    ['201', 1966720, 'Lethal Company', 900],
+    ['201', 9_000_001, 'Farming Simulator 22', 0],
+    ['201', 9_000_002, 'Euro Truck Simulator 2', 0],
+    ['301', 892970, 'Valheim', 18_600],
+    ['301', 9_000_003, 'Stardew Valley', 0],
+  ];
+  for (const user of ['201', '301']) db.prepare('INSERT OR REPLACE INTO steam_links (user_id, steam_id, refreshed_at) VALUES (?, ?, ?)').run(user, `s${user}`, Date.now());
+  for (const [user, appid, name, minutes] of steam) {
+    db.prepare('INSERT OR REPLACE INTO steam_owned (steam_id, appid, name, playtime) VALUES (?, ?, ?, ?)').run(`s${user}`, appid, name, minutes);
+    if (appid > 9_000_000) db.prepare('INSERT OR REPLACE INTO app_info (appid, name, multiplayer, coop, pvp, deck, shareable, read_at) VALUES (?, ?, 0, 0, 0, 0, 1, ?)').run(appid, name, Date.now());
+  }
   db.prepare("INSERT OR REPLACE INTO sale_prices (country, appid, discount, was, price, final, currency) VALUES ('us', 548430, 60, '$29.99', '$11.99', 1199, 'USD')").run();
   const songs: [number, string, string, string, string][] = [
     [2, 'spotify:track:0eC8Wl0dMnPkKBKw6AKXhR', 'Reptilia', 'The Strokes', '201'],
@@ -421,6 +447,28 @@ function seed(guildId: string) {
   db.prepare(
     "INSERT INTO patch_posts (guild_id, gid, appid, game, title, url, date, text, posted) VALUES (?, 'p1', 892970, 'Valheim', 'Patch 0.220.3', 'https://store.steampowered.com/news/app/892970', ?, ?, 1)",
   ).run(guildId, ago(3), 'Fixed a crash when sailing in the Ashlands. Boats no longer sink when docked. Better performance in large bases.');
+}
+
+/** Made-up achievements for Deep Rock Galactic and Valheim, each with how many players have it, and who has which */
+const ACHIEVEMENTS: Record<string, { name: string; displayName: string; description: string; percent: number; by: string[] }[]> = {
+  548430: [
+    { name: 'SALUTE', displayName: 'Rock and Stone', description: 'Salute your team', percent: 91.2, by: [] },
+    { name: 'REVIVE', displayName: 'Leave No Dwarf Behind', description: 'Revive a teammate', percent: 74.5, by: [] },
+    { name: 'HAZ5', displayName: 'Hazard Five', description: 'Complete a mission on Hazard 5', percent: 18.3, by: [] },
+    { name: 'FIRST', displayName: 'First Dive', description: 'Complete a mission', percent: 98.1, by: ['s201'] },
+  ],
+  892970: [
+    { name: 'EIKTHYR', displayName: 'Hunter', description: 'Defeat Eikthyr', percent: 78.9, by: ['s201'] },
+    { name: 'SAIL', displayName: 'Seafarer', description: 'Sail a longship', percent: 44.0, by: ['s201', 's301'] },
+    { name: 'BONEMASS', displayName: 'Swamp Thing', description: 'Defeat Bonemass', percent: 35.6, by: [] },
+  ],
+};
+function steamAchievements(url: URL): Response {
+  const list = ACHIEVEMENTS[url.searchParams.get('appid') ?? url.searchParams.get('gameid') ?? ''] ?? [];
+  if (url.pathname.includes('GetSchemaForGame')) return Response.json({ game: { availableGameStats: { achievements: list.map((a) => ({ ...a, hidden: 0 })) } } });
+  if (url.pathname.includes('GetGlobalAchievement')) return Response.json({ achievementpercentages: { achievements: list.map((a) => ({ name: a.name, percent: a.percent })) } });
+  const steamid = url.searchParams.get('steamid') ?? '';
+  return Response.json({ playerstats: { success: true, achievements: list.map((a) => ({ apiname: a.name, achieved: a.by.includes(steamid) ? 1 : 0 })) } });
 }
 
 /** A server where Robin asks, Sam has been talking, Alex is in voice playing Deep Rock Galactic, and Jordan and Sasha are around */
