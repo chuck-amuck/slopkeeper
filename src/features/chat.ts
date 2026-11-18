@@ -43,6 +43,12 @@ const LONGEST_SOURCE = 300;
 /** Messages before the one asking, so it knows what's being talked about */
 const CONTEXT_MESSAGES = 20;
 const LONGEST_CONTEXT_MESSAGE = 500;
+/** What catch_up reads at most, and sends on at most (about 10,000 tokens), the newest kept */
+const CATCH_UP_DAYS = 3;
+const MOST_CATCH_UP = 500;
+const CATCH_UP_CHARS = 40_000;
+/** Someone's messages this soon before they ask are part of asking, not when they were last here */
+const ASKING_FOR = 10 * 60_000;
 /** One person's shortest time between answers */
 export const COOLDOWN_MS = 10_000;
 /** Rounds of tools before it has to answer */
@@ -356,6 +362,67 @@ function line(guild: Guild, m: Message, botId: string) {
   return `${who}: ${text.length > LONGEST_CONTEXT_MESSAGE ? `${text.slice(0, LONGEST_CONTEXT_MESSAGE)}…` : text}`;
 }
 
+/**
+ * This channel's messages before `before`, oldest first, as lines with their times: since the person last wrote here, or
+ * the last `hours`. When it's more than CATCH_UP_CHARS, the newest are kept
+ */
+export async function catchUp(member: GuildMember, channel: GuildTextBasedChannel, before: string, hours: number, now = Date.now()): Promise<string> {
+  const { guild } = member;
+  const botId = member.client.user.id;
+  const sinceThem = !(hours > 0);
+  const floor = now - (sinceThem ? CATCH_UP_DAYS * 24 : Math.min(hours, CATCH_UP_DAYS * 24)) * 3_600_000;
+  const found: Message[] = [];
+  const seen = new Set<string>();
+  let lastHere: Message | null = null;
+  let cursor = before;
+  try {
+    reading: while (found.length < MOST_CATCH_UP) {
+      // Newest first
+      const page = await channel.messages.fetch({ limit: 100, before: cursor });
+      let moved = false;
+      for (const m of page.values()) {
+        if (seen.has(m.id)) continue;
+        seen.add(m.id);
+        moved = true;
+        cursor = m.id;
+        if (m.createdTimestamp < floor) break reading;
+        if (sinceThem && m.author.id === member.id && m.createdTimestamp < now - ASKING_FOR) {
+          lastHere = m;
+          break reading;
+        }
+        found.push(m);
+        if (found.length >= MOST_CATCH_UP) break reading;
+      }
+      if (!moved || page.size < 100) break;
+    }
+  } catch (err) {
+    console.warn(`Chat couldn’t read #${channel.name}’s history: ${(err as Error).message}`);
+    return 'It can’t read this channel’s history (it needs Read Message History here).';
+  }
+  const timeZone = setting(guild.id, 'timezone');
+  const clock = (ms: number) => new Date(ms).toLocaleString('en-US', { timeZone, weekday: 'short', hour: 'numeric', minute: '2-digit' });
+  let shown = found;
+  let since: string;
+  if (!sinceThem) since = `from the last ${Math.min(hours, CATCH_UP_DAYS * 24)} hours`;
+  else if (lastHere) since = `since ${member.displayName} last wrote here (${clock(lastHere.createdTimestamp)})`;
+  else {
+    // Not here in all that: the last day of it
+    shown = found.filter((m) => m.createdTimestamp >= now - 86_400_000);
+    since = `from the last 24 hours, as ${member.displayName} hasn’t written here in the last ${found.length >= MOST_CATCH_UP ? `${MOST_CATCH_UP} messages` : `${CATCH_UP_DAYS} days`}`;
+  }
+  if (!shown.length) return `Nothing was said here ${since}.`;
+  const lines = shown.reverse().map((m) => `[${clock(m.createdTimestamp)}] ${line(guild, m, botId)}`);
+  let from = lines.length;
+  for (let size = 0; from > 0 && size + lines[from - 1]!.length + 1 <= CATCH_UP_CHARS; ) size += lines[--from]!.length + 1;
+  // Reading back by hours can stop short of them
+  const most = !sinceThem && found.length >= MOST_CATCH_UP ? `, the last ${MOST_CATCH_UP}, the most it reads at once` : '';
+  return [
+    `${shown.length} message${shown.length === 1 ? '' : 's'} in #${channel.name} ${since}${most}, oldest first:`,
+    ...(from ? [`(…${from} earlier, too many to show)`] : []),
+    ...lines.slice(from),
+  ].join('\n');
+}
+
 /** What an image really is, from its first bytes: Discord's type comes from the file's name, which can be wrong */
 function imageKind(data: Buffer): Anthropic.Base64ImageSource['media_type'] | null {
   if (data.subarray(0, 4).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47]))) return 'image/png';
@@ -495,8 +562,9 @@ function system(guild: Guild, botName: string) {
     '- Vary how you start and how you address people: don’t open every answer with a greeting or their name.',
     '- Don’t assume anyone’s gender: no “sir” or “madam”, and “they” for anyone whose pronouns you haven’t been told, unless they’ve asked to be called otherwise.',
     '- Act only when they ask you to do something. A question gets an answer, not an action: “do you know X?” isn’t “play X”. Looking things up to answer is fine (find_music, artist_albums, show_queue), and better than guessing.',
-    `- What you can do is what your tools do: music, soundboard sounds, speech, remembering things about the person asking, looking up the server’s games, game nights, play stats, deals, songs played before, patch notes and achievements, picking a game at random${actions ? ', planning, changing and answering game nights, starting a vote on what to play, setting reminders' : ''}${searches ? ', and searching the web' : ''}. You can’t edit or delete messages, change settings, or see more than this channel’s recent messages, so don’t offer to. For the bot’s other features, point them to its command (see below).`,
+    `- What you can do is what your tools do: music, soundboard sounds, speech, remembering things about the person asking, looking up the server’s games, game nights, play stats, deals, songs played before, patch notes and achievements, picking a game at random, catching people up on what was said here${actions ? ', planning, changing and answering game nights, starting a vote on what to play, setting reminders' : ''}${searches ? ', and searching the web' : ''}. You can’t edit or delete messages, change settings, or see more than this channel’s recent messages, so don’t offer to. For the bot’s other features, point them to its command (see below).`,
     '- When they ask about games, stats, deals or what was played, look it up rather than guessing or sending them to a command, and answer from what you found: pick out what answers them, as a short list at most, not everything. If a lookup says a name matches more than one person or game, ask which.',
+    '- “What did I miss?”, “catch me up” or “what happened since yesterday?”: if the earlier messages above reach back far enough, answer from them; otherwise use catch_up. Then sum up what happened in a few short bullets (plans made, decisions, anything asked of or about them), not message by message.',
     '- “Just pick one”, “choose for us” or “reroll” means pick_game, which picks at random, with kind and steam_deck “any” unless they asked for co-op, PvP or Steam Deck; “what can we play?” means games_for.',
     ...(actions
       ? [
@@ -627,6 +695,14 @@ function tools(guild: Guild): Anthropic.ToolUnion[] {
       input_schema: object({ name: { type: 'string' } }),
     },
     {
+      name: 'catch_up',
+      description: `Reads this channel’s messages from before this one, oldest first, to sum up what the person asking missed: since they last wrote here, or the last few hours. Up to ${CATCH_UP_DAYS} days and ${MOST_CATCH_UP} messages.`,
+      strict: true,
+      input_schema: object({
+        hours: { type: 'integer', description: `How many hours back, up to ${CATCH_UP_DAYS * 24}, for “since yesterday” or “the last 3 hours”; 0 for since they last wrote here` },
+      }),
+    },
+    {
       name: 'remember',
       description: `Saves what you remember about the person asking, replacing what you had, so write all of it: what’s still true from before and what’s new, up to ${LONGEST_NOTE} characters. Only what they asked you to remember, not what they did or said otherwise. Empty forgets them. They’ll see it in the web UI.`,
       strict: true,
@@ -717,6 +793,8 @@ export interface Turn {
   queued: number[][];
   /** Where game nights and votes it starts are posted */
   channel?: GuildTextBasedChannel;
+  /** The message asking, for catch_up to read from */
+  asking?: string;
 }
 
 /** Does what a tool asks, as the person asking. Returns what happened, for the model to answer from */
@@ -818,6 +896,9 @@ export async function useTool(member: GuildMember, name: string, input: Record<s
         recordPlay(guild.id, member.id, sound.name);
         return `Played “${sound.name}”.`;
       }
+      case 'catch_up':
+        if (!turn.channel || !turn.asking) return 'There’s no channel here to read.';
+        return await catchUp(member, turn.channel, turn.asking, Number(input.hours));
       case 'remember': {
         const note = text('note').replace(/\s+/g, ' ').slice(0, LONGEST_NOTE);
         setNote(guild.id, member.id, note);
@@ -876,7 +957,7 @@ export async function answer(
   let acted = false;
   let spoke = false;
   const sources: string[] = [];
-  const turn: Turn = { queued: [], channel: message.channel };
+  const turn: Turn = { queued: [], channel: message.channel, asking: message.id };
   const cut = (s: string) => (s.length > LOGGED_TOOL_CHARS ? `${s.slice(0, LOGGED_TOOL_CHARS)}…` : s).replace(/\n/g, ' | ');
   const done = (text: string | null) => {
     const typed = readable(guild, message.content).trim();

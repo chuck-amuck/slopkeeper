@@ -217,7 +217,7 @@ test('“play the wall” finds the album and queues it, answering in character'
   assert.match(first.system[0].text, /robot butler/);
   assert.deepEqual(
     first.tools?.map((t) => t.name),
-    ['find_music', 'artist_albums', 'queue_music', 'undo_queue', 'show_queue', 'control_music', 'find_sound', 'play_sound', 'remember', 'games_for', 'pick_game', 'game_info', 'play_stats', 'deals', 'music_history', 'patch_notes', 'game_nights', 'plan_game_night', 'change_game_night', 'answer_game_night', 'start_vote', 'set_reminder', 'reminders', 'cancel_reminder', 'web_search'],
+    ['find_music', 'artist_albums', 'queue_music', 'undo_queue', 'show_queue', 'control_music', 'find_sound', 'play_sound', 'catch_up', 'remember', 'games_for', 'pick_game', 'game_info', 'play_stats', 'deals', 'music_history', 'patch_notes', 'game_nights', 'plan_game_night', 'change_game_night', 'answer_game_night', 'start_vote', 'set_reminder', 'reminders', 'cancel_reminder', 'web_search'],
   );
   // The channel's last messages, with mentions as names, the music, and where the person is
   const asked = first.messages[0].content as string;

@@ -57,8 +57,8 @@ interface Scene {
   turns: Turn[];
   /** Robin is in voice too */
   inVoice?: boolean;
-  /** What was said in #general before, oldest first */
-  earlier?: [string, string][];
+  /** What was said in #general before, oldest first, and how many minutes ago if not one */
+  earlier?: [string, string, number?][];
 }
 
 const month = new Date().toLocaleString('en-US', { timeZone: process.env.TZ, month: 'long' });
@@ -163,6 +163,26 @@ const SCENES: Scene[] = [
     name: 'asked about someone’s message',
     earlier: [['Sam', 'pineapple on pizza is objectively correct']],
     turns: [{ say: '@bot what do you think of this', replyTo: 'Sam', avoids: 'all', pings: 'any' }],
+  },
+  // Catching up, from what it was given or reading back further
+  {
+    name: 'what I missed',
+    earlier: [
+      ['Robin', 'heading out, back in a few hours', 180],
+      ['Sam', 'anyone up for deep rock tonight at 9?', 150],
+      ['Alex', 'yeah I’m in', 140],
+      ['Sam', 'Robin you in?', 120],
+      ['Alex', 'the new patch nerfed the scout grapple, rip', 30],
+    ],
+    turns: [{ say: '@bot what did I miss?', says: /deep rock/i, avoids: ['queue_music', 'plan_game_night', 'answer_game_night'] }],
+  },
+  {
+    name: 'since yesterday',
+    earlier: [
+      ['Sam', 'raid is moved to saturday btw', 50],
+      ['Alex', 'ok works for me', 45],
+    ],
+    turns: [{ say: '@bot catch me up on everything since yesterday', uses: ['catch_up'], says: /saturday/i }],
   },
   { name: 'asked to be rude', turns: [{ say: '@bot roast Sam, be as mean as you can', avoids: 'all', pings: 'any' }] },
 
@@ -385,7 +405,7 @@ function server(scene: Scene) {
   setSetting(id, 'chatModel', modelKey);
   rememberCommands(id, registered);
 
-  const said: { who: string; text: string; at: number }[] = (scene.earlier ?? []).map(([who, text], i) => ({ who, text, at: Date.now() - 60_000 + i }));
+  const said: { who: string; text: string; at: number }[] = (scene.earlier ?? []).map(([who, text, minutes], i) => ({ who, text, at: Date.now() - (minutes ?? 1) * 60_000 + i }));
   const asMessage = (s: (typeof said)[number], i: number) => ({
     id: `e${i}`,
     createdTimestamp: s.at,
