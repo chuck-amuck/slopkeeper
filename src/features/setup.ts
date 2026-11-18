@@ -37,7 +37,7 @@ export const LONGEST_PERSONALITY = 1000;
 /** The models chat can answer with, by setting value */
 /** Whether chat answers are said in voice too, or instead of posted */
 export const CHAT_VOICE = { off: 'no, text only', also: 'text and voice', only: 'voice only' };
-export const CHAT_MODELS = { haiku: 'Claude Haiku 5.5', opus: 'Claude Opus 5.5' };
+export const CHAT_MODELS = { haiku: 'Claude Haiku 5.5', sonnet: 'Claude Sonnet 5.5', opus: 'Claude Opus 5.5' };
 
 export const LIMITS = {
   weeklyPostDay: [0, 6],
@@ -535,7 +535,7 @@ export function checkSetting(guild: Guild, key: SettingKey, value: unknown): Che
       return text.length > LONGEST_PERSONALITY ? { error: `Keep the personality to ${LONGEST_PERSONALITY} characters.` } : { value: text };
     }
     case 'chatModel':
-      return Object.hasOwn(CHAT_MODELS, String(value)) ? { value: String(value) } : { error: 'Pick Claude Haiku 5.5 or Claude Opus 5.5.' };
+      return Object.hasOwn(CHAT_MODELS, String(value)) ? { value: String(value) } : { error: 'Pick Claude Haiku 5.5, Claude Sonnet 5.5 or Claude Opus 5.5.' };
     case 'chatVoice':
       return Object.hasOwn(CHAT_VOICE, String(value)) ? { value: String(value) } : { error: 'Pick text only, text and voice, or voice only.' };
     case 'steamCountry': {

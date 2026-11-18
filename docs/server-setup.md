@@ -126,7 +126,7 @@ Each setting goes by the name `/setup show` and `/setup reset` use. A few are se
 | Who can control music | `music` | | everyone |
 | Answer in chat | web UI only | `CHAT` (`false` to turn off) | on, with an `ANTHROPIC_API_KEY` |
 | Personality | web UI only | `CHAT_PERSONALITY` | a robot butler with impeccable manners and no brakes |
-| Model | web UI only | `CHAT_MODEL` (`haiku` or `opus`) | `haiku` |
+| Model | web UI only | `CHAT_MODEL` (`haiku`, `sonnet` or `opus`) | `haiku` |
 | Answer in voice | web UI only | `CHAT_VOICE` (`off`, `also` or `only`) | off |
 | Answers a day | web UI only | `CHAT_DAILY_LIMIT` | 200 |
 | Text to speech | `speech` | `TTS` (`false` to turn off) | on |

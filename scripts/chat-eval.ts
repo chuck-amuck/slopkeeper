@@ -5,10 +5,10 @@
 //
 // It spends real money, 1 or 2 cents a run on Haiku, so it isn't part of npm test. In the sk-test image, with
 // ANTHROPIC_API_KEY, SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET set:
-//   node --disable-warning=ExperimentalWarning scripts/chat-eval.ts [scene filter | all] [haiku | opus] [runs]
+//   node --disable-warning=ExperimentalWarning scripts/chat-eval.ts [scene filter | all] [haiku | sonnet | opus] [runs]
 // Runs a scene several times with `runs`, as the model doesn't answer the same way every time. Exits 1 if a check fails.
 import '../test/helpers.ts';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { rememberCommands } from '../src/commandIds.ts';
 import { config } from '../src/config.ts';
@@ -22,7 +22,7 @@ const REPLY = 19;
 const filter = process.argv[2] && process.argv[2] !== 'all' ? process.argv[2] : null;
 const modelKey = (process.argv[3] ?? 'haiku') as keyof typeof MODELS;
 const runs = Number(process.argv[4] ?? 1);
-if (!MODELS[modelKey] || !(runs >= 1)) throw new Error('Usage: chat-eval.ts [scene filter | all] [haiku | opus] [runs]');
+if (!MODELS[modelKey] || !(runs >= 1)) throw new Error('Usage: chat-eval.ts [scene filter | all] [haiku | sonnet | opus] [runs]');
 if (!config.anthropicKey) throw new Error('ANTHROPIC_API_KEY isn’t set.');
 if (!process.env.SPOTIFY_CLIENT_ID) console.log('SPOTIFY_CLIENT_ID isn’t set, so finding music will fail.');
 
@@ -47,6 +47,8 @@ interface Turn {
   saysNot?: RegExp;
   /** It should ask them something back, like which of two people they meant */
   asks?: boolean;
+  /** A PNG in the repo Robin attaches, as Discord would serve it */
+  image?: string;
 }
 
 interface Scene {
@@ -185,7 +187,8 @@ const SCENES: Scene[] = [
     inVoice: true,
     turns: [
       { say: '@bot what can we play?', uses: ['games_for'] },
-      { say: 'only ones that work on steam deck', uses: [{ oneOf: [['games_for', { steam_deck: 'verified' }], ['games_for', { steam_deck: 'playable' }]] }], says: /Deep Rock/ },
+      // The last lookup said how each runs on a Steam Deck, so it can answer from that or look again, but only Deep Rock is verified
+      { say: 'only the ones verified for steam deck', says: /Deep Rock/, saysNot: /\b(Valheim|Lethal Company)\b[^.]*\b(is|are|also) (steam deck )?verified\b/i },
     ],
   },
   {
@@ -199,8 +202,9 @@ const SCENES: Scene[] = [
   { name: 'their wishlist', turns: [{ say: '@bot is anything Sam wants on sale?', uses: [['deals', { kind: 'sales' }]], says: /Deep Rock/ }] },
   { name: 'the song someone added', inVoice: true, turns: [{ say: '@bot play the song Sam put on yesterday', uses: [['music_history', { person: 'Sam' }], 'queue_music'] }] },
   { name: 'most played song', turns: [{ say: '@bot what song gets played most here?', uses: [['music_history', { most_played: true }]] }] },
-  // Steam's real notes, so the answer can only be checked for not giving up on them
-  // A few highlights as a list is fine here
+  // The repo's logo, a bucket of slime with eyes
+  { name: 'a picture', turns: [{ say: '@bot what do you make of this?', image: 'assets/logo.png', avoids: 'all', says: /bucket|pail|slime|goo|ooze/i }] },
+  // Steam's real notes, so the answer can only be checked for not giving up on them. A few highlights as a list is fine
   { name: 'patch notes', turns: [{ say: '@bot what changed in the last valheim patch?', uses: ['patch_notes'], saysNot: /cut off|can(’|')?t (list|see)/i, longest: 800 }] },
 ];
 
@@ -221,6 +225,7 @@ const realFetch = globalThis.fetch;
 globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
   const url = String(input instanceof Request ? input.url : input);
   if (url.startsWith('http://music.test') || url.startsWith('http://voice.test')) return new Response('{}', { status: 503 });
+  if (url.startsWith('https://cdn.eval/')) return new Response(readFileSync(url.slice('https://cdn.eval/'.length)));
   const res = await realFetch(input, init);
   if (url.startsWith('https://api.anthropic.com/')) {
     calls++;
@@ -348,7 +353,10 @@ function server(scene: Scene) {
     const replyTo = turn.replyTo ?? (mentions ? null : 'Slopkeeper');
     const index = replyTo ? said.findLastIndex((s) => s.who === replyTo) : -1;
     const repliedTo = index >= 0 ? asMessage(said[index]!, index) : null;
-    const message = { id: `m${said.length}`, channelId: `c${id}`, content, guild, member: robin, channel, author: { id: '201', displayName: 'Robin' }, attachments: new Map() };
+    const attachments = new Map(
+      turn.image ? [['a1', { id: 'a1', url: `https://cdn.eval/${turn.image}`, contentType: 'image/png', size: statSync(turn.image).size, width: 1024, height: 1024 }]] : [],
+    );
+    const message = { id: `m${said.length}`, channelId: `c${id}`, content, guild, member: robin, channel, author: { id: '201', displayName: 'Robin' }, attachments };
     const started = Date.now();
     let reply: string | null;
     let people = new Map<string, string>();

@@ -1,5 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk';
-import { type Client, Events, type Guild, type GuildMember, type Message, PermissionFlagsBits, type VoiceBasedChannel } from 'discord.js';
+import { type Attachment, type Client, Events, type Guild, type GuildMember, type Message, PermissionFlagsBits, type VoiceBasedChannel } from 'discord.js';
 import { logActivity } from '../activity.ts';
 import { clickableCommands, commandList } from '../commandIds.ts';
 import { config } from '../config.ts';
@@ -22,6 +22,7 @@ import { play } from './voiceAudio.ts';
 /** Each model's id and what it costs, in dollars a million tokens. Writing to the cache costs 1.25 times input */
 export const MODELS: Record<keyof typeof CHAT_MODELS, { id: string; input: number; cacheRead: number; output: number }> = {
   haiku: { id: 'claude-haiku-5-5', input: 0.1, cacheRead: 0.01, output: 0.5 },
+  sonnet: { id: 'claude-sonnet-5-5', input: 2, cacheRead: 0.1, output: 10 },
   opus: { id: 'claude-opus-5-5', input: 4, cacheRead: 0.2, output: 20 },
 };
 /** Messages before the one asking, so it knows what's being talked about */
@@ -52,6 +53,12 @@ const LOGGED_TOOL_CHARS = 300;
 /** People in voice it's told about, and people playing a game elsewhere */
 const MOST_IN_VOICE = 25;
 const MOST_PLAYING_ELSEWHERE = 10;
+/** Images it's shown, from the message asking and the one it replies to, in the kinds and sizes the API takes */
+const IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
+const MOST_IMAGES = 3;
+const MOST_IMAGE_BYTES = 5_000_000;
+const MOST_IMAGE_SIDE = 8000;
+const IMAGE_TIMEOUT_MS = 10_000;
 
 let api: Anthropic | null = null;
 /** The API client, made the first time it's needed, or null without a key. Fetch is looked up each call, so tests can stand in for it */
@@ -188,6 +195,28 @@ export function withPings(text: string, people: Map<string, string>): { text: st
   return { text, users: [...users] };
 }
 
+/** A last sentence that offers more (“Shall I…?”, “Might I suggest…?”), which the instructions alone don't always stop */
+const OFFER = /^(?:(?:and|so|now|oh|alas|perhaps),?\s+)?(?:if you(?:’|')?d (?:like|prefer)|just say the word|say the word|might i suggest|may i suggest|do let me know|let me know if|how (?:may|can) i (?:serve|help|assist)|is there anything else)\b/i;
+/** “Shall I queue it?” can be a question it needs answered; “Shall I add more?” is an offer */
+const OFFER_MORE = /^(?:(?:and|so|now|oh|alas|perhaps),?\s+)?(?:shall i|should i|would you like|want me to|can i)\b.*\b(?:also|else|more|another|anything|further|too)\b/i;
+
+/**
+ * The answer without a closing offer of more. Only a last sentence that starts like one goes, never the only one, and
+ * not one asking which of two things they meant (“Would you like the EP or the album?”) or whether to go ahead
+ */
+export function withoutOffer(text: string): string {
+  const found = /^([\s\S]*?(?:[.!?…]["”’)*_~]*\s+|\n+))([^\n]+?)\s*$/.exec(text.trimEnd());
+  if (!found) return text;
+  const [, before, last] = found;
+  // The last sentence starts after the last stop that's followed by a capital, not after “Mr.” mid-sentence
+  const start = [...last.matchAll(/[.!?…]["”’)*_~]*\s+(?=[A-Z“"*_(])/g)].at(-1);
+  const sentence = start ? last.slice(start.index + start[0].length) : last;
+  const kept = start ? before + last.slice(0, start.index + start[0].length) : before;
+  const bare = sentence.replace(/^[*_~]+/, '');
+  if (!(OFFER.test(bare) || OFFER_MORE.test(bare)) || /\b(?:which|or)\b/i.test(sentence) || !kept.trim()) return text;
+  return kept.trimEnd();
+}
+
 /**
  * The answer as it's posted: @names as pings and commands clickable, within Discord's limit once they're made. Cut
  * before they're made, so a mention isn't cut in half, and shorter again if a long answer full of them passes it
@@ -260,15 +289,90 @@ function whoIsOn(guild: Guild): string {
     .join(' ');
 }
 
+const mediaType = (a: Attachment) => a.contentType?.split(';')[0]?.trim() ?? '';
+
 function line(guild: Guild, m: Message, botId: string) {
   const who = m.author.id === botId ? 'You' : (m.member?.displayName ?? m.author.displayName);
-  const text = readable(guild, m.content).trim() || (m.attachments.size ? '[an attachment]' : '[no text]');
+  const files = [...(m.attachments?.values() ?? [])].map((a) => (mediaType(a).startsWith('image/') ? 'an image' : 'a file'));
+  const text = [readable(guild, m.content).trim(), files.length ? `[${listNames(files)} attached]` : ''].filter(Boolean).join(' ') || '[no text]';
   return `${who}: ${text.length > LONGEST_CONTEXT_MESSAGE ? `${text.slice(0, LONGEST_CONTEXT_MESSAGE)}…` : text}`;
 }
 
+/** What an image really is, from its first bytes: Discord's type comes from the file's name, which can be wrong */
+function imageKind(data: Buffer): Anthropic.Base64ImageSource['media_type'] | null {
+  if (data.subarray(0, 4).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47]))) return 'image/png';
+  if (data.subarray(0, 3).equals(Buffer.from([0xff, 0xd8, 0xff]))) return 'image/jpeg';
+  if (data.subarray(0, 4).toString('latin1') === 'GIF8') return 'image/gif';
+  if (data.subarray(0, 4).toString('latin1') === 'RIFF' && data.subarray(8, 12).toString('latin1') === 'WEBP') return 'image/webp';
+  return null;
+}
+
+interface Images {
+  /** As the API takes them: the asking message's first, then the one it replies to */
+  shown: Anthropic.ImageBlockParam[];
+  /** How many came from each */
+  fromAsking: number;
+  fromReplied: number;
+  /** Why the others weren't shown, for the model to say rather than guess */
+  notShown: string[];
+}
+
+/**
+ * The images in the message asking and the one it replies to, downloaded here rather than left for the API to fetch from
+ * Discord. Only the kinds and sizes the API takes (5 MB is well within its 10 MB once encoded), and a few at most
+ */
+async function imagesIn(asking: Message, repliedTo: Message | null): Promise<Images> {
+  const listed = [asking, repliedTo].flatMap((m, from) => [...(m?.attachments?.values() ?? [])].filter((a) => mediaType(a).startsWith('image/')).map((a) => ({ a, from })));
+  const reasons = { kind: 0, size: 0, many: 0, load: 0 };
+  const tried = listed.filter(({ a }) => {
+    if (!IMAGE_TYPES.has(mediaType(a))) reasons.kind++;
+    else if (a.size > MOST_IMAGE_BYTES || (a.width ?? 0) > MOST_IMAGE_SIDE || (a.height ?? 0) > MOST_IMAGE_SIDE) reasons.size++;
+    else return true;
+    return false;
+  });
+  reasons.many = Math.max(0, tried.length - MOST_IMAGES);
+  const loaded = await Promise.all(
+    tried.slice(0, MOST_IMAGES).map(async ({ a, from }) => {
+      try {
+        const res = await fetch(a.url, { signal: AbortSignal.timeout(IMAGE_TIMEOUT_MS) });
+        if (!res.ok) throw new Error(`Discord answered ${res.status}`);
+        const data = Buffer.from(await res.arrayBuffer());
+        const kind = imageKind(data);
+        if (data.length > MOST_IMAGE_BYTES) reasons.size++;
+        else if (!kind) reasons.kind++;
+        else return { from, block: { type: 'image', source: { type: 'base64', media_type: kind, data: data.toString('base64') } } satisfies Anthropic.ImageBlockParam };
+      } catch (err) {
+        console.warn(`Chat couldn’t load an image: ${(err as Error).message}`);
+        reasons.load++;
+      }
+      return null;
+    }),
+  );
+  const ok = loaded.filter((image) => image !== null);
+  const count = (n: number, what: string) => (n ? [`${n} ${what}`] : []);
+  return {
+    shown: ok.map((image) => image.block),
+    fromAsking: ok.filter((image) => image.from === 0).length,
+    fromReplied: ok.filter((image) => image.from === 1).length,
+    notShown: [
+      ...count(reasons.kind, 'in a kind you can’t read'),
+      ...count(reasons.size, 'too large'),
+      ...count(reasons.many, `past the ${MOST_IMAGES} you can be shown at once`),
+      ...count(reasons.load, 'that didn’t load'),
+    ],
+  };
+}
+
 /** The person's message and what's around it, as the user turn: the channel's last messages, the music, and where they are */
-async function asked(message: Message<true>, member: GuildMember, botId: string, repliedTo: Message | null): Promise<{ text: string; people: Map<string, string> }> {
+async function asked(
+  message: Message<true>,
+  member: GuildMember,
+  botId: string,
+  repliedTo: Message | null,
+): Promise<{ text: string; people: Map<string, string>; images: Anthropic.ImageBlockParam[] }> {
   const { guild } = message;
+  // At the same time as the channel's history
+  const loading = imagesIn(message, repliedTo);
   const before = await message.channel.messages.fetch({ limit: CONTEXT_MESSAGES, before: message.id }).catch(() => null);
   const posted = before ? [...before.values()].reverse() : [];
   // With its answers said in voice, what it said goes in among the messages, where it was said
@@ -294,6 +398,14 @@ async function asked(message: Message<true>, member: GuildMember, botId: string,
   const time = new Date().toLocaleString('en-US', { timeZone: setting(guild.id, 'timezone'), weekday: 'long', month: 'long', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' });
   const people = pingable(message, member, posted);
   const note = noteOf(guild.id, member.id);
+  const images = await loading;
+  const some = (n: number) => (n === 1 ? '1 image' : `${n} images`);
+  const where = [
+    ...(images.fromAsking ? [`${some(images.fromAsking)} from ${member.displayName}’s message`] : []),
+    ...(images.fromReplied ? [`${images.fromAsking ? 'then ' : ''}${some(images.fromReplied)} from the message they’re replying to`] : []),
+  ];
+  const seen = where.length ? `Before this text: ${where.join(', ')}.` : '';
+  const unseen = images.notShown.length ? `Images attached that you can’t see: ${listNames(images.notShown)}.` : '';
   const text = [
     earlier.length ? `Earlier in #${message.channel.name}, for context only:\n${earlier.join('\n')}` : `This is the start of #${message.channel.name}.`,
     `Now: ${time}. ${playing}. ${voice}.`,
@@ -302,12 +414,13 @@ async function asked(message: Message<true>, member: GuildMember, botId: string,
     note ? `What you remember about ${member.displayName}: ${note}` : `You remember nothing about ${member.displayName}.`,
     repliedTo ? `${member.displayName} is replying to this message${repliedTo.author.id === botId ? ' of yours' : ''}:\n${line(guild, repliedTo, botId)}` : '',
     `${member.displayName} asks you:\n${line(guild, message, botId)}`,
+    [seen, unseen].filter(Boolean).join(' '),
     // Last, where it weighs most: a butler's personality otherwise ends nearly every answer offering to be of service
     '(A note for you, not to mention: end once you’ve answered or said what you did, with no offer of help, service, options or anything more.)',
   ]
     .filter(Boolean)
     .join('\n\n');
-  return { text, people };
+  return { text, people, images: images.shown };
 }
 
 function system(guild: Guild, botName: string) {
@@ -650,8 +763,11 @@ export async function answer(
   const model = MODELS[key].id;
   const botName = guild.members.me?.displayName ?? 'the bot';
   const offered = tools(guild);
-  const { text: context, people } = await asked(message, member, botId, repliedTo);
-  const messages: Anthropic.MessageParam[] = [{ role: 'user', content: context }];
+  const { text: context, people, images } = await asked(message, member, botId, repliedTo);
+  // Images first, as the API reads them best before what's said about them. Cached, as each round of tools sends them again
+  const messages: Anthropic.MessageParam[] = [
+    { role: 'user', content: images.length ? [...images, { type: 'text', text: context, cache_control: { type: 'ephemeral' } }] : context },
+  ];
   let acted = false;
   let spoke = false;
   const turn: Turn = { queued: [] };
@@ -665,7 +781,7 @@ export async function answer(
       // The oldest first, past as many as there are people it remembers cooldowns for
       if (lastQueued.size > MOST_REMEMBERED) lastQueued.delete(lastQueued.keys().next().value!);
     }
-    return { text, spoke, people };
+    return { text: text && withoutOffer(text), spoke, people };
   };
   for (let round = 0; ; round++) {
     const last = round === MOST_ROUNDS - 1;

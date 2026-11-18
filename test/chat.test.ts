@@ -5,7 +5,7 @@ import { recentActivity } from '../src/activity.ts';
 import { commandMention, rememberCommands } from '../src/commandIds.ts';
 import { config } from '../src/config.ts';
 import { db } from '../src/db.ts';
-import { answer, asksBot, chat, chatNote, chatNotes, chatUsage, COOLDOWN_MS, finished, MODELS, noteOf, onMessage, resetChat, useTool, type Turn } from '../src/features/chat.ts';
+import { answer, asksBot, chat, chatNote, chatNotes, chatUsage, COOLDOWN_MS, finished, MODELS, withoutOffer, noteOf, onMessage, resetChat, useTool, type Turn } from '../src/features/chat.ts';
 import { clearQueue, queueOf } from '../src/features/music.ts';
 import { checkSetting } from '../src/features/setup.ts';
 import { setting, setSetting } from '../src/settings.ts';
@@ -74,6 +74,8 @@ mock.method(globalThis, 'fetch', async (input: string | URL | Request, init: Req
     if (where.startsWith(`/albums/${id22('wall')}`)) return Response.json({ name: 'The Wall', images: [], tracks: { items: [song(10, 'Pink Floyd', 'In the Flesh?'), song(11, 'Pink Floyd', 'The Thin Ice')], next: null } });
     if (where.startsWith(`/albums/${id22('ep')}`)) return Response.json({ name: 'Wall Demos', images: [], tracks: { items: [song(12, 'Pink Floyd', 'Demo')], next: null } });
   }
+  // Images people attach, as Discord's CDN serves them
+  if (url.startsWith('https://cdn.test/')) return new Response(new Uint8Array([137, 80, 78, 71]));
   // Covers and the music container aren't needed here
   return new Response('{}', { status: 404 });
 });
@@ -349,10 +351,11 @@ test('a refusal is declined politely, and the last round has to answer', async (
   assert.equal((sent[1].messages[2].content as { content: string }[])[0].content, 'There are no sounds yet.');
 });
 
-test('Opus can be picked, and the chat settings are checked', () => {
+test('Sonnet and Opus can be picked, and the chat settings are checked', () => {
   const guild = fakeGuild('g-settings') as never;
   assert.deepEqual(checkSetting(guild, 'chatModel', 'opus'), { value: 'opus' });
-  assert.match((checkSetting(guild, 'chatModel', 'gpt') as { error: string }).error, /Haiku 5.5 or Claude Opus 5.5/);
+  assert.deepEqual(checkSetting(guild, 'chatModel', 'sonnet'), { value: 'sonnet' });
+  assert.match((checkSetting(guild, 'chatModel', 'gpt') as { error: string }).error, /Haiku 5.5, Claude Sonnet 5.5 or Claude Opus 5.5/);
   assert.deepEqual(checkSetting(guild, 'chatPersonality', '  A grumpy pirate.  '), { value: 'A grumpy pirate.' });
   assert.match((checkSetting(guild, 'chatPersonality', '!!!') as { error: string }).error, /Describe who the bot is/);
   assert.match((checkSetting(guild, 'chatPersonality', 'a'.repeat(1001)) as { error: string }).error, /1000 characters/);
@@ -517,6 +520,52 @@ test('a correction in the same answer takes out what that answer queued, not wha
     ['Reptilia', 'Last Nite', 'Someday'],
   );
   clearQueue(guild.id, 'test');
+});
+
+test('a closing offer is left off, but not a real question, nor an answer that’s only that', () => {
+  const cases: [string, string][] = [
+    ['Hades II is $29.99 on Steam. Shall I also check other stores?', 'Hades II is $29.99 on Steam.'],
+    ['Alas, I cannot rewrite my words! Might I suggest a fresh ode to tacos, with all the grandeur you deserve?', 'Alas, I cannot rewrite my words!'],
+    ['You both own Deep Rock Galactic. Shall I... no, I shan’t offer anything further; do pick one!', 'You both own Deep Rock Galactic.'],
+    ['Done. Mr. Brightside is queued. If you’d like, I can add more of theirs.', 'Done. Mr. Brightside is queued.'],
+    ['The fixes:\n- Boats float\n- Storms stay out\n\n*Let me know if you want the rest.*', 'The fixes:\n- Boats float\n- Storms stay out'],
+  ];
+  for (const [said, posted] of cases) assert.equal(withoutOffer(said), posted, said);
+  for (const kept of [
+    'Shall I queue it?',
+    'Two people match: Sam and Sasha. Which of them do you mean?',
+    'I found two. Would you like the EP or the album?',
+    'I queued Mr. Brightside, shall I add more?',
+    'I couldn’t find that song, but there’s a live version by them. Shall I queue it?',
+    'It’s Wednesday. Splendid, is it not?',
+  ])
+    assert.equal(withoutOffer(kept), kept);
+});
+
+test('it sees the images attached to the message asking and the one it replies to, a few at most, within the API’s limits', async () => {
+  const guild = fakeGuild('g-images');
+  const member = fakeMember(guild);
+  replies = [turn('end_turn', text('A fine slime bucket, my liege.'))];
+  const asked = fakeMessage(guild, member, '<@100> rate this');
+  const image = (id: string, extra: Record<string, unknown> = {}) => ({ id, url: `https://cdn.test/${id}.png`, contentType: 'image/png', size: 4, width: 512, height: 512, ...extra });
+  const files = (asked.message as unknown as { attachments: Map<string, unknown> }).attachments;
+  files.set('a1', image('a1'));
+  files.set('a2', image('a2', { size: 9_000_000 }));
+  files.set('a3', { id: 'a3', url: 'https://cdn.test/a3.zip', contentType: 'application/zip', size: 10 });
+  files.set('a4', image('a4', { contentType: 'image/heic' }));
+  await onMessage(asked.message, client);
+  assert.deepEqual(asked.answers, ['A fine slime bucket, my liege.']);
+  const [shown, said] = sent.at(-1)!.messages[0]!.content as { type: string; source?: { type: string; media_type: string; data: string }; text?: string }[];
+  assert.deepEqual(shown, { type: 'image', source: { type: 'base64', media_type: 'image/png', data: Buffer.from([137, 80, 78, 71]).toString('base64') } });
+  assert.match(said!.text!, /asks you:\nPerson 201: \S+ rate this \[an image, an image, a file and an image attached\]/);
+  assert.match(said!.text!, /Before this text: 1 image from Person 201’s message\. Images attached that you can’t see: 1 in a kind you can’t read and 1 too large\./);
+  assert.deepEqual((said as { cache_control?: unknown }).cache_control, { type: 'ephemeral' });
+
+  // Without images it's text, as before
+  replies = [turn('end_turn', text('Indeed.'))];
+  const plainAsk = fakeMessage(guild, fakeMember(guild, '206'), '<@100> hello');
+  await onMessage(plainAsk.message, client);
+  assert.equal(typeof sent.at(-1)!.messages[0]!.content, 'string');
 });
 
 test('an answer full of pings is cut to fit once they’re made', () => {
