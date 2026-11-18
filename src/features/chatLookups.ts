@@ -199,7 +199,7 @@ function personNamed(asker: GuildMember, said: string): GuildMember | string {
 }
 
 /** The people named, without repeats, or null when none were: the caller says who it's for then */
-function peopleNamed(asker: GuildMember, said: unknown): GuildMember[] | string | null {
+export function peopleNamed(asker: GuildMember, said: unknown): GuildMember[] | string | null {
   const names = Array.isArray(said) ? said.map((n) => unquoted(String(n))).filter(Boolean) : [];
   if (!names.length) return null;
   const found = new Map<string, GuildMember>();

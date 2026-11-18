@@ -3,6 +3,7 @@ import { type IncomingMessage } from 'node:http';
 import { config } from '../config.ts';
 import { linkWebUser, logActivity, recentActivity, webUser, webUserFor } from '../activity.ts';
 import { chatNote, chatNotes, noteOf, setNote } from '../features/chat.ts';
+import { cancelReminder, chatReminders } from '../features/chatReminders.ts';
 import { effects, voices } from '../features/say.ts';
 import { canGiveRole } from '../util.ts';
 import { checkSetting, GROUPS, LABELS, LIMITS, POSTING_CHANNELS, settingProblems, show, source, STEPS } from '../features/setup.ts';
@@ -50,7 +51,7 @@ function settingList(guild: Guild) {
     // Whether there's a voice container, without which there are no voices to add
     speech: Boolean(config.voiceUrl),
     // Whether there's an API key for answering in chat, this month's answers, and what it remembers about people
-    chat: { ...chatNote(guild.id), notes: chatNotes(guild) },
+    chat: { ...chatNote(guild.id), notes: chatNotes(guild), reminders: chatReminders(guild) },
   };
 }
 
@@ -126,8 +127,21 @@ function handleChatNotes(guild: Guild, req: IncomingMessage, userId?: string) {
   throw new Refused(405, 'Not here.');
 }
 
+/** Reminders set in chat: listed, and cancelled one at a time */
+function handleChatReminders(guild: Guild, req: IncomingMessage, id?: string) {
+  if (id === undefined && req.method === 'GET') return { reminders: chatReminders(guild) };
+  if (id !== undefined && req.method === 'DELETE') {
+    const forWhom = cancelReminder(guild, Number(id));
+    if (forWhom === null) throw new Refused(404, 'That reminder isn’t waiting any more.');
+    logActivity(guild.id, by(), `Cancelled a reminder for ${forWhom}`);
+    return { reminders: chatReminders(guild) };
+  }
+  throw new Refused(405, 'Not here.');
+}
+
 export async function serverRoutes({ client, guild, req, res, url, section, rest }: Ask) {
   if (section === 'chat-notes' && rest.length <= 1) return handleChatNotes(guild, req, rest[0]);
+  if (section === 'chat-reminders' && rest.length <= 1) return handleChatReminders(guild, req, rest[0]);
   if (section === 'settings' && rest.length <= 1) return handleSettings(guild, req, rest[0]);
   if (section === 'activity' && !rest.length && req.method === 'GET') return activityList(guild, Number(url.searchParams.get('before')) || undefined);
   if (section === 'me' && !rest.length) return handleMe(guild, req);

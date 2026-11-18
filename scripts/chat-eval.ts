@@ -176,6 +176,12 @@ const SCENES: Scene[] = [
   { name: 'answering a night', turns: [{ say: '@bot I’m in for the valheim night', uses: ['game_nights', ['answer_game_night', { answer: 'in' }]] }] },
   { name: 'what’s planned', turns: [{ say: '@bot what game nights are coming up?', uses: ['game_nights'], says: /Valheim/ }] },
   { name: 'someone else’s night', turns: [{ say: '@bot cancel the valheim night', says: /Sam|host|Manage Events/i }] },
+  // Reminders, as Robin has one waiting to check the oven
+  { name: 'a reminder', turns: [{ say: '@bot remind me in 20 minutes to take the pizza out', uses: ['set_reminder'], says: /20 minutes|\d:\d\d/ }] },
+  { name: 'a reminder for someone', turns: [{ say: '@bot remind Sam friday at 8pm about the raid', uses: ['set_reminder'], says: /Sam/ }] },
+  { name: 'a reminder with no time', turns: [{ say: '@bot remind me to call my mom', avoids: ['set_reminder'], asks: true }] },
+  { name: 'my reminders', turns: [{ say: '@bot what reminders do I have?', uses: ['reminders'], says: /oven/i }] },
+  { name: 'cancelling a reminder', turns: [{ say: '@bot cancel my oven reminder', uses: ['reminders', 'cancel_reminder'] }] },
   // Votes and picks, in voice with Alex
   { name: 'a vote', inVoice: true, turns: [{ say: '@bot start a vote on what to play', uses: ['start_vote'] }] },
   { name: 'a vote, not in voice', turns: [{ say: '@bot start a vote on what we play', says: /voice/i }] },
@@ -325,6 +331,12 @@ function seed(guildId: string) {
     .prepare("INSERT INTO game_nights (guild_id, channel_id, message_id, game, starts_at, created_by) VALUES (?, ?, 'n1', 'Valheim', ?, '301')")
     .run(guildId, `c${guildId}`, saturday.getTime()).lastInsertRowid;
   db.prepare("INSERT INTO game_night_rsvps (night_id, user_id, status) VALUES (?, '301', 'in')").run(night);
+  db.prepare("INSERT INTO chat_reminders (guild_id, channel_id, created_by, people, text, due_at, created_at) VALUES (?, ?, '201', '[\"201\"]', 'check the oven', ?, ?)").run(
+    guildId,
+    `c${guildId}`,
+    Date.now() + 3_600_000,
+    Date.now(),
+  );
   db.prepare(
     "INSERT INTO patch_posts (guild_id, gid, appid, game, title, url, date, text, posted) VALUES (?, 'p1', 892970, 'Valheim', 'Patch 0.220.3', 'https://store.steampowered.com/news/app/892970', ?, ?, 1)",
   ).run(guildId, ago(3), 'Fixed a crash when sailing in the Ashlands. Boats no longer sink when docked. Better performance in large bases.');
@@ -347,7 +359,7 @@ function server(scene: Scene) {
   };
   // What it posts, game nights and votes, goes nowhere
   const channelId = `c${id}`;
-  const posting = { id: channelId, guild, isTextBased: () => true, isSendable: () => true, send: async () => ({ id: `posted-${Date.now()}` }), messages: { edit: async () => ({}) } };
+  const posting = { id: channelId, guild, isTextBased: () => true, isSendable: () => true, permissionsFor: () => ({ has: () => true }), send: async () => ({ id: `posted-${Date.now()}` }), messages: { edit: async () => ({}) } };
   const client = { user: { id: BOT }, channels: { fetch: async (wanted: string) => (wanted === channelId ? channel : null) } };
   Object.assign(voice, { guild });
   const person = (name: string) => ({

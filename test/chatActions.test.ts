@@ -105,10 +105,10 @@ beforeEach(() => {
   events.length = 0;
 });
 
-test('with actions off, it can still list game nights, but not plan, change or answer them, or start votes', (t) => {
+test('with actions off, it can still list game nights, but not plan, change or answer them, start votes or set reminders', (t) => {
   assert.deepEqual(
     actionTools(guild as never).map((tool) => tool.name),
-    ['game_nights', 'plan_game_night', 'change_game_night', 'answer_game_night', 'start_vote'],
+    ['game_nights', 'plan_game_night', 'change_game_night', 'answer_game_night', 'start_vote', 'set_reminder', 'reminders', 'cancel_reminder'],
   );
   setSetting(GUILD, 'chatActions', false);
   t.after(() => setSetting(GUILD, 'chatActions', undefined));

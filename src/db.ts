@@ -672,6 +672,20 @@ db.exec(`
     updated_at INTEGER NOT NULL,
     PRIMARY KEY (guild_id, user_id)
   );
+  -- Reminders set in chat, deleted once they're posted
+  CREATE TABLE IF NOT EXISTS chat_reminders (
+    id INTEGER PRIMARY KEY,
+    guild_id TEXT NOT NULL,
+    channel_id TEXT NOT NULL,
+    created_by TEXT NOT NULL,
+    -- JSON list of the user ids it pings
+    people TEXT NOT NULL,
+    text TEXT NOT NULL,
+    due_at INTEGER NOT NULL,
+    created_at INTEGER NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS chat_reminders_due ON chat_reminders (due_at);
+  CREATE INDEX IF NOT EXISTS chat_reminders_guild ON chat_reminders (guild_id, due_at);
 `);
 
 // Added with web search, after chat_usage came out

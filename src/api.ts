@@ -23,7 +23,7 @@ const AREAS = new Map<string, (ask: Ask) => Promise<unknown>>([
   ...['games', 'pick', 'votes', 'compare', 'achievements', 'recap', 'members', 'game-pings', 'hidden-games', 'steam-links', 'steam-apps', 'steam-refresh', 'stats', 'free-games', 'sales', 'deals', 'game-names', 'lobbies'].map((s) => [s, gameRoutes] as const),
   ...['game-nights', 'game-night-series'].map((s) => [s, nightRoutes] as const),
   ...['music'].map((s) => [s, musicRoutes] as const),
-  ...['settings', 'me', 'activity', 'chat-notes'].map((s) => [s, serverRoutes] as const),
+  ...['settings', 'me', 'activity', 'chat-notes', 'chat-reminders'].map((s) => [s, serverRoutes] as const),
   ...['voice', 'volumes', 'updates'].map((s) => [s, liveRoutes] as const),
   ...['health'].map((s) => [s, healthRoutes] as const),
   ...['voices'].map((s) => [s, voiceRoutes] as const),

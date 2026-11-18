@@ -443,3 +443,29 @@ test('what chat remembers is listed with the settings, and can be forgotten one 
   assert.deepEqual((await ok(`/guilds/${GUILD}/chat-notes`)).notes, []);
   assert.equal((await ok(`/guilds/${GUILD}/activity`)).entries[0].action, 'Had the bot forget what it remembered about Ana');
 });
+
+test('reminders set in chat are listed with the settings, soonest first, and can be cancelled', async () => {
+  const { db } = await import('../src/db.ts');
+  const add = (text: string, inMs: number, people: string[]) =>
+    Number(
+      db
+        .prepare("INSERT INTO chat_reminders (guild_id, channel_id, created_by, people, text, due_at, created_at) VALUES (?, 'nowhere', 'u1', ?, ?, ?, 0)")
+        .run(GUILD, JSON.stringify(people), text, Date.now() + inMs).lastInsertRowid,
+    );
+  const later = add('the raid', 7_200_000, ['u1', 'gone']);
+  const soon = add('check the oven', 600_000, ['u1']);
+  const { chat } = await ok(`/guilds/${GUILD}/settings`);
+  assert.deepEqual(
+    chat.reminders.map((r: { id: number; text: string; by: string; people: string[]; channel: string | null }) => [r.id, r.text, r.by, r.people, r.channel]),
+    [
+      [soon, 'check the oven', 'Ana', ['Ana'], null],
+      [later, 'the raid', 'Ana', ['Ana', 'someone who left'], null],
+    ],
+  );
+  assert.match(chat.reminders[0].when, /^\w+day, \w+ \d+, \d+:\d+ [AP]M /);
+  assert.deepEqual((await ok(`/guilds/${GUILD}/chat-reminders/${soon}`, { method: 'DELETE' })).reminders.map((r: { id: number }) => r.id), [later]);
+  assert.equal((await ok(`/guilds/${GUILD}/activity`)).entries[0].action, 'Cancelled a reminder for Ana');
+  await refused(404, `/guilds/${GUILD}/chat-reminders/${soon}`, { method: 'DELETE' });
+  assert.equal((await ok(`/guilds/${GUILD}/chat-reminders`)).reminders.length, 1);
+  db.exec('DELETE FROM chat_reminders');
+});

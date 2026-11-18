@@ -32,7 +32,7 @@ Everything updates live, whoever changed it and wherever, and a change waits whi
 
 **Activity:** who changed what, from here or Discord: sounds, games, pings, Steam accounts, music, settings and game nights.
 
-**Settings:** everything in `/setup`, plus [chat](chat.md), game ping roles, everyone's join sounds and pings, and what's free and on sale now. Anything that needs fixing is listed first, with **Go to setting**. **Find a setting** searches them, a changed setting offers **Reset**, and **Post Choose games button** posts a `/gamerole menu`.
+**Settings:** everything in `/setup`, plus [chat](chat.md) (what it remembers, and reminders waiting), game ping roles, everyone's join sounds and pings, and what's free and on sale now. Anything that needs fixing is listed first, with **Go to setting**. **Find a setting** searches them, a changed setting offers **Reset**, and **Post Choose games button** posts a `/gamerole menu`.
 
 Only a vote, a panel and the Choose games button post to Discord. Anyone with the password can change anyone's pings and Steam accounts.
 

@@ -74,7 +74,7 @@ const FIELDS = {
   chat: { kind: 'boolean', hint: 'Answers anyone who @mentions the bot or replies to it, in character, and does what they ask: music, sounds and speech, as they could themselves. Their message and the channel’s last 20 messages go to Anthropic to answer it.' },
   chatPersonality: { kind: 'longtext', maxLength: 1000, hint: 'Who the bot is when it answers, in a few sentences. Up to 1000 characters.' },
   chatWebSearch: { kind: 'boolean', hint: 'Searches the web when someone asks for a game’s strategy, builds, guides or news, through Anthropic, and links the sources. A search costs a cent, plus the pages it reads.' },
-  chatActions: { kind: 'boolean', hint: 'Lets it plan, change and answer game nights and start votes on what to play when someone asks, with the same permissions as the commands. Off, it points people to the commands instead.' },
+  chatActions: { kind: 'boolean', hint: 'Lets it plan, change and answer game nights, start votes on what to play and set reminders when someone asks, with the same permissions as the commands. Off, it points people to the game night and vote commands, and doesn’t set reminders.' },
   chatModel: { kind: 'choice', options: [['haiku', 'Claude Haiku 5.5 (cheapest and quickest)'], ['sonnet', 'Claude Sonnet 5.5 (better answers, about 20 times the cost)'], ['opus', 'Claude Opus 5.5 (smartest, about 40 times the cost)']], hint: 'Which model answers.' },
   chatVoice: {
     kind: 'choice',
@@ -633,6 +633,44 @@ export function renderSettings(main) {
     );
   }
 
+  /** Reminders people set in chat, soonest first, each cancelled with a press */
+  function chatRemindersCard(first) {
+    const body = el('div');
+    const paint = (reminders) =>
+      body.replaceChildren(
+        ...(reminders.length
+          ? reminders.map((row) =>
+              el(
+                'div',
+                { className: 'field' },
+                el(
+                  'div',
+                  {},
+                  el('div', { className: 'series-name' }, `${row.when}, for ${row.people.join(', ')}`),
+                  el('p', { className: 'hint' }, `${row.text} (set by ${row.by}${row.channel ? ` in #${row.channel}` : ''})`),
+                ),
+                el(
+                  'div',
+                  { className: 'control' },
+                  confirmButton({ ariaLabel: `Cancel the reminder for ${row.people.join(', ')} on ${row.when}` }, 'Cancel', 'Cancel it?', async () => {
+                    paint((await request(api(`/chat-reminders/${row.id}`), { method: 'DELETE' })).reminders);
+                    toast('Reminder cancelled.');
+                  }),
+                ),
+              ),
+            )
+          : [notice('empty', 'None waiting. People can ask it to remind them, or others, of something later.', { compact: true })]),
+      );
+    paint(first);
+    return el(
+      'section',
+      { className: 'card', id: 'settings-chat-reminders' },
+      el('h2', {}, 'Reminders'),
+      el('p', { className: 'card-note' }, 'Set in chat, and posted in the channel they were asked in, pinging the people they’re for.'),
+      body,
+    );
+  }
+
   function joinSoundCard(first) {
     const body = el('div');
     const who = el('select', { required: true, ariaLabel: 'Person' }, el('option', { value: '' }, 'Pick a person'), first.members.map((m) => el('option', { value: m.id, selected: m.id === state.me?.userId }, m.name)));
@@ -705,8 +743,18 @@ export function renderSettings(main) {
           card = el('details', { className: 'card fold', id: slug(title) }, el('summary', {}, el('h2', {}, title), value), ...parts);
         } else card = el('section', { className: 'card', id: slug(title) }, el('h2', {}, title), ...parts);
         // Built only for its own group: the previews share one body each
-        const extra = { 'Hop-on pings': () => gamePingCard(gamePings), 'Sale alerts': salesCard, 'Free games': freeGamesCard, 'Text to speech': () => data.speech && voicesCard(main, refreshFields), Chat: () => data.chat?.ok && data.chat.notes && chatNotesCard(data.chat.notes) }[title]?.();
-        return extra ? [card, extra] : [card];
+        const extras = {
+          'Hop-on pings': () => [gamePingCard(gamePings)],
+          'Sale alerts': () => [salesCard()],
+          'Free games': () => [freeGamesCard()],
+          'Text to speech': () => (data.speech ? [voicesCard(main, refreshFields)] : []),
+          // Reminders waiting are still posted with chat off, so they can still be cancelled
+          Chat: () => [
+            ...(data.chat?.ok && data.chat.notes ? [chatNotesCard(data.chat.notes)] : []),
+            ...(data.chat?.ok || data.chat?.reminders?.length ? [chatRemindersCard(data.chat.reminders ?? [])] : []),
+          ],
+        }[title]?.();
+        return [card, ...(extras ?? []).filter(Boolean)];
       });
       const joinCard = joinSoundCard(joinSounds);
       joinCard.id = 'settings-join-sounds';

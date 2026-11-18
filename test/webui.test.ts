@@ -55,7 +55,12 @@ const PAGES: [string, string, Record<string, string>?, string?, string?][] = [
   ['stats/recap', 'Stats: Monthly recap'],
   ['stats/health', 'Stats: Health'],
   ['activity', 'Activity'],
-  ['settings', 'Settings'],
+  [
+    'settings',
+    'Settings',
+    {},
+    `document.querySelector('#settings-chat-notes')?.textContent.includes('Captain') && /for .+, .+check the oven \\(set by .+\\)Cancel/.test(document.querySelector('#settings-chat-reminders')?.textContent ?? '')`,
+  ],
   // Added voices: one ready with speakers, one downloading and one that failed, and the ready one's settings
   [
     'settings',
@@ -189,6 +194,10 @@ function seed() {
     "INSERT INTO sale_prices (country, appid, discount, was, price, final, store, store_off, store_url, store_name, keyshop, keyshop_url, currency, lowest) VALUES ('us', 489830, 75, '$39.99', '$9.99', 999, 799, 80, 'https://example.com/store', 'Green Man Gaming', 650, 'https://example.com/keys', 'USD', 649)",
   ).run();
   config.itadKey = 'browser-test';
+  // Chat on, with what it remembers about someone and a reminder waiting, for their cards in Settings
+  config.anthropicKey = 'browser-test';
+  db.prepare("INSERT INTO chat_notes (guild_id, user_id, note, updated_at) VALUES (?, 'u1', 'Wants to be called Captain.', ?)").run(GUILD, now);
+  db.prepare("INSERT INTO chat_reminders (guild_id, channel_id, created_by, people, text, due_at, created_at) VALUES (?, '702', 'u1', '[\"u1\",\"u2\"]', 'check the oven', ?, ?)").run(GUILD, now + 2 * HOUR, now);
   const bundle = {
     id: 1,
     title: 'Humble Choice: An Unusually Long Bundle Name For A Phone',

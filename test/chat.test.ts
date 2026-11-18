@@ -217,7 +217,7 @@ test('“play the wall” finds the album and queues it, answering in character'
   assert.match(first.system[0].text, /robot butler/);
   assert.deepEqual(
     first.tools?.map((t) => t.name),
-    ['find_music', 'artist_albums', 'queue_music', 'undo_queue', 'show_queue', 'control_music', 'find_sound', 'play_sound', 'remember', 'games_for', 'pick_game', 'game_info', 'play_stats', 'deals', 'music_history', 'patch_notes', 'game_nights', 'plan_game_night', 'change_game_night', 'answer_game_night', 'start_vote', 'web_search'],
+    ['find_music', 'artist_albums', 'queue_music', 'undo_queue', 'show_queue', 'control_music', 'find_sound', 'play_sound', 'remember', 'games_for', 'pick_game', 'game_info', 'play_stats', 'deals', 'music_history', 'patch_notes', 'game_nights', 'plan_game_night', 'change_game_night', 'answer_game_night', 'start_vote', 'set_reminder', 'reminders', 'cancel_reminder', 'web_search'],
   );
   // The channel's last messages, with mentions as names, the music, and where the person is
   const asked = first.messages[0].content as string;
@@ -628,8 +628,9 @@ test('with everything set up, it offers no more strict tools than the API takes'
   assert.ok(offered.some((tool) => tool.name === 'say_aloud') && offered.some((tool) => tool.name === 'achievements'));
   const strict = offered.filter((tool) => tool.strict).map((tool) => tool.name);
   assert.ok(strict.length <= MOST_STRICT_TOOLS, `${strict.length} strict tools: ${strict.join(', ')}`);
-  // Those with more than one plain text to give keep it
+  // Those with more than one plain text to give keep it, the last ones too, so none lose it to the limit
   assert.ok(strict.includes('queue_music') && strict.includes('plan_game_night') && !strict.includes('show_queue') && !strict.includes('play_sound'));
+  assert.ok(strict.includes('set_reminder') && strict.includes('cancel_reminder'), `${strict.length} strict tools: ${strict.join(', ')}`);
 });
 
 test('past the API’s limit of strict tools, the last ones aren’t strict, and those with no input or one plain text never are', () => {

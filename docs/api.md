@@ -99,6 +99,8 @@ It applies the same rules as `/sound` and `/setup`, and every request needs an `
 | `DELETE /guilds/:id/join-sounds/:user` | Removes someone's join sound |
 | `GET /guilds/:id/chat-notes` | What [chat](chat.md) remembers about people: `{ notes: [{ userId, name, note, at }] }` |
 | `DELETE /guilds/:id/chat-notes/:user` | Has it forget what it remembers about someone |
+| `GET /guilds/:id/chat-reminders` | Reminders set in chat, soonest first: `{ reminders: [{ id, at, when, text, by, people, channel }] }` |
+| `DELETE /guilds/:id/chat-reminders/:id` | Cancels one |
 | `GET /guilds/:id/game-pings` | Lists games with ping roles, plus the games and roles that can be added |
 | `POST /guilds/:id/game-pings` | Adds pings for a game: `{ "game": "Valheim", "roleId": "..." }`. Leave out `roleId` to make a new role |
 | `DELETE /guilds/:id/game-pings/:role` | Stops pings for a game, and deletes the role if the bot made it |

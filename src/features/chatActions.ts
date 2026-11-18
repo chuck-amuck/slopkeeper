@@ -8,9 +8,10 @@ import { listNames } from '../util.ts';
 import { nameOf, object, unquoted } from './chatLookups.ts';
 import { answerFor, cancelNight, describe, editNight, gameNames, type NightEdit, planNight, readWhen, stopSeries, upcomingNight, upcomingNights } from './gamenight.ts';
 import { gamesInVote, postVote } from './gamevote.ts';
+import { remind, reminderTools } from './chatReminders.ts';
 
-// What chat can do with the bot's other features for the person asking: plan, change and answer game nights, and start
-// a vote on what to play. Each runs what the slash command, button or web UI runs, with the permission it checks, and
+// What chat can do with the bot's other features for the person asking: plan, change and answer game nights, start a
+// vote on what to play, and set reminders (chatReminders.ts). Each runs what the slash command, button or web UI runs, with the permission it checks, and
 // is in Activity under their name. The server's "Take actions" setting turns them off, leaving the list of game nights
 
 /** Game nights listed at once */
@@ -20,7 +21,7 @@ const REPEATS = { no: null, weekly: 7, every_2_weeks: 14 } as const;
 const NIGHT_ID = { type: 'integer', description: 'The night’s id from game_nights' };
 
 /** The tools that change something, for chat to log and remember */
-export const ACTIONS = new Set(['plan_game_night', 'change_game_night', 'answer_game_night', 'start_vote']);
+export const ACTIONS = new Set(['plan_game_night', 'change_game_night', 'answer_game_night', 'start_vote', 'set_reminder', 'cancel_reminder']);
 
 export function actionTools(guild: Guild): Anthropic.Tool[] {
   const list: Anthropic.Tool[] = [
@@ -75,6 +76,7 @@ export function actionTools(guild: Guild): Anthropic.Tool[] {
         games: { type: 'array', items: { type: 'string' }, description: 'Only these games, if they named some; empty for all of them' },
       }),
     },
+    ...reminderTools(),
   );
   return list;
 }
@@ -99,7 +101,8 @@ export async function act(member: GuildMember, name: string, input: Record<strin
     case 'start_vote':
       return vote(member, Number(input.minutes), Array.isArray(input.games) ? input.games.map((g) => unquoted(String(g))).filter(Boolean) : [], where);
     default:
-      return null;
+      // Offered only with the rest, in case the model asks anyway
+      return setting(member.guild.id, 'chatActions') ? remind(member, name, input, where, text) : null;
   }
 }
 
