@@ -614,11 +614,10 @@ test('what Piper reads oddly is fixed first', () => {
   assert.equal(readable('World War III and Rocky VIII, AAA batteries, xxx'), 'World War III and Rocky VIII, AAA batteries, xxx');
   assert.equal(readable('Schifffahrt und Brennnessel'), 'Schifffahrt und Brennnessel');
   assert.equal(readable('good cool'), 'good cool');
-  // Short stage directions go, longer asides stay
-  assert.equal(readable('(whispers) come here (sighs heavily). fine'), 'come here. Fine');
-  assert.equal(readable('it was (and I mean this) great'), 'it was (and I mean this) great');
-  assert.equal(readable('take 2 (or 3)'), 'take 2 (or 3)');
-  assert.equal(readable('I am (not) coming, the (blue) one, (yes) (laughing)'), 'I am (not) coming, the (blue) one, (yes)');
+  // Brackets are read as typed: Piper can't act out a stage direction, so nothing is taken for one
+  assert.equal(readable('(whispers) come here (sighs heavily). fine'), '(whispers) come here (sighs heavily). Fine');
+  assert.equal(readable('I am (not) coming'), 'I am (not) coming');
+  assert.equal(readable('he said "go." then (it ended.) after'), 'he said "go." Then (it ended.) After');
   // A space before a stop stays where nothing was taken out
   assert.equal(readable('it took .5 seconds to edit the .env file'), 'it took .5 seconds to edit the .env file');
 });

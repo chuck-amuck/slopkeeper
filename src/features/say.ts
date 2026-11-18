@@ -468,15 +468,6 @@ function money(sign: string, whole: string, part: string | undefined, scale: str
   return `${whole} ${units === 1 ? one : many}${small ? ` ${small}` : ''}`;
 }
 
-/** Words that end in s or ing but don't start a stage direction, so "(yes)" or "(this one)" is still read */
-const NOT_ACTIONS = new Set(['yes', 'this', 'thus', 'plus', 'less', 'unless', 'was', 'has', 'does', 'is', 'his', 'hers', 'its', 'ours', 'yours', 'theirs', 'us', 'thing', 'things', 'nothing', 'something', 'anything', 'everything']);
-
-/** A short aside in brackets that starts with an action, like "(whispers)", "(sighs heavily)" or "(laughing)" */
-const stageDirection = (words: string) => {
-  const first = words.trim().split(/\s+/)[0].toLowerCase();
-  return first.length >= 4 && /(?:s|ing)$/.test(first) && !NOT_ACTIONS.has(first);
-};
-
 /**
  * "nooo" and "yesss" as the word: a stretch at a word's end goes to one letter (m's to two, as "hm" is spelled). In the
  * middle, four or more go to two, as in "goooood". Three there can be real German ("Schifffahrt"), so they stay
@@ -498,16 +489,11 @@ const NOT_AN_END = new Set(['etc', 'vs', 'approx']);
  * - Dr., Mr., Mrs. and St. end a sentence, though it reads them right (Saint or Street by what's around it) without the stop
  * - "nooo" came out "noo-oh", and "noo" as "new": one letter reads as the word, except "hm", which it spells, so m's keep two.
  *   Roman numerals and "AAA" stay as they are
- * - short stage directions in brackets, like "(whispers)", were read out
  * - "$5" was "dollar five"
  */
 export function readable(text: string) {
   return (
     text
-      // Just before a stop or comma, the space before it goes too
-      .replace(/\s*\((\s*[\p{L}'’-]+(?:\s+[\p{L}'’-]+){0,2}\s*)\)\s*/gu, (aside: string, words: string, at: number, all: string) =>
-        stageDirection(words) ? (/^[.,!?;:]/.test(all.slice(at + aside.length)) ? '' : ' ') : aside,
-      )
       .replace(/([$£€])(\d{1,3}(?:,\d{3})+|\d+)(?:\.(\d{1,2}))?(k|m|bn|b)?(?![\d\p{L}]|[.,]\d)/giu, (_, sign: string, whole: string, part?: string, scale?: string) =>
         money(sign, whole, part?.padEnd(scale ? 1 : 2, '0'), scale),
       )
@@ -520,7 +506,7 @@ export function readable(text: string) {
       // What "..." at the start left
       .replace(/^\s*\.\s+/, '')
       .replace(/\p{L}+/gu, unstretched)
-      .replace(/(?<=(?:^|[^\p{L}\p{N}'’])([\p{L}\p{N}'’]+)\.["'’”)\]]*\s+)\p{Ll}/gu, (letter: string, word: string) =>
+      .replace(/(?<=(?:^|[^\p{L}\p{N}'’])([\p{L}\p{N}'’]+)["'’”)\]]*\.["'’”)\]]*\s+)\p{Ll}/gu, (letter: string, word: string) =>
         word.length < 2 || NOT_AN_END.has(word.toLowerCase()) ? letter : letter.toUpperCase(),
       )
       .trim()
