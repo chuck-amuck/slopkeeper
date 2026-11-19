@@ -368,7 +368,7 @@ function steamGames(person: GuildMember) {
 
 // A roast goes after something other than the last few it went after for the same person
 const ROAST_ANGLES_KEPT = 5;
-const lastAngles = new Map<string, string[]>();
+const lastAngles = new Map<string, { key: string; series: string }[]>();
 // Played for less than this on Steam, they barely touched it
 const BARELY_MINUTES = 120;
 // What they've played here lately
@@ -379,39 +379,55 @@ const BIG_BACKLOG = 10;
 /** Which of the things a roast could go after it takes, at random. The chat eval fixes it, to know what to expect */
 export const roastChoice = { pick: (count: number) => Math.floor(Math.random() * count) };
 
+/** The series a game is in, as far as its name says: “Total War: WARHAMMER III” and “Total War: Rome II” are one */
+export const seriesOf = (name: string) =>
+  name
+    .toLowerCase()
+    .replace(/[™®©]/g, '')
+    .split(/\s*[:–—]\s*|\s+-\s+/)[0]!
+    .replace(/\s+([ivx]+|\d+)$/, '')
+    .trim();
+
 /**
  * What to go after in a roast this time: one of the games they've put the most hours into, here or on Steam, what
  * they've played lately, one they barely touched or never played, their backlog or their time in voice. Picked at
  * random, as the model would take the most played game every time, and not one of the last few it went after for them
  */
 function roastAngle(guildId: string, person: GuildMember, games: { key: string; ms: number }[], voiceSecs: number, steam: ReturnType<typeof steamGames>): string {
-  const angles: { key: string; line: string }[] = [];
-  const add = (key: string, line: string) => angles.some((a) => a.key === key) || angles.push({ key, line });
+  const who = `${guildId}:${person.id}`;
+  const recent = lastAngles.get(who) ?? [];
+  const last = recent.at(-1);
+  const angles: { key: string; series: string; line: string }[] = [];
+  const add = (key: string, series: string, line: string) => angles.some((a) => a.key === key) || angles.push({ key, series, line });
   const one = <T>(list: T[]) => list[roastChoice.pick(list.length)]!;
-  const game = (name: string) => `game:${gameKey(name)}`;
-  if (typeof steam !== 'string') for (const g of steam.top.slice(0, TOP_GAMES)) add(game(g.name), `${g.name}, with ${formatDuration(g.minutes * 60_000)} on Steam`);
-  for (const g of games.slice(0, TOP_GAMES)) add(game(g.key), `${g.key}, played for ${formatDuration(g.ms)} in voice here`);
+  // Of a list of games, one from another series than the last roast's, if there is one
+  const oneGame = <T extends { name: string }>(list: T[]) => one(list.filter((g) => seriesOf(g.name) !== last?.series).length ? list.filter((g) => seriesOf(g.name) !== last?.series) : list);
+  const game = (name: string, line: string) => add(`game:${gameKey(name)}`, seriesOf(name), `${name}, ${line}`);
+  if (typeof steam !== 'string') for (const g of steam.top.slice(0, TOP_GAMES)) game(g.name, `with ${formatDuration(g.minutes * 60_000)} on Steam`);
+  for (const g of games.slice(0, TOP_GAMES)) game(g.key, `played for ${formatDuration(g.ms)} in voice here`);
   const lately = stats(guildId, Date.now() - LATELY_MS, 'user', 'game', person.id)[0];
-  if (lately) add(game(lately.key), `${lately.key}, what they’ve played most here in the last two weeks`);
+  if (lately) game(lately.key, 'what they’ve played most here in the last two weeks');
   if (typeof steam !== 'string') {
     const barely = steam.top.filter((g) => g.minutes < BARELY_MINUTES);
     if (barely.length) {
-      const g = one(barely);
-      add('barely', `${g.name}, which they’ve played for only ${formatDuration(g.minutes * 60_000)}`);
+      const g = oneGame(barely);
+      add('barely', seriesOf(g.name), `${g.name}, which they’ve played for only ${formatDuration(g.minutes * 60_000)}`);
     }
-    if (steam.neverNamed.length) add('never', `${one(steam.neverNamed).name}, which they own and have never played`);
-    if (steam.never >= BIG_BACKLOG) add('backlog', `their backlog: ${plural(steam.owned.length, 'game')} on Steam, ${steam.never} never played`);
+    if (steam.neverNamed.length) {
+      const g = oneGame(steam.neverNamed);
+      add('never', seriesOf(g.name), `${g.name}, which they own and have never played`);
+    }
+    if (steam.never >= BIG_BACKLOG) add('backlog', 'backlog', `their backlog: ${plural(steam.owned.length, 'game')} on Steam, ${steam.never} never played`);
   }
-  if (voiceSecs) add('voice', `their ${formatDuration(voiceSecs * 1000)} in voice here`);
+  if (voiceSecs) add('voice', 'voice', `their ${formatDuration(voiceSecs * 1000)} in voice here`);
   if (!angles.length) return '';
-  const who = `${guildId}:${person.id}`;
-  const recent = lastAngles.get(who) ?? [];
-  // With all of them gone after lately, anything but the last
-  const fresh = angles.filter((a) => !recent.includes(a.key));
-  const other = angles.filter((a) => a.key !== recent.at(-1));
-  const angle = one(fresh.length ? fresh : other.length ? other : angles);
+  // Something not gone after lately, from another series than the last; failing that, not gone after lately; failing
+  // that, anything but the last
+  const keys = new Set(recent.map((r) => r.key));
+  const choices = [angles.filter((a) => !keys.has(a.key) && a.series !== last?.series), angles.filter((a) => !keys.has(a.key)), angles.filter((a) => a.key !== last?.key), angles];
+  const angle = one(choices.find((c) => c.length)!);
   lastAngles.delete(who);
-  lastAngles.set(who, [...recent, angle.key].slice(-ROAST_ANGLES_KEPT));
+  lastAngles.set(who, [...recent, { key: angle.key, series: angle.series }].slice(-ROAST_ANGLES_KEPT));
   if (lastAngles.size > MOST_PICKS_KEPT) lastAngles.delete(lastAngles.keys().next().value!);
   return `For this roast, go after ${angle.line}.`;
 }
