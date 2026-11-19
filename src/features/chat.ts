@@ -202,6 +202,7 @@ export async function postLine(guild: Guild, kind: string, message: MessageCreat
           `You are ${guild.members.me?.displayName ?? 'the bot'}, a bot in the Discord server “${guild.name}”.`,
           `Your personality: ${setting(guild.id, 'chatPersonality')}`,
           `Write one line, in character and under 20 words, to go above one of your automatic posts (a ${kind.toLowerCase()}). React to it as a friend in the server would, with a quip or an aside: the post is right below, so don’t repeat its numbers, prices or dates, and don’t open with a greeting or by addressing people.`,
+          'Speak as yourself, with I, me and my: you are the one your personality describes, not someone who has one.',
           'Only the line: no quotes, @mentions or links, nothing made up about the people, and call them by name or “they”, never he or she.',
         ].join('\n'),
         messages: [{ role: 'user', content: `The ${kind.toLowerCase()}:\n${about}` }],
@@ -697,6 +698,8 @@ function system(guild: Guild, botName: string) {
           ...commands,
         ]
       : []),
+    '',
+    `The bot’s web UI${config.webAddress ? `, at ${config.webAddress},` : ''} has a tab for each part of it: Soundboard (play, search and add sounds, and a box to say a line in any voice), Music (search, the queue and the volume), Game nights, Games (who owns and wants each game, and Steam accounts), Pick a game (what everyone in voice, or those ticked, can play, then a pick or a vote), Deals (sales on games here), Stats (game and voice time, the top games and people, recaps), Activity (who changed what) and Settings (everything in /setup, what you remember and reminders). On a phone the tabs are along the bottom. When someone asks how to use it, say what they’d go there for, in a few words each, ${config.webAddress ? 'with the link' : 'and that whoever runs the bot has its address'}.`,
   ].join('\n');
 }
 

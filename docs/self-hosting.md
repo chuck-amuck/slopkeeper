@@ -56,6 +56,7 @@ Set in `.env` (see `.env.example`).
 | `SPOTIFY_REFRESH_TOKEN` | none | From the Spotify account signing in once, so the bot can read its own playlists. See [the music container](#the-music-container) |
 | `SPOTIFY_MARKET` | `US` | The country whose Spotify catalogue search uses |
 | `ANTHROPIC_API_KEY` | none | An [Anthropic](https://console.anthropic.com) API key, for [answering in chat](chat.md). Unset, the bot doesn't answer |
+| `WEB_ADDRESS` | none | The [web UI](web-ui.md)'s address as people open it, like `https://bot.example.com`, for chat to link to when someone asks how to use it |
 
 Everything else is a per-server setting. Servers set their own with `/setup`; the variables in [Settings and defaults](server-setup.md#settings-and-defaults) change the default for servers that haven't. For example, `HOPON_MIN_PEOPLE=3` makes every server wait for 3 people unless it ran `/setup hopon`.
 

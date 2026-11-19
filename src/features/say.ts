@@ -593,6 +593,9 @@ export function speechFor(guild: Guild, typed: string) {
     })
     .replace(/<a?:(\w+):\d+>/g, ' $1 ')
     .replace(LINK, 'link')
+    // An @name or #channel as typed, or in a chat answer, is read as the name: the voices say “at” and “hash”. Not
+    // inside a word, so an email address is left alone, and not before a number, which can be “number one”
+    .replace(/(?<![\p{L}\p{N}_.])[@#](?=\p{L})/gu, '')
     .replace(/[\p{Extended_Pictographic}\p{Emoji_Modifier}‍️]/gu, ' ')
     .replace(/[*~`|]/g, '')
     .replace(/_/g, ' ')

@@ -31,6 +31,8 @@ export const config = {
   voiceUrl: process.env.VOICE_URL || null,
   // An Anthropic API key, for answering people who @mention the bot (see features/chat.ts). Unset leaves it quiet
   anthropicKey: process.env.ANTHROPIC_API_KEY || null,
+  // The web UI's address as people open it, for chat to link to when someone asks about it. Unset, it doesn't give one
+  webAddress: process.env.WEB_ADDRESS?.trim().replace(/\/+$/, '') || null,
   // The music container, which finds songs and downloads them with yt-dlp, and the password it shares with the bot. Unset turns music off
   musicUrl: process.env.MUSIC_URL || null,
   musicToken: process.env.MUSIC_TOKEN || null,

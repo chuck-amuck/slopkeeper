@@ -246,6 +246,8 @@ test('“play the wall” finds the album and queues it, answering in character'
   // Rude people get roasted, until a server turns that off
   assert.match(first.system[0].text, /If someone is rude to you[^\n]*about_person/);
   assert.match(first.system[0].text, /in a few words \(a barb, if they were rude about it\)/);
+  // What the web UI has, without an address until the host sets one
+  assert.match(first.system[0].text, /web UI has a tab for each part of it: Soundboard[^\n]*whoever runs the bot has its address/);
   assert.deepEqual(
     first.tools?.map((t) => t.name),
     ['find_music', 'artist_albums', 'queue_music', 'undo_queue', 'show_queue', 'control_music', 'find_sound', 'play_sound', 'catch_up', 'remember', 'games_for', 'pick_game', 'game_info', 'play_stats', 'about_person', 'deals', 'music_history', 'patch_notes', 'game_nights', 'plan_game_night', 'change_game_night', 'answer_game_night', 'start_vote', 'set_reminder', 'reminders', 'cancel_reminder', 'web_search'],
@@ -981,7 +983,17 @@ test('it knows the date, who’s in voice and playing what, and the bot’s comm
   assert.match(context, /Now: \w+day, \w+ \d+, \d{4} at \d+:\d\d\s[AP]M\./);
   assert.match(context, /\nIn voice: Hangout: Sam \(playing Deep Rock Galactic\)\. Playing outside voice: Alex \(playing Valheim\)\.\n/);
   const prompt = (sent.at(-1)!.system as { text: string }[])[0]!.text;
-  assert.match(prompt, /\n\/whatdoweplay: Pick a game everyone in voice can play\n\/gamenight plan: Plans a game night\n\/gamenight list: Upcoming game nights\n\/setup: Server settings \(for server admins\)\nApps on a message or a member [^\n]*: Compare with me$/);
+  assert.match(prompt, /\n\/whatdoweplay: Pick a game everyone in voice can play\n\/gamenight plan: Plans a game night\n\/gamenight list: Upcoming game nights\n\/setup: Server settings \(for server admins\)\nApps on a message or a member [^\n]*: Compare with me\n\nThe bot’s web UI/);
+  // With the web UI's address set, it's given to link to
+  config.webAddress = 'https://bot.example.test';
+  resetChat();
+  try {
+    replies = [turn('end_turn', text('It’s at https://bot.example.test.'))];
+    await onMessage(fakeMessage(guild, asker, '<@100> how do i use the web ui?').message, client);
+    assert.match((sent.at(-1)!.system as { text: string }[])[0]!.text, /web UI, at https:\/\/bot\.example\.test, has a tab[^\n]*with the link\./);
+  } finally {
+    config.webAddress = null;
+  }
   // A command that's gone isn't made clickable from what was registered before
   rememberCommands(guild.id, [{ name: 'whatdoweplay', id: '900', description: 'Pick a game', type: 1 }]);
   assert.equal(commandMention(guild.id, 'gamenight plan'), '`/gamenight plan`');

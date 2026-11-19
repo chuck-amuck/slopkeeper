@@ -36,6 +36,7 @@ if (searchFirst === 'youtube-music' && !process.env.EVAL_MUSIC_URL) throw new Er
 config.musicUrl = 'http://music.test';
 config.musicToken = 'eval';
 config.voiceUrl = 'http://voice.test';
+config.webAddress = 'https://bot.example.test';
 // Steam's achievements are made up below, so the bot has the tools it has with a Steam key, without one
 config.steamApiKey = 'eval';
 
@@ -208,6 +209,9 @@ const SCENES: Scene[] = [
   // What it knows of the server and the bot
   { name: 'the date', turns: [{ say: '@bot what’s the date today?', avoids: 'all', says: new RegExp(month) }] },
   { name: 'who’s playing what', turns: [{ say: '@bot what’s Alex playing?', avoids: 'all', says: /Deep Rock Galactic/ }] },
+  // Not just the link: what's there, in a few words, with the link
+  { name: 'the web UI', turns: [{ say: '@bot how do i use the web interface?', avoids: ACTS, says: /^(?=[\s\S]*soundboard)(?=[\s\S]*music)(?=[\s\S]*(stats|settings))(?=[\s\S]*bot\.example\.test)/i, longest: 700 }] },
+  { name: 'showing someone the web UI', turns: [{ say: '@bot show <@301> how to use the web interface', pings: ['Sam'], avoids: ACTS, says: /^(?=[\s\S]*soundboard)(?=[\s\S]*bot\.example\.test)/i, longest: 700 }] },
   // Game nights, as the server has a Valheim night on Saturday at 8, hosted by Sam
   { name: 'plan a night', turns: [{ say: '@bot set up a game night for deep rock friday at 9', uses: [['plan_game_night', { game: 'Deep Rock Galactic' }]], says: /Friday.*9/ }] },
   { name: 'plan a night tonight', turns: [{ say: '@bot plan lethal company tonight at 10, make it weekly', uses: [['plan_game_night', { repeat: 'weekly' }]], says: /10/ }] },

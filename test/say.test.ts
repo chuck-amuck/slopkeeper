@@ -604,6 +604,9 @@ test('reads mentions, emoji and links as words', () => {
   } as never;
   assert.equal(speechFor(guild, 'hey <@1> and <@!1>, <@&2> in <#3>'), 'hey Ana and Ana, Gamers in general');
   assert.equal(speechFor(guild, '<@9> <@&9> <#9>'), 'someone a role a channel');
+  // As a chat answer has them once they're made readable, or as someone typed them
+  assert.equal(speechFor(guild, 'Esteemed @Ana, (@Bo) see #general.'), 'Esteemed Ana, (Bo) see general.');
+  assert.equal(speechFor(guild, 'mail ana@example.test, we’re #1 and @ 5'), 'mail ana@example.test, we’re #1 and @ 5');
   assert.equal(speechFor(guild, 'nice <:big_brain:1234> <a:party:5678> 🎉 👍🏽'), 'nice big brain party');
   assert.equal(speechFor(guild, 'see https://example.test/a?b=1 now'), 'see link now');
   assert.equal(speechFor(guild, '**bold** ~~gone~~ `code` ||secret|| _lean_'), 'bold gone code secret lean');
