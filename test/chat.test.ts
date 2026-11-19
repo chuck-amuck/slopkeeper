@@ -639,13 +639,25 @@ test('a closing offer is left off, but not a real question, nor an answer that�
     ['You both own Deep Rock Galactic. Shall I... no, I shan’t offer anything further; do pick one!', 'You both own Deep Rock Galactic.'],
     ['Done. Mr. Brightside is queued. If you’d like, I can add more of theirs.', 'Done. Mr. Brightside is queued.'],
     ['The fixes:\n- Boats float\n- Storms stay out\n\n*Let me know if you want the rest.*', 'The fixes:\n- Boats float\n- Storms stay out'],
+    // Tacked onto the last sentence, or asked and taken back
+    ['Your gratitude is most gratefully received, esteemed Robin! Do enjoy The Wall, and do let me know if there’s anything else my humble circuits can fetch.', 'Your gratitude is most gratefully received, esteemed Robin! Do enjoy The Wall.'],
+    ['I queued Mr. Brightside, shall I add more?', 'I queued Mr. Brightside.'],
+    ['Queued and playing; say the word for more!', 'Queued and playing!'],
+    ['Splendid, the reminder is set — should you need anything else, I am here.', 'Splendid, the reminder is set.'],
+    ['Oh, esteemed guest, yes! "Reality Awaits" is the 2026 album by The Strokes. Shall I play it? No, I shall not ask; I shall simply wait for your command with bated circuits.', 'Oh, esteemed guest, yes! "Reality Awaits" is the 2026 album by The Strokes.'],
+    ['Indeed, my liege! *Reality Awaits* is a 2026 album by The Strokes, and I am delighted to have it in my records. Shall I... no, no offers. Carry on, esteemed guest.', 'Indeed, my liege! *Reality Awaits* is a 2026 album by The Strokes, and I am delighted to have it in my records. Carry on, esteemed guest.'],
   ];
   for (const [said, posted] of cases) assert.equal(withoutOffer(said), posted, said);
   for (const kept of [
     'Shall I queue it?',
     'Two people match: Sam and Sasha. Which of them do you mean?',
     'I found two. Would you like the EP or the album?',
-    'I queued Mr. Brightside, shall I add more?',
+    'Shall I play it? No, I shall not ask.',
+    'I found it. Shall I queue it? There’s no other version, so ask if you want a live one.',
+    'Found it. Shall I queue it? No worries, just ask. It’s #3 in the queue already.',
+    'Robin asks if I am useless. No, I merely wonder why anyone would ask that while losing 300 hours to Valheim’s trolls.',
+    'Pick one, and let me know which: the EP or the album.',
+    'Your reminder is set; let me know.',
     'I couldn’t find that song, but there’s a live version by them. Shall I queue it?',
     'It’s Wednesday. Splendid, is it not?',
   ])

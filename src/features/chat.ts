@@ -308,22 +308,43 @@ export function withPings(text: string, people: Map<string, string>): { text: st
 const OFFER = /^(?:(?:and|so|now|oh|alas|perhaps),?\s+)?(?:if you(?:’|')?d (?:like|prefer)|just say the word|say the word|might i suggest|may i suggest|do let me know|let me know if|how (?:may|can) i (?:serve|help|assist)|is there anything else)\b/i;
 /** “Shall I queue it?” can be a question it needs answered; “Shall I add more?” is an offer */
 const OFFER_MORE = /^(?:(?:and|so|now|oh|alas|perhaps),?\s+)?(?:shall i|should i|would you like|want me to|can i)\b.*\b(?:also|else|more|another|anything|further|too)\b/i;
-
 /**
- * The answer without a closing offer of more. Only a last sentence that starts like one goes, never the only one, and
- * not one asking which of two things they meant (“Would you like the EP or the album?”) or whether to go ahead
+ * Told not to offer, in character it sometimes asks and takes it back: “Shall I play it? No, I shall not ask; I shall
+ * simply wait…”, “Shall I... no, no offers. Carry on.” From the question to the end of the sentence taking it back
  */
-export function withoutOffer(text: string): string {
+const TAKEN_BACK = /(?<=^|[.!?…]["”’)*_~]*\s+|\n)(?:(?:and|so|now|oh|alas|perhaps),?\s+)?(?:shall i|should i|would you like|want me to|can i|may i|might i)\b[^\n]*?(?:\?|\.{2,}|…|—|–|-)\s*(?:but\s+)?(?:no|nay)\b[\s,!.…—–]*(?:no (?:more )?(?:offers?|asking|suggestions?)\b|i (?:shall not|shan[’']t|will not|won[’']t|must not|mustn[’']t|do not|don[’']t|need not|needn[’']t|should not|shouldn[’']t) (?:ask|offer|suggest))[^\n]*?[.!?…]["”’)*_~]*(?=\s+[A-Z“"*_(]|\s*$)/i;
+/** An offer tacked onto the last sentence (“Do enjoy it, and do let me know if there’s anything else.”), to its end */
+const OFFER_CLAUSE = /\s*(?:[,;]|\s[—–])\s*(?:(?:and|but|so)\s+)?(?:(?:do|just|please|simply)\s+)?(?:let me know if|if you(?:’|')?d (?:like|prefer)|say the word|should you (?:need|want|wish|desire)|if (?:there(?:’|')?s|you need) anything|(?:shall i|should i|would you like|want me to|can i)\b[^.!?\n]*\b(?:also|else|more|another|anything|further|too)\b)[^.!?\n]*([.!?…])\s*$/i;
+
+/** The last sentence and what's before it, or null for an answer of one */
+function lastSentence(text: string): { kept: string; sentence: string; bare: string } | null {
   const found = /^([\s\S]*?(?:[.!?…]["”’)*_~]*\s+|\n+))([^\n]+?)\s*$/.exec(text.trimEnd());
-  if (!found) return text;
+  if (!found) return null;
   const [, before, last] = found;
   // The last sentence starts after the last stop that's followed by a capital, not after “Mr.” mid-sentence
   const start = [...last.matchAll(/[.!?…]["”’)*_~]*\s+(?=[A-Z“"*_(])/g)].at(-1);
   const sentence = start ? last.slice(start.index + start[0].length) : last;
   const kept = start ? before + last.slice(0, start.index + start[0].length) : before;
-  const bare = sentence.replace(/^[*_~]+/, '');
-  if (!(OFFER.test(bare) || OFFER_MORE.test(bare)) || /\b(?:which|or)\b/i.test(sentence) || !kept.trim()) return text;
-  return kept.trimEnd();
+  return { kept, sentence, bare: sentence.replace(/^[*_~]+/, '') };
+}
+
+/**
+ * The answer without a closing offer of more: a last sentence that starts like one, one tacked onto the last sentence,
+ * or one asked and taken back. Never all of it, and not a question asking which of two things they meant (“Would you
+ * like the EP or the album?”) or whether to go ahead (“Shall I queue it?”)
+ */
+export function withoutOffer(text: string): string {
+  let out = text;
+  const taken = TAKEN_BACK.exec(out);
+  if (taken && /\p{L}/u.test(out.slice(0, taken.index))) {
+    const after = out.slice(taken.index + taken[0].length).trimStart();
+    out = after ? out.slice(0, taken.index) + after : out.slice(0, taken.index).trimEnd();
+  }
+  const end = lastSentence(out);
+  if (end && (OFFER.test(end.bare) || OFFER_MORE.test(end.bare)) && !/\b(?:which|or)\b/i.test(end.sentence) && end.kept.trim()) return end.kept.trimEnd();
+  const tacked = OFFER_CLAUSE.exec(out);
+  if (tacked && !/\b(?:which|or)\b/i.test(tacked[0]) && /\p{L}/u.test(out.slice(0, tacked.index))) return out.slice(0, tacked.index) + (tacked[1] === '!' ? '!' : '.');
+  return out;
 }
 
 /**
