@@ -1,4 +1,5 @@
 import { renderActivity } from './activity.js';
+import { renderChat } from './chat.js';
 import { renderDeals } from './deals.js';
 import { renderGames } from './games.js';
 import { api, askEarly, attempt, el, formProblem, icon, newPage, notice, openDialog, player, recall, remember, request, RequestError, session, SESSION_KEY, sessionLasts, state, toast } from './lib.js';
@@ -28,6 +29,7 @@ const TABS = [
   ['pick', 'Pick a game', renderPick, 'dice', 'Pick'],
   ['deals', 'Deals', renderDeals, 'tag'],
   ['stats', 'Stats', renderStats, 'chart'],
+  ['chat', 'Chat', renderChat, 'bubble'],
   ['activity', 'Activity', renderActivity, 'clock'],
   ['settings', 'Settings', renderSettings, 'sliders'],
 ];

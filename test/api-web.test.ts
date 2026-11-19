@@ -483,3 +483,38 @@ test('reminders set in chat are listed with the settings, soonest first, and can
   assert.equal((await ok(`/guilds/${GUILD}/chat-reminders`)).reminders.length, 1);
   db.exec('DELETE FROM chat_reminders');
 });
+
+test('chat tried in the web UI says what it needs, who can ask and where, and checks what it’s sent', async () => {
+  const start = await ok(`/guilds/${GUILD}/chat-try`);
+  assert.equal(start.ready, false);
+  assert.match(start.note, /ANTHROPIC_API_KEY/);
+  assert.deepEqual(start.members.map((m: any) => m.name), ['Ana', 'Ben', 'Cy']);
+  assert.deepEqual(start.channels.map((c: any) => c.name), ['first', 'second']);
+  assert.deepEqual([start.me, start.speech], [null, false]);
+  const asking = { text: 'roast @Ben', as: 'u1', channelId: 'c2', history: [{ from: 'you', text: 'hi', at: 1 }] };
+  const post = (json: unknown) => ({ method: 'POST', headers: { 'x-slopkeeper': '1' }, json });
+  assert.match(await refused(400, `/guilds/${GUILD}/chat-try`, post({ ...asking, text: '  ' })), /Type something/);
+  assert.match(await refused(400, `/guilds/${GUILD}/chat-try`, post({ ...asking, text: 'x'.repeat(2001) })), /2000 characters/);
+  assert.match(await refused(404, `/guilds/${GUILD}/chat-try`, post({ ...asking, as: 'nobody' })), /aren’t in this server/);
+  // Not a voice channel, nor one the page doesn't offer
+  for (const channelId of ['v1', 'nowhere']) assert.match(await refused(404, `/guilds/${GUILD}/chat-try`, post({ ...asking, channelId })), /text channel/);
+  assert.match(await refused(400, `/guilds/${GUILD}/chat-try`, post({ ...asking, history: [{ from: 'them', text: 'hi', at: 1 }] })), /isn’t in a form/);
+  assert.match(await refused(409, `/guilds/${GUILD}/chat-try`, post(asking)), /ANTHROPIC_API_KEY/);
+  assert.match(await refused(409, `/guilds/${GUILD}/chat-try/speech`, post({ text: 'hello' })), /Text to speech is off/);
+  await refused(405, `/guilds/${GUILD}/chat-try`, { method: 'PUT', headers: { 'x-slopkeeper': '1' }, json: asking });
+});
+
+test('chat tried in the web UI is only offered in channels everyone can see, so asking as someone else shows nothing private', async (t) => {
+  const everyone = guild.roles.cache.get(GUILD)!;
+  const secret = { ...(guild.channels.cache.get('c2') as object), id: 'p1', name: 'secret', permissionsFor: (who: { id: string }) => ({ has: () => who.id !== GUILD }) };
+  guild.channels.cache.set('p1', secret as never);
+  Object.assign(guild.roles, { everyone });
+  t.after(() => {
+    guild.channels.cache.delete('p1');
+    delete (guild.roles as { everyone?: unknown }).everyone;
+  });
+  const start = await ok(`/guilds/${GUILD}/chat-try`);
+  assert.deepEqual(start.channels.map((c: any) => c.name), ['first', 'second']);
+  const asking = { method: 'POST', headers: { 'x-slopkeeper': '1' }, json: { text: 'what did I miss?', as: 'u1', channelId: 'p1' } };
+  assert.match(await refused(404, `/guilds/${GUILD}/chat-try`, asking), /everyone here can see/);
+});

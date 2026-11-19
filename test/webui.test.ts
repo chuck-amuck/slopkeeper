@@ -54,6 +54,14 @@ const PAGES: [string, string, Record<string, string>?, string?, string?][] = [
   ['stats/sounds', 'Stats: Sounds & music'],
   ['stats/recap', 'Stats: Monthly recap'],
   ['stats/health', 'Stats: Health'],
+  // Chat tried here: asked something, answered with who it would ping, and nothing said aloud, as that's turned off
+  [
+    'chat',
+    'Chat',
+    { 'try-chat:speak': 'off' },
+    `(() => { const bot = [...document.querySelectorAll('.try-line.bot')].at(-1); return !!bot && /Right away, @Ben!/.test(bot.textContent) && /Claude Haiku/.test(bot.textContent) && !document.querySelector('.try-ask textarea').value; })()`,
+    `(() => { document.querySelector('.try-ask textarea').value = 'say hi to @Ben'; document.querySelector('.try-ask').requestSubmit(); })()`,
+  ],
   ['activity', 'Activity'],
   [
     'settings',
@@ -246,6 +254,10 @@ mock.method(globalThis, 'fetch', async (input: string | URL | Request, init?: Re
     return Response.json(containerReport());
   }
   if (url.hostname.endsWith('gamerpower.com')) return new Response('[]');
+  // Chat's model, for the Chat tab, answering at once
+  if (url.hostname === 'api.anthropic.com') {
+    return Response.json({ id: 'msg_1', type: 'message', role: 'assistant', model: 'claude-haiku-5-5', stop_reason: 'end_turn', stop_sequence: null, usage: { input_tokens: 10, output_tokens: 5, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 }, content: [{ type: 'text', text: 'Right away, @Ben!' }] });
+  }
   if (url.pathname === '/api/storesearch/') return new Response('{"items":[]}');
   return new Response('{}');
 });

@@ -183,15 +183,22 @@ function voiceNamed(member: GuildMember, said: string): VoiceBasedChannel | stri
   return close.length ? `More than one voice channel matches “${said}”: ${listNames(close.map((c) => c.name))}. Ask which.` : `There’s no voice channel called “${said}”. They are: ${listNames(voices.map((c) => c.name)) || 'none'}.`;
 }
 
+/** When a night is, from what was said, or what's wrong with it */
+export function nightTime(guildId: string, when: string): { at: number; label: string } | string {
+  if (!when) return 'They didn’t say when: ask them.';
+  const time = readWhen(guildId, when.slice(0, 100));
+  if (!time) return `“${when}” isn’t a time it can read. Give it like “fri 9pm”, “tomorrow 20:30” or “nov 3 7pm”, or ask them when.`;
+  if (time.passed) return `${time.label} has already passed.`;
+  return time;
+}
+
 async function plan(member: GuildMember, said: string, when: string, details: string, voiceName: string, everyDays: number | null, where: GuildTextBasedChannel | null): Promise<string> {
   const { guild } = member;
   if (!where) return 'There’s nowhere here to post it.';
   if (!said || said.length > 90) return 'Ask what they’re playing: a game’s name, in 90 characters or fewer.';
   const game = libraryName(guild, said);
-  if (!when) return 'They didn’t say when: ask them.';
-  const time = readWhen(guild.id, when.slice(0, 100));
-  if (!time) return `“${when}” isn’t a time it can read. Give it like “fri 9pm”, “tomorrow 20:30” or “nov 3 7pm”, or ask them when.`;
-  if (time.passed) return `${time.label} has already passed.`;
+  const time = nightTime(guild.id, when);
+  if (typeof time === 'string') return time;
   if (details.length > 1000) return 'The details have to fit in 1000 characters.';
   const voice = voiceName ? voiceNamed(member, voiceName) : null;
   if (typeof voice === 'string') return voice;

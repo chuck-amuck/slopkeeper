@@ -11,13 +11,13 @@ import { SpotifyError, type Found } from '../spotify.ts';
 import type { Feature } from '../types.ts';
 import { asksBot, canSee, isAnswer, listNames, playingGames, servedGuilds } from '../util.ts';
 import { canControl, time, musicPlaying, musicState, OUTSIDE_DJ, pauseMusic, queueArtist, queueFrom, queueOf, removeTracks, setAutoplay, shuffleQueue, skipMusic, startMusic, stopMusic } from './music.ts';
-import { busyElsewhere, effects, maySpeak, NO_EFFECT, say, sayOut, voices } from './say.ts';
-import { act, ACTIONS, actionTools } from './chatActions.ts';
-import { CHECK_EVERY, sendDue } from './chatReminders.ts';
+import { busyElsewhere, effects, maySpeak, NO_EFFECT, say, sayOut, voices, wouldSay } from './say.ts';
+import { act, ACTIONS, actionTools, nightTime } from './chatActions.ts';
+import { CHECK_EVERY, readReminderTime, sendDue } from './chatReminders.ts';
 import { every } from '../schedule.ts';
 import { lookUp, lookupTools, nameOf, object } from './chatLookups.ts';
 import { CHAT_MODELS } from './setup.ts';
-import { findSound, listSounds, recordPlay, soundGain } from './soundLibrary.ts';
+import { findSound, listSounds, recordPlay, soundGain, soundVolumes } from './soundLibrary.ts';
 import { play } from './voiceAudio.ts';
 
 // People @mention the bot, or reply to it, and it answers in character, doing what they ask with the bot's own
@@ -231,11 +231,38 @@ export function chatUsage(guildId: string, at = Date.now()) {
     .all(guildId, `${today(guildId, at).slice(0, 7)}-%`) as { model: string; replies: number; input: number; write: number; read: number; output: number; searches: number }[];
   let cost = 0;
   for (const r of rows) {
-    const price = MODELS[r.model as keyof typeof MODELS];
-    if (price) cost += ((r.input + r.write * 1.25) * price.input + r.read * price.cacheRead + r.output * price.output) / 1e6 + r.searches * SEARCH_COST;
+    cost += costOf(r.model, { input_tokens: r.input, cache_creation_input_tokens: r.write, cache_read_input_tokens: r.read, output_tokens: r.output, server_tool_use: { web_search_requests: r.searches } as Anthropic.ServerToolUsage });
   }
   return { replies: rows.reduce((n, r) => n + r.replies, 0), cost };
 }
+
+/** What one request of an answer cost, roughly, in dollars */
+export function costOf(model: string, usage: Used): number {
+  const price = MODELS[model as keyof typeof MODELS];
+  if (!price) return 0;
+  const tokens = (usage.input_tokens + (usage.cache_creation_input_tokens ?? 0) * 1.25) * price.input + (usage.cache_read_input_tokens ?? 0) * price.cacheRead + usage.output_tokens * price.output;
+  return tokens / 1e6 + (usage.server_tool_use?.web_search_requests ?? 0) * SEARCH_COST;
+}
+
+const NO_USAGE = { input_tokens: 0, output_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 };
+
+/**
+ * Whether `who` can be answered now: not within their cooldown, nor past the server's answers for the day. When they
+ * can, starts their cooldown and counts the answer before it's made, so answers under way count toward the day's limit,
+ * and gives the model to answer with and to hand back to giveBack if it fails
+ */
+export function claimAnswer(guildId: string, who: string): { model: keyof typeof MODELS } | { refused: 'wait' | 'out' } {
+  if (Date.now() - (lastAsked.get(who) ?? -Infinity) < COOLDOWN_MS) return { refused: 'wait' };
+  if (answeredToday(guildId) >= setting(guildId, 'chatDailyLimit')) return { refused: 'out' };
+  lastAsked.set(who, Date.now());
+  if (lastAsked.size > MOST_REMEMBERED) for (const [key, at] of lastAsked) if (Date.now() - at >= COOLDOWN_MS) lastAsked.delete(key);
+  const model = modelKey(guildId);
+  record(guildId, model, NO_USAGE, 1);
+  return { model };
+}
+
+/** Takes an answer that failed off the day's count again */
+export const giveBack = (guildId: string, model: keyof typeof MODELS) => record(guildId, model, NO_USAGE, -1);
 
 /** What Settings says above the chat settings */
 export function chatNote(guildId: string) {
@@ -389,7 +416,7 @@ export function sourcesLine(urls: string[]): string {
 }
 
 /** Mentions, channels and custom emoji as names, so a message reads as people see it */
-function readable(guild: Guild, text: string) {
+export function readable(guild: Guild, text: string) {
   return text
     .replace(/<@!?(\d+)>/g, (_, id: string) => `@${guild.members.cache.get(id)?.displayName ?? 'someone'}`)
     .replace(/<@&(\d+)>/g, (_, id: string) => `@${guild.roles.cache.get(id)?.name ?? 'a role'}`)
@@ -984,7 +1011,132 @@ export interface Turn {
   channel?: GuildTextBasedChannel;
   /** The message asking, for catch_up to read from */
   asking?: string;
+  /** Tried in the web UI: what changes something isn't done, only noted here */
+  trying?: Tried;
 }
+
+/** Something an answer tried in the web UI plays there instead of in voice: a line said in a voice, or a sound */
+export type Heard = { kind: 'speech'; text: string; voice: string; effect: string } | { kind: 'sound'; name: string; loudness: number };
+
+/** What an answer tried in the web UI looked up, and would have done in Discord, with what it cost */
+export interface Tried {
+  /** Each as a person would put it, like “Queue “The Wall” by Pink Floyd, shuffled” */
+  would: string[];
+  heard: Heard[];
+  /** The tools that only look things up, with what they were asked */
+  looked: string[];
+  cost: number;
+  /** What find_music and artist_albums found, by ref, so what it would queue can be named */
+  names: Map<string, string>;
+}
+
+/** What say_aloud tells the model when the line was said */
+const SAID = 'Said it.';
+
+/** The tools that change something, as Activity would put what they'd do, for those it can only describe */
+const WOULD: Record<string, string> = {
+  plan_game_night: 'Plan a game night',
+  change_game_night: 'Change a game night',
+  answer_game_night: 'Answer a game night',
+  start_vote: 'Start a vote',
+  set_reminder: 'Set a reminder',
+  cancel_reminder: 'Cancel a reminder',
+  make_sound: 'Make a sound from a link',
+};
+
+/**
+ * A tool that changes something, not done, for an answer tried in the web UI. What it would have done is noted in
+ * `tried`, and the model is told it was done, as near as can be to what the tool itself says, so it answers as it would
+ * have. What can be checked without changing anything, like whether a sound is there, is
+ */
+async function pretend(member: GuildMember, name: string, input: Record<string, unknown>, tried: Tried): Promise<string> {
+  const { guild } = member;
+  const text = (key: string) => String(input[key] ?? '').trim();
+  const would = (what: string, told: string) => {
+    tried.would.push(what);
+    return told;
+  };
+  switch (name) {
+    case 'queue_music': {
+      if (!canControl(member)) return unpinged(guild, OUTSIDE_DJ(guild.id));
+      const ref = text('ref');
+      if (!ref) return 'Give a ref from find_music, or a link.';
+      const what = tried.names.get(ref) ?? (/^https?:/.test(ref) ? 'what that link has' : 'that');
+      const how = [input.next === true ? 'next' : '', input.shuffle === true ? 'shuffled' : '', input.replaces_last === true ? 'in place of what it queued last' : ''].filter(Boolean).join(', ');
+      return would(`Queue ${what}${how ? `, ${how}` : ''}`, `Added ${what} to the queue${input.next === true ? ', to play next' : ''}${input.shuffle === true ? ', shuffled' : ''}.`);
+    }
+    case 'undo_queue':
+      if (!canControl(member)) return unpinged(guild, OUTSIDE_DJ(guild.id));
+      return would('Take out the songs it queued last', 'Took out the songs you queued for them last.');
+    case 'control_music': {
+      if (!canControl(member)) return unpinged(guild, OUTSIDE_DJ(guild.id));
+      // Turned down as the real ones would be, when that's down to what's playing
+      const phase = musicState(guild.id).phase;
+      const waiting = queueOf(guild.id).length - 1;
+      if (input.action === 'skip' && phase === 'stopped') return 'Nothing is playing.';
+      if (input.action === 'pause' && phase !== 'playing') return 'Nothing is playing.';
+      if (input.action === 'resume' && musicPlaying(guild.id)) return 'The music is already playing.';
+      if (input.action === 'resume' && waiting < 0) return 'The queue is empty, so there’s nothing to play.';
+      if (input.action === 'shuffle' && waiting < 2) return 'There’s nothing to shuffle. It takes two songs waiting.';
+      const done: Record<string, [string, string]> = {
+        skip: ['Skip the song', `Skipped “${queueOf(guild.id)[0]?.title}”.`],
+        pause: ['Pause the music', 'Paused the music.'],
+        resume: ['Play the music again', `Playing “${queueOf(guild.id)[0]?.title}”.`],
+        stop: ['Stop the music and clear the queue', 'Stopped the music and cleared the queue.'],
+        shuffle: ['Shuffle the queue', `Shuffled the ${waiting} songs waiting.`],
+        autoplay_on: ['Turn Autoplay on', 'Autoplay is on: similar songs keep playing when the queue runs out.'],
+        autoplay_off: ['Turn Autoplay off', 'Autoplay is off: the music stops when the queue runs out.'],
+      };
+      const [what, told] = done[String(input.action)] ?? [];
+      return what ? would(what, told!) : 'That isn’t something the music can do.';
+    }
+    case 'play_sound': {
+      const sound = findSound(guild.id, text('name'));
+      if (!sound) return 'No sound has that name. Use find_sound for the exact name.';
+      tried.heard.push({ kind: 'sound', name: sound.name, loudness: soundVolumes(guild.id)(sound.name).loudness });
+      return would(`Play “${sound.name}”`, `Played “${sound.name}”.`);
+    }
+    case 'say_aloud': {
+      if (!maySpeak(member)) return 'They don’t have the role that text to speech takes here.';
+      const effect = text('effect');
+      const line = wouldSay(guild, text('text'), text('voice') || undefined, member.id, /^(no effect|none)$/i.test(effect) ? NO_EFFECT : effect || undefined);
+      if (typeof line === 'string') return line;
+      tried.heard.push({ kind: 'speech', text: line.text, voice: line.voice.id, effect: line.effect?.id ?? NO_EFFECT });
+      return would(`Say “${line.text}” as ${line.voice.name}${line.effect ? `, ${line.effect.name}` : ''}`, SAID);
+    }
+    case 'remember': {
+      const note = text('note').replace(/\s+/g, ' ').slice(0, LONGEST_NOTE);
+      return note ? would(`Remember about ${member.displayName}: ${note}`, `Remembered about them: ${note}`) : would(`Forget what it remembers about ${member.displayName}`, 'Forgot what you remembered about them.');
+    }
+    // Their time read as the real ones read it, so one they'd turn down is turned down here too, and the one read shown
+    case 'set_reminder':
+    case 'plan_game_night': {
+      const time = name === 'set_reminder' ? (text('when') ? readReminderTime(guild.id, text('when')) : 'They didn’t say when: ask them.') : nightTime(guild.id, text('when'));
+      if (typeof time === 'string') return time;
+      return described({ ...input, when: time.label }, `Done, for ${time.label}.`);
+    }
+    default:
+      return described(input, 'Done.');
+  }
+
+  function described(said: Record<string, unknown>, told: string) {
+    const details = inWords(said);
+    return would(`${WOULD[name] ?? name.replace(/_/g, ' ')}${details ? `: ${details}` : ''}`, told);
+  }
+}
+
+/** What a tool was asked, as “key value” pairs, leaving out what's empty or off */
+const inWords = (input: unknown) =>
+  Object.entries(input && typeof input === 'object' ? input : {})
+    .filter(([, v]) => v !== '' && v !== null && v !== undefined && v !== false)
+    .map(([k, v]) => `${k.replace(/_/g, ' ')} ${typeof v === 'string' ? v : JSON.stringify(v)}`)
+    .join(', ');
+
+/** A tool that looks something up, and what it was asked, for the web UI to show */
+const lookedUp = (name: string, input: unknown) => {
+  const details = inWords(input);
+  return `${name.replace(/_/g, ' ')}${details ? `: ${details}` : ''}`;
+};
 
 /** Does what a tool asks, as the person asking. Returns what happened, for the model to answer from */
 export async function useTool(member: GuildMember, name: string, input: Record<string, unknown>, turn: Turn = { queued: [] }): Promise<string> {
@@ -992,6 +1144,7 @@ export async function useTool(member: GuildMember, name: string, input: Record<s
   const key = `${guild.id}:${member.id}`;
   const text = (key: string) => String(input[key] ?? '').trim();
   try {
+    if (turn.trying && acting(name)) return await pretend(member, name, input, turn.trying);
     const found = (await lookUp(member, name, input)) ?? (await act(member, name, input, turn.channel ?? null));
     if (found !== null) return found;
     switch (name) {
@@ -999,12 +1152,14 @@ export async function useTool(member: GuildMember, name: string, input: Record<s
         if (!searchReady()) return 'Searching for music isn’t set up on this bot, so only links work.';
         const kind = (['song', 'album', 'artist', 'any'] as const).find((k) => k === input.kind) ?? 'song';
         const { found, answered, failed } = await findMusic(guild.id, text('query'), kind);
+        for (const f of turn.trying ? found : []) turn.trying!.names.set(f.ref, named(f));
         return found.length ? found.map(described).join('\n') : `${kind === 'any' ? 'Nothing' : `No ${kind}`} matches that on ${sourceNames(answered)}.${failed ? ` ${failed}` : ''}`;
       }
       case 'artist_albums': {
         if (!searchReady()) return 'Searching for music isn’t set up on this bot, so only links work.';
         if (!artistRef(text('ref'))) return 'Give an artist’s ref from find_music.';
         const { found, answered, failed } = await artistAlbumsFor(guild.id, text('ref'));
+        for (const f of turn.trying ? found : []) turn.trying!.names.set(f.ref, named(f));
         return found.length ? `Newest first:\n${found.map(described).join('\n')}` : `${sourceNames(answered)} lists no albums of theirs.${failed ? ` ${failed}` : ''}`;
       }
       case 'queue_music': {
@@ -1097,7 +1252,7 @@ export async function useTool(member: GuildMember, name: string, input: Record<s
         if (!channel) return 'They aren’t in a voice channel, so there’s nowhere to say it.';
         const effect = text('effect');
         const none = /^(no effect|none)$/i.test(effect);
-        return (await say(channel, text('text'), text('voice') || undefined, member.id, none ? NO_EFFECT : effect || undefined)) ?? 'Said it.';
+        return (await say(channel, text('text'), text('voice') || undefined, member.id, none ? NO_EFFECT : effect || undefined)) ?? SAID;
       }
       default:
         return 'There’s no tool by that name.';
@@ -1108,6 +1263,9 @@ export async function useTool(member: GuildMember, name: string, input: Record<s
     return 'That didn’t work, because of a fault in the bot.';
   }
 }
+
+/** What was found, as a person would name it */
+const named = (f: Found) => `${f.kind === 'artist' ? 'songs by ' : ''}“${f.name}”${f.artist ? ` by ${f.artist}` : ''}`;
 
 /** A find_music or artist_albums result, as the model is told it */
 const described = (f: Found) =>
@@ -1120,13 +1278,15 @@ const acting = (name: string) => ACTING.has(name) || ACTIONS.has(name);
 
 /**
  * The answer to someone's message, having done what they asked. Null when there's nothing to say. Throws the API's
- * errors, for the caller to say it couldn't answer
+ * errors, for the caller to say it couldn't answer. `trying` is an answer tried in the web UI: nothing is changed, only
+ * noted in it, and `channel` is the real one its message stands in for, for catch_up
  */
 export async function answer(
   message: Message<true>,
   member: GuildMember,
   botId: string,
   repliedTo: Message | null = null,
+  trying?: { tried: Tried; channel: GuildTextBasedChannel },
 ): Promise<{ text: string | null; spoke: boolean; people: Map<string, string>; sources: string[] }> {
   const client = claude();
   if (!client) return { text: null, spoke: false, people: new Map(), sources: [] };
@@ -1144,11 +1304,12 @@ export async function answer(
   let acted = false;
   let spoke = false;
   const sources: string[] = [];
-  const turn: Turn = { queued: [], channel: message.channel, asking: message.id };
+  const turn: Turn = { queued: [], channel: trying?.channel ?? message.channel, asking: message.id, trying: trying?.tried };
+  const where = trying ? `Chat tried in the web UI in server ${guild.id}` : `Chat in server ${guild.id}`;
   const cut = (s: string) => (s.length > LOGGED_TOOL_CHARS ? `${s.slice(0, LOGGED_TOOL_CHARS)}…` : s).replace(/\n/g, ' | ');
   const done = (text: string | null) => {
     const typed = readable(guild, message.content).trim();
-    if (acted) logActivity(guild.id, member.id, `Asked in chat: “${typed.length > LOGGED_CHARS ? `${typed.slice(0, LOGGED_CHARS)}…` : typed}”`);
+    if (acted && !trying) logActivity(guild.id, member.id, `Asked in chat: “${typed.length > LOGGED_CHARS ? `${typed.slice(0, LOGGED_CHARS)}…` : typed}”`);
     const queued = turn.queued.flat();
     if (queued.length) {
       lastQueued.delete(`${guild.id}:${member.id}`);
@@ -1185,18 +1346,23 @@ export async function answer(
         instructions = system(guild, botName);
         return send();
       }
-      // Once something's been done, it's said so, so they don't ask again and have it done twice
-      if (!acted) throw err;
+      // Once something's been done, it's said so, so they don't ask again and have it done twice. Tried, nothing was
+      if (!acted || trying) throw err;
       console.error('Couldn’t finish a chat answer:', err instanceof Anthropic.APIError ? `${err.status} ${err.message}` : err);
       return null;
     });
     if (!res) return done('Done as you asked, though my words have deserted me. Do check what I did before asking again.');
     record(guild.id, key, res.usage);
+    if (trying) trying.tried.cost += costOf(key, res.usage);
     // Which also keeps the tools ready, as a warm-up would
     toolsSent.set(toolsKey(key, offered), Date.now());
     searches += res.usage.server_tool_use?.web_search_requests ?? 0;
     if (res.stop_reason === 'refusal') return done('I’m afraid that’s one request I must decline.');
-    for (const b of res.content) if (b.type === 'server_tool_use') console.log(`Chat in server ${guild.id}: ${b.name} ${cut(JSON.stringify(b.input ?? {}))}`);
+    for (const b of res.content) {
+      if (b.type !== 'server_tool_use') continue;
+      console.log(`${where}: ${b.name} ${cut(JSON.stringify(b.input ?? {}))}`);
+      trying?.tried.looked.push(lookedUp(b.name, b.input));
+    }
     // After a search, the answer comes in pieces, a piece for each source it cites, and what came before it was only “let me look”
     const searched = res.content.findLastIndex((b) => b.type === 'server_tool_use' || b.type === 'web_search_tool_result');
     const pieces = res.content.slice(searched + 1).filter((b): b is Anthropic.TextBlock => b.type === 'text');
@@ -1220,13 +1386,15 @@ export async function answer(
     const results: Anthropic.ToolResultBlockParam[] = [];
     for (const ask of asks) {
       acted ||= acting(ask.name);
-      spoke ||= ask.name === 'say_aloud';
       const result = await useTool(member, ask.name, (ask.input ?? {}) as Record<string, unknown>, turn);
+      // Only a line it said: one it couldn't leaves the answer to be said instead
+      spoke ||= ask.name === 'say_aloud' && result === SAID;
       // In the bot's log, so what it did and why can be followed when an answer goes wrong
-      console.log(`Chat in server ${guild.id}: ${ask.name} ${cut(JSON.stringify(ask.input ?? {}))} → ${cut(result)}`);
+      console.log(`${where}: ${ask.name} ${cut(JSON.stringify(ask.input ?? {}))} → ${cut(result)}`);
       results.push({ type: 'tool_result', tool_use_id: ask.id, content: result });
+      if (trying && !acting(ask.name)) trying.tried.looked.push(lookedUp(ask.name, ask.input));
       // What it remembers about someone stays with their own questions
-      if (acting(ask.name) && ask.name !== 'remember') {
+      if (acting(ask.name) && ask.name !== 'remember' && !trying) {
         const first = `for ${member.displayName}: ${result.split('\n')[0]!}`;
         const did = [...(doneIn.get(message.channelId) ?? []), { at: Date.now(), text: first.length > LONGEST_DONE ? `${first.slice(0, LONGEST_DONE)}…` : first }];
         doneIn.set(message.channelId, did.slice(-DONE_REMEMBERED));
@@ -1256,23 +1424,18 @@ export async function onMessage(message: Message, client: Client<true>) {
   const member = message.member ?? (await guild.members.fetch(message.author.id).catch(() => null));
   if (!member) return;
 
-  const who = `${guild.id}:${member.id}`;
-  if (Date.now() - (lastAsked.get(who) ?? -Infinity) < COOLDOWN_MS) {
+  const claim = claimAnswer(guild.id, `${guild.id}:${member.id}`);
+  if ('refused' in claim && claim.refused === 'wait') {
     await message.react('⏳').catch(() => undefined);
     return;
   }
-  if (answeredToday(guild.id) >= setting(guild.id, 'chatDailyLimit')) {
+  if ('refused' in claim) {
     if (toldOut.get(guild.id) === today(guild.id)) return;
     toldOut.set(guild.id, today(guild.id));
     await message.reply({ content: 'That’s all the answers I have in me today. Ask me again tomorrow.', allowedMentions: { parse: [], repliedUser: false } }).catch(console.error);
     return;
   }
-  lastAsked.set(who, Date.now());
-  if (lastAsked.size > MOST_REMEMBERED) for (const [key, at] of lastAsked) if (Date.now() - at >= COOLDOWN_MS) lastAsked.delete(key);
-  // Counted before it's answered, so answers already under way count toward the day's limit. A failed one is taken off again
-  const model = modelKey(guild.id);
-  const none = { input_tokens: 0, output_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 };
-  record(guild.id, model, none, 1);
+  const { model } = claim;
 
   const typing = () => void message.channel.sendTyping().catch(() => undefined);
   typing();
@@ -1285,7 +1448,7 @@ export async function onMessage(message: Message, client: Client<true>) {
     ({ text, spoke, people, sources } = await answer(message, member, client.user.id, repliedTo));
   } catch (err) {
     console.error('Couldn’t answer in chat:', err instanceof Anthropic.APIError ? `${err.status} ${err.message}` : err);
-    record(guild.id, model, none, -1);
+    giveBack(guild.id, model);
     text = 'I can’t answer right now. Try again in a moment.';
   } finally {
     clearInterval(typingTimer);

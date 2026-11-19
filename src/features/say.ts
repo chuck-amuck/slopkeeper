@@ -811,7 +811,7 @@ const previewsAt = new Map<string, number[]>();
  * whole call does. A blank line gets the voice saying its name. `effectId` is as for serverEffect. Throws a TooSoon when
  * a server asks too often
  */
-export async function previewSpeech(guild: Guild, typed: string, chosen: string | Voice, effectId?: string): Promise<Buffer> {
+export async function previewSpeech(guild: Guild, typed: string, chosen: string | Voice, effectId?: string, whole = false): Promise<Buffer> {
   if (!config.voiceUrl) throw new Error('Text to speech isn’t set up on this bot.');
   const voice = typeof chosen === 'string' ? serverVoice(guild.id, chosen) : chosen;
   const effect = serverEffect(guild.id, effectId, typeof chosen === 'string' ? chosen : undefined);
@@ -819,7 +819,9 @@ export async function previewSpeech(guild: Guild, typed: string, chosen: string 
   const recent = (previewsAt.get(guild.id) ?? []).filter((at) => now - at < 60_000);
   if (recent.length >= PREVIEWS_PER_MINUTE || now - (recent.at(-1) ?? 0) < PREVIEW_EVERY_MS) throw new TooSoon();
   previewsAt.set(guild.id, [...recent, now]);
-  const text = typed.trim() ? previewPart(speechFor(guild, typed).slice(0, setting(guild.id, 'ttsMaxChars'))) : `Hi, this is ${voice.name}.`;
+  // A whole line is an answer tried in the web UI, heard as it would be in voice
+  const longest = speechFor(guild, typed).slice(0, setting(guild.id, 'ttsMaxChars'));
+  const text = typed.trim() ? (whole ? longest : previewPart(longest)) : `Hi, this is ${voice.name}.`;
   if (!hasWords(text)) throw new Error('There’s nothing in that to say.');
   return lineAudio(text, voice, effect, pacing(guild.id), new AbortController().signal);
 }
@@ -919,19 +921,27 @@ function sayProblem(guild: Guild, text: string, who: string): string | null {
  */
 export async function say(channel: VoiceBasedChannel, typed: string, voiceId: string | undefined, who: string, effectId?: string): Promise<string | null> {
   const { guild } = channel;
-  const voice = voiceId === undefined ? serverVoice(guild.id) : voiceCalled(voiceId);
-  if (!voice) return 'Pick a voice from the list.';
-  const named = effectId === undefined || effectId === NO_EFFECT ? effectId : effectCalled(effectId)?.id;
-  if (effectId !== undefined && !named) return 'Pick an effect from the list.';
-  const effect = serverEffect(guild.id, named, voiceId);
-  const text = speechFor(guild, typed);
-  const problem = sayProblem(guild, text, who);
-  if (problem) return problem;
+  const line = wouldSay(guild, typed, voiceId, who, effectId);
+  if (typeof line === 'string') return line;
+  const { text, voice, effect } = line;
   lastLine.set(`${guild.id}:${who}`, Date.now());
 
   const failed = await queueLine(channel, text, voice, effect, who, 'say');
   if (!failed) logActivity(guild.id, who, `Said “${text.length > LOGGED_CHARS ? `${text.slice(0, LOGGED_CHARS).trimEnd()}…` : text}” in <#${channel.id}>`);
   return failed;
+}
+
+/**
+ * What say would say, in which voice and effect, without saying it, for an answer tried in the web UI. Why it couldn't,
+ * as say would put it, otherwise
+ */
+export function wouldSay(guild: Guild, typed: string, voiceId: string | undefined, who: string, effectId?: string): { text: string; voice: Voice; effect: Effect | null } | string {
+  const voice = voiceId === undefined ? serverVoice(guild.id) : voiceCalled(voiceId);
+  if (!voice) return 'Pick a voice from the list.';
+  const named = effectId === undefined || effectId === NO_EFFECT ? effectId : effectCalled(effectId)?.id;
+  if (effectId !== undefined && !named) return 'Pick an effect from the list.';
+  const text = speechFor(guild, typed);
+  return sayProblem(guild, text, who) ?? { text, voice, effect: serverEffect(guild.id, named, voiceId) };
 }
 
 /** Says a line nobody typed, in the server's voice and effect. Returns null once it's started, or why it couldn't */

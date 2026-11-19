@@ -33,6 +33,14 @@ It does these as you: only what you could do yourself. With a DJ role set, peopl
 
 Anything else, it just answers, briefly, and it can't edit or delete messages or change settings. It sees the channel's last 20 messages, images attached to the message asking it or the one it replies to (up to 3, each under 5 MB), so "rate my loadout" or "what does this say?" work, the date and time, what's playing, whether you're in voice, who's in the server's voice channels and what games people are playing, so it can follow along. Voice channels only some people can see aren't mentioned. Past that it remembers only the notes above, and it doesn't read messages that don't @mention it or reply to one of its answers. Replies to its other posts, like hop-on pings and recaps, are left to people.
 
+## Trying it in the web UI
+
+The web UI's **Chat** tab asks the bot as you would in Discord and shows the answer there, so a personality, a roast or a request can be tried without anyone seeing it. Pick who to ask as (you, once the page knows who you are) and the channel it's asked in, for "what did I miss": one everyone in the server can see, so asking as someone else shows nothing private. Type as in Discord: `@Sam` mentions Sam. The conversation stays in the browser tab until **Clear**, and the bot reads it as the channel's last messages.
+
+- **It's the real answer:** the same instructions, personality, model and lookups as in Discord. It costs the same, counts toward the day's answers and has the same 10-second wait.
+- **Nothing it does happens:** under each answer is what it would have done, like queueing music, planning a game night or remembering something, and who it would have pinged. The model is told each was done, so it answers as it would have. Nothing is posted, logged in Activity or remembered.
+- **What it would say aloud plays in your browser:** the answer, in the server's default voice and effect, with **Say answers aloud** on, plus any line it would say in another voice and any sound it would play. **Hear it** plays them again. Above the conversation it says how the answer goes out in Discord, with the server's **Answer in voice** setting.
+
 ## Settings
 
 The **Chat** card in the web UI's Settings has them all, and says how many answers it gave this month and roughly what they cost:

@@ -102,6 +102,9 @@ It applies the same rules as `/sound` and `/setup`, and every request needs an `
 | `DELETE /guilds/:id/chat-notes/:user` | Has it forget what it remembers about someone |
 | `GET /guilds/:id/chat-reminders` | Reminders set in chat, soonest first: `{ reminders: [{ id, at, when, text, by, people, channel }] }` |
 | `DELETE /guilds/:id/chat-reminders/:id` | Cancels one |
+| `GET /guilds/:id/chat-try` | What the web UI's [Chat tab](chat.md#trying-it-in-the-web-ui) starts from: `{ ready, note, chatOn, members, channels, me, botName, speech, inDiscord }` |
+| `POST /guilds/:id/chat-try` | The bot's answer to `{ "text": "roast @Sam", "as": userId, "channelId": id, "history": [{ from, text, at, as }] }` (`from` is `you` or `bot`), with nothing done or posted: `{ answer, pings, asked, aloud, quiet, heard, would, looked, model, seconds, cost }`. It counts toward the day's answers. 429 within 10 seconds of the last one, or past the day's limit |
+| `POST /guilds/:id/chat-try/speech` | `{ text, voice, effect }` said as a WAV, as it would be in voice |
 | `GET /guilds/:id/game-pings` | Lists games with ping roles, plus the games and roles that can be added |
 | `POST /guilds/:id/game-pings` | Adds pings for a game: `{ "game": "Valheim", "roleId": "..." }`. Leave out `roleId` to make a new role |
 | `DELETE /guilds/:id/game-pings/:role` | Stops pings for a game, and deletes the role if the bot made it |

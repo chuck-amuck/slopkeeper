@@ -10,6 +10,7 @@ import { answer, asksBot, chat, chatNote, chatNotes, chatUsage, COOLDOWN_MS, fin
 import { clearQueue, queueOf } from '../src/features/music.ts';
 import { checkSetting } from '../src/features/setup.ts';
 import { ACTIONS } from '../src/features/chatActions.ts';
+import { CantTry, inDiscord, mentionsIn, tryChat } from '../src/features/chatTry.ts';
 import { sendPost } from '../src/postFailures.ts';
 import { setting, setSetting } from '../src/settings.ts';
 import { resetSpotify } from '../src/spotify.ts';
@@ -1062,4 +1063,147 @@ test('a post goes out without its line when the model is down, refuses, or chat 
   // The refusal was asked; being down says so in the log
   assert.equal(sent.length, 1);
   assert.equal(warned.mock.callCount(), 1);
+});
+
+// ---------- tried in the web UI ----------
+
+/** A server, the one trying and a friend, as tryChat needs them: with users, and the bot's client */
+function tryingIn(id: string) {
+  const guild = { ...fakeGuild(id), client: { user: { id: BOT, displayName: 'Slopkeeper' } } };
+  Object.assign(guild.members.me, { user: { id: BOT, bot: true, username: 'slopkeeper' } });
+  const person = (memberId: string, name: string, username: string) => {
+    const member = Object.assign(fakeMember(guild, memberId), { displayName: name, user: { id: memberId, bot: false, username, displayName: name } });
+    guild.members.cache.set(memberId, member as never);
+    return member;
+  };
+  const robin = person('201', 'Robin', 'robin_r');
+  person('301', 'Sam', 'samwise');
+  const channel = { id: 'c1', name: 'general', permissionsFor: () => ({ has: () => true }), messages: { fetch: async () => new Map() } };
+  return { guild, robin, channel };
+}
+
+test('@names typed in the web UI become mentions, as Discord’s list would make them, and an email address doesn’t', () => {
+  const { guild } = tryingIn('try-names');
+  assert.equal(mentionsIn(guild as never)('tell @Sam and @robin_r, not @Samuel or me@sam.test'), 'tell <@301> and <@201>, not @Samuel or me@sam.test');
+});
+
+test('tried in the web UI, an answer follows the page’s conversation and does nothing it would do, saying what it would have', async () => {
+  const { guild, robin, channel } = tryingIn('try-1');
+  replies = [
+    turn('tool_use', toolUse('t1', 'find_music', { query: 'the wall', kind: 'album' })),
+    turn('tool_use', toolUse('t2', 'queue_music', { ref: `spotify:album:${id22('wall')}`, shuffle: true }), toolUse('t3', 'remember', { note: 'Likes Pink Floyd' }), toolUse('t4', 'control_music', { action: 'stop' })),
+    turn('end_turn', text('The Wall is queued, shuffled, @Sam!')),
+  ];
+  const history = [
+    { from: 'you' as const, text: 'hello there', at: Date.now() - 60_000 },
+    { from: 'bot' as const, text: 'Greetings, my liege!', at: Date.now() - 50_000 },
+  ];
+  const tried = await tryChat(guild as never, robin as never, channel as never, history, 'play the wall shuffled and tell @Sam', 'tester@example.test');
+  assert.equal(tried.answer, 'The Wall is queued, shuffled, <@301>!');
+  assert.deepEqual(tried.pings, [{ id: '301', name: 'Sam' }]);
+  assert.deepEqual(tried.would, ['Queue “The Wall” by Pink Floyd, shuffled', 'Remember about Robin: Likes Pink Floyd', 'Stop the music and clear the queue']);
+  assert.deepEqual(tried.looked, ['find music: query the wall, kind album']);
+  // Told it was done, in the tools' own words
+  const results = sent[2]!.messages.at(-1)!.content as { content: string }[];
+  assert.deepEqual(results.map((r) => r.content), ['Added “The Wall” by Pink Floyd to the queue, shuffled.', 'Remembered about them: Likes Pink Floyd', 'Stopped the music and cleared the queue.']);
+  // Nothing was done, logged or remembered
+  assert.deepEqual(queueOf(guild.id), []);
+  assert.equal(noteOf(guild.id, '201'), null);
+  assert.equal(recentActivity(guild.id, 10).length, 0);
+  // The page's conversation, in place of the channel's
+  const context = sent[0]!.messages[0]!.content as string;
+  assert.match(context, /Earlier in #general, for context only:\nRobin: hello there\nYou: Greetings, my liege!\n/);
+  assert.match(context, /Robin asks you:\nRobin: play the wall shuffled and tell @Sam/);
+  // It counts as an answer, and costs what three requests do on Haiku
+  assert.equal(chatUsage(guild.id).replies, 1);
+  assert.equal(Math.round(tried.cost * 1e6), Math.round(3 * (1000 * MODELS.haiku.input + 2000 * MODELS.haiku.cacheRead + 100 * MODELS.haiku.output)));
+  assert.equal(tried.model, 'Claude Haiku 5.5');
+  // Without the voice container, nothing's said aloud
+  assert.equal(tried.aloud, null);
+});
+
+test('tried in the web UI, an answer is said as it would be in voice, and what it would say or play is heard there instead', async (t) => {
+  const { guild, robin, channel } = tryingIn('try-2');
+  config.voiceUrl = 'http://voice.test';
+  t.after(() => (config.voiceUrl = null));
+  replies = [turn('end_turn', text('Of course, @Sam, at once!'))];
+  const said = await tryChat(guild as never, robin as never, channel as never, [], 'tell @Sam hi', 'a');
+  assert.deepEqual(said.aloud, { kind: 'speech', text: 'Of course, @Sam, at once!', voice: setting(guild.id, 'ttsVoice'), effect: setting(guild.id, 'ttsEffect') });
+  assert.deepEqual(said.heard, []);
+  assert.match(inDiscord(guild.id), /Answer in voice is off/);
+  // A line it says in a voice is heard instead, and the answer isn't said on top of it
+  resetChat();
+  replies = [turn('tool_use', toolUse('t1', 'say_aloud', { text: 'Happy birthday, <@301>!' })), turn('end_turn', text('Said it, my liege.'))];
+  const line = await tryChat(guild as never, robin as never, channel as never, [], 'say happy birthday to sam', 'a');
+  assert.deepEqual(line.heard, [{ kind: 'speech', text: 'Happy birthday, Sam!', voice: setting(guild.id, 'ttsVoice'), effect: setting(guild.id, 'ttsEffect') }]);
+  assert.equal(line.aloud, null);
+  assert.match(line.quiet!, /already said something aloud/);
+  assert.match(line.would[0]!, /^Say “Happy birthday, Sam!” as /);
+  // A voice it doesn't have is turned down as say would
+  resetChat();
+  replies = [turn('tool_use', toolUse('t1', 'say_aloud', { text: 'hi', voice: 'Nobody' })), turn('end_turn', text('Alas.'))];
+  const nobody = await tryChat(guild as never, robin as never, channel as never, [], 'say hi as nobody', 'a');
+  assert.deepEqual([nobody.heard, nobody.would], [[], []]);
+  assert.equal((sent.at(-1)!.messages.at(-1)!.content as { content: string }[])[0]!.content, 'Pick a voice from the list.');
+  // Nothing was said, so the answer is
+  assert.equal(nobody.aloud?.text, 'Alas.');
+  assert.equal(nobody.quiet, null);
+});
+
+test('tried in the web UI, what the real tools would turn down is turned down, and a time is read as they’d read it', async () => {
+  const { guild, robin, channel } = tryingIn('try-4');
+  replies = [
+    turn(
+      'tool_use',
+      toolUse('t1', 'control_music', { action: 'skip' }),
+      toolUse('t2', 'set_reminder', { when: 'whenever', about: 'bins' }),
+      toolUse('t3', 'set_reminder', { when: 'in 2 hours', about: 'bins' }),
+      toolUse('t4', 'plan_game_night', { game: 'Valheim', when: '2020-11-01 9pm' }),
+      toolUse('t5', 'plan_game_night', { game: 'Valheim', when: 'tomorrow 9pm' }),
+    ),
+    turn('end_turn', text('Done, my liege.')),
+  ];
+  const tried = await tryChat(guild as never, robin as never, channel as never, [], 'skip, remind me about the bins, and plan valheim', 'a');
+  const results = (sent[1]!.messages.at(-1)!.content as { content: string }[]).map((r) => r.content);
+  assert.equal(results[0], 'Nothing is playing.');
+  assert.match(results[1]!, /“whenever” isn’t a time it can read/);
+  assert.match(results[2]!, /^Done, for .+ \(in 2 hours\)\.$/);
+  assert.match(results[3]!, /already passed/);
+  assert.match(results[4]!, /^Done, for /);
+  assert.equal(tried.would.length, 2);
+  assert.match(tried.would[0]!, /^Set a reminder: when .+ \(in 2 hours\), about bins$/);
+  assert.match(tried.would[1]!, /^Plan a game night: game Valheim, when /);
+});
+
+test('tried in the web UI, an answer that fails after a tool it only pretended to use isn’t counted as done', async () => {
+  const { guild, robin, channel } = tryingIn('try-5');
+  replies = [turn('tool_use', toolUse('t1', 'remember', { note: 'Likes Valheim' })), { down: true }];
+  const errors = mock.method(console, 'error', () => {});
+  try {
+    await assert.rejects(tryChat(guild as never, robin as never, channel as never, [], 'remember I like valheim', 'a'), (err: CantTry) => err.status === 502);
+  } finally {
+    errors.mock.restore();
+  }
+  assert.equal(chatUsage(guild.id).replies, 0);
+});
+
+test('tried in the web UI, answers wait between asks and stop at the day’s limit, and a failed one isn’t counted', async () => {
+  const { guild, robin, channel } = tryingIn('try-3');
+  replies = [turn('end_turn', text('Hello!'))];
+  await tryChat(guild as never, robin as never, channel as never, [], 'hi', 'a');
+  await assert.rejects(tryChat(guild as never, robin as never, channel as never, [], 'hi again', 'a'), (err: CantTry) => err.status === 429 && /Wait a few seconds/.test(err.message));
+  // Someone else trying isn't held up by that
+  replies = [turn('end_turn', text('Hello to you too!'))];
+  await tryChat(guild as never, robin as never, channel as never, [], 'hi', 'b');
+  setSetting(guild.id, 'chatDailyLimit', 2);
+  await assert.rejects(tryChat(guild as never, robin as never, channel as never, [], 'hi', 'c'), (err: CantTry) => err.status === 429 && /all the answers/.test(err.message));
+  setSetting(guild.id, 'chatDailyLimit', 5);
+  apiDown = true;
+  const errors = mock.method(console, 'error', () => {});
+  try {
+    await assert.rejects(tryChat(guild as never, robin as never, channel as never, [], 'hi', 'd'), (err: CantTry) => err.status === 502);
+  } finally {
+    errors.mock.restore();
+  }
+  assert.equal(chatUsage(guild.id).replies, 2);
 });

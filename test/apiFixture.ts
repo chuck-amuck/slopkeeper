@@ -30,7 +30,8 @@ export let editedEvents: [string, any][];
 export let createdEvents: any[];
 export let failSend: boolean;
 
-export const member = (id: string, displayName: string, bot = false) => [id, { id, displayName, user: { bot } }] as const;
+// Out of voice, as far as the member knows: a channel's members are who's in it
+export const member = (id: string, displayName: string, bot = false) => [id, { id, displayName, user: { id, bot, username: displayName.toLowerCase() }, voice: { channel: null, channelId: null } }] as const;
 
 export const channel = (id: string, name: string, type: ChannelType, rawPosition: number, people: ReturnType<typeof member>[] = []) => ({
   id,

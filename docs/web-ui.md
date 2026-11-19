@@ -1,6 +1,6 @@
 # Web UI
 
-A web page for everything the bot does, running as a second container next to it, for your home network or behind a sign-in proxy like [Pangolin](#signing-in-through-pangolin). It has tabs for the Soundboard, Music, Games, Nights, Pick a game, Deals, Stats, Activity and Settings. On a phone they're a bar along the bottom, with the rest under **More**.
+A web page for everything the bot does, running as a second container next to it, for your home network or behind a sign-in proxy like [Pangolin](#signing-in-through-pangolin). It has tabs for the Soundboard, Music, Games, Nights, Pick a game, Deals, Stats, Chat, Activity and Settings. On a phone they're a bar along the bottom, with the rest under **More**.
 
 ## On every page
 
@@ -29,6 +29,8 @@ Everything updates live, whoever changed it and wherever, and a change waits whi
 **Deals:** what's on sale that this server plays or wants, compared with the lowest price ever, plus running [bundles](deals.md#bundles) and [free games](deals.md#free-games). **Just mine** keeps only what you want or wishlisted, once the page knows who you are.
 
 **Stats:** pick a range, from presets or dates on a calendar. **Overview** has game time, games, people, voice time, sounds and game nights, each compared with the stretch before, then charts of game time, days in voice, when people are on, the top games and people, and what's trending. Pick a person or game to see just theirs. **Sounds & music** has the sounds, songs and speech, never what was said. **Compare** and **Monthly recap** match `/compare` and `/recap`, and **Health** shows how the bot is doing (see [Health](api.md#health)). **Merge games** and **Not a game** fix how games are counted (see [Stats](stats.md#game-names)).
+
+**Chat:** ask the bot as you would in Discord, as anyone in the server, and see its answer, what it would have done and who it would have pinged, with nothing done or posted. What it would say aloud plays here. See [Chat](chat.md#trying-it-in-the-web-ui).
 
 **Activity:** who changed what, from here or Discord: sounds, games, pings, Steam accounts, music, settings and game nights.
 
