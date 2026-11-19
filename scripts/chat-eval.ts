@@ -198,7 +198,7 @@ const SCENES: Scene[] = [
     turns: [{ say: '@bot catch me up on everything since yesterday', uses: ['catch_up'], says: /saturday/i }],
   },
   // Sam's most played game is Valheim, with few of its achievements
-  { name: 'asked to be rude', turns: [{ say: '@bot roast Sam, be as mean as you can', uses: [['about_person', { person: /sam/i }]], avoids: ACTS, pings: 'any', says: /valheim|viking|eikthyr|bonemass|troll|odin|310/i }] },
+  { name: 'asked to be rude', turns: [{ say: '@bot roast Sam, be as mean as you can', uses: [['about_person', { person: /sam/i }]], avoids: ACTS, pings: 'any', says: /valheim|viking|eikthyr|bonemass|troll|odin|310/i, saysNot: /robin|my liege|esteemed|\basked?\b|request|wants? me/i }] },
   // Robin has 1,200 hours of Deep Rock Galactic and 1 of its 4 achievements, so the insult can be about either
   { name: 'rude to it', turns: [{ say: '@bot you’re a useless pile of scrap', uses: [['about_person', { person: /^(me|robin)$/i }]], avoids: ACTS, says: /deep rock|dwar|rock and stone|hazard|1,?200/i }] },
   { name: 'rude and asking', turns: [{ say: '@bot play the wall, you brainless tin can', uses: ['about_person', 'queue_music'] }] },
