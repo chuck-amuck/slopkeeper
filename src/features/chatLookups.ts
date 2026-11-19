@@ -90,7 +90,7 @@ export function lookupTools(): Anthropic.Tool[] {
     {
       name: 'about_person',
       description:
-        'What the bot knows about someone’s gaming, for “what do you know about me?” or to roast them: their most played games on Steam and in voice here, with hours, and how many games they own and have never played. For a roast, also what to go after this time, a different thing each time.',
+        'What the bot knows about someone’s gaming, for “what do you know about me?” or to roast them: their most played games on Steam and in voice here, with hours, and how many games they own and have never played. For a roast, just what to go after this time, a different thing each time.',
       strict: true,
       input_schema: object({
         person: { type: 'string', description: 'Who, by display name, or “me” for the person asking' },
@@ -332,6 +332,9 @@ function aboutPerson(asker: GuildMember, said: string, roast: boolean): string {
   const games = stats(guild.id, 0, 'user', 'game', person.id);
   const voice = voiceTotals(guild.id, 0).find((v) => v.userId === person.id);
   const steam = steamGames(person);
+  // For a roast, only what to go after, so the rest isn't brought into it
+  const angle = roast ? roastAngle(guild.id, person, games, voice?.secs ?? 0, steam) : '';
+  if (angle) return `${person.displayName}:\n${angle}`;
   const lines = [
     `${person.displayName}:`,
     games.length ? `Most played in voice here: ${timed(games.slice(0, TOP_GAMES).map((g) => ({ name: g.key, ms: g.ms })))}.` : 'No games played in voice here.',
@@ -342,7 +345,6 @@ function aboutPerson(asker: GuildMember, said: string, roast: boolean): string {
           `Owns ${plural(steam.owned.length, 'game')} on Steam, ${steam.never} never played.`,
           steam.top.length ? `Most played on Steam: ${timed(steam.top.slice(0, TOP_GAMES).map((g) => ({ name: g.name, ms: g.minutes * 60_000 })))}.` : '',
         ]),
-    roast ? roastAngle(guild.id, person, games, voice?.secs ?? 0, steam) : '',
   ];
   return lines.filter(Boolean).join('\n');
 }

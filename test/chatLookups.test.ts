@@ -310,7 +310,8 @@ test('for a roast, it says what to go after, something other than the last few t
   // The first of what's left each time, to know which
   t.mock.method(roastChoice, 'pick', () => 0);
   const roast = async () => (await ask(sasha, 'about_person', { person: 'robin', roast: true })).split('\n').at(-1);
-  assert.equal(await roast(), 'For this roast, go after Deep Rock Galactic, with 1200h on Steam.');
+  // Only that, so the rest isn't brought into it
+  assert.equal(await ask(sasha, 'about_person', { person: 'robin', roast: true }), 'Robin:\nFor this roast, go after Deep Rock Galactic, with 1200h on Steam.');
   assert.equal(await roast(), 'For this roast, go after Valheim, with 10h on Steam.');
   assert.equal(await roast(), 'For this roast, go after Goat Simulator, with 25m on Steam.');
   assert.equal(await roast(), 'For this roast, go after Goat Simulator, which they’ve played for only 25m.');
@@ -318,9 +319,9 @@ test('for a roast, it says what to go after, something other than the last few t
   // Once it's gone after all of them lately, anything but the last comes round again
   assert.equal(await roast(), 'For this roast, go after Deep Rock Galactic, with 1200h on Steam.');
   assert.equal(await roast(), 'For this roast, go after Valheim, with 10h on Steam.');
-  // Not for a roast, or with nothing to go after, there's no such line
+  // Not for a roast, there's no such line. With nothing to go after, it's what's known
   assert.doesNotMatch(await ask(sasha, 'about_person', { person: 'robin', roast: false }), /go after/);
-  assert.doesNotMatch(await ask(robin, 'about_person', { person: 'sasha', roast: true }), /go after/);
+  assert.equal(await ask(robin, 'about_person', { person: 'sasha', roast: true }), ['Sasha:', 'No games played in voice here.', 'No Steam account linked.'].join('\n'));
 });
 
 test('how long ago, in words', () => {
