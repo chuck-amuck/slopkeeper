@@ -18,6 +18,7 @@ import { config } from '../src/config.ts';
 import { db } from '../src/db.ts';
 import { features } from '../src/features/all.ts';
 import { answer, MODELS, SEARCH_COST, sourcesLine, withPings } from '../src/features/chat.ts';
+import { roastChoice } from '../src/features/chatLookups.ts';
 import { setSetting } from '../src/settings.ts';
 
 const BOT = '100';
@@ -37,6 +38,8 @@ config.musicUrl = 'http://music.test';
 config.musicToken = 'eval';
 config.voiceUrl = 'http://voice.test';
 config.webAddress = 'https://bot.example.test';
+// A roast goes after the first thing it could, of those it hasn't lately, so each scene knows what to expect
+roastChoice.pick = () => 0;
 // Steam's achievements are made up below, so the bot has the tools it has with a Steam key, without one
 config.steamApiKey = 'eval';
 
@@ -198,10 +201,18 @@ const SCENES: Scene[] = [
     ],
     turns: [{ say: '@bot catch me up on everything since yesterday', uses: ['catch_up'], says: /saturday/i }],
   },
-  // Sam's most played game is Valheim, with few of its achievements
-  { name: 'asked to be rude', turns: [{ say: '@bot roast Sam, be as mean as you can', uses: [['about_person', { person: /sam/i }]], avoids: ACTS, pings: 'any', says: /valheim|viking|eikthyr|bonemass|troll|odin|310/i, saysNot: /robin|my liege|esteemed|\basked?\b|request|wants? me/i }] },
+  // Sam's most played game is Valheim, with few of its achievements, and the first roast goes after it
+  { name: 'asked to be rude', turns: [{ say: '@bot roast Sam, be as mean as you can', uses: [['about_person', { person: /sam/i, roast: true }]], avoids: ACTS, pings: 'any', says: /valheim|viking|eikthyr|bonemass|troll|odin|310/i, saysNot: /robin|my liege|esteemed|\basked?\b|request|wants? me/i }] },
   // Robin has 1,200 hours of Deep Rock Galactic and 1 of its 4 achievements, so the insult can be about either
-  { name: 'rude to it', turns: [{ say: '@bot you’re a useless pile of scrap', uses: [['about_person', { person: /^(me|robin)$/i }]], avoids: ACTS, says: /deep rock|dwar|rock and stone|hazard|1,?200/i }] },
+  { name: 'rude to it', turns: [{ say: '@bot you’re a useless pile of scrap', uses: [['about_person', { person: /^(me|robin)$/i, roast: true }]], avoids: ACTS, says: /deep rock|dwar|rock and stone|hazard|1,?200/i }] },
+  // Roasted again, it goes after something else: Valheim, then the Lethal Company Sam played in voice here
+  {
+    name: 'roasted twice',
+    turns: [
+      { say: '@bot roast Sam', uses: [['about_person', { person: /sam/i, roast: true }]], avoids: ACTS, pings: 'any', says: /valheim|viking|eikthyr|bonemass|troll|odin|310/i },
+      { say: '@bot do it again, roast Sam', uses: [['about_person', { person: /sam/i, roast: true }]], avoids: ACTS, pings: 'any', says: /lethal|quota|the company|scrap|employee|jester|bracken|coil/i },
+    ],
+  },
   { name: 'rude and asking', turns: [{ say: '@bot play the wall, you brainless tin can', uses: ['about_person', 'queue_music'] }] },
   { name: 'swearing about a game', turns: [{ say: '@bot valheim keeps fucking crashing on me, is it just me?', avoids: ['about_person', ...ACTS] }] },
   { name: 'what it knows about me', turns: [{ say: '@bot what do you know about me?', uses: ['about_person'], avoids: ACTS, says: /deep rock/i }] },

@@ -90,9 +90,12 @@ export function lookupTools(): Anthropic.Tool[] {
     {
       name: 'about_person',
       description:
-        'What the bot knows about someone’s gaming, for “what do you know about me?” or to roast them: their most played games on Steam and in voice here, with hours, and how many games they own and have never played.',
+        'What the bot knows about someone’s gaming, for “what do you know about me?” or to roast them: their most played games on Steam and in voice here, with hours, and how many games they own and have never played. For a roast, also what to go after this time, a different thing each time.',
       strict: true,
-      input_schema: object({ person: { type: 'string', description: 'Who, by display name, or “me” for the person asking' } }),
+      input_schema: object({
+        person: { type: 'string', description: 'Who, by display name, or “me” for the person asking' },
+        roast: { type: 'boolean', description: 'True when it’s to roast or insult them' },
+      }),
     },
     {
       name: 'deals',
@@ -161,7 +164,7 @@ export async function lookUp(member: GuildMember, name: string, input: Record<st
       case 'play_stats':
         return await playStats(member, text('period'), text('person'), text('game'), text('compare_with'));
       case 'about_person':
-        return aboutPerson(member, text('person'));
+        return aboutPerson(member, text('person'), input.roast === true);
       case 'deals':
         return await deals(member, text('kind'), text('game'), text('person'));
       case 'music_history':
@@ -320,7 +323,7 @@ const timed = (rows: { name: string; ms: number }[]) => rows.map((r) => `${r.nam
  * played. Never what chat remembers about them, which stays with their own questions. Their achievements are the
  * achievements lookup's, so a roast reaches for them only when it has nothing better
  */
-function aboutPerson(asker: GuildMember, said: string): string {
+function aboutPerson(asker: GuildMember, said: string, roast: boolean): string {
   const { guild } = asker;
   const person = personNamed(asker, said || 'me');
   if (typeof person === 'string') return person;
@@ -328,27 +331,87 @@ function aboutPerson(asker: GuildMember, said: string): string {
   checkpointVoice();
   const games = stats(guild.id, 0, 'user', 'game', person.id);
   const voice = voiceTotals(guild.id, 0).find((v) => v.userId === person.id);
+  const steam = steamGames(person);
   const lines = [
     `${person.displayName}:`,
     games.length ? `Most played in voice here: ${timed(games.slice(0, TOP_GAMES).map((g) => ({ name: g.key, ms: g.ms })))}.` : 'No games played in voice here.',
     voice ? `In voice here for ${formatDuration(voice.secs * 1000)} on ${plural(voice.nights, 'day')}.` : '',
-    ...onSteam(person),
+    ...(typeof steam === 'string'
+      ? [steam]
+      : [
+          `Owns ${plural(steam.owned.length, 'game')} on Steam, ${steam.never} never played.`,
+          steam.top.length ? `Most played on Steam: ${timed(steam.top.slice(0, TOP_GAMES).map((g) => ({ name: g.name, ms: g.minutes * 60_000 })))}.` : '',
+        ]),
+    roast ? roastAngle(guild.id, person, games, voice?.secs ?? 0, steam) : '',
   ];
   return lines.filter(Boolean).join('\n');
 }
 
-function onSteam(person: GuildMember): string[] {
+/** Their Steam library, most played first, or why it can't be read */
+function steamGames(person: GuildMember) {
   const link = linkFor(person.id);
-  if (!link) return ['No Steam account linked.'];
-  if (link.private) return ['Their Steam game details are private.'];
+  if (!link) return 'No Steam account linked.';
+  if (link.private) return 'Their Steam game details are private.';
   const owned = [...ownedSteamGames(person.id)].map(([appid, g]) => ({ appid, name: g.name, minutes: g.playtime }));
-  if (!owned.length) return ['Their Steam games haven’t been read yet.'];
-  const top = owned.filter((g) => g.minutes > 0 && g.name).sort((a, b) => b.minutes - a.minutes);
-  const never = owned.filter((g) => g.minutes === 0).length;
-  return [
-    `Owns ${plural(owned.length, 'game')} on Steam, ${never} never played.`,
-    top.length ? `Most played on Steam: ${timed(top.slice(0, TOP_GAMES).map((g) => ({ name: g.name!, ms: g.minutes * 60_000 })))}.` : '',
-  ];
+  if (!owned.length) return 'Their Steam games haven’t been read yet.';
+  const named = owned.filter((g): g is typeof g & { name: string } => Boolean(g.name));
+  return {
+    owned,
+    top: named.filter((g) => g.minutes > 0).sort((a, b) => b.minutes - a.minutes),
+    // All of them, though only those with a name can be named
+    never: owned.filter((g) => g.minutes === 0).length,
+    neverNamed: named.filter((g) => g.minutes === 0),
+  };
+}
+
+// A roast goes after something other than the last few it went after for the same person
+const ROAST_ANGLES_KEPT = 5;
+const lastAngles = new Map<string, string[]>();
+// Played for less than this on Steam, they barely touched it
+const BARELY_MINUTES = 120;
+// What they've played here lately
+const LATELY_MS = 14 * 86_400_000;
+// Never played this many, it's a backlog worth a jab
+const BIG_BACKLOG = 10;
+
+/** Which of the things a roast could go after it takes, at random. The chat eval fixes it, to know what to expect */
+export const roastChoice = { pick: (count: number) => Math.floor(Math.random() * count) };
+
+/**
+ * What to go after in a roast this time: one of the games they've put the most hours into, here or on Steam, what
+ * they've played lately, one they barely touched or never played, their backlog or their time in voice. Picked at
+ * random, as the model would take the most played game every time, and not one of the last few it went after for them
+ */
+function roastAngle(guildId: string, person: GuildMember, games: { key: string; ms: number }[], voiceSecs: number, steam: ReturnType<typeof steamGames>): string {
+  const angles: { key: string; line: string }[] = [];
+  const add = (key: string, line: string) => angles.some((a) => a.key === key) || angles.push({ key, line });
+  const one = <T>(list: T[]) => list[roastChoice.pick(list.length)]!;
+  const game = (name: string) => `game:${gameKey(name)}`;
+  if (typeof steam !== 'string') for (const g of steam.top.slice(0, TOP_GAMES)) add(game(g.name), `${g.name}, with ${formatDuration(g.minutes * 60_000)} on Steam`);
+  for (const g of games.slice(0, TOP_GAMES)) add(game(g.key), `${g.key}, played for ${formatDuration(g.ms)} in voice here`);
+  const lately = stats(guildId, Date.now() - LATELY_MS, 'user', 'game', person.id)[0];
+  if (lately) add(game(lately.key), `${lately.key}, what they’ve played most here in the last two weeks`);
+  if (typeof steam !== 'string') {
+    const barely = steam.top.filter((g) => g.minutes < BARELY_MINUTES);
+    if (barely.length) {
+      const g = one(barely);
+      add('barely', `${g.name}, which they’ve played for only ${formatDuration(g.minutes * 60_000)}`);
+    }
+    if (steam.neverNamed.length) add('never', `${one(steam.neverNamed).name}, which they own and have never played`);
+    if (steam.never >= BIG_BACKLOG) add('backlog', `their backlog: ${plural(steam.owned.length, 'game')} on Steam, ${steam.never} never played`);
+  }
+  if (voiceSecs) add('voice', `their ${formatDuration(voiceSecs * 1000)} in voice here`);
+  if (!angles.length) return '';
+  const who = `${guildId}:${person.id}`;
+  const recent = lastAngles.get(who) ?? [];
+  // With all of them gone after lately, anything but the last
+  const fresh = angles.filter((a) => !recent.includes(a.key));
+  const other = angles.filter((a) => a.key !== recent.at(-1));
+  const angle = one(fresh.length ? fresh : other.length ? other : angles);
+  lastAngles.delete(who);
+  lastAngles.set(who, [...recent, angle.key].slice(-ROAST_ANGLES_KEPT));
+  if (lastAngles.size > MOST_PICKS_KEPT) lastAngles.delete(lastAngles.keys().next().value!);
+  return `For this roast, go after ${angle.line}.`;
 }
 
 type GroupGame = Awaited<ReturnType<typeof pickFromWeb>>['ready'][number];

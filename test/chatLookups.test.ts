@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { beforeEach, test, type TestContext } from 'node:test';
 import { config } from '../src/config.ts';
 import { db } from '../src/db.ts';
-import { ago, lookUp, lookupTools, unquoted } from '../src/features/chatLookups.ts';
+import { ago, lookUp, lookupTools, roastChoice, unquoted } from '../src/features/chatLookups.ts';
 
 const GUILD = 'g-lookups';
 const HOUR = 3_600_000;
@@ -294,6 +294,33 @@ test('about a person: their top games here and on Steam, and the ones they never
       'Most played on Steam: Deep Rock Galactic (1200h), Valheim (10h).',
     ].join('\n'),
   );
+});
+
+test('for a roast, it says what to go after, something other than the last few times, as the model would take the top game every time', async (t) => {
+  t.after(() => db.exec('DELETE FROM steam_owned'));
+  db.exec('DELETE FROM steam_owned');
+  played('201', 'Deep Rock Galactic', 2, 3);
+  played('201', 'Valheim', 3, 1);
+  db.prepare(`INSERT INTO steam_links (user_id, steam_id) VALUES ('201', 's1')`).run();
+  const own = db.prepare('INSERT INTO steam_owned (steam_id, appid, name, playtime) VALUES (?, ?, ?, ?)');
+  own.run('s1', 548430, 'Deep Rock Galactic', 72_000);
+  own.run('s1', 892970, 'Valheim', 600);
+  own.run('s1', 3, 'Goat Simulator', 25);
+  own.run('s1', 1, 'Shovelware', 0);
+  // The first of what's left each time, to know which
+  t.mock.method(roastChoice, 'pick', () => 0);
+  const roast = async () => (await ask(sasha, 'about_person', { person: 'robin', roast: true })).split('\n').at(-1);
+  assert.equal(await roast(), 'For this roast, go after Deep Rock Galactic, with 1200h on Steam.');
+  assert.equal(await roast(), 'For this roast, go after Valheim, with 10h on Steam.');
+  assert.equal(await roast(), 'For this roast, go after Goat Simulator, with 25m on Steam.');
+  assert.equal(await roast(), 'For this roast, go after Goat Simulator, which they’ve played for only 25m.');
+  assert.equal(await roast(), 'For this roast, go after Shovelware, which they own and have never played.');
+  // Once it's gone after all of them lately, anything but the last comes round again
+  assert.equal(await roast(), 'For this roast, go after Deep Rock Galactic, with 1200h on Steam.');
+  assert.equal(await roast(), 'For this roast, go after Valheim, with 10h on Steam.');
+  // Not for a roast, or with nothing to go after, there's no such line
+  assert.doesNotMatch(await ask(sasha, 'about_person', { person: 'robin', roast: false }), /go after/);
+  assert.doesNotMatch(await ask(robin, 'about_person', { person: 'sasha', roast: true }), /go after/);
 });
 
 test('how long ago, in words', () => {
