@@ -124,9 +124,20 @@ test('it sets a reminder for the asker or the people named, who must see the cha
   assert.equal(await set(robin, { people: ['Alex'] }), 'Alex can’t see this channel, so the reminder wouldn’t reach them. Ask them to set it somewhere they can see.');
   assert.equal(waiting().n, 2);
 
-  for (let i = 2; i < 10; i++) await set(robin, {});
-  assert.equal(await set(robin, {}), 'Robin has 10 reminders waiting already, the most there can be. They can cancel one first.');
+  for (let i = 2; i < 10; i++) await set(robin, { about: `thing ${i}` });
+  assert.equal(await set(robin, { about: 'one more' }), 'Robin has 10 reminders waiting already, the most there can be. They can cancel one first.');
   assert.match(await set(sam, {}), /^Set reminder/);
+});
+
+test('a reminder asked for again, for the same thing at about the same time, isn’t set twice', async () => {
+  const first = idIn(await set(robin, { when: 'in 2 hours', about: 'Take out the bins' }));
+  assert.match(await set(robin, { when: 'in 2 hours', about: 'take out the bins', people: ['me'] }), new RegExp(`^Robin already has reminder ${first} for that, \\w+day, .+: “take out the bins”\\. It isn’t set twice\\.$`));
+  assert.equal(waiting().n, 1);
+  // Another time, another thing, or someone else asking is another reminder
+  assert.match(await set(robin, { when: 'in 3 hours', about: 'take out the bins' }), /^Set reminder/);
+  assert.match(await set(robin, { when: 'in 2 hours', about: 'feed the cat' }), /^Set reminder/);
+  assert.match(await set(sam, { when: 'in 2 hours', about: 'take out the bins' }), /^Set reminder/);
+  assert.equal(waiting().n, 4);
 });
 
 test('each person lists the reminders they set or that are for them, and cancels their own or takes themselves off another’s', async () => {

@@ -131,6 +131,20 @@ export function readReminderTime(guildId: string, said: string, now = Date.now()
   return { at, label: `${describe(at, timeZone)} (${inWords(at - now)})` };
 }
 
+// Asked for again within this of the first, it's the same reminder
+const SAME_WITHIN = 5 * MINUTE;
+
+/**
+ * Why a reminder they're asking for is already set, or null: one they set to remind of the same thing at about the same
+ * time, as asking again (“ok, just me then”) would otherwise set it twice
+ */
+export function alreadySet(member: GuildMember, about: string, at: number): string | null {
+  const same = db
+    .prepare('SELECT id, due_at FROM chat_reminders WHERE guild_id = ? AND created_by = ? AND lower(text) = lower(?) AND abs(due_at - ?) < ? LIMIT 1')
+    .get(member.guild.id, member.id, about, at, SAME_WITHIN) as { id: number; due_at: number } | undefined;
+  return same ? `${member.displayName} already has reminder ${same.id} for that, ${describe(same.due_at, setting(member.guild.id, 'timezone'))}: “${about}”. It isn’t set twice.` : null;
+}
+
 async function setReminder(member: GuildMember, when: string, about: string, said: unknown, where: GuildTextBasedChannel | null): Promise<string> {
   const { guild } = member;
   if (!where) return 'There’s nowhere here to post it.';
@@ -145,6 +159,8 @@ async function setReminder(member: GuildMember, when: string, about: string, sai
   if (people.length > MOST_PEOPLE) return `A reminder can be for ${MOST_PEOPLE} people at most.`;
   const blind = people.filter((p) => !where.permissionsFor(p)?.has(PermissionFlagsBits.ViewChannel));
   if (blind.length) return `${listNames(blind.map((p) => p.displayName))} can’t see this channel, so the reminder wouldn’t reach them. Ask them to set it somewhere they can see.`;
+  const twice = alreadySet(member, about, time.at);
+  if (twice) return twice;
   const open = (db.prepare('SELECT COUNT(*) AS n FROM chat_reminders WHERE guild_id = ? AND created_by = ?').get(guild.id, member.id) as { n: number }).n;
   if (open >= MOST_OPEN) return `${member.displayName} has ${MOST_OPEN} reminders waiting already, the most there can be. They can cancel one first.`;
   const ids = people.map((p) => p.id);

@@ -13,7 +13,7 @@ import { asksBot, canSee, isAnswer, listNames, playingGames, servedGuilds } from
 import { canControl, time, musicPlaying, musicState, OUTSIDE_DJ, pauseMusic, queueArtist, queueFrom, queueOf, removeTracks, setAutoplay, shuffleQueue, skipMusic, startMusic, stopMusic } from './music.ts';
 import { busyElsewhere, effects, maySpeak, NO_EFFECT, say, sayOut, voices, wouldSay } from './say.ts';
 import { act, ACTIONS, actionTools, nightTime } from './chatActions.ts';
-import { CHECK_EVERY, readReminderTime, sendDue } from './chatReminders.ts';
+import { alreadySet, CHECK_EVERY, readReminderTime, sendDue } from './chatReminders.ts';
 import { every } from '../schedule.ts';
 import { lookUp, lookupTools, nameOf, object, peopleNamed } from './chatLookups.ts';
 import { CHAT_MODELS } from './setup.ts';
@@ -1116,6 +1116,8 @@ async function pretend(member: GuildMember, name: string, input: Record<string, 
       const named = peopleNamed(member, input.people);
       if (typeof named === 'string') return named;
       const people = named ?? [member];
+      const twice = alreadySet(member, text('about'), time.at);
+      if (twice) return twice;
       const reminder = `for ${listNames(people.map((p) => p.displayName))}, ${time.label}: “${text('about')}”`;
       return would(`Set a reminder ${reminder}`, `Set a reminder ${reminder}. It’s posted here then, pinging ${people.length === 1 ? 'them' : 'each of them'}.`);
     }
