@@ -1,10 +1,11 @@
 import { Events, type Client, type Guild, type VoiceBasedChannel } from 'discord.js';
 import { anyChange, type FeedName, feeds } from '../changes.ts';
-import { playingNow } from '../features/voiceAudio.ts';
+import { PREVIEWED, playingNow, previewVolume } from '../features/voiceAudio.ts';
+import { checkSetting } from '../features/setup.ts';
 import { config } from '../config.ts';
 import { idSetting, setting } from '../settings.ts';
 import { humansIn } from '../util.ts';
-import { type Ask, Refused, untilGone } from './common.ts';
+import { type Ask, Refused, plain, readJson, untilGone } from './common.ts';
 import { musicList } from './music.ts';
 import { nightList } from './nights.ts';
 import { activityList } from './server.ts';
@@ -94,6 +95,17 @@ export function followVoice(client: Client) {
 export async function liveRoutes({ client, guild, req, res, url, section, rest }: Ask) {
   if (section === 'voice' && !rest.length && req.method === 'GET') return voiceList(guild);
   if (section === 'volumes' && !rest.length && req.method === 'GET') return { version: feeds.volumes.version(guild.id), ...volumesOf(guild) };
+  // A slider being dragged, heard on what's playing but not saved or logged: saving the setting is what keeps it
+  if (section === 'volumes' && rest.length === 2 && rest[1] === 'preview') {
+    if (req.method !== 'POST') throw new Refused(405, 'Not here.');
+    const name = rest[0];
+    if (!Object.hasOwn(PREVIEWED, name)) throw new Refused(404, 'No such volume.');
+    const previewed = name as keyof typeof PREVIEWED;
+    const checked = checkSetting(guild, PREVIEWED[previewed].key, (await readJson(req)).value);
+    if ('error' in checked) throw new Refused(400, plain(guild, checked.error));
+    previewVolume(guild.id, previewed, checked.value as number);
+    return {};
+  }
   if (section === 'updates' && !rest.length && req.method === 'GET') {
     // One request per page for all it keeps up with: ?playing=&music=&sounds=… with the version it has of each it wants (empty
     // for none yet). It waits until one changes, then answers with only those that did, or with nothing after a while

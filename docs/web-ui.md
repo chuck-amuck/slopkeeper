@@ -8,7 +8,7 @@ A web page for everything the bot does, running as a second container next to it
 - **Stop:** while sounds or speech play, a red button in the bottom corner stops them, with what's playing listed above it to stop one at a time. Music carries on, but the toast after Stop offers **Pause music**.
 - **Music player:** while music plays, a card at the bottom shows the song with **Pause**, **Skip** and **+** to add a song.
 - **Sounds:** a button that opens the server's sounds, the volumes and a line to say over any page.
-- **Volume:** the sounds', speech's and music's volumes, for everyone in the server. Sliders run to 100% at the tick, and the orange last quarter goes past it. The box beside each takes an exact number, and the arrow keys move 5% at a time.
+- **Volume:** the sounds', speech's and music's volumes, for everyone in the server. Sliders run to 100% at the tick, and the orange last quarter goes past it. What's playing follows a slider as you drag it, and letting go saves it for everyone. The box beside each takes an exact number, and the arrow keys move 5% at a time.
 - **Pop out:** in Chrome or Edge 116+, or Firefox 151+, over HTTPS, the Sounds panel and the music player can pop out into a small window that stays on top of everything, a game included.
 - **Undo:** removing a song, deleting a sound or saved line, taking a sound off Discord, **Never suggest this** and **Reset** on a setting each offer **Undo** for a few seconds.
 

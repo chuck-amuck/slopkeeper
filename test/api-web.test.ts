@@ -337,6 +337,18 @@ test('the volumes leave out what isn’t set up, so there’s no slider for it',
   assert.deepEqual(await levels(), { sounds: 100, speech: null, music: 40, loopSound: 50, loopSpeech: 50 });
 });
 
+test('a volume being dragged is tried out without being saved or logged, within the setting’s limits', async () => {
+  const logged = db.prepare('SELECT COUNT(*) AS n FROM activity WHERE guild_id = ?').get(GUILD) as { n: number };
+  assert.deepEqual(await ok(`/guilds/${GUILD}/volumes/music/preview`, { method: 'POST', json: { value: 25 } }), {});
+  assert.deepEqual(await ok(`/guilds/${GUILD}/volumes/sounds/preview`, { method: 'POST', json: { value: 150 } }), {});
+  assert.deepEqual([setting(GUILD, 'musicVolume'), setting(GUILD, 'soundVolume')], [40, 100]);
+  assert.deepEqual(db.prepare('SELECT COUNT(*) AS n FROM activity WHERE guild_id = ?').get(GUILD), logged);
+  await refused(400, `/guilds/${GUILD}/volumes/music/preview`, { method: 'POST', json: { value: 900 } });
+  await refused(400, `/guilds/${GUILD}/volumes/speech/preview`, { method: 'POST', json: { value: 'loud' } });
+  await refused(404, `/guilds/${GUILD}/volumes/loopSound/preview`, { method: 'POST', json: { value: 50 } });
+  await refused(405, `/guilds/${GUILD}/volumes/music/preview`);
+});
+
 test('a page’s one request for updates waits for a change, then answers with only what changed', async (t) => {
   t.after(() => ok(`/guilds/${GUILD}/music/queue`, { method: 'DELETE' }));
   assert.match(await refused(400, `/guilds/${GUILD}/updates`), /playing, music, voice/);

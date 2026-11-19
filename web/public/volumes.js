@@ -8,24 +8,61 @@ const VOLUMES = {
   music: { key: 'musicVolume', label: 'Music', name: 'Music volume', min: 0, said: 'Music plays' },
 };
 
+/** How often a slider being dragged sends where it's at, at most */
+const PREVIEW_MS = 150;
+
+/**
+ * Lets a volume (`sounds`, `speech` or `music`) be heard as its slider is dragged, without saving it: `move` sends where
+ * it's at, one at a time and at most every PREVIEW_MS, ending on the latest, and `save` saves it once the ones on their
+ * way are in, so the saved volume is the one that stays
+ */
+export function volumePreview(id) {
+  const { key, said } = VOLUMES[id];
+  let next = null;
+  let sending = null;
+  let sentAt = 0;
+  let timer = null;
+  const later = () => (timer ??= setTimeout(send, Math.max(0, sentAt + PREVIEW_MS - performance.now())));
+  async function send() {
+    timer = null;
+    if (sending || next === null) return;
+    const value = next;
+    next = null;
+    sentAt = performance.now();
+    // Only a help: a preview that doesn't go through leaves the volume where it was, and letting go still saves it
+    sending = request(api(`/volumes/${id}/preview`), { method: 'POST', json: { value } }).catch(() => {});
+    await sending;
+    sending = null;
+    if (next !== null) later();
+  }
+  return {
+    move(value) {
+      next = value;
+      if (!sending) later();
+    },
+    save: (value) =>
+      void attempt(async () => {
+        clearTimeout(timer);
+        timer = null;
+        next = null;
+        await sending;
+        await request(api(`/settings/${key}`), { method: 'PUT', json: { value } });
+        // It's the server's setting, not this page's, so saying so is worth a toast
+        toast(`${said} at ${value}% for everyone now.`);
+      }),
+  };
+}
+
 /**
  * Sliders for the volumes named, each shown once the bot says what it's at, and only while it's set up. They keep up
- * with whoever changes them, from anywhere, apart from one being dragged or typed in
+ * with whoever changes them, from anywhere, apart from one being dragged or typed in. What's playing follows a slider
+ * as it's dragged
  */
 export function volumeSliders(names) {
   const rows = names.map((id) => {
-    const { key, label, name, min, said } = VOLUMES[id];
-    const control = volumeControl({
-      min,
-      max: 200,
-      label: name,
-      // It's the server's setting, not this page's, so saying so is worth a toast
-      onSave: (value) =>
-        void attempt(async () => {
-          await request(api(`/settings/${key}`), { method: 'PUT', json: { value } });
-          toast(`${said} at ${value}% for everyone now.`);
-        }),
-    });
+    const { label, name, min } = VOLUMES[id];
+    const preview = volumePreview(id);
+    const control = volumeControl({ min, max: 200, label: name, onInput: preview.move, onSave: preview.save });
     const row = el('div', { className: 'voice-volume', hidden: true, title: 'For everyone in the server' }, el('span', { className: 'voice-label' }, label), control.node);
     return { id, control, row };
   });

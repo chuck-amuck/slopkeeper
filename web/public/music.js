@@ -1,6 +1,7 @@
 import { announce, api, attempt, confirmButton, el, icon, keepFocus, needsVoice, NOBODY_IN_VOICE, notice, request, RequestError, session, state, toast, undoToast, volumeControl } from './lib.js';
 import { follow, followWhenIdle, older } from './updates.js';
 import { voiceBar } from './voice.js';
+import { volumePreview } from './volumes.js';
 
 // A playlist adds this many songs, the first or at random
 const FROM_A_LIST = 100;
@@ -200,16 +201,9 @@ export function renderMusic(main) {
   const playButton = el('button', { className: 'primary', onclick: () => void act(() => (cantPlay(data, voice.channel()) ? null : playOrPause(data, voice.channel()))) }, 'Play');
   const skipButton = el('button', { onclick: () => void act(() => request(api('/music/skip'), { method: 'POST' })) }, 'Skip');
   const stopButton = confirmButton({ title: 'Stops the music and empties the queue' }, 'Stop and clear', 'Clear the queue?', async () => show(await request(api('/music/stop'), { method: 'POST' })));
-  const volume = volumeControl({
-    min: 0,
-    max: 200,
-    label: 'Music volume',
-    onSave: (value) =>
-      void attempt(async () => {
-        await request(api('/settings/musicVolume'), { method: 'PUT', json: { value } });
-        toast(`Music plays at ${value}% for everyone now.`);
-      }),
-  });
+  // The music follows the slider as it's dragged, and letting go saves it
+  const preview = volumePreview('music');
+  const volume = volumeControl({ min: 0, max: 200, label: 'Music volume', onInput: preview.move, onSave: preview.save });
   const volumeLabel = el(
     'span',
     { className: 'voice-volume', title: 'How loud music plays for everyone in the server. It’s the Music volume in Settings.' },

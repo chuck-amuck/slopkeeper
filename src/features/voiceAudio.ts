@@ -162,6 +162,34 @@ export function applySpeechVolume(guildId: string) {
   audio.get(guildId)?.mixer?.setGroupGain('speech', setting(guildId, 'ttsVolume') / 100);
 }
 
+/** The volumes a slider can be heard at while it's dragged: the setting each saves to, and the mixer's group for it */
+export const PREVIEWED = {
+  sounds: { key: 'soundVolume', group: 'sound' },
+  speech: { key: 'ttsVolume', group: 'speech' },
+  music: { key: 'musicVolume', group: 'music' },
+} as const;
+/** A volume heard while a slider is dragged that isn't saved, say from a page closed mid-drag, goes back after this */
+export const PREVIEW_FOR_MS = 5_000;
+const previews = new Map<string, NodeJS.Timeout>();
+
+/**
+ * Plays what's playing at a volume someone's dragging a slider to, so they hear it as it moves, without saving it.
+ * Saving the setting applies it as usual; otherwise the saved volume comes back after a few seconds
+ */
+export function previewVolume(guildId: string, name: keyof typeof PREVIEWED, percent: number) {
+  const { key, group } = PREVIEWED[name];
+  audio.get(guildId)?.mixer?.setGroupGain(group, percent / 100);
+  const id = `${guildId} ${name}`;
+  clearTimeout(previews.get(id));
+  previews.set(
+    id,
+    setTimeout(() => {
+      previews.delete(id);
+      audio.get(guildId)?.mixer?.setGroupGain(group, setting(guildId, key) / 100);
+    }, PREVIEW_FOR_MS).unref(),
+  );
+}
+
 /** Plays a sound for the web UI, which has nobody to credit. It still counts towards the recap's top sounds */
 export async function playFromWeb(channel: VoiceBasedChannel, sound: Sound): Promise<string | null> {
   const problem = await play(channel, sound.file, soundGain(channel.guild.id, sound.name));

@@ -58,6 +58,7 @@ It applies the same rules as `/sound` and `/setup`, and every request needs an `
 | `GET /guilds/:id/free-games` | Lists what's free right now, with whether each game is posted and why |
 | `GET /guilds/:id/voice` | Lists voice channels with people in them, busiest first |
 | `GET /guilds/:id/volumes` | The volumes the web UI's sliders show: `sounds`, `speech`, `music`, `loopSound` and `loopSpeech`, each null when that part isn't set up |
+| `POST /guilds/:id/volumes/:volume/preview` | Plays what's playing at `{ "value": 25 }` percent while a slider (`sounds`, `speech` or `music`) is dragged, within the setting's limits, without saving or logging it. Saving the setting keeps it; otherwise the saved volume comes back after 5 seconds |
 | `POST /guilds/:id/stop` | Stops every sound and any spoken lines waiting, leaving the music playing. Returns `musicPlaying` |
 | `GET /guilds/:id/playing` | The sounds and speech playing, not the music: `version` and `playing` (`id`, `name`, `kind` sound or speech, `loop`, `started` once it's heard, `elapsedMs`). With `?after=<version>` it waits up to 25 s for a change |
 | `POST /guilds/:id/playing/:playingId/stop` | Stops one of them. 404 if it's already finished |
