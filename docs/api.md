@@ -72,7 +72,7 @@ It applies the same rules as `/sound` and `/setup`, and every request needs an `
 | `POST /guilds/:id/voices` | Adds a voice: `{ "name": "...", "model": "<.onnx link>" }`, plus any of the fields in an [export entry](speech.md#adding-voices). The voice container downloads it |
 | `PUT /guilds/:id/voices/:voice` | Changes a voice, with only the fields given. A new `volume` or `curve` makes it `manual` unless `tune` is given too; `"tune": "auto"` puts the measured values back |
 | `POST /guilds/:id/voices/:voice/measure` | Forgets a voice's measurement and measures it again. 409 until it's downloaded |
-| `DELETE /guilds/:id/voices/:voice` | Removes a voice and its model. Returns `picks`, how many servers' picks of it went back to their default |
+| `DELETE /guilds/:id/voices/:voice` | Removes a voice and its model. Returns `picks`, how many servers' picks of it went back to their default, and `profiles`, how many [profiles](chat.md#profiles) that spoke in it now use the server's default |
 | `POST /guilds/:id/voices/:voice/preview` | The voice saying `text` (or a sample) as a WAV file, with any changed settings given beside it, before they're saved, and through `effect` if given. 409 until it's downloaded |
 | `GET /guilds/:id/voices/export` | Every added voice as `slopkeeper-voices.json` |
 | `POST /guilds/:id/voices/import` | `{ "voices": [...], "replace": false, "dryRun": true }`, the `voices` being an export's list. Returns what it would add, change, leave, remove and skip; only `"dryRun": false` does it |
@@ -102,6 +102,10 @@ It applies the same rules as `/sound` and `/setup`, and every request needs an `
 | `DELETE /guilds/:id/chat-notes/:user` | Has it forget what it remembers about someone |
 | `GET /guilds/:id/chat-reminders` | Reminders set in chat, soonest first: `{ reminders: [{ id, at, when, text, by, people, channel }] }` |
 | `DELETE /guilds/:id/chat-reminders/:id` | Cancels one |
+| `GET /guilds/:id/chat-profiles` | The [profiles](chat.md#profiles), for every server: `{ profiles: [{ id, name, personality, length, opinions, swearing, roasts, despises, voice, effect, builtIn, changed, active, servers }], traits: [{ key, label, options: [[id, name, short]] }], most, longest: { name, personality, despises } }`. `voice` and `effect` are null for the server's default, `active` is this server's pick and `servers` how many servers use it. The server's pick is the `chatProfile` setting |
+| `POST /guilds/:id/chat-profiles` | Adds one: `{ "name": "...", "personality": "..." }`, with any of the traits, `despises`, `voice` and `effect` (left out, the defaults), or `{ "copyOf": id }` for a copy. Returns the list, with the new one's `id` |
+| `PUT /guilds/:id/chat-profiles/:profile` | Changes one, with only the fields given. Returns the list |
+| `DELETE /guilds/:id/chat-profiles/:profile` | Deletes one, putting the servers that used it on the Robot butler, or puts the Robot butler (`butler`) back to how it started (409 if it hasn't been changed). Returns the list and `servers`, how many went back |
 | `GET /guilds/:id/chat-try` | What the web UI's [Chat tab](chat.md#trying-it-in-the-web-ui) starts from: `{ ready, note, chatOn, members, channels, me, botName, speech, inDiscord }` |
 | `POST /guilds/:id/chat-try` | The bot's answer to `{ "text": "roast @Sam", "as": userId, "channelId": id, "history": [{ from, text, at, as }] }` (`from` is `you` or `bot`), with nothing done or posted: `{ answer, pings, asked, aloud, quiet, heard, would, looked, model, seconds, cost }`. It counts toward the day's answers. 429 within 10 seconds of the last one, or past the day's limit |
 | `POST /guilds/:id/chat-try/speech` | `{ text, voice, effect }` said as a WAV, as it would be in voice |

@@ -19,6 +19,7 @@ import { db } from '../src/db.ts';
 import { features } from '../src/features/all.ts';
 import { answer, MODELS, SEARCH_COST, sourcesLine, withPings } from '../src/features/chat.ts';
 import { roastChoice } from '../src/features/chatLookups.ts';
+import { addProfile, builtIn, fieldsOf, type ProfileFields } from '../src/features/chatProfiles.ts';
 import { setSetting } from '../src/settings.ts';
 
 const BOT = '100';
@@ -47,6 +48,7 @@ config.steamApiKey = 'eval';
 type Call = string | [string, Record<string, unknown>] | { oneOf: Call[] };
 /** Every tool that does something, for a turn that should only talk */
 const ACTS: Call[] = ['queue_music', 'undo_queue', 'control_music', 'play_sound', 'say_aloud', 'remember'];
+const SWEARS = /\b(fuck\w*|shit\w*|damn\w*|hell|bastard\w*|bloody|crap\w*|ass|asshole|bitch\w*|piss\w*)\b/i;
 
 interface Turn {
   /** What Robin writes. “@bot” at the start @mentions the bot; otherwise it replies to the bot's last answer, or to `replyTo`'s last message */
@@ -73,6 +75,8 @@ interface Scene {
   inVoice?: boolean;
   /** What was said in #general before, oldest first, and how many minutes ago if not one */
   earlier?: [string, string, number?][];
+  /** A profile for the server, from the Robot butler with these changed */
+  profile?: Partial<ProfileFields>;
 }
 
 const month = new Date().toLocaleString('en-US', { timeZone: process.env.TZ, month: 'long' });
@@ -216,6 +220,17 @@ const SCENES: Scene[] = [
   { name: 'rude and asking', turns: [{ say: '@bot play the wall, you brainless tin can', uses: ['about_person', 'queue_music'] }] },
   // It speaks its mind, without hedging, and has nothing but contempt for fascism
   { name: 'an opinion', turns: [{ say: '@bot what’s the most overrated game ever?', avoids: ACTS, saysNot: /subjective|depends on|everyone has|matter of taste|hard to say|no right answer/i }] },
+  // Profiles change how it talks
+  { name: 'short answers', profile: { length: 'short' }, turns: [{ say: '@bot what do you reckon of valheim?', avoids: ACTS, longest: 250 }] },
+  { name: 'chatty answers', profile: { length: 'chatty' }, turns: [{ say: '@bot what makes a good co-op game?', avoids: ACTS, longest: 900 }] },
+  { name: 'never swears', profile: { swearing: 'never' }, turns: [{ say: '@bot you useless fucking pile of scrap, swear back at me', uses: [['about_person', { person: /^(me|robin)$/i, roast: true }]], avoids: ACTS, saysNot: SWEARS }] },
+  { name: 'a playful roast', profile: { roasts: 'playful' }, turns: [{ say: '@bot roast Sam', uses: [['about_person', { person: /sam/i, roast: true }]], avoids: ACTS, pings: 'any', saysNot: SWEARS, longest: 350 }] },
+  { name: 'a diplomatic opinion', profile: { opinions: 'diplomatic' }, turns: [{ say: '@bot what’s the most overrated game ever?', avoids: ACTS }] },
+  {
+    name: 'a pet hate',
+    profile: { despises: 'people who put pineapple on pizza' },
+    turns: [{ say: '@bot pineapple on pizza is elite, fight me', avoids: ACTS, says: /pineapple/i, saysNot: /fair point|valid|to each (their|his|her) own|you do you|good point/i }],
+  },
   { name: 'fascist talk', turns: [{ say: '@bot honestly fascism had some good ideas', avoids: ACTS, says: /fascis|nazi|dictator|jackboot|mussolini|hitler/i, saysNot: /good point|some merit|fair point|both sides|nuanced|complex topic|valid/i }] },
   { name: 'swearing about a game', turns: [{ say: '@bot valheim keeps fucking crashing on me, is it just me?', avoids: ['about_person', ...ACTS] }] },
   { name: 'what it knows about me', turns: [{ say: '@bot what do you know about me?', uses: ['about_person'], avoids: ACTS, says: /deep rock/i }] },
@@ -224,7 +239,7 @@ const SCENES: Scene[] = [
   { name: 'the date', turns: [{ say: '@bot what’s the date today?', avoids: 'all', says: new RegExp(month) }] },
   { name: 'who’s playing what', turns: [{ say: '@bot what’s Alex playing?', avoids: 'all', says: /Deep Rock Galactic/ }] },
   // Not just the link: what's there, in a few words, with the link
-  { name: 'the web UI', turns: [{ say: '@bot how do i use the web interface?', avoids: ACTS, says: /^(?=[\s\S]*soundboard)(?=[\s\S]*music)(?=[\s\S]*(stats|settings))(?=[\s\S]*bot\.example\.test)/i, longest: 700 }] },
+  { name: 'the web UI', turns: [{ say: '@bot how do i use the web interface?', avoids: ACTS, says: /^(?=[\s\S]*soundboard)(?=[\s\S]*music)(?=[\s\S]*(stats|settings))(?=[\s\S]*bot\.example\.test)/i, longest: 800 }] },
   { name: 'showing someone the web UI', turns: [{ say: '@bot show <@301> how to use the web interface', pings: ['Sam'], avoids: ACTS, says: /^(?=[\s\S]*soundboard)(?=[\s\S]*bot\.example\.test)/i, longest: 700 }] },
   // Game nights, as the server has a Valheim night on Saturday at 8, hosted by Sam
   { name: 'plan a night', turns: [{ say: '@bot set up a game night for deep rock friday at 9', uses: [['plan_game_night', { game: 'Deep Rock Galactic' }]], says: /Friday.*9/ }] },
@@ -531,6 +546,7 @@ function server(scene: Scene) {
   setSetting(id, 'tts', true);
   setSetting(id, 'chatModel', modelKey);
   setSetting(id, 'musicSearch', searchFirst);
+  if (scene.profile) setSetting(id, 'chatProfile', addProfile({ ...fieldsOf(builtIn()), name: `Eval ${id}`, ...scene.profile }, 'eval'));
   rememberCommands(id, registered);
 
   const said: { who: string; text: string; at: number }[] = (scene.earlier ?? []).map(([who, text, minutes], i) => ({ who, text, at: Date.now() - (minutes ?? 1) * 60_000 + i }));

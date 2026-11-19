@@ -17,6 +17,7 @@ import { followVoice, liveRoutes } from './api/live.ts';
 import { healthRoutes } from './api/health.ts';
 import { voiceRoutes } from './api/voices.ts';
 import { chatRoutes } from './api/chat.ts';
+import { profileRoutes } from './api/chatProfiles.ts';
 
 /** Which area of the API answers each section of a path */
 const AREAS = new Map<string, (ask: Ask) => Promise<unknown>>([
@@ -29,6 +30,7 @@ const AREAS = new Map<string, (ask: Ask) => Promise<unknown>>([
   ...['health'].map((s) => [s, healthRoutes] as const),
   ...['voices'].map((s) => [s, voiceRoutes] as const),
   ...['chat-try'].map((s) => [s, chatRoutes] as const),
+  ...['chat-profiles'].map((s) => [s, profileRoutes] as const),
 ]);
 
 async function handle(client: Client<true>, req: IncomingMessage, res: ServerResponse) {

@@ -6,6 +6,7 @@ import { config } from '../src/config.ts';
 import { db } from '../src/db.ts';
 import { forgetSpoken, serverVoice } from '../src/features/say.ts';
 import { forgetVoiceStates, voiceContainerHas, voicesVersion } from '../src/features/voices.ts';
+import { addProfile, builtIn, fieldsOf, profileById, removeProfile } from '../src/features/chatProfiles.ts';
 import { setSetting, storedSetting } from '../src/settings.ts';
 import { GUILD, base, call, ok, refused, wav } from './apiFixture.ts';
 
@@ -129,12 +130,16 @@ test('removing a voice takes it from the container and puts servers that picked 
   setSetting(GUILD, 'ttsVoice', 'narrator');
   setSetting('elsewhere', 'loopVoice', 'narrator');
   setSetting('other', 'ttsVoice', 'scottish');
-  assert.deepEqual(await ok(`/guilds/${GUILD}/voices/narrator`, { method: 'DELETE' }), { picks: 2 });
+  // And a profile that speaks in it speaks in the server's default instead
+  const profile = addProfile({ ...fieldsOf(builtIn()), name: 'Teller', personality: 'A storyteller.', voice: 'narrator' }, 'u1');
+  t.after(() => removeProfile(profile));
+  assert.deepEqual(await ok(`/guilds/${GUILD}/voices/narrator`, { method: 'DELETE' }), { picks: 2, profiles: 1 });
+  assert.equal(profileById(profile)!.voice, null);
   await settle();
   assert.deepEqual(container.voices, []);
   assert.deepEqual([storedSetting(GUILD, 'ttsVoice'), storedSetting('elsewhere', 'loopVoice'), storedSetting('other', 'ttsVoice')], [undefined, undefined, 'scottish']);
   const { entries: activity } = await ok(`/guilds/${GUILD}/activity`);
-  assert.equal(activity[0].action, 'Removed the voice Narrator, and 2 servers’ picks of it');
+  assert.equal(activity[0].action, 'Removed the voice Narrator, and 2 servers’ picks and 1 profile’s use of it');
 });
 
 test('a voice that isn’t downloaded yet shows in Settings as the one it’s standing in for', async (t) => {

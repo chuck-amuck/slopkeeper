@@ -232,3 +232,18 @@ export async function talksToBot(message: Message): Promise<boolean> {
   const to = message.reference?.messageId ? await message.fetchReference().catch(() => null) : null;
   return !!to && isAnswer(to, message.client.user.id);
 }
+
+/** An id made from a name, unlike any taken: lower case, with dashes, or `fallback` for a name with no letters or digits */
+export function slugId(name: string, taken: Iterable<string>, fallback: string): string {
+  const used = new Set(taken);
+  const base =
+    name
+      .toLowerCase()
+      .normalize('NFKD')
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 28)
+      .replace(/-+$/, '') || fallback;
+  if (!used.has(base)) return base;
+  for (let n = 2; ; n++) if (!used.has(`${base}-${n}`)) return `${base}-${n}`;
+}

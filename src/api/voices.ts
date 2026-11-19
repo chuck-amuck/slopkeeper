@@ -119,9 +119,10 @@ export async function voiceRoutes(ask: Ask) {
 
   if (id && !action && req.method === 'DELETE') {
     const voice = find(id);
-    const picks = removeVoice(id);
-    logActivity(guild.id, by(), `Removed the voice ${voice.name}${picks ? `, and ${picks === 1 ? '1 server’s pick' : `${picks} servers’ picks`} of it` : ''}`);
-    return { picks };
+    const { picks, profiles } = removeVoice(id);
+    const gone = [picks && (picks === 1 ? '1 server’s pick' : `${picks} servers’ picks`), profiles && (profiles === 1 ? '1 profile’s use' : `${profiles} profiles’ use`)].filter(Boolean);
+    logActivity(guild.id, by(), `Removed the voice ${voice.name}${gone.length ? `, and ${gone.join(' and ')} of it` : ''}`);
+    return { picks, profiles };
   }
 
   if (id && action === 'measure' && !rest[2] && req.method === 'POST') {

@@ -5387,3 +5387,25 @@ a,
     font-size: 16px;
   }
 }
+
+/* Settings' Profiles card: which one is in use, and its buttons, which wrap on a phone */
+.profile-tag {
+  display: inline-block;
+  margin-left: var(--space-2);
+  padding: 1px 8px;
+  border-radius: var(--radius-pill);
+  background: var(--accent-fill);
+  color: var(--accent-text);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  vertical-align: 1px;
+}
+
+.profile-row .control {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.field.profile-row .control button {
+  margin-left: 0;
+}

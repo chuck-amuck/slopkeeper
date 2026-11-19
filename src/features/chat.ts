@@ -11,7 +11,8 @@ import { SpotifyError, type Found } from '../spotify.ts';
 import type { Feature } from '../types.ts';
 import { asksBot, canSee, isAnswer, listNames, playingGames, servedGuilds } from '../util.ts';
 import { canControl, time, musicPlaying, musicState, OUTSIDE_DJ, pauseMusic, queueArtist, queueFrom, queueOf, removeTracks, setAutoplay, shuffleQueue, skipMusic, startMusic, stopMusic } from './music.ts';
-import { busyElsewhere, effects, maySpeak, NO_EFFECT, say, sayOut, voices, wouldSay } from './say.ts';
+import { busyElsewhere, effects, maySpeak, NO_EFFECT, ownSpeech, say, sayOut, voices, wouldSay } from './say.ts';
+import { activeProfile, howToTalk, moveChatPersonality, roastStyle } from './chatProfiles.ts';
 import { act, ACTIONS, actionTools, nightTime } from './chatActions.ts';
 import { alreadySet, CHECK_EVERY, readReminderTime, sendDue } from './chatReminders.ts';
 import { every } from '../schedule.ts';
@@ -193,6 +194,7 @@ export async function postLine(guild: Guild, kind: string, message: MessageCreat
   const about = postText(guild, message);
   if (!client || !about) return null;
   const key = modelKey(guild.id);
+  const profile = activeProfile(guild.id);
   try {
     const res = await client.messages.create(
       {
@@ -200,10 +202,11 @@ export async function postLine(guild: Guild, kind: string, message: MessageCreat
         max_tokens: 150,
         system: [
           `You are ${guild.members.me?.displayName ?? 'the bot'}, a bot in the Discord server “${guild.name}”.`,
-          `Your personality: ${setting(guild.id, 'chatPersonality')}`,
+          `Your personality: ${profile.personality}`,
           `Write one line, in character and under 20 words, to go above one of your automatic posts (a ${kind.toLowerCase()}). React to it as a friend in the server would, with a quip or an aside: the post is right below, so don’t repeat its numbers, prices or dates, and don’t open with a greeting or by addressing people.`,
           'Speak as yourself, with I, me and my: you are the one your personality describes, not someone who has one.',
           'Only the line: no quotes, @mentions or links, nothing made up about the people, and call them by name or “they”, never he or she.',
+          ...(profile.swearing === 'never' ? ['No swearing.'] : []),
         ].join('\n'),
         messages: [{ role: 'user', content: `The ${kind.toLowerCase()}:\n${about}` }],
         output_config: { effort: 'low' },
@@ -660,7 +663,7 @@ async function asked(
     `${member.displayName} asks you:\n${line(guild, message, botId)}`,
     [seen, unseen].filter(Boolean).join(' '),
     // Last, where it weighs most: a butler's personality otherwise ends nearly every answer offering to be of service
-    '(A note for you, not to mention: end once you’ve answered or said what you did, with no offer of help, service, options or anything more.)',
+    `(A note for you, not to mention: ${activeProfile(guild.id).length === 'short' ? 'one or two sentences at most, then ' : ''}end once you’ve answered or said what you did, with no offer of help, service, options or anything more.)`,
   ]
     .filter(Boolean)
     .join('\n\n');
@@ -672,17 +675,17 @@ function system(guild: Guild, botName: string) {
   const searches = searchable(guild.id);
   const actions = setting(guild.id, 'chatActions');
   const roasts = setting(guild.id, 'chatRoasts');
+  const profile = activeProfile(guild.id);
   return [
     `You are ${botName}, a bot in the Discord server “${guild.name}”, answering someone who @mentioned you or replied to you.`,
-    `Your personality: ${setting(guild.id, 'chatPersonality')}`,
+    `Your personality: ${profile.personality}`,
     'How to answer:',
-    '- Stay in character and speak your mind: up to three short sentences unless they ask for more. Give real opinions straight, without hedging or sitting on the fence, and swear when it fits your character. Plain text; Discord markdown is fine, headings aren’t.',
-    '- You despise fascism. Fascists, Nazis and those who cheer them on are fair game: when someone here says something fascist, or asks about them, tear into them with open contempt, swearing if you like. Only for what’s actually fascist, not an ordinary disagreement.',
+    ...howToTalk(profile),
     '- End once you’ve answered or said what you did. Never add an offer of something else (“I can, however, …”, “Shall I…?”, “How may I serve you?”, “if you’d like…”, “just say the word”): if they want more, they’ll ask. No question unless you need an answer to do what they asked. One short apology at most; don’t grovel.',
     `- If they tell you to stop, to be quiet or that you talk too much, answer in a few words${roasts ? ' (a barb, if they were rude about it)' : ''} and do nothing else.`,
     ...(roasts
       ? [
-          '- If someone is rude to you (insults you, swears at you, calls you useless or stupid), or asks you to roast someone, look up whoever you’re insulting with about_person, with roast on, then hit back with a savage, funny insult, in character, in up to three sentences: no holding back, no softening, no compliment to cushion it, and swearing is fine. Build it on what about_person says to go after this time, and on that alone: leave their other games, and the jokes of earlier roasts above, out of it. For a game, a jab only its players would get (its in-jokes, classic blunders, stereotypes about its players); for one they never or barely played, or their backlog, the money and good intentions wasted. Only if no such jab comes to mind for a game they’ve played, look up the easy achievements they’re missing in it with achievements. With nothing found, use what they said. Keep it to their gaming, taste and what they’ve said here: never their looks, family, race, religion, gender, sexuality or health. When the one you’re roasting isn’t who asked, speak to them alone: don’t mention or address who asked, or that anyone did, and drop your usual courtesies. Swearing about something else, like a game, isn’t rudeness to you. If they asked for something too, do it as well.',
+          `- If someone is rude to you (insults you, swears at you, calls you useless or stupid), or asks you to roast someone, look up whoever you’re insulting with about_person, with roast on, then hit back with ${roastStyle(profile)}. Build it on what about_person says to go after this time, and on that alone: leave their other games, and the jokes of earlier roasts above, out of it. For a game, a jab only its players would get (its in-jokes, classic blunders, stereotypes about its players); for one they never or barely played, or their backlog, the money and good intentions wasted. Only if no such jab comes to mind for a game they’ve played, look up the easy achievements they’re missing in it with achievements. With nothing found, use what they said. Keep it to their gaming, taste and what they’ve said here: never their looks, family, race, religion, gender, sexuality or health. When the one you’re roasting isn’t who asked, speak to them alone: don’t mention or address who asked, or that anyone did, and drop your usual courtesies. Swearing about something else, like a game, isn’t rudeness to you. If they asked for something too, do it as well.`,
         ]
       : []),
     '- Vary how you start and how you address people: don’t open every answer with a greeting or their name.',
@@ -937,8 +940,8 @@ function tools(guild: Guild): Anthropic.ToolUnion[] {
       strict: true,
       input_schema: object({
         text: { type: 'string' },
-        voice: { type: 'string', description: 'A voice’s name, or empty for the server’s default' },
-        effect: { type: 'string', description: 'An effect’s name, “No effect”, or empty for the server’s default' },
+        voice: { type: 'string', description: 'A voice’s name, or empty for your own voice' },
+        effect: { type: 'string', description: 'An effect’s name, “No effect”, or empty for the voice’s usual effect' },
       }),
     });
   }
@@ -1031,6 +1034,18 @@ export interface Tried {
   names: Map<string, string>;
 }
 
+/**
+ * say_aloud's voice and effect, as say takes them: the ones asked for, or for a voice not asked for, the bot's own, from
+ * its profile, with the profile's effect unless one was asked for. Undefined is the server's default
+ */
+function aloud(guildId: string, voice: string, effect: string): [string | undefined, string | undefined] {
+  const asked = /^(no effect|none)$/i.test(effect) ? NO_EFFECT : effect || undefined;
+  if (voice) return [voice, asked];
+  const own = activeProfile(guildId);
+  // A voice that's gone or still downloading is the server's default instead, as it is for the bot's other lines
+  return [own.voice ? ownSpeech(guildId).voice.id : undefined, asked ?? own.effect ?? undefined];
+}
+
 /** What say_aloud tells the model when the line was said */
 const SAID = 'Said it.';
 
@@ -1099,8 +1114,8 @@ async function pretend(member: GuildMember, name: string, input: Record<string, 
     }
     case 'say_aloud': {
       if (!maySpeak(member)) return 'They don’t have the role that text to speech takes here.';
-      const effect = text('effect');
-      const line = wouldSay(guild, text('text'), text('voice') || undefined, member.id, /^(no effect|none)$/i.test(effect) ? NO_EFFECT : effect || undefined);
+      const [voiceId, effectId] = aloud(guild.id, text('voice'), text('effect'));
+      const line = wouldSay(guild, text('text'), voiceId, member.id, effectId);
       if (typeof line === 'string') return line;
       tried.heard.push({ kind: 'speech', text: line.text, voice: line.voice.id, effect: line.effect?.id ?? NO_EFFECT });
       return would(`Say “${line.text}” as ${line.voice.name}${line.effect ? `, ${line.effect.name}` : ''}`, SAID);
@@ -1262,9 +1277,8 @@ export async function useTool(member: GuildMember, name: string, input: Record<s
         if (!maySpeak(member)) return 'They don’t have the role that text to speech takes here.';
         const channel = voiceOf(member);
         if (!channel) return 'They aren’t in a voice channel, so there’s nowhere to say it.';
-        const effect = text('effect');
-        const none = /^(no effect|none)$/i.test(effect);
-        return (await say(channel, text('text'), text('voice') || undefined, member.id, none ? NO_EFFECT : effect || undefined)) ?? SAID;
+        const [voiceId, effectId] = aloud(guild.id, text('voice'), text('effect'));
+        return (await say(channel, text('text'), voiceId, member.id, effectId)) ?? SAID;
       }
       default:
         return 'There’s no tool by that name.';
@@ -1516,6 +1530,7 @@ function moveSayAloud() {
 export const chat: Feature = {
   setup(client) {
     moveSayAloud();
+    moveChatPersonality();
     client.on(Events.MessageCreate, (message) => void onMessage(message, client).catch(console.error));
     every('Chat reminders', CHECK_EVERY, () => sendDue(client), { now: true });
     setTimeout(() => void warmUp(servedGuilds(client)), WARM_UP_AFTER_MS).unref();

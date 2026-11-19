@@ -15,6 +15,7 @@ import type { Feature } from '../types.ts';
 import { canGiveRole, isTimeZone, pingWarning } from '../util.ts';
 import { effectName, effects, missingVoice, NO_EFFECT, serverVoice, voiceName, voices } from './say.ts';
 import { afterSettingsChanged } from './soundboard.ts';
+import { BUILT_IN_ID, profileById } from './chatProfiles.ts';
 import { cantJoin } from './voiceAudio.ts';
 import { findSound, listSounds } from './soundLibrary.ts';
 import { loopSpeechProblem } from './loopRoom.ts';
@@ -34,7 +35,6 @@ const ANNOUNCE_PERMISSIONS = [
 const PATCH_MODES = { off: 'off', each: 'each one posted', digest: 'weekly digest' };
 const READ_WHO = { everyone: 'everyone', voice: 'only people in voice' };
 const LONGEST_GREETING = 100;
-export const LONGEST_PERSONALITY = 1000;
 /** The models chat can answer with, by setting value */
 /** Whether chat answers are said in voice too, or instead of posted */
 export const CHAT_VOICE = { off: 'no, text only', also: 'text and voice', only: 'voice only' };
@@ -150,7 +150,7 @@ export const LABELS: Record<SettingKey, string> = {
   musicSearch: 'Music search',
   musicSearchFallback: 'Fall back to the other',
   chat: 'Answer in chat',
-  chatPersonality: 'Personality',
+  chatProfile: 'Profile',
   chatModel: 'Model',
   chatWebSearch: 'Search the web',
   chatActions: 'Take actions',
@@ -261,8 +261,8 @@ export function show(key: SettingKey, value: unknown): string {
       return CHAT_VOICE[value as keyof typeof CHAT_VOICE] ?? String(value);
     case 'musicSearch':
       return SOURCES[value as Source] ?? String(value);
-    case 'chatPersonality':
-      return `“${String(value)}”`;
+    case 'chatProfile':
+      return (profileById(String(value)) ?? profileById(BUILT_IN_ID)!).name;
     case 'chatDailyLimit':
       return `${value} a day`;
     default:
@@ -314,7 +314,7 @@ export const GROUPS: [string, SettingKey[]][] = [
   ['Soundboard', ['soundVolume', 'evenVolume', 'joinSounds', 'joinSoundDelayMs', 'joinSoundCooldownMin', 'soundManagerRole']],
   ['Music', ['musicVolume', 'evenMusic', 'musicAutoplay', 'musicSearch', 'musicSearchFallback', 'musicDjRole']],
   ['Looping sound room', ['loopRoom', 'loopSound', 'loopVolume', 'loopEvery', 'loopText', 'loopVoice', 'loopEffect', 'loopTextVolume', 'loopTextEvery', 'loopIntro', 'loopIntroDelayMs', 'loopSoundDelayMs', 'loopTextDelayMs']],
-  ['Chat', ['chat', 'chatPersonality', 'chatModel', 'chatWebSearch', 'chatActions', 'chatRoasts', 'chatPostLines', 'chatVoice', 'chatDailyLimit']],
+  ['Chat', ['chat', 'chatProfile', 'chatModel', 'chatWebSearch', 'chatActions', 'chatRoasts', 'chatPostLines', 'chatVoice', 'chatDailyLimit']],
   ['Text to speech', ['tts', 'ttsVoice', 'ttsEffect', 'ttsSpeed', 'ttsPauseMs', 'ttsVolume', 'ttsChannel', 'ttsChannelWho', 'ttsGreet', 'ttsGreeting', 'ttsNightReminders', 'ttsHopOn', 'ttsRole', 'ttsMaxChars', 'ttsCooldownSec']],
 ];
 
@@ -540,11 +540,8 @@ export function checkSetting(guild: Guild, key: SettingKey, value: unknown): Che
       return Object.hasOwn(READ_WHO, String(value)) ? { value: String(value) } : { error: 'Read everyone, or only people in voice.' };
     case 'ttsGreeting':
       return greetingProblem(String(value)) ? { error: greetingProblem(String(value))! } : { value: String(value).trim() };
-    case 'chatPersonality': {
-      const text = String(value).trim();
-      if (!/[\p{L}]/u.test(text)) return { error: 'Describe who the bot is when it answers.' };
-      return text.length > LONGEST_PERSONALITY ? { error: `Keep the personality to ${LONGEST_PERSONALITY} characters.` } : { value: text };
-    }
+    case 'chatProfile':
+      return profileById(String(value)) ? { value: String(value) } : { error: 'Pick a profile from the list.' };
     case 'chatModel':
       return Object.hasOwn(CHAT_MODELS, String(value)) ? { value: String(value) } : { error: 'Pick Claude Haiku 5.5, Claude Sonnet 5.5 or Claude Opus 5.5.' };
     case 'chatVoice':

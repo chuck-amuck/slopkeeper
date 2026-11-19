@@ -16,6 +16,7 @@ import * as perf from '../src/perf.ts';
 import { announceAloud, CURVE_STRETCHES, heldWords, previewSpeech, readable, effects, forgetSpoken, lengthFor, moveEffectVoices, NO_EFFECT, oldEffectVoice, phrases, previewPart, readMessage, removePhrase, savePhrase, say, sayOut, missingVoice, serverEffect, serverVoice, speak, speechFor, voiceGroup, voices } from '../src/features/say.ts';
 import { effectGain, forgetEffectGains, setEffectGain, soundKey } from '../src/features/effectGains.ts';
 import { addVoice, removeVoice, syncVoices, voiceFields, voicesVersion } from '../src/features/voices.ts';
+import { addProfile, builtIn, fieldsOf, removeProfile } from '../src/features/chatProfiles.ts';
 import { applySpeechVolume, stopPlayback } from '../src/features/voiceAudio.ts';
 import { loopSpeechProblem } from '../src/features/loopRoom.ts';
 import { playJoinSound, setJoinSound } from '../src/features/joinSounds.ts';
@@ -390,6 +391,25 @@ test('a server whose voice was removed talks in the default voice, but asking fo
   await sleep(300);
   assert.equal(await say(voice, 'not this', 'racer', 'b'), 'Pick a voice from the list.');
   assert.deepEqual(asked.map((a) => [a.text, a.model]), [['still here', 'southern_male'], ['and here', 'southern_male']]);
+});
+
+test('the bot’s own lines are in its profile’s voice, while lines people say keep the server’s', { skip: !hasFfmpeg }, async (t) => {
+  const asked = fakeVoice(t);
+  const voice = channel();
+  const id = addProfile({ ...fieldsOf(builtIn()), name: 'Scot', personality: 'A Scot.', voice: 'scottish' }, 'u1');
+  t.after(() => removeProfile(id));
+  setSetting(voice.guild.id, 'chatProfile', id);
+  assert.equal(await sayOut(voice, 'its own'), null);
+  await sleep(300);
+  assert.equal(await say(voice, 'somebody else', undefined, 'a'), null);
+  await sleep(300);
+  assert.deepEqual(
+    asked.map((a) => [a.text, a.model]),
+    [
+      ['its own', 'alba'],
+      ['somebody else', 'southern_male'],
+    ],
+  );
 });
 
 test('a pick of a voice that’s gone is kept, and falls back to the server’s own default, then the bot’s', () => {

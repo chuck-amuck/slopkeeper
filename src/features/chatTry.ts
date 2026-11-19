@@ -3,7 +3,7 @@ import { type Guild, type GuildMember, type GuildTextBasedChannel, MessageType, 
 import { config } from '../config.ts';
 import { setting } from '../settings.ts';
 import { answer, claimAnswer, finished, giveBack, readable, sourcesLine, type Heard, type Tried } from './chat.ts';
-import { NO_EFFECT, serverEffect, serverVoice } from './say.ts';
+import { NO_EFFECT, ownSpeech } from './say.ts';
 import { CHAT_MODELS, CHAT_VOICE } from './setup.ts';
 
 // Chat tried in the web UI: the bot's real answer, with its real instructions, model and lookups, as if someone had
@@ -125,7 +125,10 @@ export async function tryChat(guild: Guild, asker: GuildMember, channel: GuildTe
     const text = readable(guild, done.reply);
     if (made.spoke) quiet = 'It already said something aloud, so the answer isn’t said too.';
     else if (text.length > setting(guild.id, 'ttsMaxChars')) quiet = 'It’s longer than the longest line, so it wouldn’t be said aloud.';
-    else aloud = { kind: 'speech', text, voice: serverVoice(guild.id).id, effect: serverEffect(guild.id)?.id ?? NO_EFFECT };
+    else {
+      const own = ownSpeech(guild.id);
+      aloud = { kind: 'speech', text, voice: own.voice.id, effect: own.effect?.id ?? NO_EFFECT };
+    }
   }
   return {
     // As it would be posted, with its mentions, for the page to show by name

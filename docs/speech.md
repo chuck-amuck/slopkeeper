@@ -27,7 +27,8 @@ Neither the accents nor the effects imitate a known person. In Discord, `voice` 
 Any voice can be said through an effect, picked beside the voice: **Demon**, **Helium**, **Giant**, **Robot**, **Alien**, **Walkie-talkie**, **Phone call**, **Megaphone**, **Stadium PA**, **Newsreel**, **Cathedral**, **Underwater**, **Ghost**, **Trailer narrator** and **Old loudspeaker**. Pitch effects change the pace too: Helium is quicker, and Giant and Demon slower.
 
 - An effect changes some voices' loudness far more than others', so each voice and effect pair is measured once, in the background, to be as loud as the voice is without it. Until then a pair uses the effect's usual correction.
-- The server's **Default effect**, in Settings, is used when nobody picks one, including for messages read out, greetings and announcements. **No effect** is a pick of its own.
+- The server's **Default effect**, in Settings, is used when nobody picks one, including for messages read out. **No effect** is a pick of its own.
+- The bot's own lines (chat answers said aloud, greetings, and hop-on and game night announcements) are in its [profile's](chat.md#profiles) voice and effect, which are the server's default voice and effect unless the profile picks others.
 - The effects used to be voices, on three American voices. A server, the looping room or a device that had picked one now has the American voice it was made on, with that effect.
 
 ## Settings
@@ -54,7 +55,7 @@ The web UI's Settings has a **Voices** card for adding any [Piper](https://githu
   - **Steadiness**: steadier timing and sound for a voice that wobbles in long lines.
   - **Speed curve**: how it follows the speed setting. Character suits most community models.
   - **Preview** plays it with these settings, just for you, through the **Preview effect** if one is picked.
-- **Remove** deletes it, and servers that picked it go back to their default voice.
+- **Remove** deletes it, servers that picked it go back to their default voice, and [profiles](chat.md#profiles) that spoke in it use the server's default voice.
 - **Export** saves every added voice as `slopkeeper-voices.json`. **Import** takes that file, matches voices by id or name, and shows what it would add, change and skip before it does. **Replace all** removes added voices the file doesn't have.
 
 An export entry has `name` and `model`, and only what differs from the defaults: `id`, `group` (`Characters` or `Accents`), `config` (the settings' address, by default the model's with `.json` added), `sha256` and `configSha256` (checked when given), `speaker`, `volume` (dB, -20 to 20), `pace` (0.5 to 2), `noise` (Piper's `noise_scale` and `noise_w_scale`, from 0 to 2), `curve` (`character`, `default`, `middle` or `low`) and `tune`. Exports always write `tune`: `auto` takes the measured curve and loudness, `manual` keeps the entry's own. An entry without `tune` is `auto` if it gives neither `volume` nor `curve`.

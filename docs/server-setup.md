@@ -128,7 +128,7 @@ Each setting goes by the name `/setup show` and `/setup reset` use. A few are se
 | Music search | web UI only | `MUSIC_SEARCH` (`spotify` or `youtube-music`) | Spotify |
 | Fall back to the other | web UI only | `MUSIC_SEARCH_FALLBACK` (`false` to turn off) | on |
 | Answer in chat | web UI only | `CHAT` (`false` to turn off) | on, with an `ANTHROPIC_API_KEY` |
-| Personality | web UI only | `CHAT_PERSONALITY` | a robot butler with impeccable manners and no brakes |
+| Profile | web UI only | `CHAT_PERSONALITY` sets the Robot butler's personality | the Robot butler, a robot butler with impeccable manners and no brakes (see [Profiles](chat.md#profiles)) |
 | Model | web UI only | `CHAT_MODEL` (`haiku`, `sonnet` or `opus`) | `haiku` |
 | Search the web | web UI only | `CHAT_WEB_SEARCH` (`false` to turn off) | on |
 | Take actions | web UI only | `CHAT_ACTIONS` (`false` to turn off) | on |

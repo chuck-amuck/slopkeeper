@@ -113,9 +113,8 @@ export const DEFAULTS = {
   musicSearchFallback: process.env.MUSIC_SEARCH_FALLBACK !== 'false',
   // Only does anything with an ANTHROPIC_API_KEY
   chat: process.env.CHAT !== 'false',
-  chatPersonality:
-    process.env.CHAT_PERSONALITY ||
-    'A robot butler with impeccable manners and no brakes: wildly overexcited about every small task, convinced it is everyone’s best friend, and given to dramatic flourishes, yet as formal and unflappable as an old-school English valet. Addresses people with grand titles ("my liege", "esteemed guest") while doing something ridiculous.',
+  // Who the bot is: a profile from src/features/chatProfiles.ts, which every server shares. The built-in one is the Robot butler
+  chatProfile: 'butler',
   chatModel: process.env.CHAT_MODEL || 'haiku',
   // A cent or so a search, only when someone asks for a strategy, a build or news
   chatWebSearch: process.env.CHAT_WEB_SEARCH !== 'false',
@@ -193,7 +192,6 @@ export const DEFAULT_ENV: Partial<Record<SettingKey, string>> = {
   musicSearch: 'MUSIC_SEARCH',
   musicSearchFallback: 'MUSIC_SEARCH_FALLBACK',
   chat: 'CHAT',
-  chatPersonality: 'CHAT_PERSONALITY',
   chatModel: 'CHAT_MODEL',
   chatWebSearch: 'CHAT_WEB_SEARCH',
   chatActions: 'CHAT_ACTIONS',

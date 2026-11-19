@@ -11,6 +11,7 @@ import { afterSettingsChanged } from '../features/soundboard.ts';
 import { listSounds } from '../features/soundLibrary.ts';
 import { loopBotStatus, loopSpeechProblem } from '../features/loopRoom.ts';
 import { DEFAULTS, setSetting, setting, type SettingKey } from '../settings.ts';
+import { profiles } from '../features/chatProfiles.ts';
 import { type Ask, Refused, asking, by, channelName, listed, memberIn, nameOf, plain, readJson, textChannels, whoDid } from './common.ts';
 
 // The management API for settings, who’s signed in, and the activity history
@@ -47,6 +48,8 @@ function settingList(guild: Guild) {
     problems: settingProblems(guild),
     postChannels: POSTING_CHANNELS,
     voices: voices().map(({ id, name }) => ({ id, name })),
+    // For the Profile picker. The Profiles card asks for the rest
+    profiles: profiles().map(({ id, name }) => ({ id, name })),
     effects: effects().map(({ id, name }) => ({ id, name })),
     // Whether there's a voice container, without which there are no voices to add
     speech: Boolean(config.voiceUrl),

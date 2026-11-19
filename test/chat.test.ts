@@ -9,6 +9,7 @@ import { MessageFlags } from 'discord.js';
 import { answer, asksBot, chat, chatNote, chatNotes, chatUsage, COOLDOWN_MS, finished, MODELS, MOST_STRICT_TOOLS, getReady, joinsVoice, strictAtMost, talksNearby, warmUp, withoutOffer, noteOf, onMessage, resetChat, sourcesLine, useTool, type Turn } from '../src/features/chat.ts';
 import { clearQueue, queueOf } from '../src/features/music.ts';
 import { checkSetting } from '../src/features/setup.ts';
+import { addProfile, builtIn, editProfile, fieldsOf, profileById, removeProfile } from '../src/features/chatProfiles.ts';
 import { ACTIONS } from '../src/features/chatActions.ts';
 import { CantTry, inDiscord, mentionsIn, tryChat } from '../src/features/chatTry.ts';
 import { sendPost } from '../src/postFailures.ts';
@@ -467,9 +468,8 @@ test('Sonnet and Opus can be picked, and the chat settings are checked', () => {
   assert.deepEqual(checkSetting(guild, 'chatModel', 'opus'), { value: 'opus' });
   assert.deepEqual(checkSetting(guild, 'chatModel', 'sonnet'), { value: 'sonnet' });
   assert.match((checkSetting(guild, 'chatModel', 'gpt') as { error: string }).error, /Haiku 5.5, Claude Sonnet 5.5 or Claude Opus 5.5/);
-  assert.deepEqual(checkSetting(guild, 'chatPersonality', '  A grumpy pirate.  '), { value: 'A grumpy pirate.' });
-  assert.match((checkSetting(guild, 'chatPersonality', '!!!') as { error: string }).error, /Describe who the bot is/);
-  assert.match((checkSetting(guild, 'chatPersonality', 'a'.repeat(1001)) as { error: string }).error, /1000 characters/);
+  assert.deepEqual(checkSetting(guild, 'chatProfile', 'butler'), { value: 'butler' });
+  assert.match((checkSetting(guild, 'chatProfile', 'nobody') as { error: string }).error, /Pick a profile from the list/);
   assert.match((checkSetting(guild, 'chatDailyLimit', 0) as { error: string }).error, /1 to 5000/);
   // Opus costs more
   db.prepare("INSERT INTO chat_usage (guild_id, day, model, replies, input_tokens, output_tokens) VALUES ('g-cost', ?, 'opus', 1, 1000000, 0)").run(new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Chicago' }).format(Date.now()));
@@ -1009,6 +1009,49 @@ function postChannel(guild: ReturnType<typeof fakeGuild>) {
 }
 const LEADERBOARD = { embeds: [{ title: '🏆 This week', description: '1. **Sam**: 12 h\n2. **Alex**: 3 h', footer: { text: 'Monday to Sunday' } }] };
 
+test('the instructions follow the server’s profile: its personality, how it talks, its roasts and who it can’t stand', async (t) => {
+  const guild = fakeGuild('g-profile');
+  let n = 0;
+  const instructions = async () => {
+    replies = [turn('end_turn', text('Hmm.'))];
+    sent = [];
+    const { message } = fakeMessage(guild, fakeMember(guild, `30${n++}`), '<@100> hello');
+    await onMessage(message, client);
+    return sent[0].system[0].text as string;
+  };
+  // The Robot butler's are what the instructions said before there were profiles
+  const before = await instructions();
+  assert.match(before, /Your personality: A robot butler/);
+  assert.match(
+    before,
+    /- Stay in character and speak your mind: up to three short sentences unless they ask for more\. Give real opinions straight, without hedging or sitting on the fence, and swear when it fits your character\. Plain text/,
+  );
+  assert.match(before, /- You despise fascists, Nazis and those who cheer them on: they’re fair game\.[^\n]*swearing if you like[^\n]*never for who someone is/);
+  assert.match(before, /then hit back with a savage, funny insult, in character, in up to three sentences: no holding back, no softening, no compliment to cushion it, and swearing is fine\. Build/);
+
+  const id = addProfile({ ...fieldsOf(builtIn()), name: 'Grump', personality: 'A grumpy pirate.', length: 'short', opinions: 'diplomatic', swearing: 'never', roasts: 'playful', despises: '' }, 'test');
+  t.after(() => removeProfile(id));
+  setSetting(guild.id, 'chatProfile', id);
+  const grump = await instructions();
+  assert.match(grump, /Your personality: A grumpy pirate\./);
+  assert.doesNotMatch(grump, /robot butler/i);
+  assert.match(grump, /- Stay in character: be brief, one or two short sentences and no more, unless they ask for more\. Give your opinion when asked, tactfully, allowing that others see it differently\. Never swear, even when they do\. Plain text/);
+  assert.doesNotMatch(grump, /despise/);
+  assert.match(grump, /then hit back with a playful, teasing jab[^\n]*the way friends tease\. Build/);
+  assert.doesNotMatch(grump, /swear(ing)? (is fine|if you like)/);
+
+  editProfile(id, { ...fieldsOf(profileById(id)!), length: 'chatty', swearing: 'freely', roasts: 'cutting', despises: 'people who put pineapple on pizza' }, 'test');
+  const chatty = await instructions();
+  assert.match(chatty, /a few sentences, a short paragraph at most, unless they ask for more/);
+  assert.match(chatty, /Swear freely: it’s how you talk\./);
+  assert.match(chatty, /then hit back with one cutting, funny insult, in character, in two sentences at most, and swearing is fine\. Build/);
+  assert.match(chatty, /- You despise people who put pineapple on pizza: they’re fair game/);
+
+  // One that's gone leaves the server on the Robot butler
+  removeProfile(id);
+  assert.match(await instructions(), /Your personality: A robot butler/);
+});
+
 test('lines on automatic posts are on by default, one above the post, written from what it says, until a server turns them off', async (t) => {
   const guild = fakeGuild('g-lines');
   const { channel, posted } = postChannel(guild);
@@ -1023,7 +1066,8 @@ test('lines on automatic posts are on by default, one above the post, written fr
   replies = [turn('end_turn', text('“Sam, you magnificent <@123> menace! https://example.com @everyone”\nAnd another thing.'))];
   await sendPost('weekly', guild.id, channel, LEADERBOARD);
   assert.deepEqual(posted[0], { ...LEADERBOARD, content: 'Sam, you magnificent menace! @\u200beveryone' });
-  assert.match(sent[0]!.system as unknown as string, /You are Slopkeeper, a bot in the Discord server “Test Server”\.[\s\S]*a weekly leaderboard/);
+  assert.match(sent[0]!.system as unknown as string, /You are Slopkeeper, a bot in the Discord server “Test Server”\.\nYour personality: A robot butler[\s\S]*a weekly leaderboard/);
+  assert.doesNotMatch(sent[0]!.system as unknown as string, /swearing/);
   assert.equal(sent[0]!.messages[0]!.content, 'The weekly leaderboard:\n🏆 This week\n1. **Sam**: 12 h\n2. **Alex**: 3 h\nMonday to Sunday');
   assert.equal(sent[0]!.model, MODELS.haiku.id);
   assert.equal(sent[0]!.tools, undefined);
@@ -1042,6 +1086,14 @@ test('lines on automatic posts are on by default, one above the post, written fr
   // Its cost counts toward the month, but not as an answer toward the day's limit
   const used = db.prepare('SELECT SUM(replies) AS replies, SUM(input_tokens) AS input FROM chat_usage WHERE guild_id = ?').get(guild.id) as { replies: number; input: number };
   assert.deepEqual({ ...used }, { replies: 0, input: 2000 });
+
+  // In the server's profile, without swearing if that's how it talks
+  const id = addProfile({ ...fieldsOf(builtIn()), name: 'Prim', personality: 'A prim librarian.', swearing: 'never' }, 'test');
+  t.after(() => removeProfile(id));
+  setSetting(guild.id, 'chatProfile', id);
+  replies = [turn('end_turn', text('Shush.'))];
+  await sendPost('weekly', guild.id, channel, LEADERBOARD);
+  assert.match(sent[2]!.system as unknown as string, /Your personality: A prim librarian\.[\s\S]*No swearing\./);
 });
 
 test('a post goes out without its line when the model is down, refuses, or chat is off', async (t) => {

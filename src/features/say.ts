@@ -23,6 +23,7 @@ import { db, transaction } from '../db.ts';
 import { holdSounds, levelSpeech } from '../loudness.ts';
 import * as perf from '../perf.ts';
 import { DEFAULTS, idSetting, setSetting, setting, storedSetting } from '../settings.ts';
+import { activeProfile } from './chatProfiles.ts';
 import type { Feature } from '../types.ts';
 import { canSee, humansIn, talksToBot } from '../util.ts';
 import { plural } from './gamestats.ts';
@@ -944,14 +945,26 @@ export function wouldSay(guild: Guild, typed: string, voiceId: string | undefine
   return sayProblem(guild, text, who) ?? { text, voice, effect: serverEffect(guild.id, named, voiceId) };
 }
 
-/** Says a line nobody typed, in the server's voice and effect. Returns null once it's started, or why it couldn't */
+/**
+ * The voice and effect the bot says its own lines in: its profile's, or the server's default for what the profile leaves
+ * to the server, and for a voice that's gone or still downloading
+ */
+export function ownSpeech(guildId: string): { voice: Voice; effect: Effect | null } {
+  const profile = activeProfile(guildId);
+  return { voice: serverVoice(guildId, profile.voice ?? undefined), effect: serverEffect(guildId, profile.effect ?? undefined, profile.voice) };
+}
+
+/**
+ * Says a line nobody typed (an answer, an announcement or a greeting), in the bot's own voice and effect. Returns null once
+ * it's started, or why it couldn't
+ */
 export function sayOut(channel: VoiceBasedChannel, line: string): Promise<string | null> {
   const { guild } = channel;
   const text = speechFor(guild, line);
-  const voice = serverVoice(guild.id);
   if (!config.voiceUrl || !setting(guild.id, 'tts') || !hasWords(text)) return Promise.resolve('Nothing to say.');
   if (queueFor(guild.id).lines.length >= MOST_WAITING) return Promise.resolve('Too many lines waiting.');
-  return queueLine(channel, text, voice, serverEffect(guild.id), null, 'announcement');
+  const { voice, effect } = ownSpeech(guild.id);
+  return queueLine(channel, text, voice, effect, null, 'announcement');
 }
 
 /** Whether the bot is in another voice channel, which speaking here would take it, and any music, away from */

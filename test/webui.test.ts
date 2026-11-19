@@ -76,7 +76,15 @@ const PAGES: [string, string, Record<string, string>?, string?, string?][] = [
     'settings',
     'Settings',
     {},
-    `document.querySelector('#settings-chat-notes')?.textContent.includes('Captain') && /for .+, .+check the oven \\(set by .+\\)Cancel/.test(document.querySelector('#settings-chat-reminders')?.textContent ?? '')`,
+    `/A grumpy pirate with a long name to wrapUsing/.test(document.querySelector('#settings-profiles')?.textContent ?? '') && document.querySelector('#setting-chatProfile')?.value === 'pirate' && document.querySelector('#settings-chat-notes')?.textContent.includes('Captain') && /for .+, .+check the oven \\(set by .+\\)Cancel/.test(document.querySelector('#settings-chat-reminders')?.textContent ?? '')`,
+  ],
+  // Profiles: the one in use, and its settings
+  [
+    'settings',
+    'Settings: Edit a profile',
+    {},
+    `(() => { const d = document.querySelector('dialog[open]'); return !!d && /Edit A grumpy pirate/.test(d.textContent) && d.querySelectorAll('select').length === 6 && d.querySelector('#profile-swearing').value === 'freely' && d.querySelector('#profile-voice').value === 'scottish' && d.querySelector('#profile-effect').value === 'robot' && /\\d+ of 1000 characters/.test(d.textContent); })()`,
+    `[...document.querySelectorAll('#settings-profiles .profile-row')].find((r) => r.textContent.startsWith('A grumpy pirate')).querySelector('button').click()`,
   ],
   // Added voices: one ready with speakers, one downloading and one that failed, and the ready one's settings
   [
@@ -215,6 +223,11 @@ function seed() {
   config.anthropicKey = 'browser-test';
   db.prepare("INSERT INTO chat_notes (guild_id, user_id, note, updated_at) VALUES (?, 'u1', 'Wants to be called Captain.', ?)").run(GUILD, now);
   db.prepare("INSERT INTO chat_reminders (guild_id, channel_id, created_by, people, text, due_at, created_at) VALUES (?, '702', 'u1', '[\"u1\",\"u2\"]', 'check the oven', ?, ?)").run(GUILD, now + 2 * HOUR, now);
+  // A profile in use, with a name long enough to wrap, a voice and an effect, for the Profiles card and its dialog
+  db.prepare(
+    "INSERT INTO chat_profiles (id, name, personality, length, opinions, swearing, roasts, despises, voice, effect, added_by, added_at, changed_at) VALUES ('pirate', 'A grumpy pirate with a long name to wrap', 'A grumpy pirate who has seen too many storms.', 'short', 'straight', 'freely', 'playful', '', 'scottish', 'robot', 'u1', ?, ?)",
+  ).run(now, now);
+  db.prepare("INSERT INTO guild_settings (guild_id, key, value) VALUES (?, 'chatProfile', 'pirate')").run(GUILD);
   const bundle = {
     id: 1,
     title: 'Humble Choice: An Unusually Long Bundle Name For A Phone',

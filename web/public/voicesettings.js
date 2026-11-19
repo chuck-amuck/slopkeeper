@@ -100,8 +100,12 @@ export function voicesCard(main, onChange) {
         hear,
         el('button', { type: 'button', onclick: () => editDialog(v) }, 'Edit'),
         confirmButton({ ariaLabel: `Remove ${v.name}` }, 'Remove', 'Remove it?', async () => {
-          const { picks } = await request(api(`/voices/${encodeURIComponent(v.id)}`), { method: 'DELETE' });
-          toast(picks ? `Removed ${v.name}. ${picks === 1 ? 'A server that picked it is' : `${picks} servers that picked it are`} back on their default voice.` : `Removed ${v.name}.`);
+          const { picks, profiles } = await request(api(`/voices/${encodeURIComponent(v.id)}`), { method: 'DELETE' });
+          const after = [
+            picks && `${picks === 1 ? 'A server that picked it is' : `${picks} servers that picked it are`} back on their default voice.`,
+            profiles && `${profiles === 1 ? 'A profile that spoke in it speaks' : `${profiles} profiles that spoke in it speak`} in the server’s default voice now.`,
+          ].filter(Boolean);
+          toast([`Removed ${v.name}.`, ...after].join(' '));
           await load();
           onChange?.();
         }),

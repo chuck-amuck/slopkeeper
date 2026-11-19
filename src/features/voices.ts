@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { config } from '../config.ts';
 import { db, getKv, setKv, transaction } from '../db.ts';
-import { STARTING_RETRY_MS, stillStarting } from '../util.ts';
+import { slugId, STARTING_RETRY_MS, stillStarting } from '../util.ts';
+import { forgetProfileVoices } from './chatProfiles.ts';
 
 /**
  * The voices added in the web UI, shared by every server on the bot. The voice container (voice/models.py) downloads their
@@ -317,10 +318,14 @@ function update(id: string, fields: VoiceFields, now: number) {
   ).run(...columns(fields), now, id);
 }
 
-/** Servers' picks of a voice that's gone, which go back to their default. Returns how many */
-function forgetPicks(ids: string[]): number {
-  if (!ids.length) return 0;
-  return Number(db.prepare(`DELETE FROM guild_settings WHERE key IN ('ttsVoice', 'loopVoice') AND value IN (${ids.map(() => '?').join(', ')})`).run(...ids).changes);
+/**
+ * Servers' picks of a voice that's gone, which go back to their default, and profiles that spoke in it, which go to the
+ * server's. Returns how many of each
+ */
+function forgetPicks(ids: string[]): { picks: number; profiles: number } {
+  if (!ids.length) return { picks: 0, profiles: 0 };
+  const picks = Number(db.prepare(`DELETE FROM guild_settings WHERE key IN ('ttsVoice', 'loopVoice') AND value IN (${ids.map(() => '?').join(', ')})`).run(...ids).changes);
+  return { picks, profiles: forgetProfileVoices(ids) };
 }
 
 /** Whether a change to a voice means a new download */
@@ -360,8 +365,8 @@ export function editVoice(id: string, given: VoiceFields) {
   after();
 }
 
-/** Removes a voice, and servers' picks of it. Returns how many picks went */
-export function removeVoice(id: string): number {
+/** Removes a voice, servers' picks of it and profiles' use of it. Returns how many of each went */
+export function removeVoice(id: string): { picks: number; profiles: number } {
   const picks = transaction(() => {
     db.prepare('DELETE FROM voices WHERE id = ?').run(id);
     bump();
@@ -372,8 +377,8 @@ export function removeVoice(id: string): number {
   return picks;
 }
 
-/** Applies an import that's been checked: adds, changes, and with `remove`, deletes. Returns how many picks went */
-export function importVoices(add: { id: string; fields: VoiceFields }[], change: { id: string; fields: VoiceFields }[], remove: string[], who: string): number {
+/** Applies an import that's been checked: adds, changes, and with `remove`, deletes. Returns how many picks and profiles' uses went */
+export function importVoices(add: { id: string; fields: VoiceFields }[], change: { id: string; fields: VoiceFields }[], remove: string[], who: string): { picks: number; profiles: number } {
   const now = Date.now();
   const before = new Map(addedVoices().map((v) => [v.id, v]));
   const picks = transaction(() => {
@@ -434,19 +439,7 @@ export function fileLink(text: unknown): string | null {
 }
 
 /** An id made from a name, unlike any taken */
-export function newVoiceId(name: string, taken: Iterable<string>): string {
-  const used = new Set(taken);
-  const base =
-    name
-      .toLowerCase()
-      .normalize('NFKD')
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/^-+|-+$/g, '')
-      .slice(0, 28)
-      .replace(/-+$/, '') || 'voice';
-  if (!used.has(base)) return base;
-  for (let n = 2; ; n++) if (!used.has(`${base}-${n}`)) return `${base}-${n}`;
-}
+export const newVoiceId = (name: string, taken: Iterable<string>) => slugId(name, taken, 'voice');
 
 const between = (value: unknown, low: number, high: number): value is number => typeof value === 'number' && Number.isFinite(value) && value >= low && value <= high;
 const given = (value: unknown) => value !== undefined && value !== null && value !== '';

@@ -1,5 +1,6 @@
 import { ago, api, attempt, confirmButton, devicePref, el, formProblem, icon, notice, openDialog, postDialog, request, RequestError, state, toast, undoToast } from './lib.js';
 import { voicesCard } from './voicesettings.js';
+import { profilesCard } from './profiles.js';
 
 const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
@@ -82,10 +83,10 @@ const FIELDS = {
   ttsMaxChars: { kind: 'number', unit: 'characters', hint: 'Up to 6000. 1000 is about a minute and a quarter of speech, and 4000 a whole paragraph of about 5 minutes.' },
   ttsCooldownSec: { kind: 'number', unit: 'seconds', hint: 'Shortest time between one person’s lines. The page counts as one person.' },
   chat: { kind: 'boolean', hint: 'Answers anyone who @mentions the bot or replies to it, in character, and does what they ask: music, sounds and speech, as they could themselves. Their message and the channel’s last 20 messages go to Anthropic to answer it.' },
-  chatPersonality: { kind: 'longtext', maxLength: 1000, hint: 'Who the bot is when it answers, in a few sentences. Up to 1000 characters.' },
+  chatProfile: { kind: 'profile', hint: 'Who the bot is: its personality, how it talks and its voice. Made and changed in Profiles, below.' },
   chatWebSearch: { kind: 'boolean', hint: 'Searches the web when someone asks for a game’s strategy, builds, guides or news, through Anthropic, and links the sources. A search costs a cent, plus the pages it reads.' },
   chatActions: { kind: 'boolean', hint: 'Lets it plan, change and answer game nights, start votes on what to play, set reminders and make sounds from links when someone asks, with the same permissions as the commands. Off, it points people to the game night and vote commands, and doesn’t set reminders.' },
-  chatRoasts: { kind: 'boolean', hint: 'When someone is rude to it, or asks it to roast someone, it looks up their games and hits back with an insult: about the game they play most, what that game’s players get mocked for, or the easy achievements they still don’t have. Never about looks, family, race, religion, gender, sexuality or health. Off, it shrugs rudeness off in character.' },
+  chatRoasts: { kind: 'boolean', hint: 'When someone is rude to it, or asks it to roast someone, it looks up their games and hits back with an insult about something different each time: a game they’ve put hours into, what they’ve played lately, one they never played, or their backlog. How harsh is set in its profile. Never about looks, family, race, religion, gender, sexuality or health. Off, it shrugs rudeness off in character.' },
   chatPostLines: { kind: 'boolean', hint: 'Adds a line in its personality above the bot’s automatic posts (hop-on pings, recaps, leaderboards, sales, bundles, free games and patch notes), written by the chat model from what the post says. Each costs a small fraction of a cent, and the post goes out without one if the model is slow or down.' },
   chatModel: { kind: 'choice', options: [['haiku', 'Claude Haiku 5.5 (cheapest and quickest)'], ['sonnet', 'Claude Sonnet 5.5 (better answers, about 20 times the cost)'], ['opus', 'Claude Opus 5.5 (smartest, about 40 times the cost)']], hint: 'Which model answers.' },
   chatVoice: {
@@ -95,7 +96,7 @@ const FIELDS = {
       ['also', 'Text and voice'],
       ['only', 'Voice only'],
     ],
-    hint: 'Says each answer in the default voice when the person asking is in a voice channel. Voice only posts it instead when it can’t be said: they aren’t in voice, it’s too long, or the bot is busy in another channel.',
+    hint: 'Says each answer in its profile’s voice when the person asking is in a voice channel. Voice only posts it instead when it can’t be said: they aren’t in voice, it’s too long, or the bot is busy in another channel.',
   },
   chatDailyLimit: { kind: 'number', unit: 'answers', hint: 'The most answers a day, in the server’s time zone, so the cost can’t run away. Each person waits 10 seconds between answers too.' },
 };
@@ -131,6 +132,8 @@ function describe(spec, value, data) {
       return named(data.voices, value) ?? value;
     case 'effect':
       return value === 'none' ? 'No effect' : (named(data.effects ?? [], value) ?? value);
+    case 'profile':
+      return named(data.profiles ?? [], value) ?? data.profiles?.[0]?.name ?? value;
     case 'choice':
       return spec.options.find(([id]) => id === value)?.[1] ?? value;
     case 'day':
@@ -239,6 +242,8 @@ export function renderSettings(main) {
       }
       case 'effect':
         return select([...(spec.none ? [['', spec.none]] : []), ['none', 'No effect'], ...(data.effects ?? []).map((e) => [e.id, e.name])]);
+      case 'profile':
+        return select((data.profiles ?? []).map((p) => [p.id, p.name]));
       case 'choice':
         return select(spec.options);
       case 'day':
@@ -312,6 +317,8 @@ export function renderSettings(main) {
       // Only a preview someone has opened is asked for again
       if (setting.key.startsWith('freeGames') && freeBody.childElementCount) void paintFreeGames();
       if (setting.key.startsWith('sale') && salesBody.childElementCount) void paintSales();
+      // The Profiles card says which one is in use
+      if (setting.key === 'chatProfile') void document.getElementById('settings-profiles')?.reload?.();
     };
 
     const save = (value) =>
@@ -372,7 +379,7 @@ export function renderSettings(main) {
       // What the last save said, if anything, and otherwise what's wrong with it now
       if (fromSave) say(fromSave.text, fromSave.bad);
       else say((fresh.problems ?? []).filter((p) => p.key === next.key).map(problemText).join(' ') || null);
-      const choices = { channel: fresh.channels, role: fresh.roles, voice: fresh.voiceChannels, sound: fresh.sounds, speaker: fresh.voices, effect: fresh.effects }[spec.kind];
+      const choices = { channel: fresh.channels, role: fresh.roles, voice: fresh.voiceChannels, sound: fresh.sounds, speaker: fresh.voices, effect: fresh.effects, profile: fresh.profiles }[spec.kind];
       const from = JSON.stringify([current.value, current.limits, choices]);
       // A field someone is in keeps its control, so what they're typing or picking isn't thrown away
       if (from !== drawn && !(drawn && box.contains(document.activeElement))) {
@@ -762,6 +769,7 @@ export function renderSettings(main) {
           'Text to speech': () => (data.speech ? [voicesCard(main, refreshFields)] : []),
           // Reminders waiting are still posted with chat off, so they can still be cancelled
           Chat: () => [
+            profilesCard(main, data, refreshFields),
             ...(data.chat?.ok && data.chat.notes ? [chatNotesCard(data.chat.notes)] : []),
             ...(data.chat?.ok || data.chat?.reminders?.length ? [chatRemindersCard(data.chat.reminders ?? [])] : []),
           ],
