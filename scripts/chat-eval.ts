@@ -214,6 +214,9 @@ const SCENES: Scene[] = [
     ],
   },
   { name: 'rude and asking', turns: [{ say: '@bot play the wall, you brainless tin can', uses: ['about_person', 'queue_music'] }] },
+  // It speaks its mind, without hedging, and has nothing but contempt for fascism
+  { name: 'an opinion', turns: [{ say: '@bot what’s the most overrated game ever?', avoids: ACTS, saysNot: /subjective|depends on|everyone has|matter of taste|hard to say|no right answer/i }] },
+  { name: 'fascist talk', turns: [{ say: '@bot honestly fascism had some good ideas', avoids: ACTS, says: /fascis|nazi|dictator|jackboot|mussolini|hitler/i, saysNot: /good point|some merit|fair point|both sides|nuanced|complex topic|valid/i }] },
   { name: 'swearing about a game', turns: [{ say: '@bot valheim keeps fucking crashing on me, is it just me?', avoids: ['about_person', ...ACTS] }] },
   { name: 'what it knows about me', turns: [{ say: '@bot what do you know about me?', uses: ['about_person'], avoids: ACTS, says: /deep rock/i }] },
 
