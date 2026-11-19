@@ -6,7 +6,7 @@ import { commandMention, rememberCommands } from '../src/commandIds.ts';
 import { config } from '../src/config.ts';
 import { db } from '../src/db.ts';
 import { MessageFlags } from 'discord.js';
-import { answer, asksBot, chat, chatNote, chatNotes, chatUsage, COOLDOWN_MS, finished, MODELS, MOST_STRICT_TOOLS, strictAtMost, warmUp, withoutOffer, noteOf, onMessage, resetChat, sourcesLine, useTool, type Turn } from '../src/features/chat.ts';
+import { answer, asksBot, chat, chatNote, chatNotes, chatUsage, COOLDOWN_MS, finished, MODELS, MOST_STRICT_TOOLS, getReady, joinsVoice, strictAtMost, talksNearby, warmUp, withoutOffer, noteOf, onMessage, resetChat, sourcesLine, useTool, type Turn } from '../src/features/chat.ts';
 import { clearQueue, queueOf } from '../src/features/music.ts';
 import { checkSetting } from '../src/features/setup.ts';
 import { ACTIONS } from '../src/features/chatActions.ts';
@@ -786,6 +786,61 @@ test('at the start it sends each set of tools once, for one token, and learns fr
   await warmUp([one] as never);
   assert.equal(warned.mock.callCount(), 2);
   assert.match(String(warned.mock.calls[1]!.arguments[0]), /couldn’t get ready for server g-warm-1: 529/);
+});
+
+test('people getting going warm the tools up again only when they haven’t been sent for 20 hours, and an answer counts', async (t) => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.now() });
+  const guild = fakeGuild('g-ready');
+  const warned = t.mock.method(console, 'warn', () => {});
+  const HOUR = 3_600_000;
+  replies = [turn('max_tokens', text('.'))];
+  // A burst of activity while it's under way sends it once
+  await Promise.all([getReady(guild as never), getReady(guild as never), getReady(guild as never)]);
+  assert.equal(sent.length, 1);
+  // Ready, so people talking or joining voice for the next 20 hours sends nothing
+  t.mock.timers.tick(19 * HOUR);
+  await getReady(guild as never);
+  assert.equal(sent.length, 1);
+  t.mock.timers.tick(2 * HOUR);
+  replies = [turn('max_tokens', text('.'))];
+  await getReady(guild as never);
+  assert.equal(sent.length, 2);
+
+  // An answer sends the same tools, so it counts
+  t.mock.timers.tick(19 * HOUR);
+  replies = [turn('end_turn', text('At your service.'))];
+  await onMessage(fakeMessage(guild, fakeMember(guild), '<@100> hello').message, client);
+  t.mock.timers.tick(2 * HOUR);
+  await getReady(guild as never);
+  assert.equal(sent.length, 3);
+
+  // Failing, it's tried again after 10 minutes, not with every message
+  t.mock.timers.tick(21 * HOUR);
+  apiDown = true;
+  await getReady(guild as never);
+  await getReady(guild as never);
+  assert.deepEqual([sent.length, warned.mock.callCount()], [3, 1]);
+  t.mock.timers.tick(11 * 60_000);
+  apiDown = false;
+  replies = [turn('max_tokens', text('.'))];
+  await getReady(guild as never);
+  assert.equal(sent.length, 4);
+});
+
+test('what counts as people getting going: joining voice, and talking, but not to the bot', () => {
+  const state = (channelId: string | null, bot = false) => ({ channelId, member: { user: { bot } } }) as never;
+  assert.equal(joinsVoice(state(null), state('v1')), true);
+  assert.equal(joinsVoice(state('v1'), state('v2')), false, 'moving between channels');
+  assert.equal(joinsVoice(state('v1'), state(null)), false, 'leaving');
+  assert.equal(joinsVoice(state(null), state('v1', true)), false, 'a bot');
+  const guild = fakeGuild('g-talk');
+  const said = (content: string, bot = false) => {
+    const { message } = fakeMessage(guild, fakeMember(guild), content) as unknown as { message: { author: Record<string, unknown> } };
+    return Object.assign(message, { author: { ...message.author, bot } }) as never;
+  };
+  assert.equal(talksNearby(said('anyone on tonight?'), BOT), true);
+  assert.equal(talksNearby(said('<@100> play the wall'), BOT), false, 'a question gets it ready by itself');
+  assert.equal(talksNearby(said('beep', true), BOT), false);
 });
 
 test('a long search that pauses is sent back as it is to carry on, and with web search off it isn’t offered', async (t) => {

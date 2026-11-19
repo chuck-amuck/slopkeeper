@@ -1,11 +1,11 @@
 import Anthropic from '@anthropic-ai/sdk';
-import { type APIEmbed, type Attachment, type Client, Events, type Guild, type GuildMember, type GuildTextBasedChannel, type Message, type MessageCreateOptions, MessageFlags, PermissionFlagsBits, type VoiceBasedChannel } from 'discord.js';
+import { type APIEmbed, type Attachment, type Client, Events, type Guild, type GuildMember, type GuildTextBasedChannel, type Message, type MessageCreateOptions, MessageFlags, PermissionFlagsBits, type VoiceBasedChannel, type VoiceState } from 'discord.js';
 import { logActivity } from '../activity.ts';
 import { clickableCommands, commandList } from '../commandIds.ts';
 import { config } from '../config.ts';
 import { db } from '../db.ts';
 import { gameName } from '../gameNames.ts';
-import { setting } from '../settings.ts';
+import { isAllowed, setting } from '../settings.ts';
 import { artistAlbumsFor, artistRef, findMusic, searchReady, sourceNames } from '../musicSearch.ts';
 import { SpotifyError, type Found } from '../spotify.ts';
 import type { Feature } from '../types.ts';
@@ -121,6 +121,8 @@ export function resetChat() {
   shuffledRows.clear();
   api = null;
   searchOff = false;
+  toolsSent.clear();
+  warming.clear();
   strictBudget = MOST_STRICT_TOOLS;
 }
 
@@ -727,36 +729,62 @@ function fewerStrict(err: unknown): boolean {
 
 /** After starting, so it doesn't slow the start */
 const WARM_UP_AFTER_MS = 5_000;
+/** The API keeps strict tools ready for 24 hours after they were last used; this leaves room */
+const READY_FOR_MS = 20 * 3_600_000;
+/** After a warm-up fails, how long before activity tries again, so an outage isn't asked about with every message */
+const RETRY_WARM_UP_MS = 10 * 60_000;
+
+/** When each set of tools was last sent, by an answer or a warm-up, by the model and the tools as sent */
+const toolsSent = new Map<string, number>();
+const warming = new Set<string>();
+const toolsKey = (model: string, offered: Anthropic.ToolUnion[]) => `${model} ${JSON.stringify(offered)}`;
 
 /**
- * The API takes about 20 s to get ready for strict tools it hasn't seen, so the first answer after a deploy that changed
- * them would keep someone waiting. So each set of tools the servers use is sent once at the start, in a request for one
- * token: about 9,000 tokens in, a tenth of a cent with Haiku. A refusal of the tools lowers how many are strict, before anyone asks. Never throws
+ * The API takes about 20 s to get ready for strict tools it hasn't seen, or hasn't seen for 24 hours, and the answer that
+ * finds them so keeps someone waiting. So when the bot starts, and when people get going (someone joins voice or posts)
+ * after the server's tools haven't been sent for 20 hours, they're sent in a request for one token, before anyone asks:
+ * about 9,000 tokens in, a tenth of a cent with Haiku. Servers with the same tools share it. A refusal of the tools
+ * lowers how many are strict, before anyone asks. Never throws
  */
-export async function warmUp(guilds: Iterable<Guild>): Promise<void> {
+export async function getReady(guild: Guild): Promise<void> {
   const client = claude();
-  if (!client) return;
-  const done = new Set<string>();
-  for (const guild of guilds) {
-    if (!setting(guild.id, 'chat')) continue;
-    const key = modelKey(guild.id);
-    // Again after each refusal it learns from, while there's something left to try
-    for (let tries = 0; tries < 5; tries++) {
-      const offered = tools(guild);
-      const sent = `${key} ${JSON.stringify(offered)}`;
-      if (done.has(sent)) break;
-      try {
-        const res = await client.messages.create({ model: MODELS[key].id, max_tokens: 1, tools: offered, messages: [{ role: 'user', content: '.' }] }, { timeout: 60_000, maxRetries: 0 });
-        record(guild.id, key, res.usage);
-        done.add(sent);
-        break;
-      } catch (err) {
-        if (searchRefused(err, offered) || fewerStrict(err)) continue;
-        console.warn(`Chat couldn’t get ready for server ${guild.id}: ${err instanceof Anthropic.APIError ? `${err.status} ${err.message}` : (err as Error).message}`);
-        break;
-      }
+  if (!client || !setting(guild.id, 'chat') || !isAllowed(guild.id)) return;
+  const key = modelKey(guild.id);
+  // Again after each refusal it learns from, while there's something left to try
+  for (let tries = 0; tries < 5; tries++) {
+    let sent = '';
+    let offered: Anthropic.ToolUnion[] = [];
+    // Only the call that started a warm-up says it's over, not one that found it under way
+    let mine = false;
+    try {
+      offered = tools(guild);
+      sent = toolsKey(key, offered);
+      if (warming.has(sent) || Date.now() - (toolsSent.get(sent) ?? 0) < READY_FOR_MS) return;
+      warming.add(sent);
+      mine = true;
+      const res = await client.messages.create({ model: MODELS[key].id, max_tokens: 1, tools: offered, messages: [{ role: 'user', content: '.' }] }, { timeout: 60_000, maxRetries: 0 });
+      record(guild.id, key, res.usage);
+      toolsSent.set(sent, Date.now());
+      return;
+    } catch (err) {
+      if (searchRefused(err, offered) || fewerStrict(err)) continue;
+      console.warn(`Chat couldn’t get ready for server ${guild.id}: ${err instanceof Anthropic.APIError ? `${err.status} ${err.message}` : (err as Error).message}`);
+      if (sent) toolsSent.set(sent, Date.now() - READY_FOR_MS + RETRY_WARM_UP_MS);
+      return;
+    } finally {
+      if (mine) warming.delete(sent);
     }
   }
+}
+
+/** Someone joining a voice channel, from none, not a bot */
+export const joinsVoice = (before: VoiceState, after: VoiceState) => !!after.channelId && !before.channelId && !after.member?.user.bot;
+/** Someone talking in a channel, not to the bot, which gets ready by answering */
+export const talksNearby = (message: Message, botId: string) => message.inGuild() && !message.author.bot && !message.webhookId && !asksBot(message, botId);
+
+/** Each server in turn, at the start */
+export async function warmUp(guilds: Iterable<Guild>): Promise<void> {
+  for (const guild of guilds) await getReady(guild);
 }
 
 /** The tools for what this bot can do here: music only with the music container, speech only with the voice container and speech on */
@@ -1140,6 +1168,8 @@ export async function answer(
     });
     if (!res) return done('Done as you asked, though my words have deserted me. Do check what I did before asking again.');
     record(guild.id, key, res.usage);
+    // Which also keeps the tools ready, as a warm-up would
+    toolsSent.set(toolsKey(key, offered), Date.now());
     searches += res.usage.server_tool_use?.web_search_requests ?? 0;
     if (res.stop_reason === 'refusal') return done('I’m afraid that’s one request I must decline.');
     for (const b of res.content) if (b.type === 'server_tool_use') console.log(`Chat in server ${guild.id}: ${b.name} ${cut(JSON.stringify(b.input ?? {}))}`);
@@ -1290,5 +1320,8 @@ export const chat: Feature = {
     client.on(Events.MessageCreate, (message) => void onMessage(message, client).catch(console.error));
     every('Chat reminders', CHECK_EVERY, () => sendDue(client), { now: true });
     setTimeout(() => void warmUp(servedGuilds(client)), WARM_UP_AFTER_MS).unref();
+    // People getting going, in voice or in a channel, may ask soon. A question gets the tools ready by itself
+    client.on(Events.VoiceStateUpdate, (before, after) => void (joinsVoice(before, after) && getReady(after.guild)));
+    client.on(Events.MessageCreate, (message) => void (message.inGuild() && talksNearby(message, client.user.id) && getReady(message.guild)));
   },
 };
