@@ -99,7 +99,8 @@ export function createApi(client: Client<true>, token: string): Server {
     const who = signedIn(req);
     if (who) seeWebUser(who.email, who.name);
     // The web UI's own report comes every 30 seconds and would bury what people did
-    if (req.method !== 'GET' && !req.url?.startsWith('/perf/')) console.log(`Web UI: ${req.method} ${req.url}${who ? ` (${who.email})` : ''}`);
+    // Not a volume slider being dragged either, which sends several a second and saves once it's let go
+    if (req.method !== 'GET' && !req.url?.startsWith('/perf/') && !/\/volumes\/[^/]+\/preview$/.test(req.url ?? '')) console.log(`Web UI: ${req.method} ${req.url}${who ? ` (${who.email})` : ''}`);
     asking.run(who, () => handle(client, req, res)).then(
       (body) => body && reply(200, body),
       (err: unknown) => {
