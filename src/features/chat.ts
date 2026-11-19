@@ -15,7 +15,7 @@ import { busyElsewhere, effects, maySpeak, NO_EFFECT, say, sayOut, voices, would
 import { act, ACTIONS, actionTools, nightTime } from './chatActions.ts';
 import { CHECK_EVERY, readReminderTime, sendDue } from './chatReminders.ts';
 import { every } from '../schedule.ts';
-import { lookUp, lookupTools, nameOf, object } from './chatLookups.ts';
+import { lookUp, lookupTools, nameOf, object, peopleNamed } from './chatLookups.ts';
 import { CHAT_MODELS } from './setup.ts';
 import { findSound, listSounds, recordPlay, soundGain, soundVolumes } from './soundLibrary.ts';
 import { play } from './voiceAudio.ts';
@@ -1109,9 +1109,18 @@ async function pretend(member: GuildMember, name: string, input: Record<string, 
       return note ? would(`Remember about ${member.displayName}: ${note}`, `Remembered about them: ${note}`) : would(`Forget what it remembers about ${member.displayName}`, 'Forgot what you remembered about them.');
     }
     // Their time read as the real ones read it, so one they'd turn down is turned down here too, and the one read shown
-    case 'set_reminder':
+    case 'set_reminder': {
+      if (!text('about')) return 'Ask what to remind them of.';
+      const time = text('when') ? readReminderTime(guild.id, text('when')) : 'They didn’t say when: ask them.';
+      if (typeof time === 'string') return time;
+      const named = peopleNamed(member, input.people);
+      if (typeof named === 'string') return named;
+      const people = named ?? [member];
+      const reminder = `for ${listNames(people.map((p) => p.displayName))}, ${time.label}: “${text('about')}”`;
+      return would(`Set a reminder ${reminder}`, `Set a reminder ${reminder}. It’s posted here then, pinging ${people.length === 1 ? 'them' : 'each of them'}.`);
+    }
     case 'plan_game_night': {
-      const time = name === 'set_reminder' ? (text('when') ? readReminderTime(guild.id, text('when')) : 'They didn’t say when: ask them.') : nightTime(guild.id, text('when'));
+      const time = nightTime(guild.id, text('when'));
       if (typeof time === 'string') return time;
       return described({ ...input, when: time.label }, `Done, for ${time.label}.`);
     }
@@ -1129,7 +1138,7 @@ async function pretend(member: GuildMember, name: string, input: Record<string, 
 const inWords = (input: unknown) =>
   Object.entries(input && typeof input === 'object' ? input : {})
     .filter(([, v]) => v !== '' && v !== null && v !== undefined && v !== false)
-    .map(([k, v]) => `${k.replace(/_/g, ' ')} ${typeof v === 'string' ? v : JSON.stringify(v)}`)
+    .map(([k, v]) => `${k.replace(/_/g, ' ')} ${typeof v === 'string' ? v : Array.isArray(v) ? listNames(v.map(String)) : JSON.stringify(v)}`)
     .join(', ');
 
 /** A tool that looks something up, and what it was asked, for the web UI to show */

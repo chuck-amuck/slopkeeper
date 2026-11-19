@@ -1157,7 +1157,7 @@ test('tried in the web UI, what the real tools would turn down is turned down, a
       'tool_use',
       toolUse('t1', 'control_music', { action: 'skip' }),
       toolUse('t2', 'set_reminder', { when: 'whenever', about: 'bins' }),
-      toolUse('t3', 'set_reminder', { when: 'in 2 hours', about: 'bins' }),
+      toolUse('t3', 'set_reminder', { when: 'in 2 hours', about: 'bins', people: ['me', 'Sam'] }),
       toolUse('t4', 'plan_game_night', { game: 'Valheim', when: '2020-11-01 9pm' }),
       toolUse('t5', 'plan_game_night', { game: 'Valheim', when: 'tomorrow 9pm' }),
     ),
@@ -1167,11 +1167,11 @@ test('tried in the web UI, what the real tools would turn down is turned down, a
   const results = (sent[1]!.messages.at(-1)!.content as { content: string }[]).map((r) => r.content);
   assert.equal(results[0], 'Nothing is playing.');
   assert.match(results[1]!, /“whenever” isn’t a time it can read/);
-  assert.match(results[2]!, /^Done, for .+ \(in 2 hours\)\.$/);
+  assert.match(results[2]!, /^Set a reminder for Robin and Sam, .+ \(in 2 hours\): “bins”\. It’s posted here then, pinging each of them\.$/);
   assert.match(results[3]!, /already passed/);
   assert.match(results[4]!, /^Done, for /);
   assert.equal(tried.would.length, 2);
-  assert.match(tried.would[0]!, /^Set a reminder: when .+ \(in 2 hours\), about bins$/);
+  assert.match(tried.would[0]!, /^Set a reminder for Robin and Sam, .+ \(in 2 hours\): “bins”$/);
   assert.match(tried.would[1]!, /^Plan a game night: game Valheim, when /);
 });
 
