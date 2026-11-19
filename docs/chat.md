@@ -35,7 +35,7 @@ Anything else, it just answers, briefly, and it can't edit or delete messages or
 
 ## Trying it in the web UI
 
-The web UI's **Chat** tab asks the bot as you would in Discord and shows the answer there, so a personality, a roast or a request can be tried without anyone seeing it. Pick who to ask as (you, once the page knows who you are) and the channel it's asked in, for "what did I miss": one everyone in the server can see, so asking as someone else shows nothing private. Type as in Discord: `@Sam` mentions Sam. The conversation stays in the browser tab until **Clear**, and the bot reads it as the channel's last messages.
+The web UI's **Chat** tab asks the bot as you would in Discord and shows the answer there, so a personality, a roast or a request can be tried without anyone seeing it. Pick who to ask as (you, once the page knows who you are) and the channel it's asked in, for "what did I miss": one everyone in the server can see, so asking as someone else shows nothing private. Type as in Discord: an @ opens a list of the server's members, by their name here, display name or username, to pick who to mention. The conversation stays in the browser tab until **Clear**, and the bot reads it as the channel's last messages.
 
 - **It's the real answer:** the same instructions, personality, model and lookups as in Discord. It costs the same, counts toward the day's answers and has the same 10-second wait.
 - **Nothing it does happens:** under each answer is what it would have done, like queueing music, planning a game night or remembering something, and who it would have pinged. The model is told each was done, so it answers as it would have. Nothing is posted, logged in Activity or remembered.

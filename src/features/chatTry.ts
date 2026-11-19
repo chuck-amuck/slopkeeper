@@ -33,15 +33,16 @@ export class CantTry extends Error {
 }
 
 /**
- * @Names typed as Discord would have made them mentions, picked from its list: a member's display name or username
- * after an @, the longest first so one name that starts another doesn't take its place
+ * @Names typed out as Discord would have made them mentions, picked from its list: a member's name in the server,
+ * display name or username after an @, the longest first so one name that starts another doesn't take its place. Those
+ * picked from the page's own @ list arrive as mentions already
  */
 export function mentionsIn(guild: Guild): (typed: string) => string {
   // A name two people share goes to the first
   const ids = new Map<string, string>();
   for (const m of guild.members.cache.values()) {
     if (m.user.bot) continue;
-    for (const name of [m.displayName, m.user.username]) if (name && !ids.has(name.toLowerCase())) ids.set(name.toLowerCase(), m.id);
+    for (const name of [m.displayName, m.user.globalName, m.user.username]) if (name && !ids.has(name.toLowerCase())) ids.set(name.toLowerCase(), m.id);
   }
   if (!ids.size) return (typed) => typed;
   const names = [...ids.keys()].sort((a, b) => b.length - a.length).map((n) => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));

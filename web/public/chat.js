@@ -1,4 +1,5 @@
 import { api, el, fetchAudio, icon, notice, pageSignal, player, recall, remember, request, RequestError, soundPath, state, toast } from './lib.js';
+import { matching, withPicked } from './mentions.js';
 
 // Chat tried here: the bot's real answer, as if asked in a channel, with nothing done in Discord. What it would have
 // said in voice, and the sounds and lines it would have played, play in this browser
@@ -30,7 +31,7 @@ function saveLines(guildId, lines) {
 function rich(text, setup) {
   const nameOf = (id) => setup.members.find((m) => m.id === id)?.name ?? 'someone';
   const channelOf = (id) => setup.channels.find((c) => c.id === id)?.name ?? 'a channel';
-  const INLINE = /<@!?(\d+)>|<#(\d+)>|<\/([\w -]+):\d+>|<a?:(\w+):\d+>|\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)|(https?:\/\/[^\s<>()]+)|\*\*([^*]+)\*\*/g;
+  const INLINE = /<@!?(\w+)>|<#(\d+)>|<\/([\w -]+):\d+>|<a?:(\w+):\d+>|\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)|(https?:\/\/[^\s<>()]+)|\*\*([^*]+)\*\*/g;
   const inline = (line) => {
     const parts = [];
     let at = 0;
@@ -143,20 +144,114 @@ function draw(body, setup, guildId) {
     'Clear',
   );
   const log = el('div', { className: 'try-chat', role: 'log', ariaLive: 'polite', ariaLabel: 'Conversation' });
+  // The @ list, as in Discord: who's been picked, by the name put in for them, and who it shows for what's typed
+  const picked = new Map();
+  const picker = el('div', { className: 'mention-picker', role: 'listbox', id: 'try-mentions', ariaLabel: 'Members' });
+  picker.hidden = true;
+  let choices = [];
+  let chosen = 0;
+  // Where the @ and what's typed after it are in the box
+  let typing = null;
   const text = el('textarea', {
     rows: 2,
     maxLength: 2000,
     ariaLabel: 'Ask the bot',
+    role: 'combobox',
+    'aria-autocomplete': 'list',
+    'aria-controls': 'try-mentions',
+    'aria-expanded': 'false',
     placeholder: 'Ask the bot something, like “roast @Sam” or “what should we play tonight?”',
     onkeydown: (e) => {
+      if (!picker.hidden && !e.isComposing) {
+        if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+          e.preventDefault();
+          chosen = (chosen + (e.key === 'ArrowDown' ? 1 : -1) + choices.length) % choices.length;
+          return mark();
+        }
+        if ((e.key === 'Enter' || e.key === 'Tab') && !e.shiftKey) {
+          e.preventDefault();
+          return pick(chosen);
+        }
+        if (e.key === 'Escape') {
+          e.preventDefault();
+          return closePicker();
+        }
+      }
       if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
         e.preventDefault();
         form.requestSubmit();
       }
     },
+    oninput: () => lookForAt(),
+    // The caret moved
+    onclick: () => lookForAt(),
+    onkeyup: (e) => ['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(e.key) && lookForAt(),
+    onblur: () => closePicker(),
   });
   const send = el('button', { className: 'primary', type: 'submit' }, 'Ask');
-  const form = el('form', { className: 'try-ask', onsubmit: (e) => (e.preventDefault(), void ask()) }, text, send);
+  const form = el('form', { className: 'try-ask', onsubmit: (e) => (e.preventDefault(), void ask()) }, picker, text, send);
+
+  /** Opens the @ list on who could be meant by what's typed after an @ just before the caret, or closes it */
+  function lookForAt() {
+    const caret = text.selectionStart;
+    const at = caret === text.selectionEnd && /(?:^|[^\p{L}\p{N}_])@([^@\n]{0,32})$/u.exec(text.value.slice(0, caret));
+    const query = at ? at[1] : null;
+    // Not straight after an @ with a space, nor after one just picked
+    if (query === null || query.startsWith(' ') || (query.endsWith(' ') && picked.has(query.trimEnd()))) return closePicker();
+    choices = matching(setup.members, query);
+    if (!choices.length) return closePicker();
+    typing = { start: caret - query.length - 1, end: caret };
+    chosen = 0;
+    picker.replaceChildren(
+      ...choices.map((m, i) =>
+        el(
+          'div',
+          {
+            className: 'mention-choice',
+            role: 'option',
+            id: `try-mention-${i}`,
+            // Keeps the box focused, so the list stays open to be clicked
+            onmousedown: (e) => e.preventDefault(),
+            onclick: () => pick(i),
+            onmousemove: () => chosen !== i && ((chosen = i), mark()),
+          },
+          m.avatar ? el('img', { className: 'mention-avatar', src: m.avatar, alt: '', width: 24, height: 24 }) : el('span', { className: 'mention-avatar', ariaHidden: 'true' }, [...m.name][0]?.toUpperCase() ?? '?'),
+          el('span', { className: 'mention-name' }, m.name),
+          m.username && m.username.toLowerCase() !== m.name.toLowerCase() ? el('span', { className: 'mention-user' }, m.username) : '',
+        ),
+      ),
+    );
+    picker.hidden = false;
+    text.setAttribute('aria-expanded', 'true');
+    mark();
+  }
+
+  function mark() {
+    for (const [i, node] of [...picker.children].entries()) node.setAttribute('aria-selected', String(i === chosen));
+    text.setAttribute('aria-activedescendant', `try-mention-${chosen}`);
+    picker.children[chosen]?.scrollIntoView({ block: 'nearest' });
+  }
+
+  function closePicker() {
+    if (picker.hidden) return;
+    picker.hidden = true;
+    choices = [];
+    typing = null;
+    text.setAttribute('aria-expanded', 'false');
+    text.removeAttribute('aria-activedescendant');
+  }
+
+  /** Puts in the one picked, by their name here, or their username when someone else has the same name */
+  function pick(i) {
+    const m = choices[i];
+    if (!m || !typing) return;
+    const shared = setup.members.some((o) => o.id !== m.id && o.name.toLowerCase() === m.name.toLowerCase());
+    const name = shared && m.username ? m.username : m.name;
+    text.setRangeText(`@${name} `, typing.start, typing.end, 'end');
+    picked.set(name, m.id);
+    closePicker();
+    text.focus();
+  }
 
   body.append(
     setup.chatOn ? '' : notice('empty', 'Chat is off in this server’s settings, so the bot doesn’t answer in Discord. It still answers here, to try it first.'),
@@ -223,20 +318,25 @@ function draw(body, setup, guildId) {
   async function ask() {
     const typed = text.value.trim();
     if (!typed || send.disabled) return;
+    closePicker();
+    // Sent with the people picked as their mentions, and those picks kept to put back if it fails
+    const picks = new Map(picked);
+    picked.clear();
+    const asked = withPicked(typed, picks);
     playing++;
     player.stop();
     const history = lines
       .filter((l) => !l.pending && (l.from === 'you' || l.result.answer))
       .slice(-MOST_SENT)
       .map((l) => ({ from: l.from, text: l.from === 'you' ? l.text : l.result.answer, at: l.at, ...(l.as && { as: l.as }) }));
-    const mine = { from: 'you', text: typed, at: Date.now(), as: asWho.value };
+    const mine = { from: 'you', text: asked, at: Date.now(), as: asWho.value };
     const waiting = { from: 'bot', pending: true, at: Date.now() };
     lines.push(mine, waiting);
     text.value = '';
     send.disabled = true;
     paint();
     try {
-      const result = await request(api('/chat-try'), { method: 'POST', json: { text: typed, as: asWho.value, channelId: inChannel.value, history } });
+      const result = await request(api('/chat-try'), { method: 'POST', json: { text: asked, as: asWho.value, channelId: inChannel.value, history } });
       // Cleared while it was coming: the answer goes with what it answered
       if (!lines.includes(waiting)) return;
       lines.splice(lines.indexOf(waiting), 1, { from: 'bot', at: Date.now(), result });
@@ -248,7 +348,10 @@ function draw(body, setup, guildId) {
     } catch (err) {
       // What was asked goes back in the box, to ask again
       if (lines.includes(mine)) lines.splice(lines.indexOf(mine), 2);
-      if (!text.value) text.value = typed;
+      if (!text.value) {
+        text.value = typed;
+        for (const [name, id] of picks) picked.set(name, id);
+      }
       if (body.isConnected) paint();
       toast(err instanceof RequestError ? err.message : 'Couldn’t ask the bot.', true);
     } finally {

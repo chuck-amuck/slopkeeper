@@ -38,7 +38,12 @@ export async function chatRoutes({ guild, req, res, section, rest }: Ask) {
       ready: ok,
       note,
       chatOn: setting(guild.id, 'chat'),
-      members: memberList(guild),
+      // With the names Discord's @ list matches on, and their picture where they've set one
+      members: memberList(guild).map((m) => {
+        const member = guild.members.cache.get(m.id)!;
+        const pictured = member.avatar || member.user.avatar;
+        return { ...m, username: member.user.username ?? null, globalName: member.user.globalName ?? null, avatar: pictured ? member.displayAvatarURL({ size: 64 }) : null };
+      }),
       channels: tryChannels(guild),
       me: me && guild.members.cache.has(me) ? me : null,
       botName: guild.members.me?.displayName ?? 'The bot',

@@ -1077,7 +1077,7 @@ function tryingIn(id: string) {
     return member;
   };
   const robin = person('201', 'Robin', 'robin_r');
-  person('301', 'Sam', 'samwise');
+  Object.assign(person('301', 'Sam', 'samwise').user, { globalName: 'Samwise Gamgee' });
   const channel = { id: 'c1', name: 'general', permissionsFor: () => ({ has: () => true }), messages: { fetch: async () => new Map() } };
   return { guild, robin, channel };
 }
@@ -1085,6 +1085,8 @@ function tryingIn(id: string) {
 test('@names typed in the web UI become mentions, as Discord’s list would make them, and an email address doesn’t', () => {
   const { guild } = tryingIn('try-names');
   assert.equal(mentionsIn(guild as never)('tell @Sam and @robin_r, not @Samuel or me@sam.test'), 'tell <@301> and <@201>, not @Samuel or me@sam.test');
+  // A display name, the longest name first, and a mention picked from the page's list left as it is
+  assert.equal(mentionsIn(guild as never)('@Samwise Gamgee, @samwise and <@201>'), '<@301>, <@301> and <@201>');
 });
 
 test('tried in the web UI, an answer follows the page’s conversation and does nothing it would do, saying what it would have', async () => {

@@ -59,8 +59,17 @@ const PAGES: [string, string, Record<string, string>?, string?, string?][] = [
     'chat',
     'Chat',
     { 'try-chat:speak': 'off' },
-    `(() => { const bot = [...document.querySelectorAll('.try-line.bot')].at(-1); return !!bot && /Right away, @Ben!/.test(bot.textContent) && /Claude Haiku/.test(bot.textContent) && !document.querySelector('.try-ask textarea').value; })()`,
-    `(() => { document.querySelector('.try-ask textarea').value = 'say hi to @Ben'; document.querySelector('.try-ask').requestSubmit(); })()`,
+    `(() => { const bot = [...document.querySelectorAll('.try-line.bot')].at(-1); const you = [...document.querySelectorAll('.try-line.you')].at(-1); return !!bot && /Right away, @Ben!/.test(bot.textContent) && /Claude Haiku/.test(bot.textContent) && you?.querySelector('.mention')?.textContent === '@Ben' && !document.querySelector('.try-ask textarea').value && document.querySelector('.mention-picker').hidden; })()`,
+    // Picked from the @ list as in Discord: Ben's the only one whose name starts "Be"
+    `(() => { const box = document.querySelector('.try-ask textarea'); box.focus(); box.value = 'say hi to @Be'; box.setSelectionRange(13, 13); box.dispatchEvent(new Event('input')); const shown = [...document.querySelectorAll('.mention-choice')].map((c) => c.textContent); if (shown.join() !== 'BBen') throw new Error('The @ list shows ' + shown.join()); document.querySelector('.mention-choice').click(); if (box.value !== 'say hi to @Ben ') throw new Error('Picked as ' + box.value); document.querySelector('.try-ask').requestSubmit(); })()`,
+  ],
+  // The @ list, open on what's typed, with the one picked marked
+  [
+    'chat',
+    'Chat: the @ list',
+    { 'try-chat:speak': 'off' },
+    `(() => { const list = document.querySelector('.mention-picker'); const shown = [...list.querySelectorAll('.mention-choice')]; return !list.hidden && shown.length === 3 && shown[1].getAttribute('aria-selected') === 'true' && document.querySelector('.try-ask textarea').getAttribute('aria-activedescendant') === shown[1].id; })()`,
+    `(() => { const box = document.querySelector('.try-ask textarea'); box.focus(); box.value = 'roast @'; box.setSelectionRange(7, 7); box.dispatchEvent(new Event('input')); box.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true })); })()`,
   ],
   ['activity', 'Activity'],
   [

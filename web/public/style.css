@@ -5295,10 +5295,71 @@ button.health-slow-row:hover {
 }
 
 .try-ask {
+  position: relative;
   display: flex;
   align-items: flex-end;
   gap: var(--space-2);
   min-width: 0;
+}
+
+/* The @ list, above the box as in Discord, so a phone's keyboard doesn't cover it */
+.mention-picker {
+  position: absolute;
+  bottom: calc(100% + var(--space-1));
+  left: 0;
+  z-index: 5;
+  width: min(360px, 100%);
+  max-height: 290px;
+  overflow-y: auto;
+  padding: var(--space-1);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: 0 4px 16px rgb(0 0 0 / 18%);
+}
+
+.mention-choice {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  padding: var(--space-1) var(--space-2);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.mention-choice[aria-selected='true'] {
+  background: var(--raised);
+}
+
+.mention-avatar {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--accent-fill);
+  color: var(--accent-text);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  object-fit: cover;
+}
+
+.mention-name,
+.mention-user {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mention-name {
+  font-weight: 500;
+}
+
+.mention-user {
+  color: var(--muted);
+  font-size: var(--text-sm);
 }
 
 .try-ask textarea {

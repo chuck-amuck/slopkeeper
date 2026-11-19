@@ -489,6 +489,8 @@ test('chat tried in the web UI says what it needs, who can ask and where, and ch
   assert.equal(start.ready, false);
   assert.match(start.note, /ANTHROPIC_API_KEY/);
   assert.deepEqual(start.members.map((m: any) => m.name), ['Ana', 'Ben', 'Cy']);
+  // With what Discord's @ list matches on, and no picture for one who hasn't set one
+  assert.deepEqual(start.members[1], { id: 'u2', name: 'Ben', username: 'ben', globalName: null, avatar: null });
   assert.deepEqual(start.channels.map((c: any) => c.name), ['first', 'second']);
   assert.deepEqual([start.me, start.speech], [null, false]);
   const asking = { text: 'roast @Ben', as: 'u1', channelId: 'c2', history: [{ from: 'you', text: 'hi', at: 1 }] };
