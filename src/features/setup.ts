@@ -144,6 +144,7 @@ export const LABELS: Record<SettingKey, string> = {
   ttsNightReminders: 'Say game night reminders',
   ttsHopOn: 'Say hop-on pings',
   musicVolume: 'Music volume',
+  evenMusic: 'Even music volume',
   musicAutoplay: 'Autoplay',
   musicDjRole: 'Who can control music',
   musicSearch: 'Music search',
@@ -206,6 +207,7 @@ export function show(key: SettingKey, value: unknown): string {
     case 'sessionRecap':
     case 'weeklyLeaderboard':
     case 'evenVolume':
+    case 'evenMusic':
     case 'joinSounds':
     case 'tts':
       return value ? 'on' : 'off';
@@ -310,7 +312,7 @@ export const GROUPS: [string, SettingKey[]][] = [
   ['Patch notes', ['patchNotes', 'patchNotesChannel']],
   ['Free games', ['freeGames', 'freeGamesChannel', 'freeGamesMinRating', 'freeGamesTaste', 'freeGamesMultiplayer', 'freeGamesUnlisted']],
   ['Soundboard', ['soundVolume', 'evenVolume', 'joinSounds', 'joinSoundDelayMs', 'joinSoundCooldownMin', 'soundManagerRole']],
-  ['Music', ['musicVolume', 'musicAutoplay', 'musicSearch', 'musicSearchFallback', 'musicDjRole']],
+  ['Music', ['musicVolume', 'evenMusic', 'musicAutoplay', 'musicSearch', 'musicSearchFallback', 'musicDjRole']],
   ['Looping sound room', ['loopRoom', 'loopSound', 'loopVolume', 'loopEvery', 'loopText', 'loopVoice', 'loopEffect', 'loopTextVolume', 'loopTextEvery', 'loopIntro', 'loopIntroDelayMs', 'loopSoundDelayMs', 'loopTextDelayMs']],
   ['Chat', ['chat', 'chatPersonality', 'chatModel', 'chatWebSearch', 'chatActions', 'chatRoasts', 'chatPostLines', 'chatVoice', 'chatDailyLimit']],
   ['Text to speech', ['tts', 'ttsVoice', 'ttsEffect', 'ttsSpeed', 'ttsPauseMs', 'ttsVolume', 'ttsChannel', 'ttsChannelWho', 'ttsGreet', 'ttsGreeting', 'ttsNightReminders', 'ttsHopOn', 'ttsRole', 'ttsMaxChars', 'ttsCooldownSec']],

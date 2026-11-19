@@ -102,6 +102,8 @@ export const DEFAULTS = {
   ttsNightReminders: process.env.TTS_NIGHT_REMINDERS === 'true',
   ttsHopOn: process.env.TTS_HOP_ON === 'true',
   musicVolume: num('MUSIC_VOLUME', 40),
+  // Songs levelled so each plays about as loud as the others
+  evenMusic: process.env.EVEN_MUSIC !== 'false',
   // Off until someone turns it on, so the music stops when the queue runs out, as people expect
   musicAutoplay: process.env.MUSIC_AUTOPLAY === 'true',
   // Unset lets everyone control music
@@ -186,6 +188,7 @@ export const DEFAULT_ENV: Partial<Record<SettingKey, string>> = {
   ttsNightReminders: 'TTS_NIGHT_REMINDERS',
   ttsHopOn: 'TTS_HOP_ON',
   musicVolume: 'MUSIC_VOLUME',
+  evenMusic: 'EVEN_MUSIC',
   musicAutoplay: 'MUSIC_AUTOPLAY',
   musicSearch: 'MUSIC_SEARCH',
   musicSearchFallback: 'MUSIC_SEARCH_FALLBACK',

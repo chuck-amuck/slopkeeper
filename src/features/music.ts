@@ -32,6 +32,7 @@ import type { Feature } from '../types.ts';
 import { humansIn } from '../util.ts';
 import { botChannelId, onMusicCheck, onPlaybackStop, playLong } from './voiceAudio.ts';
 import { EXTENSIONS } from './soundLibrary.ts';
+import { songLevel, songMultiplier } from '../songLevels.ts';
 
 // Jumping within a song stops this far short of its end, which would only end it
 const END_SLACK_MS = 6_000;
@@ -488,6 +489,8 @@ function fetchNext(guildId: string) {
     setTimeout(() => askedAhead.delete(row.uri), ASKED_AHEAD_MS).unref();
     void fetchShared(row)
       .then((found) => {
+        // Read for levelling now, so it starts without that wait when its turn comes
+        if ('file' in found && setting(guildId, 'evenMusic')) void songLevel(found.file);
         // Autoplay knows the video a Spotify song was matched to before it plays
         const s = sessions.get(guildId);
         const video = 'url' in found && found.url && videoOf(found.url);
@@ -653,6 +656,11 @@ async function playCurrent(s: Session, fromMs = 0): Promise<string | null> {
     cardChanged(s.guild.id);
     return null;
   }
+  // Levelled to the others once it's been read, which a song fetched ahead already has been, and which takes well under a
+  // second for one that wasn't
+  const gain = setting(s.guild.id, 'evenMusic') ? await songMultiplier(found.file, setting(s.guild.id, 'musicVolume')) : 1;
+  trace.step('levelling');
+  if (s.turn !== turn || sessions.get(s.guild.id) !== s) return null;
   const channel = channelOf(s);
   const source = found.source;
   trace.detail.source = source;
@@ -676,7 +684,7 @@ async function playCurrent(s: Session, fromMs = 0): Promise<string | null> {
       console.error('Couldn’t note a song for Stats:', err);
     }
   };
-  const stop = channel ? await playLong(channel, found.file, (byItself, failed) => onSongEnd(s, turn, byItself, failed), fromMs, heard) : 'That voice channel is gone.';
+  const stop = channel ? await playLong(channel, found.file, (byItself, failed) => onSongEnd(s, turn, byItself, failed), fromMs, heard, gain) : 'That voice channel is gone.';
   if (s.turn !== turn) {
     if (typeof stop !== 'string') stop();
     return null;

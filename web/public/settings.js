@@ -49,6 +49,7 @@ const FIELDS = {
   ttsChannelWho: { kind: 'choice', options: [['everyone', 'Everyone'], ['voice', 'Only people in voice']], hint: 'Only people in voice leaves out anyone who’s only typing.' },
   soundVolume: { kind: 'number', unit: '%', hint: 'How loud every sound plays, including join sounds and the looping sound. Speech has its own volume. The Sounds slider on the Soundboard tab and the Volume button change this too.' },
   musicVolume: { kind: 'number', unit: '%', hint: 'How loud music plays. It drops to under a third while the bot is talking. The slider on the Music tab and the Volume button change this too.' },
+  evenMusic: { kind: 'boolean', hint: 'Plays each song about as loud as the others, so a quiet old recording and a loud new one don’t need the volume changed between them. The files aren’t changed, and it takes effect from the next song.' },
   musicAutoplay: { kind: 'boolean', hint: 'Keeps three songs waiting at the end of the queue, from YouTube, like the last song in it that someone added, so the music carries on in that style. Songs people add play first, and Autoplay’s change to follow the last of them. Turning it off takes out the ones it added. The switch on the Music tab and the /music card change this too.' },
   musicSearch: {
     kind: 'choice',

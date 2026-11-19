@@ -61,6 +61,9 @@ config.musicAudioDir = `${process.env.DATA_DIR}/music-audio`;
 mkdirSync(config.musicAudioDir, { recursive: true });
 // Songs the container says it has, but whose file the bot can't see
 const unseen = new Set<string>();
+const hasFfmpeg = spawnSync('ffmpeg', ['-version']).status === 0;
+/** Real audio for a song's file, for levelling; others get an empty file */
+const audio = new Map<string, Buffer>();
 
 // The music container. Songs are "downloaded" unless `youtube` says a song is missing, fails, or waits until the test lets it go on
 const fetched: string[] = [];
@@ -115,7 +118,7 @@ mock.method(globalThis, 'fetch', async (url: string, init: RequestInit = {}) => 
     if (how === 'missing') return Response.json({ error: 'No match on YouTube or SoundCloud.' }, { status: 404 });
     if (how === 'fail') return Response.json({ error: 'Sign in to confirm you’re not a bot' }, { status: 502 });
     const file = `yt-${key.slice(-4)}.webm`;
-    if (!unseen.has(key)) writeFileSync(`${config.musicAudioDir}/${file}`, '');
+    if (!unseen.has(key)) writeFileSync(`${config.musicAudioDir}/${file}`, audio.get(key) ?? '');
     return Response.json({ file, source: 'youtube', url: body.uri ? watch(`yt${body.uri.slice(-9)}`) : body.url });
   }
   if (where === '/similar') {
@@ -155,6 +158,7 @@ mock.method(globalThis, 'fetch', async (url: string, init: RequestInit = {}) => 
 // What the mixer is asked to play, instead of playing it. `heard` is it starting to be heard, and `end` finishes it as a song ending would
 interface Played {
   file: string;
+  gain: number;
   options: VoiceOptions;
   stopped: boolean;
   heard: () => void;
@@ -163,8 +167,8 @@ interface Played {
   fail: () => void;
 }
 const played: Played[] = [];
-mock.method(Mixer.prototype, 'add', (file: string, _gain: number, onEnd: (byItself: boolean, failed?: boolean) => void, { onHeard, ...options }: VoiceOptions) => {
-  const voice: Played = { file, options, stopped: false, heard: () => onHeard?.(), end: () => onEnd(true), fail: () => onEnd(false, true) };
+mock.method(Mixer.prototype, 'add', (file: string, gain: number, onEnd: (byItself: boolean, failed?: boolean) => void, { onHeard, ...options }: VoiceOptions) => {
+  const voice: Played = { file, gain, options, stopped: false, heard: () => onHeard?.(), end: () => onEnd(true), fail: () => onEnd(false, true) };
   played.push(voice);
   return () => {
     voice.stopped = true;
@@ -370,6 +374,29 @@ test('when Spotify limits cover lookups, they wait as long as it asks and then c
   assert.ok(Date.now() - started >= 1000, 'waited the second Spotify asked for');
   assert.deepEqual(looked.map(Number), [8, 8]);
   assert.equal(queueOf(id)[0]!.cover, coverOf(8));
+});
+
+test('with Even music volume on, a song starts at the gain that brings it to the others’ level, and with it off as it is', { skip: !hasFfmpeg }, async (t) => {
+  const { id, guild, channel } = server();
+  t.after(() => setSetting(id, 'evenMusic', undefined));
+  const tone = (db: number) => execFileSync('ffmpeg', ['-loglevel', 'error', '-f', 'lavfi', '-i', 'sine=frequency=800:duration=4', '-af', `volume=${db}dB`, '-f', 'wav', 'pipe:1']);
+  audio.set(song(701).uri, tone(-24));
+  // ffmpeg's test tone is at -18 dBFS before this
+  audio.set(song(702).uri, tone(16));
+  t.after(() => [701, 702].forEach((n) => audio.delete(song(n).uri)));
+  addTracks(id, [song(701)], 'u1');
+  assert.equal(await startMusic(guild, channel), null);
+  assert.ok(lastPlayed().gain > 1.5, `a quiet song comes up: ${lastPlayed().gain}`);
+  stopMusic(id, 'u1');
+  addTracks(id, [song(702)], 'u1');
+  assert.equal(await startMusic(guild, channel), null);
+  assert.ok(lastPlayed().gain < 1, `a loud one comes down: ${lastPlayed().gain}`);
+  stopMusic(id, 'u1');
+  setSetting(id, 'evenMusic', false);
+  addTracks(id, [song(701)], 'u1');
+  assert.equal(await startMusic(guild, channel), null);
+  assert.equal(lastPlayed().gain, 1);
+  stopMusic(id, 'u1');
 });
 
 test('the queue stops filling at its limit', () => {

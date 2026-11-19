@@ -22,6 +22,36 @@ export function levelGain(lufs: number, peak: number): number {
   return Math.round(Math.max(gain, MAX_CUT_DB) * 10) / 10;
 }
 
+// What songs are brought to: about the middle of the songs played here (40 of them measured in November 2026 had a median
+// of -10.6 LUFS), so a music volume set before songs were levelled still suits a typical one
+const SONG_TARGET_LUFS = -10.5;
+
+/**
+ * The gain, in dB, that brings a song with this loudness and sample peak to the songs' level. `headroomDb` is how much the
+ * music volume and the mix turn it down after that: a quiet song only comes up as far as its peaks stay under the ceiling
+ * once they have, so levelling never makes it clip. It's never turned down below how it was released for that
+ */
+export function songGain(lufs: number | null, peak: number | null, headroomDb: number): number {
+  if (lufs === null || peak === null || !Number.isFinite(lufs) || lufs <= SILENT_LUFS || !Number.isFinite(peak)) return 0;
+  const room = Math.max(0, PEAK_CEILING_DB - peak + headroomDb);
+  const gain = Math.min(SONG_TARGET_LUFS - lufs, room, MAX_BOOST_DB);
+  return Math.round(Math.max(gain, MAX_CUT_DB) * 10) / 10;
+}
+
+/** A song needn't be read for longer than this: a long one takes a few seconds */
+const READ_TIMEOUT_MS = 30_000;
+
+/** A song's loudness and sample peak, read whole: well under a second for a few minutes. Null for what ffmpeg can't read, like silence */
+export async function songLoudness(file: string): Promise<{ lufs: number | null; peak: number | null }> {
+  const { stderr } = await exec('ffmpeg', ['-hide_banner', '-nostats', '-vn', '-i', file, '-af', 'ebur128=peak=sample:framelog=verbose', '-f', 'null', '-'], { timeout: READ_TIMEOUT_MS });
+  // The summary at the end
+  const lufs = [...stderr.matchAll(/\bI:\s+(\S+) LUFS/g)].at(-1)?.[1];
+  const peak = [...stderr.matchAll(/\bPeak:\s+(\S+) dBFS/g)].at(-1)?.[1];
+  if (lufs === undefined) throw new Error('ffmpeg gave no loudness reading');
+  const reading = (value: string | undefined) => (value !== undefined && Number.isFinite(Number(value)) ? Number(value) : null);
+  return { lufs: reading(lufs), peak: reading(peak) };
+}
+
 // Speech hits full scale while sounding quiet, so levelling can't raise it. Taking its peaks off with a limiter lets it reach the target
 const SPEECH_FILTER = `volume=7dB,alimiter=limit=${10 ** (PEAK_CEILING_DB / 20)}:attack=3:release=40:level=false`;
 

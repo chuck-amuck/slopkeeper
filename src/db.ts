@@ -686,6 +686,15 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS chat_reminders_due ON chat_reminders (due_at);
   CREATE INDEX IF NOT EXISTS chat_reminders_guild ON chat_reminders (guild_id, due_at);
+  -- How loud each song file is, read once, so a song can be levelled as it starts. By the file's path and size, so a file
+  -- replaced under the same name is read again. Null where ffmpeg had no reading, as for silence
+  CREATE TABLE IF NOT EXISTS song_loudness (
+    file TEXT PRIMARY KEY,
+    bytes INTEGER NOT NULL,
+    lufs REAL,
+    peak REAL,
+    at INTEGER NOT NULL
+  );
 `);
 
 // Added with web search, after chat_usage came out
