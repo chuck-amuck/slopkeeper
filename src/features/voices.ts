@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { config } from '../config.ts';
 import { db, getKv, setKv, transaction } from '../db.ts';
+import { STARTING_RETRY_MS, stillStarting } from '../util.ts';
 
 /**
  * The voices added in the web UI, shared by every server on the bot. The voice container (voice/models.py) downloads their
@@ -250,9 +251,14 @@ export function syncVoices(): Promise<void> {
         takeReport(await res.json());
         saidDown = false;
       } catch (err) {
-        if (!saidDown) console.warn(`Couldn't send the added voices to the voice container: ${(err as Error).message}`);
-        saidDown = true;
         containerVersion = null;
+        // Just after the bot starts, the voice container may still be starting too: tried again soon, it's warned about
+        // only if it's still not answering a minute on
+        if (stillStarting()) setTimeout(() => void syncVoices(), STARTING_RETRY_MS).unref();
+        else if (!saidDown) {
+          console.warn(`Couldn't send the added voices to the voice container: ${(err as Error).message}`);
+          saidDown = true;
+        }
       }
     } while (syncAgain);
   })().finally(() => {

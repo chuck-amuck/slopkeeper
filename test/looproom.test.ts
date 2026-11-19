@@ -7,6 +7,7 @@ import type { AddressInfo } from 'node:net';
 import path from 'node:path';
 import { after, test, type TestContext } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
+import { markStarted, STARTING_RETRY_MS } from '../src/util.ts';
 import { getVoiceConnection, joinVoiceChannel, VoiceConnectionStatus } from '@discordjs/voice';
 import { config } from '../src/config.ts';
 import type { LoopProgram } from '../src/loopBot.ts';
@@ -630,6 +631,31 @@ test('with a loop bot that’s down or refuses, the room stays quiet and the log
   assert.match(String(errors.mock.calls.at(-1)!.arguments[0]), /loop bot couldn’t be reached/);
   assert.equal(loops().length, 0, 'no playing it here instead');
   void id;
+});
+
+test('just after the bot starts, a loop bot that isn’t answering yet is tried again quietly, and logged a minute on', { skip: !hasFfmpeg }, async (t) => {
+  const { guild, therapy, enter, turnOn } = await server(t);
+  const { sent, answer } = await fakeLoopBot(t);
+  const errors = t.mock.method(console, 'error', () => {});
+  t.after(() => markStarted(0));
+  turnOn();
+  enter(therapy, 'ana');
+  markStarted();
+  answer.down = true;
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  await syncLoopBot(guild);
+  assert.equal(errors.mock.callCount(), 0);
+  answer.down = false;
+  // The second try goes out by itself, and this one waits behind it
+  t.mock.timers.tick(STARTING_RETRY_MS);
+  t.mock.timers.reset();
+  await syncLoopBot(guild);
+  assert.deepEqual([errors.mock.callCount(), sent.filter((s) => s.method === 'PUT').length], [0, 2]);
+
+  markStarted(Date.now() - 61_000);
+  answer.down = true;
+  await syncLoopBot(guild);
+  assert.match(String(errors.mock.calls.at(-1)?.arguments[0]), /loop bot couldn’t be reached/);
 });
 
 test('Settings says how the loop bot is doing', async (t) => {

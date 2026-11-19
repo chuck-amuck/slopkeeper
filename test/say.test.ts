@@ -24,6 +24,7 @@ import { soundboard } from '../src/features/soundboard.ts';
 import { stopTuning } from '../src/features/voiceTuning.ts';
 import { setSetting, storedSetting } from '../src/settings.ts';
 import { holdSounds } from '../src/loudness.ts';
+import { markStarted, STARTING_RETRY_MS } from '../src/util.ts';
 
 const hasFfmpeg = spawnSync('ffmpeg', ['-version']).status === 0;
 const dir = mkdtempSync(path.join(process.env.DATA_DIR!, 'speech-'));
@@ -317,6 +318,36 @@ test('an effect is turned up or down by what was measured on that voice, or its 
 });
 
 const MODEL = 'https://huggingface.co/someone/voice/resolve/main/voice.onnx';
+
+test('just after the bot starts, a voice container that isn’t answering yet is sent the voices again quietly, and warned about a minute on', async (t) => {
+  let up = false;
+  let sent = 0;
+  t.mock.method(globalThis, 'fetch', async (url: string) => {
+    assert.equal(url, 'http://voice.test/models');
+    sent++;
+    if (!up) throw new TypeError('fetch failed');
+    return Response.json({ version: voicesVersion(), voices: {} });
+  });
+  const warned = t.mock.method(console, 'warn', () => {});
+  t.after(() => markStarted(0));
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  markStarted();
+  await syncVoices();
+  assert.deepEqual([sent, warned.mock.callCount()], [1, 0]);
+  up = true;
+  t.mock.timers.tick(STARTING_RETRY_MS);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual([sent, warned.mock.callCount()], [2, 0], 'tried again by itself, and fine');
+
+  markStarted(Date.now() - 61_000);
+  up = false;
+  await syncVoices();
+  t.mock.timers.tick(STARTING_RETRY_MS);
+  assert.deepEqual([sent, warned.mock.callCount()], [3, 1], 'not tried again: the health check sends it once the container answers');
+  assert.match(String(warned.mock.calls[0].arguments[0]), /Couldn't send the added voices to the voice container: fetch failed/);
+  up = true;
+  await syncVoices();
+});
 
 test('an added voice speaks its own model once the voice container has it, with its settings, and not before', { skip: !hasFfmpeg }, async (t) => {
   const asked: { text: string; model?: string; speaker?: number; length: number; noise?: number }[] = [];

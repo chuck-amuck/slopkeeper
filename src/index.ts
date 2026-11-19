@@ -7,7 +7,7 @@ import { db } from './db.ts';
 import { idSetting, isAllowed } from './settings.ts';
 import { features, startOrder } from './features/all.ts';
 import { timeInteraction } from './features/health.ts';
-import { servedGuilds } from './util.ts';
+import { markStarted, servedGuilds } from './util.ts';
 import { stopTimers } from './schedule.ts';
 
 const commands = new Map(features.flatMap((f) => f.commands ?? []).map((c) => [c.data.name, c]));
@@ -37,6 +37,7 @@ async function join(guild: Guild, isNew: boolean) {
 }
 
 client.once(Events.ClientReady, async (c) => {
+  markStarted();
   await Promise.all(c.guilds.cache.map((guild) => join(guild, false).catch(console.error)));
   // One feature failing to start leaves the rest working
   for (const feature of startOrder) await Promise.resolve(feature.setup?.(c)).catch((err) => console.error(`Starting ${feature.title ?? feature.componentPrefix ?? 'a feature'} failed:`, err));

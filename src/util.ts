@@ -97,6 +97,18 @@ export function pingWarning(role: Role): string {
   return `\n⚠️ Pings for ${role} won’t notify anyone yet. Turn on **Allow anyone to @mention this role** in Server Settings → Roles.`;
 }
 
+/** How long after the bot logs in the containers beside it may still be starting */
+const STARTING_MS = 60_000;
+/** How soon to try a container again while it may still be starting */
+export const STARTING_RETRY_MS = 5_000;
+let startedAt = 0;
+/** The bot logged in: for the next minute, a container not answering is most likely one still starting */
+export function markStarted(at = Date.now()) {
+  startedAt = at;
+}
+/** Within a minute of logging in, when not reaching a container beside the bot is tried again quietly, not warned about */
+export const stillStarting = () => Date.now() - startedAt < STARTING_MS;
+
 /** Servers the bot works in: every one it's in, minus any it's leaving for not being allowed */
 export function servedGuilds(client: Client<true>): Guild[] {
   return [...client.guilds.cache.values()].filter((g) => isAllowed(g.id));

@@ -9,7 +9,7 @@ import { promisify } from 'node:util';
 import { config } from '../config.ts';
 import { idSetting, setting } from '../settings.ts';
 import type { LoopProgram } from '../loopBot.ts';
-import { humansIn, servedGuilds } from '../util.ts';
+import { humansIn, servedGuilds, STARTING_RETRY_MS, stillStarting } from '../util.ts';
 import { type Sound, findSound, soundGain } from './soundLibrary.ts';
 import { audio, connect, mixIn, mixInto } from './voiceAudio.ts';
 
@@ -281,7 +281,12 @@ export function syncLoopBot(guild: Guild): Promise<void> {
       const { error } = (await res.json().catch(() => ({}))) as { error?: string };
       console.log(`Looping room in ${guild.name} didn’t play: ${error ?? `the loop bot answered ${res.status}`}`);
     })
-    .catch((err: Error) => console.error(`The loop bot couldn’t be reached for ${guild.name}:`, err.message));
+    .catch((err: Error) => {
+      // Just after the bot starts, the loop bot may still be starting too: tried again soon, it's logged only if it's
+      // still not answering a minute on
+      if (stillStarting()) setTimeout(() => void syncLoopBot(guild), STARTING_RETRY_MS).unref();
+      else console.error(`The loop bot couldn’t be reached for ${guild.name}:`, err.message);
+    });
   loopBotQueue.set(guild.id, next);
   return next;
 }
