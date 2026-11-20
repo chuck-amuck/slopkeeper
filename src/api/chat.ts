@@ -53,7 +53,8 @@ export async function chatRoutes({ guild, req, res, section, rest }: Ask) {
       botName: guild.members.me?.displayName ?? 'The bot',
       // To try it as another before picking it, under the name it would have
       profiles: profiles().map((p) => ({ id: p.id, name: p.name, botName: names(p), active: p.id === active })),
-      speech: Boolean(config.voiceUrl) && setting(guild.id, 'tts'),
+      // Answers are said aloud here only when they would be in Discord
+      speech: Boolean(config.voiceUrl) && setting(guild.id, 'tts') && setting(guild.id, 'chatVoice') !== 'off',
       inDiscord: inDiscord(guild.id),
     };
   }

@@ -493,6 +493,17 @@ test('chat tried in the web UI says what it needs, who can ask and where, and ch
   assert.deepEqual(start.members[1], { id: 'u2', name: 'Ben', username: 'ben', globalName: null, avatar: null });
   assert.deepEqual(start.channels.map((c: any) => c.name), ['first', 'second']);
   assert.deepEqual([start.me, start.speech], [null, false]);
+  // Answers are said aloud there only when they would be in Discord
+  const was = config.voiceUrl;
+  config.voiceUrl = 'http://voice';
+  try {
+    assert.equal((await ok(`/guilds/${GUILD}/chat-try`)).speech, false);
+    setSetting(GUILD, 'chatVoice', 'also');
+    assert.equal((await ok(`/guilds/${GUILD}/chat-try`)).speech, true);
+  } finally {
+    config.voiceUrl = was;
+    setSetting(GUILD, 'chatVoice', undefined);
+  }
   // The profiles to try it as, with what the bot would be called
   assert.deepEqual(start.profiles, [{ id: 'butler', name: 'Robot butler', botName: 'Slopkeeper', active: true }]);
   const asking = { text: 'roast @Ben', as: 'u1', channelId: 'c2', history: [{ from: 'you', text: 'hi', at: 1 }] };

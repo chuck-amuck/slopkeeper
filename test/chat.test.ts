@@ -1179,12 +1179,21 @@ test('tried in the web UI, an answer follows the page’s conversation and does 
 test('tried in the web UI, an answer is said as it would be in voice, and what it would say or play is heard there instead', async (t) => {
   const { guild, robin, channel } = tryingIn('try-2');
   config.voiceUrl = 'http://voice.test';
-  t.after(() => (config.voiceUrl = null));
+  t.after(() => [(config.voiceUrl = null), setSetting(guild.id, 'chatVoice', undefined)]);
+  // Not with Answer in voice off, as it wouldn't be in Discord
   replies = [turn('end_turn', text('Of course, @Sam, at once!'))];
-  const said = await tryChat(guild as never, robin as never, channel as never, [], 'tell @Sam hi', 'a');
-  assert.deepEqual(said.aloud, { kind: 'speech', text: 'Of course, @Sam, at once!', voice: setting(guild.id, 'ttsVoice'), effect: setting(guild.id, 'ttsEffect') });
-  assert.deepEqual(said.heard, []);
+  const unsaid = await tryChat(guild as never, robin as never, channel as never, [], 'tell @Sam hi', 'a');
+  assert.equal(unsaid.aloud, null);
+  assert.match(unsaid.quiet!, /Answer in voice is off/);
   assert.match(inDiscord(guild.id), /Answer in voice is off/);
+  for (const voice of ['also', 'only']) {
+    setSetting(guild.id, 'chatVoice', voice);
+    resetChat();
+    replies = [turn('end_turn', text('Of course, @Sam, at once!'))];
+    const said = await tryChat(guild as never, robin as never, channel as never, [], 'tell @Sam hi', 'a');
+    assert.deepEqual(said.aloud, { kind: 'speech', text: 'Of course, @Sam, at once!', voice: setting(guild.id, 'ttsVoice'), effect: setting(guild.id, 'ttsEffect') });
+    assert.deepEqual([said.heard, said.quiet], [[], null]);
+  }
   // A line it says in a voice is heard instead, and the answer isn't said on top of it
   resetChat();
   replies = [turn('tool_use', toolUse('t1', 'say_aloud', { text: 'Happy birthday, <@301>!' })), turn('end_turn', text('Said it, my liege.'))];
@@ -1207,7 +1216,8 @@ test('tried in the web UI, an answer is said as it would be in voice, and what i
 test('tried as another profile, it answers in that one’s personality, way of talking, name and voice, and the server keeps its own', async (t) => {
   const { guild, robin, channel } = tryingIn('try-profile');
   config.voiceUrl = 'http://voice.test';
-  t.after(() => (config.voiceUrl = null));
+  setSetting(guild.id, 'chatVoice', 'also');
+  t.after(() => [(config.voiceUrl = null), setSetting(guild.id, 'chatVoice', undefined)]);
   const pirate = profileById(
     addProfile({ ...fieldsOf(builtIn()), name: 'Pirate', personality: 'A grumpy pirate captain.', length: 'short', swearing: 'never', voice: 'scottish', effect: 'none', nickname: 'Captain' }, 'u1'),
   )!;
