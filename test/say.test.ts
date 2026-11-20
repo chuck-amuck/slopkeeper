@@ -659,10 +659,12 @@ test('what Piper reads oddly is fixed first', () => {
   assert.equal(readable('$5kg and $5.5'), '$5kg and 5 dollars 50');
   // Titles don't end a sentence
   // Sounds with no vowel were spelled out. A hum keeps its length, to be held
-  assert.equal(readable('hm, Hmm. mm mmm HMMM hrm'), 'hmm, Hmm. Hmm hmmm HMMM hmm');
+  assert.equal(readable('hm, Hmm. hm hmmm HMMM hrm'), 'hmm, Hmm. Hmm hmmm HMMM hmm');
+  // "mmm" sounds right as it is
+  assert.equal(readable('mm, mmm, Mmmm'), 'mm, mmm, Mmmm');
   assert.equal(readable('Hmph! hmmph, shhh Shh, brrr grr GRRR'), 'Humph! humph, shushhh Shush, burrr gurr GURRR');
   // One typed long is held
-  assert.deepEqual(heldWords(readable('mmmm grrr shhhh brrrrr')), {
+  assert.deepEqual(heldWords(readable('hmmmm grrr shhhh brrrrr')), {
     text: 'hmm gur shush bur',
     held: [
       { word: 'hmm', nth: 0, sound: 'end', vowel: -1, seconds: 0.8 },

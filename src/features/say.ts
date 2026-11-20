@@ -554,11 +554,12 @@ export function heldWords(text: string): { text: string; held: Held[] } {
 
 /**
  * Sounds typed without a vowel, which Piper spells out ("hm" was "aitch em", "grr" "gee are are"), as it says them. One
- * typed long ("mmmm", "grrrr") keeps its letters, to be held like any drawn-out word (heldWords). "mm" after a number is
- * millimetres, and HM and MM can be short for something, so those stay
+ * typed long ("hmmm", "grrrr") keeps its letters, to be held like any drawn-out word (heldWords). "mm" after a number is
+ * millimetres, and HM and MM can be short for something, so those stay. So does "mmm": its "em em em" runs together into
+ * a hum, which sounds more like it than "hmm" does
  */
 const SOUNDS: [RegExp, (word: string) => string][] = [
-  [/^(?:h+r*m+|m{2,})$/i, (word) => `h${'m'.repeat(Math.max(2, count(word, 'm')))}`],
+  [/^h+r*m+$/i, (word) => `h${'m'.repeat(Math.max(2, count(word, 'm')))}`],
   [/^h+m+(?:ph|f)+$/i, () => 'humph'],
   [/^sh{2,}$/i, (word) => (count(word, 'h') < 3 ? 'shush' : `shus${'h'.repeat(count(word, 'h'))}`)],
   [/^br{2,}$/i, (word) => `bu${'r'.repeat(count(word, 'r'))}`],
@@ -584,7 +585,7 @@ const NOT_AN_END = new Set(['etc', 'vs', 'approx']);
  * - Dr., Mr., Mrs. and St. end a sentence, though it reads them right (Saint or Street by what's around it) without the stop
  * Drawn-out words ("nooo") are left as typed, to be held when they're said (heldWords)
  * - "$5" was "dollar five"
- * - "hm", "mmm", "hmph", "shh", "brr" and "grr" were spelled out (SOUNDS)
+ * - "hm", "hmph", "shh", "brr" and "grr" were spelled out (SOUNDS)
  */
 export function readable(text: string) {
   return (
