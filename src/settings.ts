@@ -108,6 +108,8 @@ export const DEFAULTS = {
   musicVolume: num('MUSIC_VOLUME', 20),
   // Songs levelled so each plays about as loud as the others
   evenMusic: process.env.EVEN_MUSIC !== 'false',
+  // Music drops while people talk in the call, as it does under the bot's speech. The bot then isn't deafened, to notice
+  musicDucksForPeople: process.env.MUSIC_DUCKS_FOR_PEOPLE !== 'false',
   // Off until someone turns it on, so the music stops when the queue runs out, as people expect
   musicAutoplay: process.env.MUSIC_AUTOPLAY === 'true',
   // Unset lets everyone control music
@@ -193,6 +195,7 @@ export const DEFAULT_ENV: Partial<Record<SettingKey, string>> = {
   ttsHopOn: 'TTS_HOP_ON',
   musicVolume: 'MUSIC_VOLUME',
   evenMusic: 'EVEN_MUSIC',
+  musicDucksForPeople: 'MUSIC_DUCKS_FOR_PEOPLE',
   musicAutoplay: 'MUSIC_AUTOPLAY',
   musicSearch: 'MUSIC_SEARCH',
   musicSearchFallback: 'MUSIC_SEARCH_FALLBACK',

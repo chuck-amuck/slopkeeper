@@ -9,7 +9,7 @@ import type { Feature } from '../types.ts';
 import { servedGuilds } from '../util.ts';
 import { commandMention } from '../commandIds.ts';
 import { BIN_DAYS, DAY, type Sound, VOLUME_PERCENT, addToDiscord, libraryChanged, applyLevels, changeEmoji, clearBin, deletedSounds, dropMissingEmoji, findSound, levelLibrary, listSounds, parseEmoji, recordDiscordPlay, recordPlay, removeSound, renameSound, restoreDeleted, setSoundVolume, soundGain, syncToDiscord, uploadProblem } from './soundLibrary.ts';
-import { applyMusicVolume, applySoundVolume, applySpeechVolume, leaveIfAlone, leaveVoice, musicOn, play, stopPlayback } from './voiceAudio.ts';
+import { applyMusicVolume, applySoundVolume, applySpeechVolume, leaveIfAlone, listeningChanged, leaveVoice, musicOn, play, stopPlayback } from './voiceAudio.ts';
 import { autoplayChanged } from './music.ts';
 import { affectsLoopRoom, checkLoopRoom, noteLoopRoom, refreshLoopRoom, startLoopRoom, stopLoopRoom } from './loopRoom.ts';
 import { playJoinSound, setJoinSound } from './joinSounds.ts';
@@ -27,6 +27,7 @@ export async function afterSettingsChanged(guild: Guild, keys: string[]): Promis
   if (keys.includes('soundVolume')) applySoundVolume(guild.id);
   if (keys.includes('ttsVolume')) applySpeechVolume(guild.id);
   if (keys.includes('musicVolume')) applyMusicVolume(guild.id);
+  if (keys.includes('musicDucksForPeople')) listeningChanged(guild.id);
   if (keys.includes('musicAutoplay')) autoplayChanged(guild.id);
   if (keys.some(affectsLoopRoom)) await refreshLoopRoom(guild);
   // The bot's nickname follows its profile. Why it couldn't, if it couldn't, for whoever changed it

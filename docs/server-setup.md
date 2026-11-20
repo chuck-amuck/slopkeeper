@@ -125,6 +125,7 @@ Each setting goes by the name `/setup show` and `/setup reset` use. A few are se
 | Speech delay after intro | `loop-room` | `LOOP_TEXT_DELAY_MS` | 0 ms |
 | Music volume | `music` | `MUSIC_VOLUME` | 20% |
 | Even music volume | web UI only | `EVEN_MUSIC` (`false` to turn off) | on |
+| Music drops while people talk | `music` | `MUSIC_DUCKS_FOR_PEOPLE` (`false` to turn off) | on |
 | Autoplay | `music`, or `/music autoplay` | `MUSIC_AUTOPLAY` | off |
 | Who can control music | `music` | | everyone |
 | Music search | web UI only | `MUSIC_SEARCH` (`spotify` or `youtube-music`) | Spotify |

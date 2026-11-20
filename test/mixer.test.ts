@@ -391,6 +391,24 @@ test('a mix under full scale plays exactly as it is', { skip: !hasFfmpeg }, asyn
   assert.ok(peaks.slice(1, -1).every((p) => p === 29000), 'untouched');
 });
 
+test('music drops while people in the call talk, and comes back up more slowly after', { skip: !hasFfmpeg }, async () => {
+  const mixer = new Mixer(1, 12);
+  const { peaks, done } = record(mixer);
+  const stop = mixer.add(steady('people-music.wav', 1000, 3), 1, undefined, { group: 'music', lasting: true });
+  await sleep(300);
+  mixer.setPeopleTalking(true);
+  await sleep(500);
+  assert.ok(near(peaks.at(-1), 300), `down to 30% while they talk, got ${peaks.at(-1)}`);
+  mixer.setPeopleTalking(false);
+  const released = peaks.length;
+  await sleep(1300);
+  stop();
+  await done;
+  // Counted in frames, so a slow machine doesn't change it: about 50, a second, against 14 after the bot's own lines
+  const back = peaks.findIndex((p, n) => n >= released && near(p, 1000)) - released;
+  assert.ok(back >= 40 && back <= 60, `back up over about a second, took ${back} frames`);
+});
+
 test('lists what’s playing once per sound, leaving out the music, and stops one of them', { skip: !hasFfmpeg }, async () => {
   const mixer = new Mixer(0.5, 12);
   const { done } = record(mixer);

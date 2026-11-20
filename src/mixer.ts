@@ -16,6 +16,8 @@ const FRAMES_COUNTED_TOGETHER = 50;
 // Music drops to this while someone's line is spoken, easing down and back up over a few frames
 const DUCKED = 0.3;
 const DUCK_STEP = 0.05;
+// After people talking in the call, it comes back up over about a second instead, as they may well carry on
+const PEOPLE_RELEASE_STEP = 0.014;
 // Sounds piling up are held a decibel under full scale rather than clipped. A frame that would go over is turned down as a
 // whole, and the frames after it come back up by a little each, about 200 ms from 6 dB down
 const CEILING = 32767 * 10 ** (-1 / 20);
@@ -360,6 +362,10 @@ export class Mixer extends Readable {
   private readonly groupGains = new Map<string, number>();
   /** How far music is turned down under speech right now */
   private duck = 1;
+  /** Whether people in the call are talking, which music drops under too */
+  private peopleTalking = false;
+  /** Whether music was last turned down for people talking, rather than for the bot */
+  private duckedForPeople = false;
   /** How far the whole mix is turned down to keep it under the ceiling, 1 when it isn't */
   private limit = 1;
   private readonly hearing = new WeakMap<Source, () => void>();
@@ -451,6 +457,11 @@ export class Mixer extends Readable {
     return true;
   }
 
+  /** Music drops while people in the call talk, as it does under the bot's speech */
+  setPeopleTalking(talking: boolean) {
+    this.peopleTalking = talking;
+  }
+
   /** Changes the volume of a group, including what's already playing */
   setGroupGain(group: NonNullable<VoiceOptions['group']>, gain: number) {
     this.groupGains.set(group, gain);
@@ -507,7 +518,14 @@ export class Mixer extends Readable {
     const sum = new Int32Array(FRAME_BYTES / 2);
     let heard = false;
     const speaking = this.voices.some((v) => v.group === 'speech' && v.heard);
-    this.duck = speaking ? Math.max(DUCKED, this.duck - DUCK_STEP) : Math.min(1, this.duck + DUCK_STEP);
+    if (speaking || this.peopleTalking) {
+      // Once for people, it stays that way until it's all the way back up, even if a line of the bot's outlasts them
+      if (this.peopleTalking) this.duckedForPeople = true;
+      this.duck = Math.max(DUCKED, this.duck - DUCK_STEP);
+    } else {
+      this.duck = Math.min(1, this.duck + (this.duckedForPeople ? PEOPLE_RELEASE_STEP : DUCK_STEP));
+      if (this.duck === 1) this.duckedForPeople = false;
+    }
     const mix = (chunk: Buffer, voice: Source, fade?: 'in' | 'out') => {
       heard = true;
       const gain = voice.gain * (this.groupGains.get(voice.group) ?? 1) * (voice.group === 'music' ? this.duck : 1);

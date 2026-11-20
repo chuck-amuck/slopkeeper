@@ -44,6 +44,8 @@ export interface JoinOptions {
   bot?: 'loop';
   /** Runs when the connection dropped and didn't come back, after it's been destroyed */
   onLost?: () => void;
+  /** Joins undeafened, to notice who's talking. Otherwise it's deafened, as it has nothing to hear */
+  listen?: boolean;
 }
 
 /**
@@ -51,7 +53,7 @@ export interface JoinOptions {
  * dropped. A drop that doesn't come back by itself destroys the connection, so nothing waits on it later. Returns
  * whether it joined afresh, or null when it couldn't get ready in time, having destroyed the connection
  */
-export async function join(channel: VoiceBasedChannel, player: AudioPlayer, { bot, onLost }: JoinOptions = {}): Promise<{ fresh: boolean } | null> {
+export async function join(channel: VoiceBasedChannel, player: AudioPlayer, { bot, onLost, listen = false }: JoinOptions = {}): Promise<{ fresh: boolean } | null> {
   const labels: perf.Labels = bot ? { bot } : {};
   let connection = getVoiceConnection(channel.guild.id);
   const fresh =
@@ -63,7 +65,7 @@ export async function join(channel: VoiceBasedChannel, player: AudioPlayer, { bo
   if (fresh) {
     // Joining with one already there rejoins that one, which is already watched
     const isNew = !connection || connection.state.status === VoiceConnectionStatus.Destroyed;
-    connection = joinVoiceChannel({ channelId: channel.id, guildId: channel.guild.id, adapterCreator: channel.guild.voiceAdapterCreator, selfDeaf: true });
+    connection = joinVoiceChannel({ channelId: channel.id, guildId: channel.guild.id, adapterCreator: channel.guild.voiceAdapterCreator, selfDeaf: !listen });
     if (isNew) watch(connection, channel, labels, onLost);
     connection.subscribe(player);
   }
@@ -78,7 +80,19 @@ export async function join(channel: VoiceBasedChannel, player: AudioPlayer, { bo
   }
   // The loop bot's would stay in its own process, which nothing reads them from
   if (fresh && !bot) perf.time('voice_connect_seconds', (performance.now() - joining) / 1000);
+  // Already there, it may have been deafened or not before the setting changed
+  if (!fresh) setListening(channel.guild.id, listen);
   return { fresh };
+}
+
+/**
+ * Deafens or undeafens the bot where it already is, without leaving. Only once it's connected: sending it while
+ * connecting would start the connecting over. A connect after that gets it right
+ */
+export function setListening(guildId: string, listen: boolean) {
+  const connection = getVoiceConnection(guildId);
+  if (!connection || connection.joinConfig.selfDeaf === !listen || connection.state.status !== VoiceConnectionStatus.Ready) return;
+  connection.rejoin({ channelId: connection.joinConfig.channelId, selfDeaf: !listen, selfMute: connection.joinConfig.selfMute });
 }
 
 function watch(connection: VoiceConnection, channel: VoiceBasedChannel, labels: perf.Labels, onLost?: () => void) {

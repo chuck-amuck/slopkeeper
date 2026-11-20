@@ -147,6 +147,7 @@ export const LABELS: Record<SettingKey, string> = {
   ttsHopOn: 'Say hop-on pings',
   musicVolume: 'Music volume',
   evenMusic: 'Even music volume',
+  musicDucksForPeople: 'Music drops while people talk',
   musicAutoplay: 'Autoplay',
   musicDjRole: 'Who can control music',
   musicSearch: 'Music search',
@@ -211,6 +212,7 @@ export function show(key: SettingKey, value: unknown): string {
     case 'weeklyLeaderboard':
     case 'evenVolume':
     case 'evenMusic':
+    case 'musicDucksForPeople':
     case 'joinSounds':
     case 'tts':
       return value ? 'on' : 'off';
@@ -315,7 +317,7 @@ export const GROUPS: [string, SettingKey[]][] = [
   ['Patch notes', ['patchNotes', 'patchNotesChannel']],
   ['Free games', ['freeGames', 'freeGamesChannel', 'freeGamesMinRating', 'freeGamesTaste', 'freeGamesMultiplayer', 'freeGamesUnlisted']],
   ['Soundboard', ['soundVolume', 'evenVolume', 'joinSounds', 'joinSoundDelayMs', 'joinSoundCooldownMin', 'soundManagerRole']],
-  ['Music', ['musicVolume', 'evenMusic', 'musicAutoplay', 'musicSearch', 'musicSearchFallback', 'musicDjRole']],
+  ['Music', ['musicVolume', 'evenMusic', 'musicDucksForPeople', 'musicAutoplay', 'musicSearch', 'musicSearchFallback', 'musicDjRole']],
   ['Looping sound room', ['loopRoom', 'loopSound', 'loopVolume', 'loopEvery', 'loopText', 'loopVoice', 'loopEffect', 'loopTextVolume', 'loopTextEvery', 'loopIntro', 'loopIntroDelayMs', 'loopSoundDelayMs', 'loopTextDelayMs']],
   ['Chat', ['chat', 'chatProfile', 'chatModel', 'chatWebSearch', 'chatActions', 'chatRoasts', 'chatPostLines', 'chatVoice', 'chatDailyLimit']],
   ['Text to speech', ['tts', 'ttsVoice', 'ttsEffect', 'ttsSpeed', 'ttsPauseMs', 'ttsVolume', 'ttsChannel', 'ttsChannelWho', 'ttsGreet', 'ttsGreeting', 'ttsNightReminders', 'ttsHopOn', 'ttsRole', 'ttsMaxChars', 'ttsCooldownSec']],
@@ -788,9 +790,10 @@ export const setup: Feature = {
         .addSubcommand((s) =>
           s
             .setName('music')
-            .setDescription('Music in voice: how loud it plays, Autoplay, and who can control it')
+            .setDescription('Music in voice: how loud it plays, dropping while people talk, Autoplay, and who controls it')
             .addIntegerOption((o) => o.setName('volume').setDescription('How loud music plays, as a percentage (20 by default)').setMinValue(LIMITS.musicVolume[0]).setMaxValue(LIMITS.musicVolume[1]))
             .addBooleanOption((o) => o.setName('autoplay').setDescription('Keep playing similar songs from YouTube when the queue runs out'))
+            .addBooleanOption((o) => o.setName('drop_for_people').setDescription('Turn music down while people in the call talk, as it is while the bot talks'))
             .addRoleOption((o) => o.setName('dj_role').setDescription('Only this role, plus people with Manage Server, can control music'))
             .addBooleanOption((o) => o.setName('everyone').setDescription('Let everyone control music again')),
         )
@@ -1042,6 +1045,7 @@ export const setup: Feature = {
           return apply(i, [
             ['musicVolume', i.options.getInteger('volume')],
             ['musicAutoplay', i.options.getBoolean('autoplay')],
+            ['musicDucksForPeople', i.options.getBoolean('drop_for_people')],
             ['musicDjRole', roleOrEveryone('dj_role')],
           ]);
         }

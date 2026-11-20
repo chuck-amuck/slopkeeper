@@ -1,4 +1,14 @@
-import { AudioPlayerStatus, type AudioPlayer, NoSubscriberBehavior, StreamType, createAudioPlayer, createAudioResource, getVoiceConnection } from '@discordjs/voice';
+import {
+  AudioPlayerStatus,
+  type AudioPlayer,
+  NoSubscriberBehavior,
+  StreamType,
+  createAudioPlayer,
+  createAudioResource,
+  getVoiceConnection,
+  VoiceConnectionStatus,
+  type VoiceConnection,
+} from '@discordjs/voice';
 import type { Guild, VoiceBasedChannel } from 'discord.js';
 import { existsSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -10,7 +20,8 @@ import * as perf from '../perf.ts';
 import { setting } from '../settings.ts';
 import type { DiscordSound } from '../discordSounds.ts';
 import { humansIn } from '../util.ts';
-import { destroy, join, voiceProblem } from '../voiceJoin.ts';
+import { Talking } from '../talking.ts';
+import { destroy, join, setListening, voiceProblem } from '../voiceJoin.ts';
 import { type Sound, VOLUME, findSound, recordPlay, soundGain } from './soundLibrary.ts';
 import { botClient, checkLoopRoom, isLooping, silenced } from './loopRoom.ts';
 
@@ -39,6 +50,8 @@ interface GuildAudio {
   player: AudioPlayer;
   mixer?: Mixer;
   idleTimer?: NodeJS.Timeout;
+  /** Who's talking in the call, which music drops under */
+  talking?: Talking;
 }
 
 /** Server id → its audio; the bot can be in a voice channel in every server at once */
@@ -82,7 +95,39 @@ export async function connect(channel: VoiceBasedChannel): Promise<string | null
   // The loop belongs to the room, so it doesn't follow the bot anywhere else
   const was = getVoiceConnection(channel.guild.id);
   if (was && was.joinConfig.channelId !== channel.id) a.mixer?.stopLoops();
-  return (await join(channel, a.player)) ? null : `I couldn’t connect to ${channel}. Try again in a moment.`;
+  if (!(await join(channel, a.player, { listen: setting(channel.guild.id, 'musicDucksForPeople') }))) return `I couldn’t connect to ${channel}. Try again in a moment.`;
+  hearTalking(channel.guild, a);
+  return null;
+}
+
+const listening = new WeakSet<VoiceConnection>();
+
+/**
+ * Notices who's talking on the bot's connection, once each, so music can drop under them. Only when each person starts
+ * and stops sending: nothing is subscribed to, so none of it is decoded
+ */
+function hearTalking(guild: Guild, a: GuildAudio) {
+  const connection = getVoiceConnection(guild.id);
+  if (!connection || listening.has(connection)) return;
+  listening.add(connection);
+  const talking = (a.talking ??= new Talking(
+    // Someone in a voice channel here, and not a bot, like the loop bot or a music bot, which never stop
+    (userId) => {
+      const state = guild.voiceStates.cache.get(userId);
+      return setting(guild.id, 'musicDucksForPeople') && !!state?.channelId && !state.member?.user.bot;
+    },
+    (on) => a.mixer?.setPeopleTalking(on),
+  ));
+  connection.receiver.speaking.on('start', (userId) => talking.start(userId));
+  connection.receiver.speaking.on('end', (userId) => talking.end(userId));
+  connection.once(VoiceConnectionStatus.Destroyed, () => talking.stop());
+}
+
+/** Deafens or undeafens the bot where it is, as music dropping under people talking was turned off or on */
+export function listeningChanged(guildId: string) {
+  const listen = setting(guildId, 'musicDucksForPeople');
+  setListening(guildId, listen);
+  if (!listen) audio.get(guildId)?.talking?.stop();
 }
 
 // Speech is levelled to match a sound at the same volume, but heard in a call over people talking it needs more, so its
@@ -102,6 +147,7 @@ export function mixInto(guildId: string, add: (mixer: Mixer) => void) {
   a.mixer.setGroupGain('sound', groupGain('sound', setting(guildId, 'soundVolume')));
   a.mixer.setGroupGain('speech', groupGain('speech', setting(guildId, 'ttsVolume')));
   a.mixer.setGroupGain('music', groupGain('music', setting(guildId, 'musicVolume')));
+  a.mixer.setPeopleTalking(a.talking?.on ?? false);
   // Before playing, or the mixer would find nothing to mix and end straight away
   add(a.mixer);
   a.player.play(createAudioResource(a.mixer, { inputType: StreamType.Raw }));
