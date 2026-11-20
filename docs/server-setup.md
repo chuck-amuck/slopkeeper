@@ -108,7 +108,7 @@ Each setting goes by the name `/setup show` and `/setup reset` use. A few are se
 | Join sounds | `sounds` | `JOIN_SOUNDS` (`false` to turn off) | on |
 | Join sound cooldown | `sounds` | `JOIN_SOUND_COOLDOWN_MIN` | 10 minutes |
 | Join sound delay | `sounds` | `JOIN_SOUND_DELAY_MS` | 500 ms after the bot connects |
-| Soundboard volume | `sounds` | `SOUND_VOLUME` | 100% |
+| Soundboard volume | `sounds` | `SOUND_VOLUME` | 60% |
 | Sound managers | `sound-managers` | | everyone |
 | Looping sound room | `loop-room` | | off |
 | Looping sound | `loop-room` | | not set |

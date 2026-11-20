@@ -572,6 +572,8 @@ async function fakeLoopBot(t: TestContext) {
 test('with a loop bot, the room is sent there, and this bot stays out of it', { skip: !hasFfmpeg }, async (t) => {
   const { id, guild, therapy, enter, loops, turnOn, joined } = await server(t);
   const { sent } = await fakeLoopBot(t);
+  // The loop's gain is its own volume times the sound volume: at 100% here, so it's the loop's alone
+  setSetting(id, 'soundVolume', 100);
   turnOn();
   setSetting(id, 'loopSoundDelayMs', 300);
   enter(therapy, 'ana');
@@ -628,6 +630,7 @@ test('with a loop bot, the speech goes as a part of its own', { skip: !hasFfmpeg
     execFileSync('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', 'sine=frequency=300:duration=0.3', file]);
   }, (_guild, voice) => voice);
   t.after(() => setLoopSpeaker(undefined as never, undefined as never));
+  setSetting(id, 'soundVolume', 100);
   setSetting(id, 'loopRoom', 'therapy');
   setSetting(id, 'loopText', 'stay a while');
   setSetting(id, 'loopTextVolume', 70);

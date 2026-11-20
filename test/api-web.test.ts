@@ -323,18 +323,18 @@ test('the volumes leave out what isn’t set up, so there’s no slider for it',
     assert.ok(version);
     return each;
   };
-  assert.deepEqual(await levels(), { sounds: 100, speech: null, music: null, loopSound: null, loopSpeech: null });
+  assert.deepEqual(await levels(), { sounds: 60, speech: null, music: null, loopSound: null, loopSpeech: null });
   const was = { ...config };
   t.after(() => Object.assign(config, was));
   Object.assign(config, { voiceUrl: 'http://voice', musicUrl: 'http://music' });
   setSetting(GUILD, 'loopRoom', '701');
   t.after(() => ['loopRoom', 'loopSound', 'loopText', 'tts'].forEach((key) => setSetting(GUILD, key as never, undefined)));
-  assert.deepEqual(await levels(), { sounds: 100, speech: 100, music: 100, loopSound: null, loopSpeech: null });
+  assert.deepEqual(await levels(), { sounds: 60, speech: 100, music: 100, loopSound: null, loopSpeech: null });
   setSetting(GUILD, 'loopSound', 'airhorn');
-  assert.deepEqual(await levels(), { sounds: 100, speech: 100, music: 100, loopSound: 50, loopSpeech: null });
+  assert.deepEqual(await levels(), { sounds: 60, speech: 100, music: 100, loopSound: 50, loopSpeech: null });
   setSetting(GUILD, 'loopText', 'Welcome');
   setSetting(GUILD, 'tts', false);
-  assert.deepEqual(await levels(), { sounds: 100, speech: null, music: 100, loopSound: 50, loopSpeech: 50 });
+  assert.deepEqual(await levels(), { sounds: 60, speech: null, music: 100, loopSound: 50, loopSpeech: 50 });
 });
 
 test('a volume being dragged is tried out without being saved or logged, within the setting’s limits', async (t) => {
@@ -342,7 +342,7 @@ test('a volume being dragged is tried out without being saved or logged, within 
   const logged = db.prepare('SELECT COUNT(*) AS n FROM activity WHERE guild_id = ?').get(GUILD) as { n: number };
   assert.deepEqual(await ok(`/guilds/${GUILD}/volumes/music/preview`, { method: 'POST', json: { value: 25 } }), {});
   assert.deepEqual(await ok(`/guilds/${GUILD}/volumes/sounds/preview`, { method: 'POST', json: { value: 150 } }), {});
-  assert.deepEqual([setting(GUILD, 'musicVolume'), setting(GUILD, 'soundVolume')], [100, 100]);
+  assert.deepEqual([setting(GUILD, 'musicVolume'), setting(GUILD, 'soundVolume')], [100, 60]);
   assert.deepEqual(db.prepare('SELECT COUNT(*) AS n FROM activity WHERE guild_id = ?').get(GUILD), logged);
   assert.equal(printed.mock.calls.filter((c) => /preview/.test(String(c.arguments[0]))).length, 0, 'not in the bot’s log, several a second');
   await refused(400, `/guilds/${GUILD}/volumes/music/preview`, { method: 'POST', json: { value: 900 } });
@@ -409,7 +409,7 @@ test('a page’s one request for updates waits for a change, then answers with o
 
   // The volumes, on the Soundboard and behind the Volume button on every page
   const { volumes } = await ok(`/guilds/${GUILD}/updates?volumes=`);
-  assert.equal(volumes.sounds, 100);
+  assert.equal(volumes.sounds, 60);
   const louder = ok(since({ ...all, volumes: volumes.version }));
   await ok(`/guilds/${GUILD}/settings/soundVolume`, { method: 'PUT', json: { value: 80 } });
   const volume = await louder;

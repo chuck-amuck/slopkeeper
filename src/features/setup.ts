@@ -759,7 +759,7 @@ export const setup: Feature = {
             .addIntegerOption((o) =>
               o.setName('join_delay_ms').setDescription('How long the bot waits after connecting before a join sound, 500 is half a second').setMinValue(LIMITS.joinSoundDelayMs[0]).setMaxValue(LIMITS.joinSoundDelayMs[1]),
             )
-            .addIntegerOption((o) => o.setName('volume').setDescription('How loud every sound plays, as a percentage (100 by default)').setMinValue(LIMITS.soundVolume[0]).setMaxValue(LIMITS.soundVolume[1])),
+            .addIntegerOption((o) => o.setName('volume').setDescription('How loud every sound plays, as a percentage (60 by default)').setMinValue(LIMITS.soundVolume[0]).setMaxValue(LIMITS.soundVolume[1])),
         )
         .addSubcommand((s) =>
           s

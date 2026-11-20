@@ -56,7 +56,8 @@ export const DEFAULTS = {
   joinSounds: process.env.JOIN_SOUNDS !== 'false',
   joinSoundCooldownMin: num('JOIN_SOUND_COOLDOWN_MIN', 10),
   joinSoundDelayMs: num('JOIN_SOUND_DELAY_MS', 500),
-  soundVolume: num('SOUND_VOLUME', 100),
+  // Where servers set it given the choice: 51-65%
+  soundVolume: num('SOUND_VOLUME', 60),
   // Unset plays nothing
   loopRoom: null as string | null,
   loopSound: null as string | null,

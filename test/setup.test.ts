@@ -243,7 +243,7 @@ test('the looping room has to be a voice channel the bot can use, with a sound f
   assert.deepEqual(checkSetting(guild, 'loopSound', 'nope'), { error: 'Pick a sound from the library.' });
   assert.equal(setting('looping', 'loopRoom'), null);
   assert.equal(setting('looping', 'loopVolume'), 50);
-  assert.equal(setting('looping', 'soundVolume'), 100);
+  assert.equal(setting('looping', 'soundVolume'), 60);
 });
 
 test('/setup loop-room sets, keeps and clears the room', async () => {
