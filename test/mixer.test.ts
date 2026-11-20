@@ -367,6 +367,30 @@ test('music drops under speech and comes back up after', { skip: !hasFfmpeg }, a
   await done;
 });
 
+test('sounds piling up are held under full scale instead of clipping, and the mix comes back up after', { skip: !hasFfmpeg }, async () => {
+  const mixer = new Mixer(1, 12);
+  const { peaks, done } = record(mixer);
+  mixer.add(steady('limit-under.wav', 10000, 1.5));
+  for (let n = 0; n < 3; n++) mixer.add(steady(`limit-loud-${n}.wav`, 20000, 0.4));
+  await done;
+  const ceiling = Math.round(32767 * 10 ** (-1 / 20));
+  assert.ok(Math.max(...peaks) <= ceiling + 1, `never over the ceiling, got ${Math.max(...peaks)}`);
+  assert.ok(peaks.some((p) => near(p, ceiling)), 'held at the ceiling while they pile up');
+  // Back to as it was over a few frames, not in one jump
+  const after = peaks.findLastIndex((p) => near(p, ceiling)) + 1;
+  assert.ok(peaks.slice(after, after + 15).some((p) => p > 4500 && p < 9800), `eases back up, got ${peaks.slice(after, after + 15).join(' ')}`);
+  assert.ok(near(peaks.at(-2), 10000), `back to full once they end, got ${peaks.at(-2)}`);
+});
+
+test('a mix under full scale plays exactly as it is', { skip: !hasFfmpeg }, async () => {
+  const mixer = new Mixer(1, 12);
+  const { peaks, done } = record(mixer);
+  mixer.add(steady('limit-loud-alone.wav', 29000, 0.4));
+  await done;
+  assert.equal(Math.max(...peaks), 29000);
+  assert.ok(peaks.slice(1, -1).every((p) => p === 29000), 'untouched');
+});
+
 test('lists what’s playing once per sound, leaving out the music, and stops one of them', { skip: !hasFfmpeg }, async () => {
   const mixer = new Mixer(0.5, 12);
   const { done } = record(mixer);

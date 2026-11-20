@@ -16,6 +16,10 @@ const FRAMES_COUNTED_TOGETHER = 50;
 // Music drops to this while someone's line is spoken, easing down and back up over a few frames
 const DUCKED = 0.3;
 const DUCK_STEP = 0.05;
+// Sounds piling up are held a decibel under full scale rather than clipped. A frame that would go over is turned down as a
+// whole, and the frames after it come back up by a little each, about 200 ms from 6 dB down
+const CEILING = 32767 * 10 ** (-1 / 20);
+const LIMIT_RELEASE = 10 ** (0.6 / 20);
 /** How loud everything plays in voice, where 1 is the file as it is. The loop bot uses it too, so the room sounds the same from either */
 export const MIX_VOLUME = 0.5;
 // A layered loop plays at most this many copies at once, so a long sound repeated often doesn't pile up ffmpegs
@@ -356,6 +360,8 @@ export class Mixer extends Readable {
   private readonly groupGains = new Map<string, number>();
   /** How far music is turned down under speech right now */
   private duck = 1;
+  /** How far the whole mix is turned down to keep it under the ceiling, 1 when it isn't */
+  private limit = 1;
   private readonly hearing = new WeakMap<Source, () => void>();
   /** Frames mixed and not yet counted */
   private uncounted = 0;
@@ -557,9 +563,17 @@ export class Mixer extends Readable {
       this.nextFrameAt = performance.now();
     }
 
+    // Turned down at once for a frame that would go over, so none of it does, and eased back up across the frames after
+    let peak = 0;
+    for (let s = 0; s < sum.length; s++) peak = Math.max(peak, Math.abs(sum[s]));
+    const from = this.limit;
+    this.limit = Math.min(peak * this.volume > CEILING ? CEILING / (peak * this.volume) : 1, from * LIMIT_RELEASE, 1);
+    const rising = this.limit > from;
     const frame = Buffer.alloc(FRAME_BYTES);
     for (let s = 0; s < sum.length; s++) {
-      frame.writeInt16LE(Math.max(-32768, Math.min(32767, Math.round(sum[s] * this.volume))), s * 2);
+      const limit = rising ? from + ((this.limit - from) * s) / sum.length : this.limit;
+      // The clip only catches rounding
+      frame.writeInt16LE(Math.max(-32768, Math.min(32767, Math.round(sum[s] * this.volume * limit))), s * 2);
     }
 
     // Counted a second at a time, to keep this loop light
