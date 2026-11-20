@@ -67,6 +67,8 @@ export const feeds = {
   health: changeFeed(),
   /** Prices checked, or bundles worked out again */
   deals: changeFeed(),
+  /** The server's profile picked, or any profile changed, as the header's picker shows them */
+  profile: changeFeed(),
 };
 
 export type FeedName = keyof typeof feeds;

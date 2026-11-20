@@ -16,6 +16,7 @@ import { playJoinSound, setJoinSound } from './joinSounds.ts';
 import { INPUT, NEXT, PREV, SETTINGS, SOUND_GONE, STOP, UPLOAD, answerUpload, askAboutUpload, canChangeSounds, editPanel, isSetting, managersOnly, onSetting, pageCount, panel, refreshPanels, settingsMenu, soundSettings, storeUpload, submitUpload, trackPanel } from './soundPanel.ts';
 import { every } from '../schedule.ts';
 import { followProfile } from './profileNames.ts';
+import { followPhotoSoon } from './profilePhotos.ts';
 
 /** The /sound subcommands that don't change any sound. Anything else needs the sound managers role, if there is one */
 const OPEN_TO_ALL = new Set(['play', 'stop', 'join', 'panel']);
@@ -34,8 +35,10 @@ export async function afterSettingsChanged(guild: Guild, keys: string[]): Promis
   if (keys.includes('musicDucksForPeople')) listeningChanged(guild.id);
   if (keys.includes('musicAutoplay')) autoplayChanged(guild.id);
   if (keys.some(affectsLoopRoom)) await refreshLoopRoom(guild);
-  // The bot's nickname follows its profile. Why it couldn't, if it couldn't, for whoever changed it
-  return keys.includes('chatProfile') ? await followProfile(guild) : null;
+  // The bot's nickname and photo follow its profile. Why they couldn't, if they couldn't, for whoever changed it
+  if (!keys.includes('chatProfile')) return null;
+  const whys = await Promise.all([followProfile(guild), followPhotoSoon(guild)]);
+  return whys.filter(Boolean).join(' ') || null;
 }
 
 export const soundboard: Feature = {

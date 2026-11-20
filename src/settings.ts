@@ -249,6 +249,8 @@ const SHOWN_ON: Partial<Record<SettingKey, FeedName[]>> = {
   // Night times, and the channel the planning form starts on
   timezone: ['nights'],
   announceChannel: ['nights'],
+  // The header's profile picker
+  chatProfile: ['profile'],
 };
 
 /** Stores a /setup value; undefined goes back to the default. The web UI and /setup both come through here */

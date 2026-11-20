@@ -15,7 +15,7 @@ const UNCHANGED_MS = 1000;
 const UNSEEN_MS = 5000;
 
 /** Who follows each part: { node, listener, since, seen } */
-const followers = { playing: new Set(), music: new Set(), voice: new Set(), nights: new Set(), activity: new Set(), sounds: new Set(), volumes: new Set(), health: new Set(), deals: new Set() };
+const followers = { playing: new Set(), music: new Set(), voice: new Set(), nights: new Set(), activity: new Set(), sounds: new Set(), volumes: new Set(), health: new Set(), deals: new Set(), profile: new Set() };
 /** The last of each part the bot sent for the server watched: { data, at } */
 let latest = new Map();
 /** The request loop for one server */

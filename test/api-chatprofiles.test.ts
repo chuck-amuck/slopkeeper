@@ -1,10 +1,13 @@
 import './helpers.ts';
 import assert from 'node:assert/strict';
-import { beforeEach, test } from 'node:test';
+import { execFileSync } from 'node:child_process';
+import { existsSync, rmSync } from 'node:fs';
+import { beforeEach, mock, test } from 'node:test';
 import { db } from '../src/db.ts';
 import { activeProfile } from '../src/features/chatProfiles.ts';
+import { followPhoto, PHOTO_WAITING, photoFile, photoTiming, resetPhotos } from '../src/features/profilePhotos.ts';
 import { setSetting } from '../src/settings.ts';
-import { GUILD, activityText, call, me, ok, refused, setFake } from './apiFixture.ts';
+import { GUILD, activityText, call, guild, me, ok, photoTrouble, refused, setFake } from './apiFixture.ts';
 
 // Profiles in the web UI: listed, added, copied, changed, deleted, and the Robot butler put back
 
@@ -12,8 +15,17 @@ const URL = `/guilds/${GUILD}/chat-profiles`;
 const named = (list: { profiles: { name: string }[] }, name: string) => list.profiles.find((p) => p.name === name) as Record<string, any>;
 
 beforeEach(() => {
-  db.exec('DELETE FROM chat_profiles; DELETE FROM guild_settings; DELETE FROM activity;');
+  db.exec("DELETE FROM chat_profiles; DELETE FROM guild_settings; DELETE FROM activity; DELETE FROM profile_photos; DELETE FROM kv WHERE key LIKE 'profile photo:%';");
+  resetPhotos();
+  photoTiming.waitMs = 10_000;
 });
+
+/** An image of `size`, as a PNG, made with ffmpeg */
+const image = (color: string, size = '300x200') =>
+  execFileSync('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', `color=c=${color}:s=${size}`, '-frames:v', '1', '-c:v', 'png', '-f', 'image2', 'pipe:1']);
+const pngSize = (png: Buffer) => [png.readUInt32BE(16), png.readUInt32BE(20)];
+const photoOfIt = (list: { profiles: { name: string }[] }, name: string) => named(list, name).photo as string;
+const pick = (id: string) => ok(`/guilds/${GUILD}/settings/chatProfile`, { method: 'PUT', json: { value: id } });
 
 test('the profiles are listed with their traits and choices, the Robot butler first and in use', async () => {
   const list = await ok(URL);
@@ -171,4 +183,107 @@ test('a nickname Discord wouldn’t take is turned down', async () => {
   for (const bad of ['@everyone', 'Bot#1', 'a:b', '`x`', '!!!']) assert.equal(await refused(400, URL, post(bad)), 'A nickname can’t have @, #, : or ` in it, and needs a letter or number.', bad);
   assert.equal(await refused(400, URL, post(7)), 'Type a nickname, or leave it empty for the bot’s own name.');
   assert.equal(named(await ok(URL, post('Señor Bot 9')), 'Odd').nickname, 'Señor Bot 9');
+});
+
+test('a profile’s photo is made a 512 px square, shown by its hash, copied, and taken away, each in Activity', async (t) => {
+  await ok(URL, { method: 'POST', json: { name: 'Pirate', personality: 'A grumpy pirate.' } });
+  let list = await ok(`${URL}/pirate/photo`, { method: 'PUT', body: image('red') as BodyInit });
+  const hash = photoOfIt(list, 'Pirate');
+  assert.match(hash, /^[0-9a-f]{16}$/);
+  assert.equal(photoOfIt(list, 'Robot butler'), '');
+  const shown = await call(`${URL}/pirate/photo?v=${hash}`);
+  assert.equal(shown.headers.get('content-type'), 'image/png');
+  assert.match(shown.headers.get('cache-control')!, /immutable/);
+  assert.deepEqual(pngSize(Buffer.from(await shown.arrayBuffer())), [512, 512]);
+
+  assert.equal(await refused(400, `${URL}/pirate/photo`, { method: 'PUT', body: 'not a picture' }), 'Pick a PNG, JPEG, GIF or WebP image.');
+  const warned = t.mock.method(console, 'warn', () => {});
+  assert.match(await refused(400, `${URL}/pirate/photo`, { method: 'PUT', body: Buffer.concat([Buffer.from('\x89PNG\r\n\x1a\n', 'latin1'), Buffer.alloc(64)]) as BodyInit }), /^That image couldn’t be read/);
+  assert.equal(warned.mock.callCount(), 1);
+  assert.equal(photoOfIt(await ok(URL), 'Pirate'), hash, 'a failed one leaves the photo it had');
+  assert.equal(await refused(404, `${URL}/nobody/photo`, { method: 'PUT', body: image('red') as BodyInit }), 'That profile isn’t there any more.');
+
+  list = await ok(URL, { method: 'POST', json: { copyOf: 'pirate' } });
+  assert.equal(photoOfIt(list, 'Pirate copy'), hash);
+  assert.equal((await call(`${URL}/pirate-copy/photo`)).status, 200);
+
+  list = await ok(`${URL}/pirate/photo`, { method: 'DELETE' });
+  assert.equal(photoOfIt(list, 'Pirate'), '');
+  assert.equal(await refused(404, `${URL}/pirate/photo`), 'Pirate has no photo.');
+  assert.equal(await refused(404, `${URL}/pirate/photo`, { method: 'DELETE' }), 'Pirate has no photo.');
+  await ok(`${URL}/pirate-copy`, { method: 'DELETE' });
+  assert.equal(existsSync(photoFile('pirate-copy')), false, 'a deleted profile’s photo goes with it');
+  assert.deepEqual(activityText().slice(-5), [
+    'Added the profile Pirate',
+    'Changed the photo of the profile Pirate',
+    'Added the profile Pirate copy',
+    'Removed the photo of the profile Pirate',
+    'Deleted the profile Pirate copy',
+  ]);
+});
+
+test('the bot takes on its profile’s photo where it’s picked, and its own back for a profile without one', async () => {
+  await ok(URL, { method: 'POST', json: { name: 'Pirate', personality: 'A grumpy pirate.' } });
+  await ok(`${URL}/pirate/photo`, { method: 'PUT', body: image('red') as BodyInit });
+  assert.deepEqual(me.photos, [], 'not until it’s picked');
+
+  await pick('pirate');
+  assert.equal(me.photos.length, 1);
+  assert.deepEqual(pngSize(me.photos[0]!), [512, 512]);
+  await pick('pirate');
+  assert.equal(me.photos.length, 1, 'the same photo isn’t sent again');
+
+  // A new photo for the profile in use goes up here too
+  await ok(`${URL}/pirate/photo`, { method: 'PUT', body: image('blue') as BodyInit });
+  assert.equal(me.photos.length, 2);
+  assert.notDeepEqual(me.photos[1], me.photos[0]);
+
+  // Straight after, before Discord would say the bot's photo changed
+  await pick('butler');
+  assert.deepEqual([me.photos.length, me.photos[2]], [3, null], 'the bot’s own photo for a profile without one');
+  await pick('butler');
+  assert.equal(me.photos.length, 3);
+
+  // Deleting the profile in use moves the server to the Robot butler, and its photo with it
+  await pick('pirate');
+  await ok(`${URL}/pirate`, { method: 'DELETE' });
+  assert.deepEqual([me.photos.length, me.photos[4]], [5, null]);
+
+  // The header's picker follows the profiles and the server's pick
+  const { profile } = await ok(`/guilds/${GUILD}/updates?profile=`);
+  assert.deepEqual([profile.profiles, profile.active], [[{ id: 'butler', name: 'Robot butler', photo: '' }], 'butler']);
+});
+
+test('a photo Discord won’t take is said, shown in Settings and tried again; a slow Discord is answered anyway', async () => {
+  await ok(URL, { method: 'POST', json: { name: 'Pirate', personality: 'A grumpy pirate.' } });
+  await ok(`${URL}/pirate/photo`, { method: 'PUT', body: image('red') as BodyInit });
+  const warned = mock.method(console, 'warn', () => {});
+  photoTrouble.error = new Error('Invalid Form Body');
+  const { warning } = await pick('pirate');
+  assert.equal(warning, 'Discord didn’t let me change my photo here: Invalid Form Body');
+  const { problems } = await ok(`/guilds/${GUILD}/settings`);
+  assert.ok(problems.some((p: { key: string; text: string }) => p.key === 'chatProfile' && p.text === 'Profile: Discord didn’t let me change my photo here: Invalid Form Body. It’s tried again when the bot restarts or the profile changes.'));
+  warned.mock.restore();
+
+  // As at start-up
+  photoTrouble.error = null;
+  assert.equal(await followPhoto(guild as never), null);
+  assert.equal(me.photos.length, 1);
+  assert.ok(!(await ok(`/guilds/${GUILD}/settings`)).problems.some((p: { text: string }) => /photo here/.test(p.text)));
+
+  // Made to wait: the page is answered, and the photo changes once Discord lets it
+  let release!: () => void;
+  photoTrouble.wait = new Promise((done) => (release = done));
+  photoTiming.waitMs = 20;
+  assert.equal((await pick('butler')).warning, PHOTO_WAITING);
+  assert.equal(me.photos.length, 1);
+  release();
+  await followPhoto(guild as never);
+  assert.deepEqual(me.photos, [me.photos[0], null]);
+
+  // A photo whose file went missing says so, rather than blaming Discord
+  photoTiming.waitMs = 10_000;
+  rmSync(photoFile('pirate'));
+  assert.equal((await pick('pirate')).warning, 'Pirate’s photo is missing from the bot’s data folder. Choose it again in Settings → Profiles.');
+  assert.equal(me.photos.length, 2);
 });

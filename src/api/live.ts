@@ -1,5 +1,7 @@
 import { Events, type Client, type Guild, type VoiceBasedChannel } from 'discord.js';
 import { anyChange, type FeedName, feeds } from '../changes.ts';
+import { activeProfile, profiles } from '../features/chatProfiles.ts';
+import { photos } from '../features/profilePhotos.ts';
 import { PREVIEWED, playingNow, previewVolume } from '../features/voiceAudio.ts';
 import { checkSetting } from '../features/setup.ts';
 import { config } from '../config.ts';
@@ -37,7 +39,14 @@ export const updates: Record<FeedName, (guild: Guild) => object | Promise<object
   health: () => ({}),
   // Likewise: the Deals tab asks for the lot again
   deals: () => ({}),
+  profile: (guild) => profilePicks(guild),
 };
+
+/** The profiles to pick from in the header, with their photos, and the server's */
+export function profilePicks(guild: Guild) {
+  const hashes = photos();
+  return { profiles: profiles().map((p) => ({ id: p.id, name: p.name, photo: hashes.get(p.id) ?? '' })), active: activeProfile(guild.id).id };
+}
 
 /** How loud the bot plays each thing, for everyone in the server. Null for what isn't set up, so there's no slider for it */
 export function volumesOf(guild: Guild) {

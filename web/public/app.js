@@ -13,6 +13,7 @@ import { noSoundsDock, soundsDock } from './soundsdock.js';
 import { volumeDock } from './volumes.js';
 import { stopWatchingUpdates, watchUpdates } from './updates.js';
 import { playInPicker } from './voice.js';
+import { profilePicker } from './profiles.js';
 import { renderSettings } from './settings.js';
 import { renderSoundboard, VIEW_KEY } from './soundboard.js';
 import { SHOWN_PREFIX } from './soundgrid.js';
@@ -343,6 +344,8 @@ function renderFrame() {
         ),
       // Where sounds, speech and music play, beside the server, as it's for every page
       guild && playInPicker(),
+      // Who the bot is here, for every page too
+      guild && profilePicker(),
       el(
         'nav',
         { ariaLabel: 'Pages' },

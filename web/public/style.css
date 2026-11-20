@@ -5417,6 +5417,111 @@ a,
   justify-content: flex-end;
 }
 
+/* A profile's photo, round, or a face for one without */
+.profile-photo {
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: var(--raised);
+  color: var(--muted);
+  object-fit: cover;
+}
+
+.profile-who {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.profile-photo-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.profile-photo-preview .profile-photo {
+  width: 72px;
+  height: 72px;
+}
+
+.profile-photo-preview .profile-photo .ico {
+  width: 2em;
+  height: 2em;
+}
+
+/*
+ * The header's profile picker: the photo, with the list laid over it so a click or tap opens it, and the name on a
+ * screen wide enough for it beside the tabs, with the photo where Play in has its speaker
+ */
+.profile-pick {
+  position: relative;
+  display: flex;
+  flex: none;
+  align-items: center;
+  min-width: 0;
+}
+
+.profile-pick .profile-face {
+  display: flex;
+  pointer-events: none;
+}
+
+.profile-pick .profile-photo {
+  width: 40px;
+  height: 40px;
+  box-shadow: 0 0 0 1px var(--line);
+}
+
+.profile-pick select {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  padding: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.profile-pick:hover .profile-photo,
+.profile-pick:focus-within .profile-photo {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+@media (min-width: 1500px) {
+  .profile-pick .profile-face {
+    position: absolute;
+    left: 7px;
+  }
+
+  .profile-pick .profile-photo {
+    width: 26px;
+    height: 26px;
+    box-shadow: none;
+  }
+
+  .profile-pick .profile-photo .ico {
+    width: 1em;
+    height: 1em;
+  }
+
+  .profile-pick select {
+    position: static;
+    width: 12em;
+    max-width: 200px;
+    padding: 6px 10px 6px 40px;
+    opacity: 1;
+  }
+
+  .profile-pick:hover .profile-photo,
+  .profile-pick:focus-within .profile-photo {
+    outline: none;
+  }
+}
+
 .field.profile-row .control button {
   margin-left: 0;
 }

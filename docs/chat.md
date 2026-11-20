@@ -57,8 +57,11 @@ The **Chat** card in the web UI's Settings has them all, and says how many answe
 
 ## Profiles
 
-A profile is who the bot is: a personality, how it talks, what it's called and the voice it says its own lines in. The **Profiles** card under Chat in Settings lists them, with **Use**, **Try**, **Edit**, **Copy** and **Delete**, and **New profile** makes one. Every server on the bot shares them, and each uses the one picked in its **Profile** setting, so switching between, say, a Yoda and a Bender changes how it talks, what it's called and how it sounds at once. **Try** opens the [Chat tab](#trying-it-in-the-web-ui) as that profile, to hear it before anyone else does. Activity shows each one made, changed or deleted, and each switch.
+A profile is who the bot is: a personality, how it talks, what it's called, its photo and the voice it says its own lines in. The **Profiles** card under Chat in Settings lists them, with **Use**, **Try**, **Edit**, **Copy** and **Delete**, and **New profile** makes one. Every server on the bot shares them, and each uses the one picked in its **Profile** setting, so switching between, say, a Yoda and a Bender changes how it talks, what it's called and how it sounds at once. **Try** opens the [Chat tab](#trying-it-in-the-web-ui) as that profile, to hear it before anyone else does. Activity shows each one made, changed or deleted, and each switch.
 
+Once there are two or more, the profile's photo sits in the web UI's header beside **Play in**, on every tab: click or tap it to pick another profile for the server, as **Use** does. On a wide screen it shows the profile's name too.
+
+- **Photo:** the bot's photo in servers using the profile: the middle square of a PNG, JPEG, GIF (its first frame) or WebP image of up to 5 MB, made 512 pixels square. Discord lets a bot have its own photo in each server, so each server shows its profile's, and a profile without one shows the bot's own photo from the Discord Developer Portal, which never changes. It changes when a server picks the profile, when the profile's photo changes, and at start-up for a server where it didn't go through. If Discord turns a change down, the toast and Settings say why; if Discord makes the bot wait, it changes by itself once it can.
 - **Nickname:** what the bot is called in servers using the profile, up to 32 characters. Empty keeps its own name: switching from a profile with a nickname to one without puts the bot's own name back, while a nickname an admin gave it by hand stays until a profile with one is picked. Renaming needs **Change Nickname** for the bot's role, which @everyone has unless a server took it away; Settings says so when it's missing.
 
 - **Personality:** who it is, in a few sentences, up to 1000 characters. 300 to 900 works best: enough for a voice of its own, without rules that fight the bot's.
@@ -71,7 +74,7 @@ A profile is who the bot is: a personality, how it talks, what it's called and t
 
 Whatever the profile, it never goes after someone's looks, family, race, religion, gender, sexuality or health, and it doesn't assume anyone's gender.
 
-The **Robot butler** is built in. It can be changed, and **Reset** puts it back; it can't be deleted. Deleting another profile puts the servers that used it back on the Robot butler, and removing a voice puts the profiles that used it on the server's default voice. A server that had changed its personality before there were profiles gets a profile of it, named from its first words, with the default voice and effect it had, and keeps talking and sounding as it did.
+The **Robot butler** is built in. It can be changed, and given a photo, and **Reset** puts it back without one; it can't be deleted. Deleting another profile puts the servers that used it back on the Robot butler, and removing a voice puts the profiles that used it on the server's default voice. A server that had changed its personality before there were profiles gets a profile of it, named from its first words, with the default voice and effect it had, and keeps talking and sounding as it did.
 
 ## Privacy and cost
 

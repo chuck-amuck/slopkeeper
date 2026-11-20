@@ -5,6 +5,7 @@ A web page for everything the bot does, running as a second container next to it
 ## On every page
 
 - **Play in:** beside the server in the header, the voice channel sounds, speech and music play in, with who's in each. When that channel empties, the next one with people takes over.
+- **Profile:** beside Play in, the photo of the [profile](chat.md#profiles) the bot is in this server. Click or tap it to pick another, once there are two or more. A wide screen shows its name too.
 - **Stop:** while sounds or speech play, a red button in the bottom corner stops them, with what's playing listed above it to stop one at a time. Music carries on, but the toast after Stop offers **Pause music**.
 - **Music player:** while music plays, a card at the bottom shows the song with **Pause**, **Skip** and **+** to add a song.
 - **Sounds:** a button that opens the server's sounds, the volumes and a line to say over any page.

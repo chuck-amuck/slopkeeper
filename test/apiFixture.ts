@@ -77,6 +77,9 @@ export const me = {
   // Its nickname, and each one it was given, null for its own name
   nickname: null as string | null,
   renamed: [] as (string | null)[],
+  // Its photo in this server, and each one it was given, null for its own
+  avatar: null as string | null,
+  photos: [] as (Buffer | null)[],
   get displayName() {
     return this.nickname ?? 'Slopkeeper';
   },
@@ -89,6 +92,9 @@ export const me = {
 };
 for (const r of roles.values()) r.guild = { members: { me } };
 
+/** Discord turning down the bot's photo, or making it wait until `wait` settles */
+export const photoTrouble = { error: null as Error | null, wait: null as Promise<void> | null };
+
 export const guild = {
   id: GUILD,
   name: 'Test server',
@@ -99,6 +105,13 @@ export const guild = {
   premiumTier: 0,
   members: {
     me,
+    // As discord.js does, the cached member stays as it was until Discord says it changed: only what's returned has it
+    async editMe({ avatar }: { avatar?: Buffer | null }) {
+      await photoTrouble.wait;
+      if (photoTrouble.error) throw photoTrouble.error;
+      me.photos.push(avatar ?? null);
+      return { ...me, avatar: avatar ? `photo-${me.photos.length}` : null };
+    },
     cache: new Map([member('u1', 'Ana'), member('u2', 'Ben'), member('u3', 'Cy')]),
     fetch: async ({ user }: { user: string }) => ({
       ...guild.members.cache.get(user),
@@ -222,6 +235,10 @@ beforeEach(() => {
   changeNickname = true;
   me.nickname = null;
   me.renamed.length = 0;
+  me.avatar = null;
+  me.photos.length = 0;
+  photoTrouble.error = null;
+  photoTrouble.wait = null;
   heldRoles.clear();
   failRoles = false;
   for (const id of roles.keys()) if (id.startsWith('made-')) roles.delete(id);

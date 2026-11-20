@@ -17,6 +17,7 @@ import { effectName, effects, missingVoice, NO_EFFECT, serverVoice, voiceName, v
 import { afterSettingsChanged } from './soundboard.ts';
 import { BUILT_IN_ID, profileById } from './chatProfiles.ts';
 import { nicknameProblem } from './profileNames.ts';
+import { photoProblem } from './profilePhotos.ts';
 import { cantJoin } from './voiceAudio.ts';
 import { findSound, listSounds } from './soundLibrary.ts';
 import { loopSpeechProblem } from './loopRoom.ts';
@@ -410,6 +411,8 @@ export function settingProblems(guild: Guild): SettingProblem[] {
 
   const renamed = nicknameProblem(guild);
   if (renamed) problems.push({ key: 'chatProfile', text: renamed });
+  const photo = photoProblem(guild.id);
+  if (photo) problems.push({ key: 'chatProfile', text: photo });
 
   const { id: loopId, channel: loopChannel } = channelOf('loopRoom');
   if (loopId && !loopChannel) problems.push({ key: 'loopRoom', text: 'The looping room’s channel is gone. Pick another one.' });

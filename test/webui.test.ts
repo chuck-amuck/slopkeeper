@@ -7,6 +7,7 @@ import { spawn, execFileSync, type ChildProcess } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
+import { crc32, deflateSync } from 'node:zlib';
 import path from 'node:path';
 import { after, before, mock, test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
@@ -14,6 +15,32 @@ import { config } from '../src/config.ts';
 import { resetChat } from '../src/features/chat.ts';
 import { db, setKv } from '../src/db.ts';
 import { createWeb } from '../web/src/server.ts';
+
+/** A small PNG of an orange ring on teal, made without ffmpeg, which the host running this may not have */
+function ringPng(size: number) {
+  const chunk = (type: string, data: Buffer) => {
+    const body = Buffer.concat([Buffer.from(type, 'latin1'), data]);
+    const length = Buffer.alloc(4);
+    length.writeUInt32BE(data.length);
+    const crc = Buffer.alloc(4);
+    crc.writeUInt32BE(crc32(body));
+    return Buffer.concat([length, body, crc]);
+  };
+  const header = Buffer.alloc(13);
+  header.writeUInt32BE(size, 0);
+  header.writeUInt32BE(size, 4);
+  header.set([8, 2, 0, 0, 0], 8);
+  const rows = [];
+  for (let y = 0; y < size; y++) {
+    const row = [0];
+    for (let x = 0; x < size; x++) {
+      const r = Math.hypot(x - size / 2, y - size / 2) / (size / 2);
+      row.push(...(r > 0.45 && r < 0.75 ? [240, 140, 40] : [30, 120, 130]));
+    }
+    rows.push(Buffer.from(row));
+  }
+  return Buffer.concat([Buffer.from('\x89PNG\r\n\x1a\n', 'latin1'), chunk('IHDR', header), chunk('IDAT', deflateSync(Buffer.concat(rows))), chunk('IEND', Buffer.alloc(0))]);
+}
 
 const PASSWORD = 'browser-test';
 // A sound this device saw last time, that's since been deleted
@@ -237,6 +264,10 @@ function seed() {
     "INSERT INTO chat_profiles (id, name, personality, length, opinions, swearing, roasts, despises, voice, effect, nickname, added_by, added_at, changed_at) VALUES ('pirate', 'A grumpy pirate with a long name to wrap', 'A grumpy pirate who has seen too many storms.', 'short', 'straight', 'freely', 'playful', '', 'scottish', 'robot', 'Captain Grump', 'u1', ?, ?)",
   ).run(now, now);
   db.prepare("INSERT INTO guild_settings (guild_id, key, value) VALUES (?, 'chatProfile', 'pirate')").run(GUILD);
+  // And a photo, for the header's picker and the Profiles card
+  mkdirSync(path.join(config.dataDir, 'profile-photos'), { recursive: true });
+  writeFileSync(path.join(config.dataDir, 'profile-photos', 'pirate.png'), ringPng(64));
+  db.prepare("INSERT INTO profile_photos (profile_id, hash) VALUES ('pirate', '0123456789abcdef')").run();
   const bundle = {
     id: 1,
     title: 'Humble Choice: An Unusually Long Bundle Name For A Phone',
