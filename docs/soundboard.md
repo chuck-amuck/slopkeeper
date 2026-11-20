@@ -98,6 +98,6 @@ So the bot keeps the full library and copies what fits onto Discord's soundboard
 /sound discord-add name:rickroll start:43      # the chorus, 0:43 to 0:48
 ```
 
-`/sound add` copies a short sound to Discord on its own when a slot is free. Removing a sound or changing its emoji updates Discord's copy, and a copy someone deletes in Discord turns the sound back to bot-only. The bot never touches sounds it didn't upload.
+`/sound add` copies a short sound to Discord on its own when a slot is free. Removing a sound or changing its emoji updates Discord's copy, and a copy someone deletes in Discord turns the sound back to bot-only. Sounds people added to Discord's soundboard themselves are changed only when someone asks in **Manage**: taking one off or swapping it out saves it to the library first, so it isn't lost.
 
-The web UI's **Manage** shows everything on Discord's soundboard, including sounds people added there themselves, to play, save to the library or swap for a library sound.
+The web UI's **Manage** shows everything on Discord's soundboard, including sounds people added there themselves, to play, save to the library, take off or swap for a library sound.

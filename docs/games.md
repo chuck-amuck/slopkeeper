@@ -11,7 +11,7 @@ Linking Steam, picking a game everyone in voice owns, and the server's game libr
 
 [Chat](chat.md#what-it-can-do) does both too: "just pick one", "reroll", "start a vote on what to play".
 
-A game qualifies if Steam tags it multiplayer, co-op or PvP, or it's in the [game library](#game-library). A library game with a player cap is skipped when there are more people than that, and games hidden with **Never suggest this** are skipped.
+A game qualifies if Steam lists it as multi-player, online co-op or online PvP, or it's in the [game library](#game-library). A game Steam lists only as local or split-screen co-op or PvP doesn't, unless it's added to the library. A library game with a player cap is skipped when there are more people than that, and games hidden with **Never suggest this** are skipped.
 
 The answer also shows **Also works** (other games everyone owns, most played first), **One purchase away** (games all but one person owns, and who needs to buy them) and **Not counted** (people whose games the bot doesn't know, left out rather than blocking every game: no Steam link and no games marked, or a private profile it has never seen the games of; a profile made private keeps the games seen before).
 
