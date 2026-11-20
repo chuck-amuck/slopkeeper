@@ -127,6 +127,8 @@ It applies the same rules as `/sound` and `/setup`, and every request needs an `
 | `GET /guilds/:id/members/:user/pings` | Lists the hop-on and game ping roles, and which someone has |
 | `PUT /guilds/:id/members/:user/pings` | Turns one on or off: `{ "roleId": "...", "on": true }`. Other roles can't be changed |
 | `POST /guilds/:id/sound-panels` | Posts a soundboard panel: `{ "channelId": "..." }` |
+| `GET /guilds/:id/sound-panels` | The posted soundboard panels, oldest first: `messageId`, `channelId`, `channel` (its name, or null when the bot can't see it) and `url` |
+| `DELETE /guilds/:id/sound-panels[/:messageId]` | Takes down one panel, or all of them, deleting the message: `{ removed, failed: [{ channel, problem }] }`. A panel in a channel the bot can't see any more is forgotten and listed in `failed`, to be deleted by hand |
 | `POST /guilds/:id/game-pings/menu` | Posts the Choose games button: `{ "channelId": "..." }` |
 | `GET /guilds/:id/activity?before=<id>` | The last year of changes to sounds, settings and game nights, 50 at a time, newest first |
 | `GET /guilds/:id/me` | Who's signed in through Pangolin, and which member they said they are |

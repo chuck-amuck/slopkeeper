@@ -23,6 +23,9 @@ export let discordSounds: Map<string, { name: string; volume?: number; emoji?: {
 export let refuseDiscord: Error | null;
 export let nextSoundId = 0;
 export let panelEdits: unknown[][];
+/** Posted messages deleted, and the ones a delete fails on, with the error */
+export const panelDeletes: string[] = [];
+export const deleteFailures = new Map<string, Error>();
 export let permitted: bigint[];
 export let sent: { channelId: string; message: any }[];
 export let deletedEvents: string[];
@@ -185,7 +188,14 @@ export const client = {
         sent.push({ channelId, message });
         return { id: `posted-${sent.length}` };
       },
-      messages: { edit: async (...args: unknown[]) => void panelEdits.push(args) },
+      messages: {
+        edit: async (...args: unknown[]) => void panelEdits.push(args),
+        delete: async (id: string) => {
+          const failure = deleteFailures.get(id);
+          if (failure) throw failure;
+          panelDeletes.push(id);
+        },
+      },
     }),
   },
 } as never;
@@ -216,6 +226,8 @@ beforeEach(() => {
   failRoles = false;
   for (const id of roles.keys()) if (id.startsWith('made-')) roles.delete(id);
   panelEdits = [];
+  panelDeletes.length = 0;
+  deleteFailures.clear();
   sent = [];
   deletedEvents = [];
   editedEvents = [];

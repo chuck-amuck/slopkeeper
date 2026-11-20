@@ -18,7 +18,7 @@ import { setJoinSound } from '../src/features/joinSounds.ts';
 import { soundboard } from '../src/features/soundboard.ts';
 import { lengthFor } from '../src/features/say.ts';
 import { setting, setSetting } from '../src/settings.ts';
-import { GUILD, HOUR, TOKEN, activityText, base, call, client, discordCdn, discordSounds, guild, listed, me, member, ok, onlyOnDiscord, panelEdits, permitted, planned, play, plays, postNight, quietWav, refused, restore, save, sent, setFake, soundFolder, sounds, upload, wav } from './apiFixture.ts';
+import { GUILD, HOUR, TOKEN, activityText, base, call, client, deleteFailures, discordCdn, discordSounds, guild, listed, me, member, ok, onlyOnDiscord, panelDeletes, panelEdits, permitted, planned, play, plays, postNight, quietWav, refused, restore, save, sent, setFake, soundFolder, sounds, upload, wav } from './apiFixture.ts';
 
 // The sound library, Discord’s soundboard, the bin, join sounds, panels, what’s playing and speech
 
@@ -1286,6 +1286,43 @@ test('the page saves lines and removes them', async () => {
   assert.equal(await refused(404, `/guilds/${GUILD}/phrases/${phrases[0].id}`, { method: 'DELETE' }), 'That saved line is gone.');
   const log = recentActivity(GUILD, 5).map((r) => r.action);
   assert.ok(log.includes('Saved the line “good game”') && log.includes('Removed the saved line “good game”'));
+});
+
+test('posted soundboard panels are listed with links, and taken down one or all at once', async () => {
+  db.exec('DELETE FROM sound_panels');
+  const panel = (id: string, channel: string) => db.prepare('INSERT INTO sound_panels (message_id, guild_id, channel_id) VALUES (?, ?, ?)').run(id, GUILD, channel);
+  panel('m1', '111');
+  panel('m2', '111');
+  panel('m3', 'gone-channel');
+  panel('m4', '111');
+  const listed = await ok(`/guilds/${GUILD}/sound-panels`);
+  assert.deepEqual(listed[0], { messageId: 'm1', channelId: '111', channel: 'first', url: `https://discord.com/channels/${GUILD}/111/m1` });
+  assert.equal(listed[2].channel, null, 'a channel the bot can’t see has no name');
+
+  assert.deepEqual(await ok(`/guilds/${GUILD}/sound-panels/m1`, { method: 'DELETE' }), { removed: 1, failed: [] });
+  assert.deepEqual(panelDeletes, ['m1']);
+  assert.equal(activityText().at(-1), 'Took down the soundboard panel in <#111>');
+  assert.equal(await refused(404, `/guilds/${GUILD}/sound-panels/m1`, { method: 'DELETE' }), 'That panel isn’t posted any more.');
+
+  const discordError = (code: number) => new DiscordAPIError({ code, message: 'x' }, code, code === 50001 ? 403 : 404, 'DELETE', '/x', {} as never);
+  // Deleted in Discord already, out of sight, and Discord not answering
+  deleteFailures.set('m2', discordError(RESTJSONErrorCodes.UnknownMessage));
+  deleteFailures.set('m3', discordError(RESTJSONErrorCodes.MissingAccess));
+  deleteFailures.set('m4', new Error('socket hang up'));
+  const all = await ok(`/guilds/${GUILD}/sound-panels`, { method: 'DELETE' });
+  assert.equal(all.removed, 1);
+  assert.deepEqual(all.failed.map((f: { channel: string; problem: string }) => [f.channel, f.problem.split('.')[0]]), [
+    ['a channel the bot can’t see', 'The bot can’t see that channel any more, so it won’t update the panel there'],
+    ['#first', 'Discord didn’t take it down'],
+  ]);
+  assert.deepEqual(
+    db.prepare('SELECT message_id FROM sound_panels').all().map((r) => r.message_id),
+    ['m4'],
+    'only the one Discord didn’t answer about is kept, to try again',
+  );
+  deleteFailures.clear();
+  assert.deepEqual(await ok(`/guilds/${GUILD}/sound-panels`, { method: 'DELETE' }), { removed: 1, failed: [] });
+  assert.deepEqual(await ok(`/guilds/${GUILD}/sound-panels`), []);
 });
 
 test('posts a soundboard panel and keeps track of it', async () => {

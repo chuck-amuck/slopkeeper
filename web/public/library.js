@@ -2,7 +2,7 @@ import { pickClip } from './clip.js';
 import { emojiPicker } from './emojipicker.js';
 import { downloadLink, pickPart } from './linkclip.js';
 import { byUse, EVERYTHING_ELSE } from './soundgrid.js';
-import { announce, api, attempt, confirmButton, el, emojiNode, icon, keepFocus, needsVoice, notice, openDialog, player, postDialog, recall, remember, request, RequestError, soundPath, state, toast, undoToast, volumeControl } from './lib.js';
+import { announce, api, attempt, confirmButton, el, emojiNode, icon, keepFocus, needsVoice, notice, openDialog, panelsDialog, player, postDialog, recall, remember, request, RequestError, soundPath, state, toast, undoToast, volumeControl } from './lib.js';
 import { pickTrim } from './trim.js';
 import { followWhenIdle, older } from './updates.js';
 import { voiceBar } from './voice.js';
@@ -112,6 +112,7 @@ export function renderLibrary(main) {
     },
     'Post panel',
   );
+  const postedPanels = el('button', { onclick: () => panelsDialog(main, 'Posted panels', '/sound-panels', 'soundboard') }, 'Posted panels');
   const picker = el('input', {
     type: 'file',
     multiple: true,
@@ -182,7 +183,7 @@ export function renderLibrary(main) {
 
   main.append(
     voice.node,
-    el('div', { className: 'toolbar' }, search, makeGroup, sync, postPanel),
+    el('div', { className: 'toolbar' }, search, makeGroup, sync, postPanel, postedPanels),
     board,
     dropzone,
     linkForm,

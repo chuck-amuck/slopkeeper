@@ -6,7 +6,7 @@ Sounds layer like Discord's own soundboard: playing one while another plays mixe
 
 ## Playing sounds
 
-`/sound panel` posts a grid of buttons, 20 to a page, with ◀ ▶ to turn the pages and ⏹ **Stop** to silence every sound and line of speech (music carries on). The bot keeps every panel up to date as sounds change, so post one in a handy channel and pin it. The web UI's Soundboard does the same with search and groups.
+`/sound panel` posts a grid of buttons, 20 to a page, with ◀ ▶ to turn the pages and ⏹ **Stop** to silence every sound and line of speech (music carries on). The bot keeps every panel up to date as sounds change, so post one in a handy channel and pin it. The web UI's Soundboard does the same with search and groups. **Posted panels**, on the web UI's **Manage**, lists where each one is, with a link to it, and **Take down** deletes one (or **Take all down**, every one), so the bot stops keeping it up to date.
 
 On the panel, **blue** buttons are also on [Discord's soundboard](#discords-soundboard) and **gray** ones are only on the bot.
 

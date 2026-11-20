@@ -584,6 +584,51 @@ export function postDialog(parent, title, text, post) {
 }
 
 /**
+ * Lists the panels of one kind posted in Discord, each with a link to its message and a way to take it down, so the bot
+ * stops keeping it up to date. `path` is the API's list of them, like '/sound-panels'
+ */
+export function panelsDialog(parent, title, path, noun) {
+  const list = el('div', { className: 'merge-list posted-panels' }, el('p', {}, 'Loading…'));
+  const takeAll = confirmButton({ hidden: true }, 'Take all down', 'Take them all down?', () => takeDown(null, takeAll));
+  openDialog(parent, {
+    title,
+    body: [el('p', {}, `Each ${noun} panel posted in Discord is kept up to date by the bot. Take one down and its message is deleted.`), list],
+    start: [takeAll],
+  });
+
+  async function takeDown(id, button) {
+    button.disabled = true;
+    try {
+      const { removed, failed } = await request(api(id ? `${path}/${id}` : path), { method: 'DELETE' });
+      if (removed) toast(removed === 1 ? 'Took the panel down.' : `Took ${removed} panels down.`);
+      for (const f of failed) toast(`${f.channel}: ${f.problem}`, true);
+    } finally {
+      button.disabled = false;
+      await show();
+    }
+  }
+
+  async function show() {
+    const panels = await request(api(path));
+    takeAll.hidden = panels.length < 2;
+    if (!panels.length) return list.replaceChildren(el('p', {}, `No ${noun} panels are posted. Post one and it shows here.`));
+    list.replaceChildren(
+      ...panels.map((p) => {
+        const remove = el('button', { onclick: () => attempt(() => takeDown(p.messageId, remove)) }, 'Take down');
+        return el(
+          'div',
+          { className: 'merge-row' },
+          el('span', { className: 'where' }, p.channel ? `#${p.channel}` : 'A channel the bot can’t see'),
+          el('a', { href: p.url, target: '_blank', rel: 'noopener' }, 'Open in Discord'),
+          remove,
+        );
+      }),
+    );
+  }
+  void attempt(show);
+}
+
+/**
  * A button that asks once more before acting, and goes back to normal if it isn't pressed again. Both labels are in
  * it, one hidden, so it's the same size either way and doesn't push the rest of the row about
  */

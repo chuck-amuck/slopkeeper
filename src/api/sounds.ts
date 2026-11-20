@@ -15,6 +15,7 @@ import { playDiscordSound, playFromWeb, playingNow, stopPlayback, stopPlayingOne
 import { postPanel, refreshPanels } from '../features/soundPanel.ts';
 import { downloaded, downloadLink, LONGEST_PART, linksReady, partProblem, savePart, soundLinks, soundSource } from '../features/soundLinks.ts';
 import { setting } from '../settings.ts';
+import { type PanelTable, takeDownPanels, postedPanels } from '../postedPanels.ts';
 import { type Ask, Refused, by, cantDo, cantPost, memberList, nameOf, plain, postingChannel, readBody, readJson, refuse, untilGone, voiceChannelFor } from './common.ts';
 
 // The management API for the sound library, Discord’s soundboard, the bin, join sounds, panels, what’s playing and speech
@@ -448,6 +449,15 @@ async function handleLinks(client: Client<true>, guild: Guild, req: IncomingMess
   return { name: saveAs, replaced: added.replaced, discordProblem: added.problem && plain(guild, added.problem) };
 }
 
+/** Takes down posted panels, one or all, for the web UI, saying in Activity where they were */
+export async function takeDown(client: Client, guild: Guild, table: PanelTable, kind: string, only?: string) {
+  if (only && !postedPanels(guild, table).some((p) => p.messageId === only)) throw new Refused(404, 'That panel isn’t posted any more.');
+  const { removed, failed } = await takeDownPanels(client, guild, table, only);
+  if (removed.length === 1) logActivity(guild.id, by(), `Took down the ${kind} panel in <#${removed[0].channelId}>`);
+  else if (removed.length) logActivity(guild.id, by(), `Took down ${removed.length} ${kind} panels`);
+  return { removed: removed.length, failed };
+}
+
 export async function soundRoutes({ client, guild, req, res, url, section, rest }: Ask) {
   if (section === 'sound-links' && rest.length <= 2) return handleLinks(client, guild, req, res, rest[0], rest[1]);
   if (section === 'sound-groups' && rest.length <= 1) return handleGroups(client, guild, req, rest[0]);
@@ -460,6 +470,8 @@ export async function soundRoutes({ client, guild, req, res, url, section, rest 
     logActivity(guild.id, by(), `Posted a soundboard panel in <#${channel.id}>`);
     return {};
   }
+  if (section === 'sound-panels' && !rest.length && req.method === 'GET') return postedPanels(guild, 'sound_panels');
+  if (section === 'sound-panels' && rest.length <= 1 && req.method === 'DELETE') return takeDown(client, guild, 'sound_panels', 'soundboard', rest[0]);
   if (section === 'discord-sounds' && (rest.length === 1 || rest.length === 2)) return handleDiscordSound(client, guild, req, res, rest[0], rest[1]);
   if (section === 'join-sounds' && !rest.length && req.method === 'GET') return joinSoundList(guild);
   if (section === 'join-sounds' && rest.length === 1 && req.method === 'PUT') return setJoinSoundFromWeb(guild, req, rest[0]);

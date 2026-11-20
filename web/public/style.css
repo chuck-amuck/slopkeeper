@@ -2371,6 +2371,12 @@ dialog .start input {
   background: var(--raised);
 }
 
+/* Posted panels: the channel takes the room, the link and button sit at the end */
+.posted-panels .where {
+  flex: 1;
+  min-width: 8em;
+}
+
 .merge-row input {
   width: auto;
   min-height: 0;
