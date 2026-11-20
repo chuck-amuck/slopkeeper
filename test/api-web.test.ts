@@ -329,12 +329,12 @@ test('the volumes leave out what isn’t set up, so there’s no slider for it',
   Object.assign(config, { voiceUrl: 'http://voice', musicUrl: 'http://music' });
   setSetting(GUILD, 'loopRoom', '701');
   t.after(() => ['loopRoom', 'loopSound', 'loopText', 'tts'].forEach((key) => setSetting(GUILD, key as never, undefined)));
-  assert.deepEqual(await levels(), { sounds: 100, speech: 100, music: 40, loopSound: null, loopSpeech: null });
+  assert.deepEqual(await levels(), { sounds: 100, speech: 100, music: 20, loopSound: null, loopSpeech: null });
   setSetting(GUILD, 'loopSound', 'airhorn');
-  assert.deepEqual(await levels(), { sounds: 100, speech: 100, music: 40, loopSound: 50, loopSpeech: null });
+  assert.deepEqual(await levels(), { sounds: 100, speech: 100, music: 20, loopSound: 50, loopSpeech: null });
   setSetting(GUILD, 'loopText', 'Welcome');
   setSetting(GUILD, 'tts', false);
-  assert.deepEqual(await levels(), { sounds: 100, speech: null, music: 40, loopSound: 50, loopSpeech: 50 });
+  assert.deepEqual(await levels(), { sounds: 100, speech: null, music: 20, loopSound: 50, loopSpeech: 50 });
 });
 
 test('a volume being dragged is tried out without being saved or logged, within the setting’s limits', async (t) => {
@@ -342,7 +342,7 @@ test('a volume being dragged is tried out without being saved or logged, within 
   const logged = db.prepare('SELECT COUNT(*) AS n FROM activity WHERE guild_id = ?').get(GUILD) as { n: number };
   assert.deepEqual(await ok(`/guilds/${GUILD}/volumes/music/preview`, { method: 'POST', json: { value: 25 } }), {});
   assert.deepEqual(await ok(`/guilds/${GUILD}/volumes/sounds/preview`, { method: 'POST', json: { value: 150 } }), {});
-  assert.deepEqual([setting(GUILD, 'musicVolume'), setting(GUILD, 'soundVolume')], [40, 100]);
+  assert.deepEqual([setting(GUILD, 'musicVolume'), setting(GUILD, 'soundVolume')], [20, 100]);
   assert.deepEqual(db.prepare('SELECT COUNT(*) AS n FROM activity WHERE guild_id = ?').get(GUILD), logged);
   assert.equal(printed.mock.calls.filter((c) => /preview/.test(String(c.arguments[0]))).length, 0, 'not in the bot’s log, several a second');
   await refused(400, `/guilds/${GUILD}/volumes/music/preview`, { method: 'POST', json: { value: 900 } });

@@ -198,7 +198,7 @@ test('the soundboard volume reaches sounds already playing, and new ones', { ski
   assert.deepEqual(set.mock.calls.map((c) => c.arguments), [
     ['sound', 0.4],
     ['speech', 1],
-    ['music', 0.4],
+    ['music', 0.2],
   ], 'a new mixer starts at every group’s volume');
   setSetting(id, 'soundVolume', 150);
   applySoundVolume(id);

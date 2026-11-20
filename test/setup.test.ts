@@ -272,7 +272,7 @@ test('the loop gap takes tenths of a second, with /setup or the page', async () 
 });
 
 test('/setup music sets the volume and who can control it, and keeps what isn’t given', async () => {
-  assert.equal(setting('setup-music', 'musicVolume'), 40);
+  assert.equal(setting('setup-music', 'musicVolume'), 20);
   await run('setup-music', 'music', { volume: 70, dj_role: { id: 'djs', toString: () => '<@&djs>' } });
   assert.equal(setting('setup-music', 'musicVolume'), 70);
   assert.equal(setting('setup-music', 'musicDjRole'), 'djs');

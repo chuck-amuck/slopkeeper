@@ -101,7 +101,9 @@ export const DEFAULTS = {
   ttsGreeting: process.env.TTS_GREETING || '{name} joined',
   ttsNightReminders: process.env.TTS_NIGHT_REMINDERS === 'true',
   ttsHopOn: process.env.TTS_HOP_ON === 'true',
-  musicVolume: num('MUSIC_VOLUME', 40),
+  // Songs are levelled to a loud master's level, so at 20% they sit about 10 dB under the bot's speech, as background
+  // music should
+  musicVolume: num('MUSIC_VOLUME', 20),
   // Songs levelled so each plays about as loud as the others
   evenMusic: process.env.EVEN_MUSIC !== 'false',
   // Off until someone turns it on, so the music stops when the queue runs out, as people expect
