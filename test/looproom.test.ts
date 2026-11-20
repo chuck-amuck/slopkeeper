@@ -217,16 +217,17 @@ test('a slider being dragged is heard on what’s playing, unsaved, and the save
   previewVolume(id, 'music', 20);
   previewVolume(id, 'music', 25);
   previewVolume(id, 'speech', 60);
-  assert.deepEqual(set.mock.calls.map((c) => c.arguments), [['music', 0.2], ['music', 0.25], ['speech', 1.2]]);
+  // Music's 100% is a fifth of the others'
+  assert.deepEqual(set.mock.calls.map((c) => c.arguments), [['music', 0.04], ['music', 0.05], ['speech', 1.2]]);
   assert.equal(setting(id, 'musicVolume'), 40, 'not saved');
   // Each goes back on its own, counted from its last move
   t.mock.timers.tick(PREVIEW_FOR_MS);
-  assert.deepEqual(set.mock.calls.slice(3).map((c) => c.arguments), [['music', 0.4], ['speech', 2]]);
+  assert.deepEqual(set.mock.calls.slice(3).map((c) => c.arguments), [['music', 0.08], ['speech', 2]]);
   // Saved, it stays where it was saved
   previewVolume(id, 'music', 30);
   setSetting(id, 'musicVolume', 30);
   t.mock.timers.tick(PREVIEW_FOR_MS);
-  assert.deepEqual(set.mock.calls.at(-1)!.arguments, ['music', 0.3]);
+  assert.deepEqual(set.mock.calls.at(-1)!.arguments, ['music', 0.06]);
 });
 
 test('a sound that isn’t a WAV loops from a WAV copy on the data volume, made once and replaced when the sound changes', { skip: !hasFfmpeg }, async (t) => {

@@ -123,7 +123,7 @@ Each setting goes by the name `/setup show` and `/setup reset` use. A few are se
 | Looping speech volume | `loop-room` | `LOOP_TEXT_VOLUME` | 50% |
 | Sound delay after intro | `loop-room` | `LOOP_SOUND_DELAY_MS` | 0 ms |
 | Speech delay after intro | `loop-room` | `LOOP_TEXT_DELAY_MS` | 0 ms |
-| Music volume | `music` | `MUSIC_VOLUME` | 20% |
+| Music volume | `music` | `MUSIC_VOLUME` | 100%, well under the bot's speech |
 | Even music volume | web UI only | `EVEN_MUSIC` (`false` to turn off) | on |
 | Music drops while people talk | `music` | `MUSIC_DUCKS_FOR_PEOPLE` (`false` to turn off) | on |
 | Autoplay | `music`, or `/music autoplay` | `MUSIC_AUTOPLAY` | off |

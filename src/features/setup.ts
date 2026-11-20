@@ -794,7 +794,7 @@ export const setup: Feature = {
           s
             .setName('music')
             .setDescription('Music in voice: how loud it plays, dropping while people talk, Autoplay, and who controls it')
-            .addIntegerOption((o) => o.setName('volume').setDescription('How loud music plays, as a percentage (20 by default)').setMinValue(LIMITS.musicVolume[0]).setMaxValue(LIMITS.musicVolume[1]))
+            .addIntegerOption((o) => o.setName('volume').setDescription('How loud music plays, as a percentage (100 by default)').setMinValue(LIMITS.musicVolume[0]).setMaxValue(LIMITS.musicVolume[1]))
             .addBooleanOption((o) => o.setName('autoplay').setDescription('Keep playing similar songs from YouTube when the queue runs out'))
             .addBooleanOption((o) => o.setName('drop_for_people').setDescription('Turn music down while people in the call talk, as it is while the bot talks'))
             .addRoleOption((o) => o.setName('dj_role').setDescription('Only this role, plus people with Manage Server, can control music'))

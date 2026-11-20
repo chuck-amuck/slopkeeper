@@ -723,6 +723,19 @@ if (getKv('moved:speech volume doubled') === undefined) {
   });
 }
 
+/**
+ * Music's 100% is what 20% was (src/features/voiceAudio.ts), so the percentages servers had chosen are multiplied by 5,
+ * once, to sound as they did, up to the most it goes
+ */
+export function quintupleMusicVolumes() {
+  db.exec(`UPDATE guild_settings SET value = CAST(MIN(200, CAST(value AS INTEGER) * 5) AS TEXT) WHERE key = 'musicVolume' AND value != ''`);
+}
+transaction(() => {
+  if (getKv('moved:music volume fivefold') !== undefined) return;
+  quintupleMusicVolumes();
+  setKv('moved:music volume fivefold', String(Date.now()));
+});
+
 export function getKv(key: string): string | undefined {
   const row = db.prepare('SELECT value FROM kv WHERE key = ?').get(key) as { value: string } | undefined;
   return row?.value;

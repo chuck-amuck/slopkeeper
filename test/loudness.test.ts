@@ -62,14 +62,14 @@ test('a song file is read once and kept by its path and size, read again once it
   assert.ok((await songLevel(quiet))!.lufs! > -30, 'a different file under the same name is read afresh');
 
   const loud = tone('loud-song.wav', 4, 16);
-  assert.ok((await songMultiplier(quiet, 40)) > 1, 'a quiet song comes up');
-  assert.ok((await songMultiplier(loud, 40)) < 1, 'a loud one goes down');
+  assert.ok((await songMultiplier(quiet, 0.4)) > 1, 'a quiet song comes up');
+  assert.ok((await songMultiplier(loud, 0.4)) < 1, 'a loud one goes down');
 
   const broken = path.join(dir, 'broken.webm');
   writeFileSync(broken, 'not audio at all');
   const errors = t.mock.method(console, 'error', () => {});
   assert.equal(await songLevel(broken), null);
-  assert.equal(await songMultiplier(broken, 40), 1);
+  assert.equal(await songMultiplier(broken, 0.4), 1);
   assert.equal(errors.mock.callCount(), 1, 'not read and logged again');
   assert.equal(await songLevel(path.join(dir, 'gone.webm')), null);
 });

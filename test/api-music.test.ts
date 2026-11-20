@@ -82,7 +82,7 @@ test('the music queue can be filled, reordered and emptied from the page', async
   assert.deepEqual(music.queue, []);
   assert.equal(music.phase, 'stopped');
   assert.match(music.problem, /MUSIC_URL/);
-  assert.equal(music.volume, 20);
+  assert.equal(music.volume, 100);
   const before = music.version;
   for (const n of [1, 2, 3]) music = await ok(`/guilds/${GUILD}/music/queue`, { method: 'POST', json: { track: track(n) } });
   assert.ok(before && music.version && music.version !== before, 'each answer says which version of the music it is, so the page can tell it from an older one');

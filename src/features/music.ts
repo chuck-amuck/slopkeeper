@@ -33,7 +33,7 @@ import { coverFor, isShortLink, MOST_FROM_LINK, myPlaylists, parseLink, pick, pl
 import { artistSongsFor, knownTrack, searchReady, searchSongs, searchSource, sourceNames, YTM_ALBUM_REF, ytmAlbumTracks } from '../musicSearch.ts';
 import type { Feature } from '../types.ts';
 import { humansIn } from '../util.ts';
-import { applyMusicVolume, botChannelId, onMusicCheck, onPlaybackStop, playLong } from './voiceAudio.ts';
+import { applyMusicVolume, botChannelId, groupGain, onMusicCheck, onPlaybackStop, playLong } from './voiceAudio.ts';
 import { EXTENSIONS } from './soundLibrary.ts';
 import { songLevel, songMultiplier } from '../songLevels.ts';
 
@@ -661,7 +661,7 @@ async function playCurrent(s: Session, fromMs = 0): Promise<string | null> {
   }
   // Levelled to the others once it's been read, which a song fetched ahead already has been, and which takes well under a
   // second for one that wasn't
-  const gain = setting(s.guild.id, 'evenMusic') ? await songMultiplier(found.file, setting(s.guild.id, 'musicVolume')) : 1;
+  const gain = setting(s.guild.id, 'evenMusic') ? await songMultiplier(found.file, groupGain('music', setting(s.guild.id, 'musicVolume'))) : 1;
   trace.step('levelling');
   if (s.turn !== turn || sessions.get(s.guild.id) !== s) return null;
   const channel = channelOf(s);
@@ -1626,8 +1626,9 @@ export function musicCard(guildId: string, page = 0) {
   return { embeds: [embed], components: [controls, more, loudness] };
 }
 
-// The card's volume buttons step by this, up to /setup's limit
-const VOLUME_STEP = 5;
+// The card's volume buttons step by 5% under 50% and 10% from there, about 1 dB a press where people listen, up to
+// /setup's limit
+const volumeStep = (percent: number, louder: boolean) => (louder ? percent >= 50 : percent > 50) ? 10 : 5;
 const MOST_VOLUME = 200;
 
 interface Card {
@@ -1766,9 +1767,10 @@ async function onCardButton(i: ButtonInteraction<'cached'>) {
     return i.update(musicCard(i.guildId, page));
   }
   if (action === 'quieter' || action === 'louder') {
-    // To the next multiple of the step, so 18% goes to 20% or 15%
+    // To the next multiple of the step, so 93% goes to 100% or 90%
     const now = setting(i.guildId, 'musicVolume');
-    const next = action === 'louder' ? Math.min(MOST_VOLUME, Math.floor(now / VOLUME_STEP) * VOLUME_STEP + VOLUME_STEP) : Math.max(0, Math.ceil(now / VOLUME_STEP) * VOLUME_STEP - VOLUME_STEP);
+    const step = volumeStep(now, action === 'louder');
+    const next = action === 'louder' ? Math.min(MOST_VOLUME, Math.floor(now / step) * step + step) : Math.max(0, Math.ceil(now / step) * step - step);
     setSetting(i.guildId, 'musicVolume', next);
     applyMusicVolume(i.guildId);
     logActivity(i.guildId, i.user.id, `Set Music volume to ${next}%`);

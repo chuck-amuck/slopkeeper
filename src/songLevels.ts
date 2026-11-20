@@ -47,14 +47,14 @@ export function songLevel(file: string): Promise<Level | null> {
 }
 
 /**
- * What a song is multiplied by to play about as loud as the others, at a music volume of `volume` percent: 1 if it
- * can't be read. The music volume turns it down after this, so the louder that's set, the less a quiet song can come up
- * before its peaks would clip
+ * What a song is multiplied by to play about as loud as the others, when the music volume plays it at `musicGain`: 1 if
+ * it can't be read. The music volume turns it down after this, so the louder that's set, the less a quiet song can come
+ * up before its peaks would clip
  */
-export async function songMultiplier(file: string, volume: number): Promise<number> {
+export async function songMultiplier(file: string, musicGain: number): Promise<number> {
   const level = await songLevel(file);
   if (!level) return 1;
   // What the music volume and the mix take off, in dB
-  const headroom = -20 * Math.log10(Math.max(volume, 1e-6) / 100) - 20 * Math.log10(MIX_VOLUME);
+  const headroom = -20 * Math.log10(Math.max(musicGain, 1e-6)) - 20 * Math.log10(MIX_VOLUME);
   return 10 ** (songGain(level.lufs, level.peak, headroom) / 20);
 }

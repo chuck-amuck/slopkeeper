@@ -133,9 +133,13 @@ export function listeningChanged(guildId: string) {
 // Speech is levelled to match a sound at the same volume, but heard in a call over people talking it needs more, so its
 // 100% is twice that: as loud as it goes before the mix's limiter has to hold it down
 const SPEECH_BOOST = 2;
+// Songs are levelled to a loud master's level, so music needs far less than a sound to sit under the bot's speech, as
+// background music should. Its 100% is a fifth of a sound's, so the volumes people pick sit around 100%, not 20%
+const MUSIC_FIFTH = 5;
 
 /** A volume setting's percentage, as the gain its mixer group plays at */
-const groupGain = (group: 'sound' | 'speech' | 'music', percent: number) => (percent / 100) * (group === 'speech' ? SPEECH_BOOST : 1);
+export const groupGain = (group: 'sound' | 'speech' | 'music', percent: number) =>
+  group === 'music' ? percent / 100 / MUSIC_FIFTH : (percent / 100) * (group === 'speech' ? SPEECH_BOOST : 1);
 
 /** Layers onto whatever is already playing; a fresh mixer is only needed once the last one has gone quiet */
 export function mixInto(guildId: string, add: (mixer: Mixer) => void) {

@@ -103,9 +103,9 @@ export const DEFAULTS = {
   ttsGreeting: process.env.TTS_GREETING || '{name} joined',
   ttsNightReminders: process.env.TTS_NIGHT_REMINDERS === 'true',
   ttsHopOn: process.env.TTS_HOP_ON === 'true',
-  // Songs are levelled to a loud master's level, so at 20% they sit well under the bot's speech, as background music
-  // should: about 17 dB under it at 100%
-  musicVolume: num('MUSIC_VOLUME', 20),
+  // Songs are levelled to a loud master's level, and music's 100% is a fifth of a sound's, so at 100% they sit well under
+  // the bot's speech, as background music should: about 17 dB under it at 100%
+  musicVolume: num('MUSIC_VOLUME', 100),
   // Songs levelled so each plays about as loud as the others
   evenMusic: process.env.EVEN_MUSIC !== 'false',
   // Music drops while people talk in the call, as it does under the bot's speech. The bot then isn't deafened, to notice

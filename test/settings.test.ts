@@ -5,7 +5,7 @@ import { test } from 'node:test';
 process.env.HOPON_MIN_PEOPLE = '3';
 const { idSetting, setSetting, setting } = await import('../src/settings.ts');
 const { feeds } = await import('../src/changes.ts');
-const { db, getKv, halveSpeechVolumes } = await import('../src/db.ts');
+const { db, getKv, halveSpeechVolumes, quintupleMusicVolumes } = await import('../src/db.ts');
 
 test('a setting comes from /setup, then the env default, then the built-in default', () => {
   assert.equal(setting('g1', 'hopOnMinPeople'), 3);
@@ -55,4 +55,17 @@ test('speech volumes chosen before speech got twice as loud are halved once, to 
   assert.deepEqual(['loud', 'quiet', 'odd', 'blank'].map((g) => stored(g)), ['100', '10', '51', '']);
   assert.equal(setting('halve-loud', 'ttsVolume'), 100);
   assert.equal(stored('loud', 'musicVolume'), '30', 'other volumes stay');
+});
+
+test('music volumes chosen before music’s 100% became what 20% was are multiplied by 5 once, to sound the same', () => {
+  assert.ok(getKv('moved:music volume fivefold'));
+  for (const [guild, value] of [['usual', '18'], ['loud', '60'], ['off', '0'], ['blank', '']]) {
+    db.prepare("INSERT OR REPLACE INTO guild_settings (guild_id, key, value) VALUES (?, 'musicVolume', ?)").run(`five-${guild}`, value);
+  }
+  setSetting('five-usual', 'soundVolume', 65);
+  quintupleMusicVolumes();
+  const stored = (guild: string, key = 'musicVolume') => (db.prepare('SELECT value FROM guild_settings WHERE guild_id = ? AND key = ?').get(`five-${guild}`, key) as { value: string }).value;
+  assert.deepEqual(['usual', 'loud', 'off', 'blank'].map((g) => stored(g)), ['90', '200', '0', ''], 'up to the most it goes');
+  assert.equal(setting('five-usual', 'musicVolume'), 90);
+  assert.equal(stored('usual', 'soundVolume'), '65', 'other volumes stay');
 });

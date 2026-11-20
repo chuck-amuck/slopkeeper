@@ -1583,16 +1583,24 @@ test('a posted music panel follows the music, stays put when /music play posts i
   assert.equal(errors.mock.callCount(), 1);
 });
 
-test('the card’s volume buttons step the music volume by 5%, from 0 to 200%, for the DJs', async () => {
+test('the card’s volume buttons step the music volume by 5% under 50% and 10% from there, from 0 to 200%, for the DJs', async () => {
   const { id, guild } = server();
   const button = (out: { updates: any[] }, customId: string) => cardJson(out.updates[0]).buttons.find(([cid]) => cid === customId)!;
-  setSetting(id, 'musicVolume', 18);
+  setSetting(id, 'musicVolume', 93);
   let out = await pressCard(guild, 'music:louder:0');
-  assert.equal(setting(id, 'musicVolume'), 20, 'to the next step up');
-  assert.equal(button(out, 'music:volume')[1], 'Volume 20%');
-  assert.equal(recentActivity(id, 1)[0].action, 'Set Music volume to 20%');
+  assert.equal(setting(id, 'musicVolume'), 100, 'to the next step up');
+  assert.equal(button(out, 'music:volume')[1], 'Volume 100%');
+  assert.equal(recentActivity(id, 1)[0].action, 'Set Music volume to 100%');
   await pressCard(guild, 'music:quieter:0');
-  assert.equal(setting(id, 'musicVolume'), 15);
+  assert.equal(setting(id, 'musicVolume'), 90);
+  // Smaller steps under 50%, where the same step is a bigger change
+  setSetting(id, 'musicVolume', 50);
+  await pressCard(guild, 'music:quieter:0');
+  assert.equal(setting(id, 'musicVolume'), 45);
+  await pressCard(guild, 'music:louder:0');
+  assert.equal(setting(id, 'musicVolume'), 50);
+  await pressCard(guild, 'music:louder:0');
+  assert.equal(setting(id, 'musicVolume'), 60);
 
   setSetting(id, 'musicVolume', 3);
   out = await pressCard(guild, 'music:quieter:0');
