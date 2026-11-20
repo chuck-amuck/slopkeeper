@@ -95,6 +95,7 @@ Each setting goes by the name `/setup show` and `/setup reset` use. A few are se
 | Sale post time | `sale-alerts` | `SALE_POST_HOUR` | 18:00 |
 | Steam wishlists in sale alerts | `sale-alerts` | `SALE_STEAM_WISHLISTS` (`false` to turn off) | on |
 | Other stores in sale alerts | `sale-alerts` | `SALE_OTHER_STORES` (`false` to turn off) | on, with an `ITAD_API_KEY` (key resellers with a `GGDEALS_API_KEY`) |
+| Only multiplayer sales | `sale-alerts` | `SALE_MULTIPLAYER` (`true` to turn on) | off |
 | Bundle alerts | `sale-alerts` | `BUNDLE_ALERTS` (`false` to turn off) | on, with an `ITAD_API_KEY` |
 | Bundles like what you play | `sale-alerts` | `BUNDLES_LIKE_WE_PLAY` (`false` to turn off) | on |
 | Sale alerts channel | `sale-alerts` | | announce channel |

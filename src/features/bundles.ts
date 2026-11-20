@@ -9,7 +9,7 @@ import { announceChannel, eachGuild } from '../util.ts';
 import { factsFor } from './gamefacts.ts';
 import { everyoneOwns, MULTIPLAYER_TAGS, taste, tasteTags, type Taste } from './freegames.ts';
 import { short } from './gamestats.ts';
-import { itad, money, pauses, postDay, saleReasons, storeUrl, watched, type Watched } from './sales.ts';
+import { forPlayingTogether, itad, money, pauses, postDay, saleReasons, storeUrl, watched, type Watched } from './sales.ts';
 import { sendPost } from '../postFailures.ts';
 
 // Humble Bundle, Fanatical and Green Man Gaming (listed under two names), by IsThereAnyDeal's ids for bundle sites.
@@ -214,13 +214,20 @@ async function postBundles(client: Client<true>) {
       if (!fresh.length) return;
       const interested = new Map((await watched(guild)).map((g) => [g.appid, g]));
       const theirs = setting(guild.id, 'bundlesLikeWePlay') ? await taste(guild.id) : null;
-      const together = await playsTogether(theirs);
+      // With only sales of games to play together posted, a bundle game like what's played here has to be one too
+      const onlyTogether = setting(guild.id, 'saleMultiplayer');
+      const together = onlyTogether || (await playsTogether(theirs));
       const cards: (ReturnType<typeof bundleCard> & { id: number })[] = [];
       let chars = 0;
       for (const bundle of fresh) {
         if (cards.length === MAX_CARDS) break;
         // Left unmarked when nothing matches, so someone wanting one of its games later still hears about it
-        const found = await matches(guild, bundle, interested, theirs, together);
+        let found = await matches(guild, bundle, interested, theirs, together);
+        // A game the server watches is judged like a sale's, by Steam's own categories
+        if (onlyTogether) {
+          const kept = new Set((await forPlayingTogether(found.flatMap((m) => (m.wanted ? [m.wanted] : [])))).map((g) => g.appid));
+          found = found.filter((m) => !m.wanted || kept.has(m.appid));
+        }
         if (!found.length) continue;
         const card = bundleCard(bundle, found);
         // What doesn't fit waits for tomorrow's post

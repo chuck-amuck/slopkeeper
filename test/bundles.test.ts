@@ -20,6 +20,8 @@ const world = {
   apps: new Map<string, { id: number; tags: string[] }>(),
   bundles: [] as unknown[],
   asked: [] as URLSearchParams[],
+  /** Steam's player categories for each app, where 1 is multiplayer and 2 single-player */
+  categories: new Map<number, number[]>(),
 };
 
 mock.method(globalThis, 'fetch', async (input: string | URL) => {
@@ -34,6 +36,10 @@ mock.method(globalThis, 'fetch', async (input: string | URL) => {
     const appid = Number(url.searchParams.get('appid'));
     const tags = [...world.apps.values()].find((a) => a.id === appid)?.tags ?? [];
     return json({ positive: 100, negative: 1, tags: Object.fromEntries(tags.map((tag, n) => [tag, 1000 - n])) });
+  }
+  if (url.pathname.includes('GetItems')) {
+    const ids = JSON.parse(url.searchParams.get('input_json')!).ids as { appid: number }[];
+    return json({ response: { store_items: ids.map(({ appid }) => ({ appid, success: 1, categories: { supported_player_categoryids: world.categories.get(appid) ?? [2] } })) } });
   }
   if (url.hostname === 'api.isthereanydeal.com' && url.pathname === '/bundles/v1') {
     world.asked.push(url.searchParams);
@@ -196,6 +202,25 @@ test('a server that mostly plays together only hears about multiplayer games, an
   const lines = s.last().description.split('\n').filter((line) => line.startsWith('['));
   assert.equal(lines.length, 1);
   assert.match(lines[0], /Team Close\*\*\]\([^)]+\) for \$6\.00: Like Co-op Crawler \(Roguelike, Pixel Graphics, Dungeon Crawler, Top-Down\)/);
+});
+
+test('a server posting only games to play together hears about those in bundles, and games someone asked for', async () => {
+  const s = server(['a']);
+  setSetting(s.id, 'saleMultiplayer', true);
+  for (const [name, appid, categories] of [['Solo Library', 9701, [2]], ['Team Library', 9702, [1]]] as const) {
+    world.apps.set(name, { id: appid, tags: [] });
+    world.categories.set(appid, [...categories]);
+    db.prepare(`INSERT INTO games (guild_id, name, steam_appid, added_by) VALUES (?, ?, ?, 'x')`).run(s.id, name, appid);
+  }
+  wanted(s.id, 'Solo Wanted', 9703, 'a');
+  world.categories.set(9703, [2]);
+  world.bundles = [bundle(11, 'Mixed Bundle', [[8, ['Solo Library', 'Team Library', 'Solo Wanted']]])];
+  await checkBundles(s.client);
+  assert.equal(s.posts.length, 1);
+  const { description } = s.last();
+  assert.match(description, /Team Library/);
+  assert.match(description, /Solo Wanted/);
+  assert.doesNotMatch(description, /Solo Library/);
 });
 
 test('every page of bundles is read, and a day’s bundles share one post, the rest waiting for the next', async () => {

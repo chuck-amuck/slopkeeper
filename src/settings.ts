@@ -39,6 +39,8 @@ export const DEFAULTS = {
   saleSteamWishlists: process.env.SALE_STEAM_WISHLISTS !== 'false',
   // Only does anything with an ITAD_API_KEY, or a GGDEALS_API_KEY for key resellers
   saleOtherStores: process.env.SALE_OTHER_STORES !== 'false',
+  // For a server that only buys games to play together
+  saleMultiplayer: process.env.SALE_MULTIPLAYER === 'true',
   // Both need an ITAD_API_KEY
   bundleAlerts: process.env.BUNDLE_ALERTS !== 'false',
   bundlesLikeWePlay: process.env.BUNDLES_LIKE_WE_PLAY !== 'false',
@@ -157,6 +159,7 @@ export const DEFAULT_ENV: Partial<Record<SettingKey, string>> = {
   salePostHour: 'SALE_POST_HOUR',
   saleSteamWishlists: 'SALE_STEAM_WISHLISTS',
   saleOtherStores: 'SALE_OTHER_STORES',
+  saleMultiplayer: 'SALE_MULTIPLAYER',
   bundleAlerts: 'BUNDLE_ALERTS',
   bundlesLikeWePlay: 'BUNDLES_LIKE_WE_PLAY',
   steamStatus: 'STEAM_STATUS',

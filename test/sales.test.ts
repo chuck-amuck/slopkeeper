@@ -32,6 +32,9 @@ const world = {
   wishlists: new Map<string, number[] | 'down'>(),
   pricesDown: false,
   unlisted: new Set<number>(),
+  /** Steam's player categories for each app: 1 multiplayer, 2 single-player, 9 co-op, 39 split-screen co-op, 49 PvP */
+  categories: new Map<number, number[]>(),
+  itemsDown: false,
   brokenBatchWith: 0,
   storeTitles: new Map<string, string>(),
   batches: [] as number[][],
@@ -106,8 +109,13 @@ mock.method(globalThis, 'fetch', async (input: string | URL, init?: RequestInit)
     return json({ response: items ? { items: items.map((appid) => ({ appid })) } : {} });
   }
   if (url.pathname.includes('GetItems')) {
+    if (world.itemsDown) return new Response('', { status: 500 });
     const ids = JSON.parse(url.searchParams.get('input_json')!).ids as { appid: number }[];
-    return json({ response: { store_items: ids.map(({ appid }) => ({ appid, success: 1, name: world.appNames.get(appid) })) } });
+    return json({
+      response: {
+        store_items: ids.map(({ appid }) => ({ appid, success: 1, name: world.appNames.get(appid), categories: { supported_player_categoryids: world.categories.get(appid) ?? [2] } })),
+      },
+    });
   }
   if (url.hostname === 'api.isthereanydeal.com') {
     world.userAgents.push(new Headers(init?.headers).get('user-agent'));
@@ -166,6 +174,8 @@ function fresh() {
   world.wishlists.clear();
   world.pricesDown = false;
   world.unlisted.clear();
+  world.categories.clear();
+  world.itemsDown = false;
   world.brokenBatchWith = 0;
   world.storeTitles.clear();
   world.batches.length = 0;
@@ -342,6 +352,53 @@ test('wishlists can be turned off for a server', async () => {
   setSetting(s.id, 'saleSteamWishlists', false);
   await checkSales(s.client, true);
   assert.equal(s.posts.length, 0);
+});
+
+test('a server can post only games to play together, and games someone asked for', async () => {
+  const s = server(['a', 'b']);
+  linkSteam('b');
+  db.exec('DELETE FROM app_info WHERE appid BETWEEN 9301 AND 9306');
+  const games: [string, number, number[]][] = [
+    ['Alone', 9301, [2]],
+    ['Online', 9302, [2, 1, 36]],
+    ['Couch Co-op', 9303, [39]],
+    ['Arena', 9304, [49]],
+    ['Wanted Alone', 9305, [2]],
+  ];
+  for (const [name, appid, categories] of games) {
+    world.categories.set(appid, categories);
+    world.prices.set(appid, { discount: 50 });
+    if (name === 'Wanted Alone') want(addGame(s.id, name, appid), 'a');
+    else addGame(s.id, name, appid);
+  }
+  setSetting(s.id, 'saleMultiplayer', true);
+  await checkSales(s.client, true);
+  assert.equal(s.posts[0].embeds[0].toJSON().title, '💸 4 games on sale');
+  assert.doesNotMatch(s.text(), /\*\*Alone\*\*/);
+  for (const name of ['Online', 'Couch Co-op', 'Arena', 'Wanted Alone']) assert.match(s.text(), new RegExp(`\\*\\*${name}\\*\\*`));
+
+  // One left out wasn't announced, so it goes out once the server wants everything again
+  setSetting(s.id, 'saleMultiplayer', undefined);
+  await checkSales(s.client, true);
+  assert.equal(s.posts.length, 2);
+  assert.equal(s.posts[1].embeds[0].toJSON().title, '💸 1 game on sale');
+  assert.match(s.text(), /\*\*Alone\*\*/);
+});
+
+test('with only games to play together, one Steam couldn’t be asked about waits for the next post', async () => {
+  const s = server(['a']);
+  db.exec('DELETE FROM app_info WHERE appid = 9311');
+  addGame(s.id, 'Unknown Yet', 9311);
+  world.prices.set(9311, { discount: 50 });
+  world.categories.set(9311, [1]);
+  world.itemsDown = true;
+  setSetting(s.id, 'saleMultiplayer', true);
+  await checkSales(s.client, true);
+  assert.equal(s.posts.length, 0);
+  world.itemsDown = false;
+  await checkSales(s.client, true);
+  assert.equal(s.posts.length, 1);
+  assert.match(s.text(), /Unknown Yet/);
 });
 
 test('a wishlist that can’t be read keeps its games, and an empty one loses them', async () => {

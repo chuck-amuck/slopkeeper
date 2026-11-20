@@ -99,6 +99,14 @@ test('sale alerts can leave out other stores and bundles', async () => {
   assert.equal(log(guildId).at(-1), 'Set Other stores in sale alerts to off');
 });
 
+test('sale alerts can post only multiplayer games', async () => {
+  const guildId = 'setup-sales-together';
+  assert.equal(setting(guildId, 'saleMultiplayer'), false);
+  await run(guildId, 'sale-alerts', { multiplayer_only: true });
+  assert.equal(setting(guildId, 'saleMultiplayer'), true);
+  assert.deepEqual(log(guildId), ['Set Only multiplayer sales to on']);
+});
+
 test('free game filters set the lowest rating and whether unlisted games show', async () => {
   const guildId = 'setup-free';
   await run(guildId, 'free-game-filters', { min_rating: 85, not_on_steam: true });

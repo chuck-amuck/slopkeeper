@@ -461,6 +461,22 @@ export function saleReasons(g: Watched, show: (id: string) => string) {
 }
 
 export const saleName = (g: Watched, info = appInfo()) => g.name ?? info.get(g.appid)?.name ?? `App ${g.appid}`;
+
+/** Whether Steam lists a game as multiplayer, co-op or PvP */
+export function playedTogether(appid: number, info = appInfo()) {
+  const app = info.get(appid);
+  return !!app && (app.multiplayer || app.coop || app.pvp);
+}
+
+/**
+ * The games a post keeps when a server only wants sales of games to play together: those, and any someone asked for by
+ * name. One Steam couldn't be asked about waits, so it can go out once it has been
+ */
+export async function forPlayingTogether<T extends { appid: number; wanted: string[] }>(games: T[]) {
+  await ensureAppInfo(games.map((g) => g.appid)).catch(console.error);
+  const info = appInfo();
+  return games.filter((g) => g.wanted.length || playedTogether(g.appid, info));
+}
 export const storeUrl = (appid: number) => `https://store.steampowered.com/app/${appid}`;
 
 function saleLine(g: Sale, name: string, history: string | null = null) {
@@ -595,7 +611,7 @@ async function checkGuild(client: Client<true>, guild: Guild, prices: Prices, po
   const games = await watched(guild);
   await loadPrices(games.map((g) => g.appid), country, prices, otherStores);
 
-  const due: Sale[] = [];
+  let due: Sale[] = [];
   let missing = 0;
   for (const g of games.sort(byInterest)) {
     const key = `${country}:${g.appid}`;
@@ -625,6 +641,8 @@ async function checkGuild(client: Client<true>, guild: Guild, prices: Prices, po
   }
   // A sale in a batch Steam didn't answer would wait a whole day, so a post waits for it a few times first
   if (missing && !partial) return false;
+  // Ones left out aren't remembered, so turning this off while their sale runs posts them then
+  if (post && setting(guild.id, 'saleMultiplayer')) due = await forPlayingTogether(due);
   if (!post || !due.length) return missing < games.length || !games.length;
 
   // Wishlisted games only have a name once they're asked about
