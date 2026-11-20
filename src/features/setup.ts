@@ -58,7 +58,7 @@ export const LIMITS = {
   ttsCooldownSec: [0, 3600],
   ttsSpeed: [50, 150],
   ttsPauseMs: [0, 2000],
-  ttsVolume: [25, 200],
+  ttsVolume: [10, 200],
   soundVolume: [0, 200],
   loopVolume: [5, 200],
   loopEvery: [0, 60],
@@ -810,7 +810,7 @@ export const setup: Feature = {
             .addIntegerOption((o) =>
               o.setName('pause_ms').setDescription('Pause between sentences, 200 is a fifth of a second').setMinValue(LIMITS.ttsPauseMs[0]).setMaxValue(LIMITS.ttsPauseMs[1]),
             )
-            .addIntegerOption((o) => o.setName('volume').setDescription('How loud it talks. 100 is about as loud as a sound').setMinValue(LIMITS.ttsVolume[0]).setMaxValue(LIMITS.ttsVolume[1]))
+            .addIntegerOption((o) => o.setName('volume').setDescription('How loud it talks. At 100 it’s a little louder than a sound, to be heard over people').setMinValue(LIMITS.ttsVolume[0]).setMaxValue(LIMITS.ttsVolume[1]))
             .addIntegerOption((o) => o.setName('max_characters').setDescription('Longest line').setMinValue(LIMITS.ttsMaxChars[0]).setMaxValue(LIMITS.ttsMaxChars[1]))
             .addIntegerOption((o) => o.setName('wait_seconds').setDescription('Wait between one person’s lines').setMinValue(LIMITS.ttsCooldownSec[0]).setMaxValue(LIMITS.ttsCooldownSec[1]))
             .addBooleanOption((o) => o.setName('greet').setDescription('Say who joined voice, for people with no join sound'))

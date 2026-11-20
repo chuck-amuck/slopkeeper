@@ -85,6 +85,13 @@ export async function connect(channel: VoiceBasedChannel): Promise<string | null
   return (await join(channel, a.player)) ? null : `I couldn’t connect to ${channel}. Try again in a moment.`;
 }
 
+// Speech is levelled to match a sound at the same volume, but heard in a call over people talking it needs more, so its
+// 100% is twice that: as loud as it goes before the mix's limiter has to hold it down
+const SPEECH_BOOST = 2;
+
+/** A volume setting's percentage, as the gain its mixer group plays at */
+const groupGain = (group: 'sound' | 'speech' | 'music', percent: number) => (percent / 100) * (group === 'speech' ? SPEECH_BOOST : 1);
+
 /** Layers onto whatever is already playing; a fresh mixer is only needed once the last one has gone quiet */
 export function mixInto(guildId: string, add: (mixer: Mixer) => void) {
   const a = audioFor(guildId);
@@ -92,9 +99,9 @@ export function mixInto(guildId: string, add: (mixer: Mixer) => void) {
   if (a.mixer && !a.mixer.finished) return add(a.mixer);
   a.mixer = new Mixer(VOLUME, MAX_VOICES);
   a.mixer.on('playing', () => feeds.playing.changed(guildId));
-  a.mixer.setGroupGain('sound', setting(guildId, 'soundVolume') / 100);
-  a.mixer.setGroupGain('speech', setting(guildId, 'ttsVolume') / 100);
-  a.mixer.setGroupGain('music', setting(guildId, 'musicVolume') / 100);
+  a.mixer.setGroupGain('sound', groupGain('sound', setting(guildId, 'soundVolume')));
+  a.mixer.setGroupGain('speech', groupGain('speech', setting(guildId, 'ttsVolume')));
+  a.mixer.setGroupGain('music', groupGain('music', setting(guildId, 'musicVolume')));
   // Before playing, or the mixer would find nothing to mix and end straight away
   add(a.mixer);
   a.player.play(createAudioResource(a.mixer, { inputType: StreamType.Raw }));
@@ -135,7 +142,7 @@ function timeStart(channel: VoiceBasedChannel, kind: 'sound' | 'speech' | 'music
 
 /** Applies the music volume to music already playing */
 export function applyMusicVolume(guildId: string) {
-  audio.get(guildId)?.mixer?.setGroupGain('music', setting(guildId, 'musicVolume') / 100);
+  audio.get(guildId)?.mixer?.setGroupGain('music', groupGain('music', setting(guildId, 'musicVolume')));
 }
 
 /** The voice channel the bot is in, if any */
@@ -155,12 +162,12 @@ export async function play(channel: VoiceBasedChannel, file: string, gain = 1, o
 
 /** Applies the soundboard volume to sounds already playing */
 export function applySoundVolume(guildId: string) {
-  audio.get(guildId)?.mixer?.setGroupGain('sound', setting(guildId, 'soundVolume') / 100);
+  audio.get(guildId)?.mixer?.setGroupGain('sound', groupGain('sound', setting(guildId, 'soundVolume')));
 }
 
 /** Applies the speech volume to a line already being said */
 export function applySpeechVolume(guildId: string) {
-  audio.get(guildId)?.mixer?.setGroupGain('speech', setting(guildId, 'ttsVolume') / 100);
+  audio.get(guildId)?.mixer?.setGroupGain('speech', groupGain('speech', setting(guildId, 'ttsVolume')));
 }
 
 /** The volumes a slider can be heard at while it's dragged: the setting each saves to, and the mixer's group for it */
@@ -179,14 +186,14 @@ const previews = new Map<string, NodeJS.Timeout>();
  */
 export function previewVolume(guildId: string, name: keyof typeof PREVIEWED, percent: number) {
   const { key, group } = PREVIEWED[name];
-  audio.get(guildId)?.mixer?.setGroupGain(group, percent / 100);
+  audio.get(guildId)?.mixer?.setGroupGain(group, groupGain(group, percent));
   const id = `${guildId} ${name}`;
   clearTimeout(previews.get(id));
   previews.set(
     id,
     setTimeout(() => {
       previews.delete(id);
-      audio.get(guildId)?.mixer?.setGroupGain(group, setting(guildId, key) / 100);
+      audio.get(guildId)?.mixer?.setGroupGain(group, groupGain(group, setting(guildId, key)));
     }, PREVIEW_FOR_MS).unref(),
   );
 }

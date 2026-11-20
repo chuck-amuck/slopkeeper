@@ -4,7 +4,7 @@ import { followWhenIdle } from './updates.js';
 /** The volumes the bot plays at, as /volumes names them: the setting each saves to, what it's called and its range */
 const VOLUMES = {
   sounds: { key: 'soundVolume', label: 'Sounds', name: 'Sound volume', min: 0, said: 'Sounds play' },
-  speech: { key: 'ttsVolume', label: 'Speech', name: 'Speech volume', min: 25, said: 'Speech plays' },
+  speech: { key: 'ttsVolume', label: 'Speech', name: 'Speech volume', min: 10, said: 'Speech plays' },
   music: { key: 'musicVolume', label: 'Music', name: 'Music volume', min: 0, said: 'Music plays' },
 };
 

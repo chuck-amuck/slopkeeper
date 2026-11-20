@@ -94,7 +94,7 @@ export const DEFAULTS = {
   // The voices run a little fast at their natural speed
   ttsSpeed: num('TTS_SPEED', 85),
   ttsPauseMs: num('TTS_PAUSE_MS', 200),
-  // 100 is about as loud as a sound with Even volume on
+  // 100 is a little louder than a sound with Even volume on, to be heard over people talking
   ttsVolume: num('TTS_VOLUME', 100),
   // Unset reads nothing out
   ttsChannel: null as string | null,
@@ -103,8 +103,8 @@ export const DEFAULTS = {
   ttsGreeting: process.env.TTS_GREETING || '{name} joined',
   ttsNightReminders: process.env.TTS_NIGHT_REMINDERS === 'true',
   ttsHopOn: process.env.TTS_HOP_ON === 'true',
-  // Songs are levelled to a loud master's level, so at 20% they sit about 10 dB under the bot's speech, as background
-  // music should
+  // Songs are levelled to a loud master's level, so at 20% they sit well under the bot's speech, as background music
+  // should: about 17 dB under it at 100%
   musicVolume: num('MUSIC_VOLUME', 20),
   // Songs levelled so each plays about as loud as the others
   evenMusic: process.env.EVEN_MUSIC !== 'false',

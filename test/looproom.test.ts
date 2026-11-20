@@ -197,7 +197,8 @@ test('the soundboard volume reaches sounds already playing, and new ones', { ski
   await play(lounge as never, findSound(id, 'rain')!.file);
   assert.deepEqual(set.mock.calls.map((c) => c.arguments), [
     ['sound', 0.4],
-    ['speech', 1],
+    // Speech plays twice as loud as a sound at the same volume
+    ['speech', 2],
     ['music', 0.2],
   ], 'a new mixer starts at every group’s volume');
   setSetting(id, 'soundVolume', 150);
@@ -216,11 +217,11 @@ test('a slider being dragged is heard on what’s playing, unsaved, and the save
   previewVolume(id, 'music', 20);
   previewVolume(id, 'music', 25);
   previewVolume(id, 'speech', 60);
-  assert.deepEqual(set.mock.calls.map((c) => c.arguments), [['music', 0.2], ['music', 0.25], ['speech', 0.6]]);
+  assert.deepEqual(set.mock.calls.map((c) => c.arguments), [['music', 0.2], ['music', 0.25], ['speech', 1.2]]);
   assert.equal(setting(id, 'musicVolume'), 40, 'not saved');
   // Each goes back on its own, counted from its last move
   t.mock.timers.tick(PREVIEW_FOR_MS);
-  assert.deepEqual(set.mock.calls.slice(3).map((c) => c.arguments), [['music', 0.4], ['speech', 1]]);
+  assert.deepEqual(set.mock.calls.slice(3).map((c) => c.arguments), [['music', 0.4], ['speech', 2]]);
   // Saved, it stays where it was saved
   previewVolume(id, 'music', 30);
   setSetting(id, 'musicVolume', 30);

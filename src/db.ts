@@ -702,6 +702,20 @@ if (!db.prepare("SELECT 1 FROM pragma_table_info('chat_usage') WHERE name = 'web
   db.exec('ALTER TABLE chat_usage ADD COLUMN web_searches INTEGER NOT NULL DEFAULT 0');
 }
 
+/**
+ * Speech plays twice as loud at the same percentage since its 100% was made louder (src/features/voiceAudio.ts), so the
+ * percentages servers had chosen are halved, once, to sound as they did
+ */
+export function halveSpeechVolumes() {
+  db.exec(`UPDATE guild_settings SET value = CAST(MAX(10, CAST(ROUND(CAST(value AS REAL) / 2) AS INTEGER)) AS TEXT) WHERE key = 'ttsVolume' AND value != ''`);
+}
+if (getKv('moved:speech volume doubled') === undefined) {
+  transaction(() => {
+    halveSpeechVolumes();
+    setKv('moved:speech volume doubled', String(Date.now()));
+  });
+}
+
 export function getKv(key: string): string | undefined {
   const row = db.prepare('SELECT value FROM kv WHERE key = ?').get(key) as { value: string } | undefined;
   return row?.value;

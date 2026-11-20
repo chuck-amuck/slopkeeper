@@ -5,6 +5,7 @@ import { test } from 'node:test';
 process.env.HOPON_MIN_PEOPLE = '3';
 const { idSetting, setSetting, setting } = await import('../src/settings.ts');
 const { feeds } = await import('../src/changes.ts');
+const { db, getKv, halveSpeechVolumes } = await import('../src/db.ts');
 
 test('a setting comes from /setup, then the env default, then the built-in default', () => {
   assert.equal(setting('g1', 'hopOnMinPeople'), 3);
@@ -40,4 +41,18 @@ test('a setting another page shows tells that page, from /setup and the web UI a
   setSetting('g9', 'musicVolume', undefined);
   assert.notEqual(now().music, sounds.music, 'the music page, back to the default too');
   assert.notEqual(now().volumes, sounds.volumes, 'and the volume sliders');
+});
+
+test('speech volumes chosen before speech got twice as loud are halved once, to sound the same', () => {
+  // Done when the database opened, and marked so it never happens again
+  assert.ok(getKv('moved:speech volume doubled'));
+  for (const [guild, value] of [['loud', '200'], ['quiet', '15'], ['odd', '101'], ['blank', '']]) {
+    db.prepare("INSERT OR REPLACE INTO guild_settings (guild_id, key, value) VALUES (?, 'ttsVolume', ?)").run(`halve-${guild}`, value);
+  }
+  setSetting('halve-loud', 'musicVolume', 30);
+  halveSpeechVolumes();
+  const stored = (guild: string, key = 'ttsVolume') => (db.prepare('SELECT value FROM guild_settings WHERE guild_id = ? AND key = ?').get(`halve-${guild}`, key) as { value: string }).value;
+  assert.deepEqual(['loud', 'quiet', 'odd', 'blank'].map((g) => stored(g)), ['100', '10', '51', '']);
+  assert.equal(setting('halve-loud', 'ttsVolume'), 100);
+  assert.equal(stored('loud', 'musicVolume'), '30', 'other volumes stay');
 });

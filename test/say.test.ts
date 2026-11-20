@@ -461,10 +461,10 @@ test('a server’s speech volume sets how loud lines play, including one being s
   setSetting(voice.guild.id, 'ttsVolume', 150);
   assert.equal(await say(voice, 'hello', undefined, 'a'), null);
   assert.deepEqual(added.mock.calls.map((c) => [c.arguments[1], c.arguments[3]?.group]), [[1, 'speech']], 'the line plays at full gain in the speech group');
-  assert.deepEqual(set.mock.calls.find((c) => c.arguments[0] === 'speech')?.arguments, ['speech', 1.5], 'the group starts at the setting');
+  assert.deepEqual(set.mock.calls.find((c) => c.arguments[0] === 'speech')?.arguments, ['speech', 3], 'the group starts at the setting, where 100% is twice a sound’s');
   setSetting(voice.guild.id, 'ttsVolume', 50);
   applySpeechVolume(voice.guild.id);
-  assert.deepEqual(set.mock.calls.at(-1)!.arguments, ['speech', 0.5], 'and follows it when it changes');
+  assert.deepEqual(set.mock.calls.at(-1)!.arguments, ['speech', 1], 'and follows it when it changes');
 });
 
 test('audio that can’t be read counts as the voice being unavailable, and leaves nothing behind', { skip: !hasFfmpeg }, async (t) => {
