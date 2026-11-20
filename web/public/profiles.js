@@ -12,9 +12,22 @@ const SERVER_DEFAULT = '';
 const MOST_PHOTO_BYTES = 5 * 1024 * 1024;
 const TOO_BIG = 'Pick an image of up to 5 MB.';
 
-/** A profile's photo, round, or a face for one without */
-export const profileFace = (p) =>
-  p?.photo ? el('img', { className: 'profile-photo', src: api(`/chat-profiles/${encodeURIComponent(p.id)}/photo?v=${p.photo}`), alt: '' }) : el('span', { className: 'profile-photo none' }, icon('smile'));
+// The colours a profile without a photo can have, as .mono-0 to .mono-7 in style.css
+const MONO_COLOURS = 8;
+
+/**
+ * A profile's photo, round. One without has its initials, on a colour of its own, so they're told apart at a glance; one
+ * without a name yet, a face
+ */
+export function profileFace(p) {
+  if (p?.photo) return el('img', { className: 'profile-photo', src: api(`/chat-profiles/${encodeURIComponent(p.id)}/photo?v=${p.photo}`), alt: '' });
+  const words = (p?.name ?? '').split(/\s+/).filter(Boolean);
+  if (!words.length) return el('span', { className: 'profile-photo none' }, icon('smile'));
+  const letters = words.slice(0, 2).map((w) => [...w][0].toUpperCase()).join('');
+  let hash = 0;
+  for (const c of p.id ?? p.name) hash = (hash * 31 + c.codePointAt(0)) >>> 0;
+  return el('span', { className: `profile-photo mono mono-${hash % MONO_COLOURS}`, ariaHidden: 'true' }, letters);
+}
 
 /** Makes `p` the server's profile, as Settings' Use and the header's picker do, saying so */
 export async function useProfile(p) {
@@ -25,42 +38,133 @@ export async function useProfile(p) {
 }
 
 /**
- * For the header: who the bot is in this server, with its photo, to pick another. Shown once there's more than one. On a
- * phone it's only the photo, with the list laid over it
+ * For the header: who the bot is in this server, as its face, left of the server. Hovering says its name, and a click
+ * opens a menu of the profiles to pick another, or to edit them in Settings
  */
 export function profilePicker() {
   let known = null;
   let drawn = '';
-  const select = el('select', {
-    ariaLabel: 'The bot’s profile here',
-    onchange: () => {
-      const picked = known?.profiles.find((p) => p.id === select.value);
-      if (!picked) return;
-      void attempt(async () => {
-        try {
-          await useProfile(picked);
-        } catch (err) {
-          // Back to the one it still is
-          paint(true);
-          throw err;
-        }
-      });
+  const tip = el('span', { className: 'profile-tip', ariaHidden: 'true' });
+  const menu = el('div', { className: 'profile-menu', id: 'profile-menu', role: 'menu', ariaLabel: 'Profiles', hidden: true, onkeydown: moveInMenu });
+  const face = el('button', {
+    type: 'button',
+    className: 'profile-face',
+    ariaHasPopup: 'menu',
+    ariaExpanded: 'false',
+    'aria-controls': menu.id,
+    onclick: () => toggle(menu.hidden),
+    // The arrows open it too, at the first or last
+    onkeydown: (e) => {
+      if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+      e.preventDefault();
+      toggle(true, e.key === 'ArrowUp' ? 'last' : 'first');
     },
   });
-  const face = el('span', { className: 'profile-face' });
-  const node = el('div', { className: 'profile-pick', hidden: true }, face, select);
-  function paint(again = false) {
+  const node = el('div', { className: 'profile-pick', hidden: true }, face, tip, menu);
+  const items = () => [...menu.querySelectorAll('[role^="menuitem"]')];
+
+  function paint() {
     if (!known) return;
     const now = JSON.stringify(known);
-    if (now === drawn && !again) return;
+    if (now === drawn) return;
     drawn = now;
-    node.hidden = known.profiles.length < 2;
+    node.hidden = false;
     const active = known.profiles.find((p) => p.id === known.active);
+    const name = active?.name ?? 'Profile';
     face.replaceChildren(profileFace(active));
-    // Where only the photo shows, its name is a hover away
-    select.title = `${active?.name ?? 'Profile'}: who the bot is here, with its personality, name, voice and photo`;
-    select.replaceChildren(...known.profiles.map((p) => el('option', { value: p.id, selected: p.id === known.active }, p.name)));
+    face.ariaLabel = `Profile: ${name}`;
+    tip.textContent = name;
+    const focused = items().indexOf(document.activeElement);
+    menu.replaceChildren(
+      ...known.profiles.map((p) =>
+        el(
+          'button',
+          { type: 'button', role: 'menuitemradio', ariaChecked: String(p.id === known.active), tabIndex: -1, onclick: () => pick(p) },
+          profileFace(p),
+          el('span', { className: 'profile-menu-name' }, p.name),
+          p.id === known.active && icon('check'),
+        ),
+      ),
+      el('div', { role: 'separator' }),
+      el('button', { type: 'button', role: 'menuitem', tabIndex: -1, onclick: edit }, icon('pencil'), el('span', {}, 'Edit profiles…')),
+    );
+    // Redrawn while open, as when a profile is renamed elsewhere: focus stays where it was
+    if (focused >= 0) items()[Math.min(focused, items().length - 1)]?.focus();
   }
+
+  function pick(p) {
+    toggle(false);
+    face.focus();
+    if (!known || p.id === known.active) return;
+    // Shown at once: the photo can take Discord a few seconds
+    const before = known;
+    known = { ...known, active: p.id };
+    paint();
+    void attempt(async () => {
+      try {
+        await useProfile(p);
+      } catch (err) {
+        // Back to the one it still is, unless the feed has said otherwise since
+        if (known.active === p.id) known = { ...known, active: before.active };
+        paint();
+        throw err;
+      }
+    });
+  }
+
+  function edit() {
+    toggle(false);
+    location.hash = 'settings/profiles';
+  }
+
+  function moveInMenu(e) {
+    const all = items();
+    const at = all.indexOf(document.activeElement);
+    const to = { ArrowDown: at + 1, ArrowUp: at - 1, Home: 0, End: all.length - 1 }[e.key];
+    if (to !== undefined) {
+      e.preventDefault();
+      all[(to + all.length) % all.length]?.focus();
+    } else if (e.key === 'Tab') {
+      // Out of the menu, from the face onwards
+      toggle(false);
+      face.focus();
+    }
+  }
+
+  // While it's open: a press outside it, or Escape from anywhere, closes it, as the Volume panel does
+  let listening = null;
+  function toggle(open, focus = 'picked') {
+    menu.hidden = !open;
+    face.ariaExpanded = String(open);
+    node.classList.toggle('open', open);
+    listening?.abort();
+    listening = null;
+    if (!open) return;
+    const all = items();
+    (focus === 'first' ? all[0] : focus === 'last' ? all.at(-1) : (all.find((b) => b.ariaChecked === 'true') ?? all[0]))?.focus();
+    listening = new AbortController();
+    const { signal } = listening;
+    document.addEventListener(
+      'pointerdown',
+      (e) => {
+        if (!node.isConnected) return listening?.abort();
+        if (!node.contains(e.target)) toggle(false);
+      },
+      { signal, capture: true },
+    );
+    document.addEventListener(
+      'keydown',
+      (e) => {
+        if (!node.isConnected) return listening?.abort();
+        if (e.key !== 'Escape' || document.querySelector('dialog[open]')) return;
+        const within = node.contains(document.activeElement);
+        toggle(false);
+        if (within) face.focus();
+      },
+      { signal },
+    );
+  }
+
   follow('profile', node, (data) => {
     known = data;
     paint();
@@ -217,7 +321,7 @@ export function profilesCard(main, data, onChange) {
     const showPhoto = (file) => {
       if (previewUrl) URL.revokeObjectURL(previewUrl);
       previewUrl = file && URL.createObjectURL(file);
-      preview.replaceChildren(previewUrl ? el('img', { className: 'profile-photo', src: previewUrl, alt: '' }) : profileFace(null));
+      preview.replaceChildren(previewUrl ? el('img', { className: 'profile-photo', src: previewUrl, alt: '' }) : profileFace(p && { ...p, photo: '' }));
       removePhoto.hidden = !file;
     };
     removePhoto.onclick = () => {
@@ -347,6 +451,10 @@ export function profilesCard(main, data, onChange) {
     el('div', { className: 'field' }, el('div', {}, el('div', { className: 'series-name' }, 'Add a profile'), el('p', { className: 'hint' }, 'Starts with the usual traits, for a personality of your own.')), el('div', { className: 'control' }, addButton)),
   );
   card.reload = () => attempt(() => load());
+  // Opened from the header's Edit profiles…: the address goes back to plain Settings, and the card comes into view once
+  // its list is drawn, when the cards above it have their height
+  const opened = location.hash === '#settings/profiles';
+  if (opened) history.replaceState(null, '', '#settings');
   // A profile picked in the header, or changed elsewhere, after what the card was drawn from. Not while someone's typing
   // in a setting, which redrawing the fields would get in the way of
   let followed = false;
@@ -360,6 +468,26 @@ export function profilesCard(main, data, onChange) {
     } catch (err) {
       body.replaceChildren(notice('error', err.message, { compact: true }));
     }
+    if (opened && card.isConnected) bringIntoView();
   });
+
+  /**
+   * Scrolls to the card, and keeps it there while the cards above it finish loading and change height, for a few seconds
+   * or until someone scrolls or presses something themselves, or the window changes size
+   */
+  function bringIntoView() {
+    const done = new AbortController();
+    const keep = () => card.isConnected && card.scrollIntoView({ block: 'start' });
+    const sizes = new ResizeObserver(keep);
+    sizes.observe(main);
+    const end = () => {
+      sizes.disconnect();
+      done.abort();
+    };
+    // A window resized, like a phone turned, isn't the cards loading either
+    for (const type of ['wheel', 'touchstart', 'keydown', 'pointerdown', 'resize']) addEventListener(type, end, { signal: done.signal, passive: true, capture: true });
+    setTimeout(end, 3000);
+    keep();
+  }
   return card;
 }

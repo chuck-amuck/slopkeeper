@@ -145,6 +145,79 @@ const PAGES: [string, string, Record<string, string>?, string?, string?][] = [
       input.dispatchEvent(new Event('change'));
     })()`,
   ],
+  // The bot's profile, as its face left of the server: its menu open, at the one in use, with the others and Edit
+  [
+    'music',
+    'Header: the profile menu',
+    {},
+    `(() => {
+      const pick = document.querySelector('.profile-pick');
+      const face = pick?.querySelector('.profile-face');
+      const menu = pick?.querySelector('[role=menu]');
+      const items = [...(menu?.querySelectorAll('[role^=menuitem]') ?? [])];
+      const named = (text) => items.find((b) => b.querySelector('.profile-menu-name')?.textContent.startsWith(text));
+      const left = pick.getBoundingClientRect().right <= document.querySelector('.guild').getBoundingClientRect().left;
+      return left && face.getAttribute('aria-label') === 'Profile: A grumpy pirate with a long name to wrap' && pick.querySelector('.profile-tip').textContent === 'A grumpy pirate with a long name to wrap'
+        && !menu.hidden && face.getAttribute('aria-expanded') === 'true' && named('A grumpy pirate')?.getAttribute('aria-checked') === 'true' && document.activeElement === named('A grumpy pirate')
+        && named('A grumpy pirate').querySelector('img.profile-photo') && named('Robot butler')?.getAttribute('aria-checked') === 'false' && named('Robot butler').querySelector('.mono')?.textContent === 'RB'
+        && items.at(-1).textContent === 'Edit profiles…';
+    })()`,
+    `document.querySelector('.profile-face').click()`,
+  ],
+  // Escape closes it, back on the face; the arrows open it again at the last, and Escape again
+  [
+    'music',
+    'Header: the profile menu closed',
+    {},
+    `(() => { const face = document.querySelector('.profile-face'); return document.querySelector('.profile-menu').hidden && face.getAttribute('aria-expanded') === 'false' && document.activeElement === face; })()`,
+    `(async () => {
+      const face = document.querySelector('.profile-face');
+      const menu = document.querySelector('.profile-menu');
+      const key = (on, k) => on.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true }));
+      face.click();
+      key(document.activeElement, 'Escape');
+      if (!menu.hidden || document.activeElement !== face) throw new Error('Escape left it open');
+      key(face, 'ArrowUp');
+      if (menu.hidden || document.activeElement.textContent !== 'Edit profiles…') throw new Error('ArrowUp opened it at ' + document.activeElement.textContent);
+      key(document.activeElement, 'ArrowDown');
+      if (document.activeElement.getAttribute('role') !== 'menuitemradio') throw new Error('ArrowDown didn’t go round to the first');
+      key(document.activeElement, 'Escape');
+    })()`,
+  ],
+  // Edit profiles… opens Settings at Profiles. Whether it came into view is noted as it does, as a picture of the whole page
+  // moves where it's scrolled to
+  [
+    'music',
+    'Header: Edit profiles',
+    {},
+    `location.hash === '#settings' && window.profilesInView === true && document.querySelector('.profile-menu').hidden`,
+    `(async () => {
+      document.querySelector('.profile-face').click();
+      [...document.querySelectorAll('.profile-menu [role=menuitem]')].find((b) => b.textContent === 'Edit profiles…').click();
+      const inView = () => { const top = document.querySelector('#settings-profiles')?.getBoundingClientRect().top ?? -1; return top >= 0 && top < innerHeight / 2; };
+      for (let i = 0; i < 40 && !inView(); i++) await new Promise((r) => setTimeout(r, 100));
+      // Still there once the cards above it have loaded
+      await new Promise((r) => setTimeout(r, 1000));
+      window.profilesInView = inView();
+    })()`,
+  ],
+  // Picking another from it: the face changes at once, and the server uses it. Put back afterwards for the pages that follow
+  [
+    'music',
+    'Header: another profile picked',
+    {},
+    `(async () => {
+      const face = document.querySelector('.profile-face');
+      const ok = face.getAttribute('aria-label') === 'Profile: Robot butler' && face.querySelector('.mono')?.textContent === 'RB' && document.querySelector('.profile-menu').hidden
+        && (await (await fetch('/api/guilds/${GUILD}/settings').catch(() => null))?.json().catch(() => null))?.settings?.find?.((x) => x.key === 'chatProfile')?.value === 'butler';
+      face.click();
+      [...document.querySelectorAll('.profile-menu-name')].find((n) => n.textContent.startsWith('A grumpy pirate')).closest('button').click();
+      for (let i = 0; i < 50 && face.getAttribute('aria-label') !== 'Profile: A grumpy pirate with a long name to wrap'; i++) await new Promise((r) => setTimeout(r, 100));
+      await new Promise((r) => setTimeout(r, 500));
+      return ok;
+    })()`,
+    `(() => { document.querySelector('.profile-face').click(); [...document.querySelectorAll('.profile-menu-name')].find((n) => n.textContent === 'Robot butler').closest('button').click(); })()`,
+  ],
 ];
 const SCREENS = [
   { name: 'computer', width: 1280, height: 900, mobile: false },

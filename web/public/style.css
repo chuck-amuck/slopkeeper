@@ -5453,72 +5453,206 @@ a,
   height: 2em;
 }
 
-/*
- * The header's profile picker: the photo, with the list laid over it so a click or tap opens it, and the name on a
- * screen wide enough for it beside the tabs, with the photo where Play in has its speaker
- */
+/* A profile without a photo: its initials, white on a colour of its own */
+.profile-photo.mono {
+  color: #fff;
+  font-weight: 600;
+  font-size: 0.95rem;
+  letter-spacing: 0.02em;
+  user-select: none;
+}
+
+.profile-photo.mono-0 {
+  background: #4f5ce6;
+}
+
+.profile-photo.mono-1 {
+  background: #b0436a;
+}
+
+.profile-photo.mono-2 {
+  background: #2e7a4c;
+}
+
+.profile-photo.mono-3 {
+  background: #9a5410;
+}
+
+.profile-photo.mono-4 {
+  background: #6b4fc2;
+}
+
+.profile-photo.mono-5 {
+  background: #1d7486;
+}
+
+.profile-photo.mono-6 {
+  background: #b8401a;
+}
+
+.profile-photo.mono-7 {
+  background: #5b6472;
+}
+
+.profile-photo-preview .profile-photo.mono {
+  font-size: 1.6rem;
+}
+
+/* The header's profile: its face, left of the server, with its name under it on hover and a menu of the others */
 .profile-pick {
   position: relative;
   display: flex;
   flex: none;
   align-items: center;
-  min-width: 0;
 }
 
-.profile-pick .profile-face {
+.profile-face {
   display: flex;
-  pointer-events: none;
-}
-
-.profile-pick .profile-photo {
-  width: 40px;
-  height: 40px;
-  box-shadow: 0 0 0 1px var(--line);
-}
-
-.profile-pick select {
-  position: absolute;
-  inset: 0;
-  width: 100%;
   padding: 0;
-  opacity: 0;
+  border: 0;
+  border-radius: 50%;
+  background: none;
   cursor: pointer;
 }
 
-.profile-pick:hover .profile-photo,
-.profile-pick:focus-within .profile-photo {
+.profile-face .profile-photo {
+  width: 32px;
+  height: 32px;
+  box-shadow: 0 0 0 1px var(--line);
+}
+
+.profile-face .profile-photo.mono {
+  font-size: 0.8rem;
+}
+
+.profile-face:hover .profile-photo,
+.profile-face:focus-visible .profile-photo,
+.profile-pick.open .profile-face .profile-photo {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
 
-@media (min-width: 1500px) {
-  .profile-pick .profile-face {
-    position: absolute;
-    left: 7px;
+.profile-face:focus-visible {
+  outline: none;
+}
+
+.profile-tip {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 50%;
+  z-index: 6;
+  max-width: 16em;
+  padding: 4px 8px;
+  overflow: hidden;
+  border-radius: 6px;
+  background: var(--text);
+  color: var(--surface);
+  font-size: 0.8rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transform: translateX(-50%);
+  transition: opacity 0.1s;
+}
+
+.profile-pick:not(.open) .profile-face:hover + .profile-tip,
+.profile-pick:not(.open) .profile-face:focus-visible + .profile-tip {
+  opacity: 1;
+}
+
+.profile-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  z-index: 6;
+  display: flex;
+  flex-direction: column;
+  width: max-content;
+  min-width: 200px;
+  max-width: min(320px, calc(100vw - 32px));
+  max-height: min(60vh, 420px);
+  padding: 4px;
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.18);
+}
+
+.profile-menu[hidden] {
+  display: none;
+}
+
+.profile-menu button {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.profile-menu button:hover,
+.profile-menu button:focus-visible {
+  background: var(--raised);
+  outline: none;
+}
+
+.profile-menu button:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--accent);
+}
+
+.profile-menu .profile-photo {
+  width: 28px;
+  height: 28px;
+}
+
+.profile-menu .profile-photo.mono {
+  font-size: 0.75rem;
+}
+
+.profile-menu-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.profile-menu [aria-checked='true'] {
+  font-weight: 600;
+}
+
+.profile-menu .ico-check {
+  color: var(--accent);
+}
+
+.profile-menu .ico-pencil {
+  width: 28px;
+  color: var(--muted);
+}
+
+.profile-menu [role='separator'] {
+  height: 1px;
+  margin: 4px 0;
+  background: var(--line);
+}
+
+@media (max-width: 640px) {
+  .profile-face .profile-photo {
+    width: 28px;
+    height: 28px;
   }
 
-  .profile-pick .profile-photo {
-    width: 26px;
-    height: 26px;
-    box-shadow: none;
-  }
-
-  .profile-pick .profile-photo .ico {
-    width: 1em;
-    height: 1em;
-  }
-
-  .profile-pick select {
-    position: static;
-    width: 12em;
-    max-width: 200px;
-    padding: 6px 10px 6px 40px;
-    opacity: 1;
-  }
-
-  .profile-pick:hover .profile-photo,
-  .profile-pick:focus-within .profile-photo {
-    outline: none;
+  .profile-menu {
+    max-height: 60vh;
   }
 }
 

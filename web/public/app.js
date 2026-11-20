@@ -321,6 +321,8 @@ function renderFrame() {
       'header',
       {},
       el('div', { className: 'brand' }, el('img', { src: '/icon.svg', alt: '' }), el('span', {}, 'Slopkeeper')),
+      // Who the bot is here, as its face, left of the server, as it's for every page
+      guild && profilePicker(),
       state.guilds.length === 1 && el('div', { className: 'guild' }, guildIcon, el('span', { className: 'guild-name' }, guild.name)),
       state.guilds.length > 1 &&
         el(
@@ -344,8 +346,6 @@ function renderFrame() {
         ),
       // Where sounds, speech and music play, beside the server, as it's for every page
       guild && playInPicker(),
-      // Who the bot is here, for every page too
-      guild && profilePicker(),
       el(
         'nav',
         { ariaLabel: 'Pages' },
