@@ -6,6 +6,21 @@ import { matching, withPicked } from './mentions.js';
 
 const SPEAK_KEY = 'try-chat:speak';
 const CHANNEL_KEY = 'try-chat:channel';
+/** The profile being tried in a server, here or from Settings' Try, for as long as the browser tab is open */
+const profileKey = (guildId) => `try-chat:profile:${guildId}`;
+export function tryProfile(guildId, id) {
+  try {
+    if (id) sessionStorage.setItem(profileKey(guildId), id);
+    else sessionStorage.removeItem(profileKey(guildId));
+  } catch {}
+}
+function triedProfile(guildId) {
+  try {
+    return sessionStorage.getItem(profileKey(guildId));
+  } catch {
+    return null;
+  }
+}
 // As many lines as the bot sees before a message, so a long conversation sends no more than it would read
 const MOST_SENT = 20;
 // A preview asked for too soon after another waits this long, once
@@ -127,6 +142,24 @@ function draw(body, setup, guildId) {
   );
   const kept = recall(CHANNEL_KEY);
   if (setup.channels.some((c) => c.id === kept)) inChannel.value = kept;
+  // Answers as the server's profile, or another to try before picking it
+  const profiles = setup.profiles ?? [];
+  const inUse = profiles.find((p) => p.active);
+  const asProfile = el(
+    'select',
+    { ariaLabel: 'Profile', onchange: () => (tryProfile(guildId, asProfile.value === inUse?.id ? null : asProfile.value), showProfile()) },
+    profiles.map((p) => el('option', { value: p.id }, p.name)),
+  );
+  const keptProfile = triedProfile(guildId);
+  if (inUse) asProfile.value = profiles.some((p) => p.id === keptProfile) ? keptProfile : inUse.id;
+  const profileNote = el('p', { className: 'page-note', id: 'try-profile-note' });
+  const tried = () => profiles.find((p) => p.id === asProfile.value);
+  function showProfile() {
+    const other = tried() && inUse && tried().id !== inUse.id;
+    profileNote.hidden = !other;
+    profileNote.textContent = other ? `Trying as ${tried().name}, answering as ${tried().botName}. This server uses ${inUse.name}.` : '';
+  }
+  showProfile();
   const speak = el('input', { type: 'checkbox', checked: recall(SPEAK_KEY) !== 'off', onchange: () => remember(SPEAK_KEY, speak.checked ? 'on' : 'off') });
   const clear = el(
     'button',
@@ -260,10 +293,12 @@ function draw(body, setup, guildId) {
       { className: 'toolbar try-options' },
       el('label', {}, el('span', { className: 'voice-label' }, 'Ask as'), asWho),
       el('label', {}, el('span', { className: 'voice-label' }, 'In'), inChannel),
+      profiles.length > 1 ? el('label', {}, el('span', { className: 'voice-label' }, 'Profile'), asProfile) : '',
       setup.speech ? el('label', { className: 'check' }, speak, 'Say answers aloud') : '',
       clear,
     ),
     el('p', { className: 'page-note' }, setup.inDiscord),
+    profileNote,
     log,
     form,
   );
@@ -277,7 +312,7 @@ function draw(body, setup, guildId) {
   function bubble(line) {
     const asker = setup.members.find((m) => m.id === line.as)?.name ?? 'someone';
     if (line.from === 'you') return el('div', { className: 'try-line you' }, el('div', { className: 'try-who' }, asker), el('div', { className: 'try-text' }, rich(line.text, setup)));
-    if (line.pending) return el('div', { className: 'try-line bot', ariaBusy: 'true' }, el('div', { className: 'try-who' }, setup.botName), el('div', { className: 'try-text muted' }, 'Thinking…'));
+    if (line.pending) return el('div', { className: 'try-line bot', ariaBusy: 'true' }, el('div', { className: 'try-who' }, tried()?.botName ?? setup.botName), el('div', { className: 'try-text muted' }, 'Thinking…'));
     const r = line.result;
     const details = [];
     if (r.pings.length) details.push(el('li', {}, 'Would ping ', r.pings.map((p, i) => [i ? ', ' : '', el('span', { className: 'mention' }, `@${p.name}`)])));
@@ -292,7 +327,8 @@ function draw(body, setup, guildId) {
     return el(
       'div',
       { className: 'try-line bot' },
-      el('div', { className: 'try-who' }, setup.botName),
+      // As the profile it answered as was called
+      el('div', { className: 'try-who' }, r.botName ?? setup.botName),
       el('div', { className: 'try-text' }, r.answer ? rich(r.answer, setup) : el('span', { className: 'muted' }, 'It didn’t answer.')),
       el('ul', { className: 'try-details' }, details),
       again,
@@ -336,7 +372,7 @@ function draw(body, setup, guildId) {
     send.disabled = true;
     paint();
     try {
-      const result = await request(api('/chat-try'), { method: 'POST', json: { text: asked, as: asWho.value, channelId: inChannel.value, history } });
+      const result = await request(api('/chat-try'), { method: 'POST', json: { text: asked, as: asWho.value, channelId: inChannel.value, history, ...(asProfile.value && { profile: asProfile.value }) } });
       // Cleared while it was coming: the answer goes with what it answered
       if (!lines.includes(waiting)) return;
       lines.splice(lines.indexOf(waiting), 1, { from: 'bot', at: Date.now(), result });

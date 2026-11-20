@@ -16,6 +16,7 @@ import { canGiveRole, isTimeZone, pingWarning } from '../util.ts';
 import { effectName, effects, missingVoice, NO_EFFECT, serverVoice, voiceName, voices } from './say.ts';
 import { afterSettingsChanged } from './soundboard.ts';
 import { BUILT_IN_ID, profileById } from './chatProfiles.ts';
+import { nicknameProblem } from './profileNames.ts';
 import { cantJoin } from './voiceAudio.ts';
 import { findSound, listSounds } from './soundLibrary.ts';
 import { loopSpeechProblem } from './loopRoom.ts';
@@ -403,6 +404,9 @@ export function settingProblems(guild: Guild): SettingProblem[] {
     if (why) problems.push({ key, text: `${what}: ${why}, so it’s **${instead.name}** for now.${why.endsWith('downloading') ? '' : ' Pick another.'}` });
   }
 
+  const renamed = nicknameProblem(guild);
+  if (renamed) problems.push({ key: 'chatProfile', text: renamed });
+
   const { id: loopId, channel: loopChannel } = channelOf('loopRoom');
   if (loopId && !loopChannel) problems.push({ key: 'loopRoom', text: 'The looping room’s channel is gone. Pick another one.' });
   // The loop bot has its own permissions, and its own note in the room's settings
@@ -585,7 +589,8 @@ async function apply(i: ChatInputCommandInteraction<'cached'>, changes: [Setting
     flags: MessageFlags.Ephemeral,
     allowedMentions: { parse: [] },
   });
-  await afterSettingsChanged(i.guild, given.map(([key]) => key));
+  const renamed = await afterSettingsChanged(i.guild, given.map(([key]) => key));
+  if (renamed) await i.followUp({ content: `⚠️ ${renamed}`, flags: MessageFlags.Ephemeral });
 }
 
 export const setup: Feature = {
@@ -1075,7 +1080,9 @@ export const setup: Feature = {
             flags: MessageFlags.Ephemeral,
             allowedMentions: { parse: [] },
           });
-          return afterSettingsChanged(i.guild, [key]);
+          const renamed = await afterSettingsChanged(i.guild, [key]);
+          if (renamed) await i.followUp({ content: `⚠️ ${renamed}`, flags: MessageFlags.Ephemeral });
+          return;
         }
 
         return i.reply({ embeds: [settingsEmbed(i.guild)], flags: MessageFlags.Ephemeral });

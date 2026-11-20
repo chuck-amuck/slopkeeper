@@ -1,4 +1,5 @@
-import { api, attempt, confirmButton, el, fetchAudio, formProblem, notice, openDialog, player, request, RequestError, toast } from './lib.js';
+import { tryProfile } from './chat.js';
+import { api, attempt, confirmButton, el, fetchAudio, formProblem, notice, openDialog, player, request, RequestError, state, toast } from './lib.js';
 import { effectOptions } from './speech.js';
 
 // Settings' Profiles card: who the bot is, how it talks and the voice it says its own lines in. Every server on the bot
@@ -8,9 +9,9 @@ const row = (label, control, note) => el('label', { className: 'form-row' }, el(
 const select = (options, chosen, props = {}) => el('select', props, options.map(([value, label]) => el('option', { value, selected: value === chosen }, label)));
 const SERVER_DEFAULT = '';
 
-/** A profile in a few words: how it talks and what it sounds like */
+/** A profile in a few words: what it's called, how it talks and what it sounds like */
 export function summary(p, traits, voices, effects) {
-  const parts = traits.map((t) => t.options.find(([id]) => id === p[t.key])?.[2]).filter(Boolean);
+  const parts = [p.nickname && `called ${p.nickname}`, ...traits.map((t) => t.options.find(([id]) => id === p[t.key])?.[2])].filter(Boolean);
   const voice = p.voice ? `${voices.find((v) => v.id === p.voice)?.name ?? 'a voice that isn’t available'} voice` : 'the server’s voice';
   const effect = p.effect === 'none' ? 'no effect' : p.effect ? `${effects.find((e) => e.id === p.effect)?.name ?? p.effect} effect` : '';
   const said = [voice, effect].filter(Boolean).join(', ');
@@ -33,10 +34,11 @@ export function profilesCard(main, data, onChange) {
     paint();
   }
 
-  /** Saves, then redraws this card and the fields above it */
+  /** Saves, then redraws this card and the fields above it. A nickname the bot couldn't take is said */
   const after = async (fresh) => {
     await load(fresh);
     await onChange?.();
+    if (fresh?.warning) toast(fresh.warning, true);
   };
 
   function profileRow(p) {
@@ -49,12 +51,27 @@ export function profilesCard(main, data, onChange) {
             type: 'button',
             onclick: () =>
               void attempt(async () => {
-                await request(api('/settings/chatProfile'), { method: 'PUT', json: { value: p.id } });
-                toast(`The bot is ${p.name} now.`);
+                const { warning } = await request(api('/settings/chatProfile'), { method: 'PUT', json: { value: p.id } });
+                // The Chat tab answers as the server's profile again
+                tryProfile(state.guildId, null);
+                toast(warning ? `The bot is ${p.name} now. ${warning}` : `The bot is ${p.name} now.`, Boolean(warning));
                 await after();
               }),
           },
           'Use',
+        ),
+      // In the Chat tab, before it's picked
+      data.chat?.ok !== false &&
+        el(
+          'button',
+          {
+            type: 'button',
+            onclick: () => {
+              tryProfile(state.guildId, p.id);
+              location.hash = 'chat';
+            },
+          },
+          'Try',
         ),
       el('button', { type: 'button', onclick: () => editDialog(p) }, 'Edit'),
       el(
@@ -119,6 +136,7 @@ export function profilesCard(main, data, onChange) {
   function editDialog(p) {
     const fields = {
       name: el('input', { required: true, maxLength: list.longest.name, value: p?.name ?? '', autocomplete: 'off', id: 'profile-name' }),
+      nickname: el('input', { maxLength: list.longest.nickname, value: p?.nickname ?? '', autocomplete: 'off', id: 'profile-nickname', placeholder: 'Its own name' }),
       personality: el('textarea', { required: true, rows: 6, maxLength: list.longest.personality, value: p?.personality ?? '', id: 'profile-personality' }),
       ...Object.fromEntries(list.traits.map((t) => [t.key, select(t.options.map(([id, label]) => [id, label]), p?.[t.key] ?? t.options[0][0], { id: `profile-${t.key}` })])),
       despises: el('input', { maxLength: list.longest.despises, value: p ? p.despises : (list.profiles.find((b) => b.builtIn)?.despises ?? ''), autocomplete: 'off', id: 'profile-despises' }),
@@ -163,6 +181,7 @@ export function profilesCard(main, data, onChange) {
       className: 'profile-dialog',
       body: [
         row('Name', fields.name),
+        row('Nickname', fields.nickname, 'What the bot is called in servers using this profile. Empty keeps its own name.'),
         el('label', { className: 'form-row' }, el('span', {}, 'Personality'), fields.personality, count),
         ...list.traits.map((t) => row(t.label, fields[t.key], t.key === 'roasts' ? 'When Roast rude people is on.' : null)),
         row('Can’t stand', fields.despises, 'Who it tears into on sight, for what they stand for, never for who they are. Empty for nobody.'),
@@ -179,6 +198,7 @@ export function profilesCard(main, data, onChange) {
           problem.hidden = true;
           const json = {
             name: fields.name.value,
+            nickname: fields.nickname.value,
             personality: fields.personality.value,
             ...Object.fromEntries(list.traits.map((t) => [t.key, fields[t.key].value])),
             despises: fields.despises.value,
@@ -208,7 +228,7 @@ export function profilesCard(main, data, onChange) {
     el(
       'p',
       { className: 'card-note' },
-      'Who the bot is: its personality, how it talks and the voice it says its own lines in. Every server on the bot shares these, and each uses the one picked in Profile.',
+      'Who the bot is: its personality, how it talks, what it’s called and the voice it says its own lines in. Every server on the bot shares these, and each uses the one picked in Profile. Try asks it as one in the Chat tab first.',
     ),
     body,
     el('div', { className: 'field' }, el('div', {}, el('div', { className: 'series-name' }, 'Add a profile'), el('p', { className: 'hint' }, 'Starts with the usual traits, for a personality of your own.')), el('div', { className: 'control' }, addButton)),

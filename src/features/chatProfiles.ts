@@ -29,11 +29,15 @@ db.exec(`
     changed_at INTEGER NOT NULL
   );
 `);
+// Added later. nickname: what the bot is called in servers using the profile, or empty for its own name
+if (!db.prepare('SELECT 1 FROM pragma_table_info(?) WHERE name = ?').get('chat_profiles', 'nickname')) db.exec("ALTER TABLE chat_profiles ADD COLUMN nickname TEXT NOT NULL DEFAULT ''");
 
 export const BUILT_IN_ID = 'butler';
 export const MOST_PROFILES = 50;
 export const LONGEST_NAME = 40;
 export const LONGEST_PERSONALITY = 1000;
+/** Discord's longest nickname */
+export const LONGEST_NICKNAME = 32;
 export const LONGEST_DESPISES = 200;
 
 /**
@@ -95,6 +99,8 @@ export interface ProfileFields {
   voice: string | null;
   /** null for the server's default effect, 'none' for none */
   effect: string | null;
+  /** What the bot is called in a server using it, or empty for its own name */
+  nickname: string;
 }
 
 export interface Profile extends ProfileFields {
@@ -119,6 +125,7 @@ export function builtIn(): Profile {
     despises: DEFAULT_DESPISES,
     voice: null,
     effect: null,
+    nickname: '',
     builtIn: true,
     changed: false,
   };
@@ -135,6 +142,7 @@ interface Row {
   despises: string;
   voice: string | null;
   effect: string | null;
+  nickname: string;
 }
 
 /** A trait as stored, or its default if it's one this version doesn't have */
@@ -153,12 +161,13 @@ function fromRow(r: Row): Profile {
     despises: r.despises,
     voice: r.voice || null,
     effect: r.effect || null,
+    nickname: r.nickname,
     builtIn: r.id === BUILT_IN_ID,
     changed: r.id === BUILT_IN_ID,
   };
 }
 
-const COLUMNS = 'id, name, personality, length, opinions, swearing, roasts, despises, voice, effect';
+const COLUMNS = 'id, name, personality, length, opinions, swearing, roasts, despises, voice, effect, nickname';
 
 /** Every profile, the Robot butler first and the rest by name */
 export function profiles(): Profile[] {
@@ -211,13 +220,17 @@ export function profileFields(
   if (voice !== null && (typeof voice !== 'string' || !known.voice(voice))) return 'Pick a voice from the list.';
   const effect = input.effect === undefined || input.effect === null || input.effect === '' ? null : input.effect;
   if (effect !== null && (typeof effect !== 'string' || !known.effect(effect))) return 'Pick an effect from the list.';
-  return { name, personality, ...traits, despises, voice, effect };
+  if (input.nickname !== undefined && typeof input.nickname !== 'string') return 'Type a nickname, or leave it empty for the bot’s own name.';
+  const nickname = tidy(input.nickname ?? '');
+  if (nickname.length > LONGEST_NICKNAME) return `Keep the nickname to ${LONGEST_NICKNAME} characters, the most Discord allows.`;
+  if (/[@#:`\n\r]/.test(nickname) || (nickname && !/[\p{L}\p{N}]/u.test(nickname))) return 'A nickname can’t have @, #, : or ` in it, and needs a letter or number.';
+  return { name, personality, ...traits, despises, voice, effect, nickname };
 }
 
 export const sameFields = (a: ProfileFields, b: ProfileFields) => JSON.stringify(fieldsOf(a)) === JSON.stringify(fieldsOf(b));
 
 /** A profile's fields, for giving back to profileFields with some changed */
-export const fieldsOf = ({ name, personality, length, opinions, swearing, roasts, despises, voice, effect }: ProfileFields): ProfileFields => ({
+export const fieldsOf = ({ name, personality, length, opinions, swearing, roasts, despises, voice, effect, nickname }: ProfileFields): ProfileFields => ({
   name,
   personality,
   length,
@@ -227,18 +240,19 @@ export const fieldsOf = ({ name, personality, length, opinions, swearing, roasts
   despises,
   voice,
   effect,
+  nickname,
 });
 
 const newId = (name: string) => slugId(name, [BUILT_IN_ID, ...profiles().map((p) => p.id)], 'profile');
 
-const values = (f: ProfileFields) => [f.name, f.personality, f.length, f.opinions, f.swearing, f.roasts, f.despises, f.voice, f.effect] as const;
+const values = (f: ProfileFields) => [f.name, f.personality, f.length, f.opinions, f.swearing, f.roasts, f.despises, f.voice, f.effect, f.nickname] as const;
 
 /** Adds a profile. Returns its id */
 export function addProfile(fields: ProfileFields, who: string): string {
   const id = newId(fields.name);
   const now = Date.now();
   db.prepare(
-    'INSERT INTO chat_profiles (id, name, personality, length, opinions, swearing, roasts, despises, voice, effect, added_by, added_at, changed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    'INSERT INTO chat_profiles (id, name, personality, length, opinions, swearing, roasts, despises, voice, effect, nickname, added_by, added_at, changed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
   ).run(id, ...values(fields), who, now, now);
   return id;
 }
@@ -255,10 +269,10 @@ export function editProfile(id: string, fields: ProfileFields, who: string) {
   }
   const now = Date.now();
   db.prepare(
-    `INSERT INTO chat_profiles (id, name, personality, length, opinions, swearing, roasts, despises, voice, effect, added_by, added_at, changed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `INSERT INTO chat_profiles (id, name, personality, length, opinions, swearing, roasts, despises, voice, effect, nickname, added_by, added_at, changed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(id) DO UPDATE SET name = excluded.name, personality = excluded.personality, length = excluded.length, opinions = excluded.opinions,
        swearing = excluded.swearing, roasts = excluded.roasts, despises = excluded.despises, voice = excluded.voice, effect = excluded.effect,
-       changed_at = excluded.changed_at`,
+       nickname = excluded.nickname, changed_at = excluded.changed_at`,
   ).run(id, ...values(fields), who, now, now);
 }
 

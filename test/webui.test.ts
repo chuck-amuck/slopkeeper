@@ -11,6 +11,7 @@ import path from 'node:path';
 import { after, before, mock, test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { config } from '../src/config.ts';
+import { resetChat } from '../src/features/chat.ts';
 import { db, setKv } from '../src/db.ts';
 import { createWeb } from '../web/src/server.ts';
 
@@ -63,6 +64,14 @@ const PAGES: [string, string, Record<string, string>?, string?, string?][] = [
     // Picked from the @ list as in Discord: Ben's the only one whose name starts "Be"
     `(() => { const box = document.querySelector('.try-ask textarea'); box.focus(); box.value = 'say hi to @Be'; box.setSelectionRange(13, 13); box.dispatchEvent(new Event('input')); const shown = [...document.querySelectorAll('.mention-choice')].map((c) => c.textContent); if (shown.join() !== 'BBen') throw new Error('The @ list shows ' + shown.join()); document.querySelector('.mention-choice').click(); if (box.value !== 'say hi to @Ben ') throw new Error('Picked as ' + box.value); document.querySelector('.try-ask').requestSubmit(); })()`,
   ],
+  // Tried as another profile than the server's: said so, and answered under its name
+  [
+    'chat',
+    'Chat: trying another profile',
+    { 'try-chat:speak': 'off' },
+    `(() => { const note = document.querySelector('#try-profile-note'); const bot = [...document.querySelectorAll('.try-line.bot')].at(-1); return document.querySelector('select[aria-label="Profile"]')?.value === 'butler' && !note.hidden && /Trying as Robot butler, answering as Slopkeeper\. This server uses A grumpy pirate/.test(note.textContent) && bot?.querySelector('.try-who')?.textContent === 'Slopkeeper' && /Right away/.test(bot.textContent); })()`,
+    `(() => { const pick = document.querySelector('select[aria-label="Profile"]'); pick.value = 'butler'; pick.dispatchEvent(new Event('change')); const box = document.querySelector('.try-ask textarea'); box.value = 'hello'; box.dispatchEvent(new Event('input')); document.querySelector('.try-ask').requestSubmit(); })()`,
+  ],
   // The @ list, open on what's typed, with the one picked marked
   [
     'chat',
@@ -83,8 +92,8 @@ const PAGES: [string, string, Record<string, string>?, string?, string?][] = [
     'settings',
     'Settings: Edit a profile',
     {},
-    `(() => { const d = document.querySelector('dialog[open]'); return !!d && /Edit A grumpy pirate/.test(d.textContent) && d.querySelectorAll('select').length === 6 && d.querySelector('#profile-swearing').value === 'freely' && d.querySelector('#profile-voice').value === 'scottish' && d.querySelector('#profile-effect').value === 'robot' && /\\d+ of 1000 characters/.test(d.textContent); })()`,
-    `[...document.querySelectorAll('#settings-profiles .profile-row')].find((r) => r.textContent.startsWith('A grumpy pirate')).querySelector('button').click()`,
+    `(() => { const d = document.querySelector('dialog[open]'); return !!d && /Edit A grumpy pirate/.test(d.textContent) && d.querySelectorAll('select').length === 6 && d.querySelector('#profile-swearing').value === 'freely' && d.querySelector('#profile-voice').value === 'scottish' && d.querySelector('#profile-effect').value === 'robot' && d.querySelector('#profile-nickname').value === 'Captain Grump' && /\\d+ of 1000 characters/.test(d.textContent); })()`,
+    `[...[...document.querySelectorAll('#settings-profiles .profile-row')].find((r) => r.textContent.startsWith('A grumpy pirate')).querySelectorAll('button')].find((b) => b.textContent === 'Edit').click()`,
   ],
   // Added voices: one ready with speakers, one downloading and one that failed, and the ready one's settings
   [
@@ -225,7 +234,7 @@ function seed() {
   db.prepare("INSERT INTO chat_reminders (guild_id, channel_id, created_by, people, text, due_at, created_at) VALUES (?, '702', 'u1', '[\"u1\",\"u2\"]', 'check the oven', ?, ?)").run(GUILD, now + 2 * HOUR, now);
   // A profile in use, with a name long enough to wrap, a voice and an effect, for the Profiles card and its dialog
   db.prepare(
-    "INSERT INTO chat_profiles (id, name, personality, length, opinions, swearing, roasts, despises, voice, effect, added_by, added_at, changed_at) VALUES ('pirate', 'A grumpy pirate with a long name to wrap', 'A grumpy pirate who has seen too many storms.', 'short', 'straight', 'freely', 'playful', '', 'scottish', 'robot', 'u1', ?, ?)",
+    "INSERT INTO chat_profiles (id, name, personality, length, opinions, swearing, roasts, despises, voice, effect, nickname, added_by, added_at, changed_at) VALUES ('pirate', 'A grumpy pirate with a long name to wrap', 'A grumpy pirate who has seen too many storms.', 'short', 'straight', 'freely', 'playful', '', 'scottish', 'robot', 'Captain Grump', 'u1', ?, ?)",
   ).run(now, now);
   db.prepare("INSERT INTO guild_settings (guild_id, key, value) VALUES (?, 'chatProfile', 'pirate')").run(GUILD);
   const bundle = {
@@ -333,7 +342,9 @@ test('every page of the web UI opens cleanly, on a computer and a phone', { skip
   for (const screen of SCREENS) {
     await page.send('Emulation.setDeviceMetricsOverride', { width: screen.width, height: screen.height, deviceScaleFactor: 1, mobile: screen.mobile });
     for (const [hash, label, stored = {}, expect, act] of PAGES) {
-      // A fresh page each time, with what it remembers set first
+      // A fresh page each time, with what it remembers set first, and chat's wait between questions over, as two pages ask
+      // within seconds
+      resetChat();
       await page.send('Page.navigate', { url: `${site}/#${hash}` });
       await page.evaluate(`localStorage.clear(); ${Object.entries(stored).map(([k, v]) => `localStorage.setItem(${JSON.stringify(k)}, ${JSON.stringify(v)});`).join('')} true`);
       problems = [];

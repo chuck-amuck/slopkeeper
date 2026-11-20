@@ -4,7 +4,7 @@ import { beforeEach, test } from 'node:test';
 import { db } from '../src/db.ts';
 import { activeProfile } from '../src/features/chatProfiles.ts';
 import { setSetting } from '../src/settings.ts';
-import { GUILD, activityText, call, ok, refused } from './apiFixture.ts';
+import { GUILD, activityText, call, me, ok, refused, setFake } from './apiFixture.ts';
 
 // Profiles in the web UI: listed, added, copied, changed, deleted, and the Robot butler put back
 
@@ -28,7 +28,8 @@ test('the profiles are listed with their traits and choices, the Robot butler fi
     ['length', 'opinions', 'swearing', 'roasts'],
   );
   assert.deepEqual(list.traits[2].options[1], ['never', 'Never', 'never swears']);
-  assert.deepEqual([list.most, list.longest], [50, { name: 40, personality: 1000, despises: 200 }]);
+  assert.deepEqual([list.most, list.longest], [50, { name: 40, personality: 1000, despises: 200, nickname: 32 }]);
+  assert.equal(list.profiles[0].nickname, '');
   // Settings has them for the Profile picker
   const { profiles } = await ok(`/guilds/${GUILD}/settings`);
   assert.deepEqual(profiles, [{ id: 'butler', name: 'Robot butler' }]);
@@ -120,4 +121,54 @@ test('a profile keeps a voice that isn’t on offer for now, and a copy’s name
   const copy = copied.profiles.find((p: { id: string }) => p.id === copied.id);
   assert.ok(copy.name.length <= 40, copy.name);
   await ok(`${URL}/${copied.id}`, { method: 'PUT', json: { swearing: 'never' } });
+});
+
+const SETTING = `/guilds/${GUILD}/settings/chatProfile`;
+
+test('a profile’s nickname renames the bot where it’s used, and its own name comes back when it isn’t', async () => {
+  await ok(URL, { method: 'POST', json: { name: 'Pirate', personality: 'A pirate.', nickname: '  Captain ' } });
+  assert.deepEqual(me.renamed, [], 'not until it’s picked');
+  assert.equal((await ok(SETTING, { method: 'PUT', json: { value: 'pirate' } })).warning, undefined);
+  assert.equal(me.nickname, 'Captain');
+  // A new nickname renames it again; another change doesn't
+  await ok(`${URL}/pirate`, { method: 'PUT', json: { nickname: 'Cap’n' } });
+  await ok(`${URL}/pirate`, { method: 'PUT', json: { roasts: 'playful' } });
+  assert.deepEqual(me.renamed, ['Captain', 'Cap’n']);
+  // Back on the Robot butler, and deleted while picked, it has its own name
+  await ok(SETTING, { method: 'DELETE' });
+  assert.equal(me.nickname, null);
+  await ok(SETTING, { method: 'PUT', json: { value: 'pirate' } });
+  await ok(`${URL}/pirate`, { method: 'DELETE' });
+  assert.deepEqual(me.renamed, ['Captain', 'Cap’n', null, 'Cap’n', null]);
+  // A nickname an admin gave it stays while profiles without one are picked
+  me.nickname = 'Jeeves';
+  await ok(URL, { method: 'POST', json: { name: 'Plain', personality: 'Plain.' } });
+  await ok(SETTING, { method: 'PUT', json: { value: 'plain' } });
+  await ok(SETTING, { method: 'DELETE' });
+  assert.equal(me.nickname, 'Jeeves');
+  assert.equal(me.renamed.length, 5);
+});
+
+test('without Change Nickname, a profile with a nickname is still picked, and Settings says what’s missing', async () => {
+  setFake({ changeNickname: false });
+  await ok(URL, { method: 'POST', json: { name: 'Pirate', personality: 'A pirate.', nickname: 'Captain' } });
+  const { warning } = await ok(SETTING, { method: 'PUT', json: { value: 'pirate' } });
+  assert.equal(warning, 'I can’t change my nickname here: give my role Change Nickname.');
+  assert.equal(activeProfile(GUILD).id, 'pirate');
+  assert.equal(me.nickname, null);
+  const { problems } = await ok(`/guilds/${GUILD}/settings`);
+  assert.deepEqual(
+    problems.filter((p: { key: string }) => p.key === 'chatProfile').map((p: { text: string }) => p.text),
+    ['Profile: it’s called **Captain**, but I can’t change my nickname here. Give my role **Change Nickname**.'],
+  );
+  // and saying so again when its nickname changes
+  assert.match((await ok(`${URL}/pirate`, { method: 'PUT', json: { nickname: 'Cap’n' } })).warning, /Change Nickname/);
+});
+
+test('a nickname Discord wouldn’t take is turned down', async () => {
+  const post = (nickname: unknown) => ({ method: 'POST', json: { name: 'Odd', personality: 'Me.', nickname } });
+  assert.equal(await refused(400, URL, post('x'.repeat(33))), 'Keep the nickname to 32 characters, the most Discord allows.');
+  for (const bad of ['@everyone', 'Bot#1', 'a:b', '`x`', '!!!']) assert.equal(await refused(400, URL, post(bad)), 'A nickname can’t have @, #, : or ` in it, and needs a letter or number.', bad);
+  assert.equal(await refused(400, URL, post(7)), 'Type a nickname, or leave it empty for the bot’s own name.');
+  assert.equal(named(await ok(URL, post('Señor Bot 9')), 'Odd').nickname, 'Señor Bot 9');
 });

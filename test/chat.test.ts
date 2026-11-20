@@ -9,7 +9,7 @@ import { MessageFlags } from 'discord.js';
 import { answer, asksBot, chat, chatNote, chatNotes, chatUsage, COOLDOWN_MS, finished, MODELS, MOST_STRICT_TOOLS, getReady, joinsVoice, strictAtMost, talksNearby, warmUp, withoutOffer, noteOf, onMessage, resetChat, sourcesLine, useTool, type Turn } from '../src/features/chat.ts';
 import { clearQueue, queueOf } from '../src/features/music.ts';
 import { checkSetting } from '../src/features/setup.ts';
-import { addProfile, builtIn, editProfile, fieldsOf, profileById, removeProfile } from '../src/features/chatProfiles.ts';
+import { activeProfile, addProfile, builtIn, editProfile, fieldsOf, profileById, removeProfile } from '../src/features/chatProfiles.ts';
 import { ACTIONS } from '../src/features/chatActions.ts';
 import { CantTry, inDiscord, mentionsIn, tryChat } from '../src/features/chatTry.ts';
 import { sendPost } from '../src/postFailures.ts';
@@ -1202,6 +1202,40 @@ test('tried in the web UI, an answer is said as it would be in voice, and what i
   // Nothing was said, so the answer is
   assert.equal(nobody.aloud?.text, 'Alas.');
   assert.equal(nobody.quiet, null);
+});
+
+test('tried as another profile, it answers in that one’s personality, way of talking, name and voice, and the server keeps its own', async (t) => {
+  const { guild, robin, channel } = tryingIn('try-profile');
+  config.voiceUrl = 'http://voice.test';
+  t.after(() => (config.voiceUrl = null));
+  const pirate = profileById(
+    addProfile({ ...fieldsOf(builtIn()), name: 'Pirate', personality: 'A grumpy pirate captain.', length: 'short', swearing: 'never', voice: 'scottish', effect: 'none', nickname: 'Captain' }, 'u1'),
+  )!;
+  replies = [turn('tool_use', toolUse('t1', 'say_aloud', { text: 'Arr!' })), turn('end_turn', text('Said it, matey.'))];
+  const line = await tryChat(guild as never, robin as never, channel as never, [], 'say arr', 'a', pirate);
+  const instructions = sent[0]!.system![0]!.text as string;
+  assert.match(instructions, /^You are Captain, /);
+  assert.match(instructions, /Your personality: A grumpy pirate captain\./);
+  assert.match(instructions, /Never swear/);
+  assert.doesNotMatch(instructions, /robot butler/);
+  assert.match(sent[0]!.messages[0]!.content as string, /one or two sentences at most/);
+  // A line said in its own voice is in the profile's
+  assert.deepEqual(line.heard, [{ kind: 'speech', text: 'Arr!', voice: 'scottish', effect: 'none' }]);
+  assert.equal(line.botName, 'Captain');
+  // and so is the answer
+  resetChat();
+  replies = [turn('end_turn', text('Aye.'))];
+  const answered = await tryChat(guild as never, robin as never, channel as never, [], 'hi', 'a', pirate);
+  assert.deepEqual([answered.aloud?.voice, answered.aloud?.effect], ['scottish', 'none']);
+  // The server is still on its own, and answers as it
+  assert.equal(activeProfile(guild.id).id, 'butler');
+  resetChat();
+  replies = [turn('end_turn', text('Splendid!'))];
+  const own = await tryChat(guild as never, robin as never, channel as never, [], 'hi', 'a');
+  assert.match(sent.at(-1)!.system![0]!.text as string, /robot butler/);
+  assert.equal(own.aloud?.voice, setting(guild.id, 'ttsVoice'));
+  assert.equal(own.botName, 'Slopkeeper');
+  removeProfile(pirate.id);
 });
 
 test('tried in the web UI, what the real tools would turn down is turned down, and a time is read as they’d read it', async () => {

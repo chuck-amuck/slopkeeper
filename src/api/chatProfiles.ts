@@ -1,3 +1,4 @@
+import type { Guild } from 'discord.js';
 import { logActivity } from '../activity.ts';
 import { plural } from '../features/gamestats.ts';
 import {
@@ -10,6 +11,7 @@ import {
   freeName,
   LONGEST_DESPISES,
   LONGEST_NAME,
+  LONGEST_NICKNAME,
   LONGEST_PERSONALITY,
   MOST_PROFILES,
   type Profile,
@@ -23,6 +25,7 @@ import {
   TRAIT_KEYS,
   TRAITS,
 } from '../features/chatProfiles.ts';
+import { applyNickname } from '../features/profileNames.ts';
 import { effects, NO_EFFECT, voices } from '../features/say.ts';
 import { servedGuilds } from '../util.ts';
 import { type Ask, Refused, by, readJson } from './common.ts';
@@ -47,8 +50,24 @@ function list(ask: Ask) {
     profiles: profiles().map((p) => ({ id: p.id, ...fieldsOf(p), builtIn: p.builtIn, changed: p.changed, active: p.id === active, servers: picked.get(p.id) ?? 0 })),
     traits: TRAIT_KEYS.map((key) => ({ key, label: TRAITS[key].label, options: Object.entries(TRAITS[key].options).map(([id, o]) => [id, o.name, o.short]) })),
     most: MOST_PROFILES,
-    longest: { name: LONGEST_NAME, personality: LONGEST_PERSONALITY, despises: LONGEST_DESPISES },
+    longest: { name: LONGEST_NAME, personality: LONGEST_PERSONALITY, despises: LONGEST_DESPISES, nickname: LONGEST_NICKNAME },
   };
+}
+
+/** The servers using profile `id` */
+const using = (ask: Ask, id: string) => servedGuilds(ask.client).filter((g) => activeProfile(g.id).id === id);
+
+/**
+ * Renames the bot in `guilds` for a change of their profile's nickname, from `before`'s to `after`'s. Why it couldn't in
+ * the server asking, if it couldn't there; elsewhere that's only logged
+ */
+async function rename(ask: Ask, guilds: Guild[], before: Pick<Profile, 'nickname'>, after: Pick<Profile, 'nickname'>) {
+  if (before.nickname === after.nickname) return undefined;
+  const whys = await Promise.all(guilds.map((guild) => applyNickname(guild, before, after)));
+  guilds.forEach((guild, i) => {
+    if (whys[i] && guild.id !== ask.guild.id) console.warn(`Couldn’t rename the bot for its profile in server ${guild.id}: ${whys[i]}`);
+  });
+  return whys[guilds.findIndex((g) => g.id === ask.guild.id)] ?? undefined;
 }
 
 const find = (id: string): Profile => {
@@ -95,7 +114,7 @@ export async function profileRoutes(ask: Ask) {
     if (sameFields(fields, profile)) return list(ask);
     editProfile(id, fields, by());
     logActivity(guild.id, by(), fields.name === profile.name ? `Changed the profile ${profile.name}` : `Changed the profile ${profile.name}, now called ${fields.name}`);
-    return list(ask);
+    return { ...list(ask), warning: await rename(ask, using(ask, id), profile, fields) };
   }
 
   if (id !== undefined && req.method === 'DELETE') {
@@ -106,11 +125,14 @@ export async function profileRoutes(ask: Ask) {
       if (takenProfileNames(BUILT_IN_ID).has(name.toLowerCase())) throw new Refused(409, `Another profile is called ${name}. Rename it first.`);
       resetBuiltIn();
       logActivity(guild.id, by(), `Put the profile ${profile.name} back to how it started`);
-      return { ...list(ask), servers: 0 };
+      return { ...list(ask), servers: 0, warning: await rename(ask, using(ask, id), profile, builtIn()) };
     }
+    // Those using it go back to the Robot butler, and to its name
+    const moved = using(ask, id);
     const servers = removeProfile(id);
+    const warning = await rename(ask, moved, profile, profileById(BUILT_IN_ID)!);
     logActivity(guild.id, by(), `Deleted the profile ${profile.name}${servers ? `, and ${servers === 1 ? '1 server’s pick' : `${plural(servers, 'server')}’ picks`} of it` : ''}`);
-    return { ...list(ask), servers };
+    return { ...list(ask), servers, warning };
   }
 
   throw new Refused(405, 'Not here.');

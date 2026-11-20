@@ -20,6 +20,7 @@ import {
   resetBuiltIn,
   takenProfileNames,
 } from '../src/features/chatProfiles.ts';
+import { applyNickname, CANT_RENAME, followProfile, nameAs, nicknameProblem } from '../src/features/profileNames.ts';
 import { ownSpeech } from '../src/features/say.ts';
 import { setSetting, storedSetting } from '../src/settings.ts';
 
@@ -44,6 +45,7 @@ test('a profile is checked, and what’s left out is at its default', () => {
     despises: DEFAULT_DESPISES,
     voice: null,
     effect: null,
+    nickname: '',
   });
   const fine = { name: 'Pirate', personality: 'A pirate.' };
   assert.equal(check({ ...fine, name: '!!' }), 'Give the profile a name.');
@@ -168,4 +170,93 @@ test('a profile made from a personality is named from its first words', () => {
   // A name taken gets a number, within the longest a name can be
   addProfile({ ...fieldsOf(builtIn()), name: 'y'.repeat(40), personality: 'Y.' }, 'u1');
   assert.equal(freeName(`${'y'.repeat(40)} copy`), `${'y'.repeat(38)} 2`);
+});
+
+/** A server whose bot can be renamed, and each name it was given */
+function renamable(id: string, canRename = true) {
+  const me = {
+    nickname: null as string | null,
+    renamed: [] as (string | null)[],
+    fail: false,
+    get displayName() {
+      return this.nickname ?? 'Slopkeeper';
+    },
+    user: { displayName: 'Slopkeeper' },
+    permissions: { has: () => canRename },
+    async setNickname(nickname: string | null) {
+      if (me.fail) throw new Error('Missing Permissions');
+      me.nickname = nickname;
+      me.renamed.push(nickname);
+    },
+  };
+  return { guild: { id, members: { me } } as never, me };
+}
+
+test('a nickname is renamed to and from, and one given by hand is left alone', async (t) => {
+  const { guild, me } = renamable('g1');
+  const none = { nickname: '' };
+  const captain = { nickname: 'Captain' };
+  // Neither has one: nothing, even over a nickname given by hand
+  me.nickname = 'Jeeves';
+  assert.equal(await applyNickname(guild, none, none), null);
+  assert.equal(await applyNickname(guild, null, none), null);
+  assert.equal(me.nickname, 'Jeeves');
+  assert.equal(await applyNickname(guild, none, captain), null);
+  assert.equal(me.nickname, 'Captain');
+  // Already that: not asked again
+  await applyNickname(guild, captain, captain);
+  assert.deepEqual(me.renamed, ['Captain']);
+  await applyNickname(guild, captain, none);
+  assert.equal(me.nickname, null);
+  // One given by hand since isn't cleared for a profile it isn't, only replaced by another nickname
+  me.nickname = 'Butler Bot';
+  assert.equal(await applyNickname(guild, captain, none), null);
+  assert.equal(me.nickname, 'Butler Bot');
+  me.renamed.length = 0;
+  // Without the permission, or turned down, it says why and doesn't throw
+  const { guild: locked, me: lockedMe } = renamable('g2', false);
+  assert.equal(await applyNickname(locked, none, captain), CANT_RENAME);
+  assert.deepEqual(lockedMe.renamed, []);
+  me.fail = true;
+  const warned = t.mock.method(console, 'warn', () => undefined);
+  assert.match((await applyNickname(guild, none, captain))!, /didn’t let me change my nickname here: Missing Permissions/);
+  assert.equal(warned.mock.callCount(), 1);
+});
+
+test('the bot’s name follows the profile picked, and is what it would be with another', async () => {
+  const { guild, me } = renamable('g1');
+  const pirate = addProfile({ ...fieldsOf(builtIn()), name: 'Pirate', personality: 'A pirate.', nickname: 'Captain' }, 'u1');
+  const plain = addProfile({ ...fieldsOf(builtIn()), name: 'Plain', personality: 'Plain.' }, 'u1');
+  // On the butler, what it's called now, even by hand; a profile with a nickname, that
+  me.nickname = 'Jeeves';
+  assert.equal(nameAs(guild, activeProfile('g1')), 'Jeeves');
+  assert.equal(nameAs(guild, profileById(plain)!), 'Jeeves');
+  assert.equal(nameAs(guild, profileById(pirate)!), 'Captain');
+  setSetting('g1', 'chatProfile', pirate);
+  await followProfile(guild);
+  assert.equal(me.nickname, 'Captain');
+  // Named for a profile, another without a nickname would put its own name back
+  assert.equal(nameAs(guild, activeProfile('g1')), 'Captain');
+  assert.equal(nameAs(guild, profileById(plain)!), 'Slopkeeper');
+  setSetting('g1', 'chatProfile', plain);
+  await followProfile(guild);
+  assert.equal(me.nickname, null);
+  assert.deepEqual(me.renamed, ['Captain', null]);
+});
+
+test('Settings is told when the profile’s nickname can’t be taken', () => {
+  const { guild } = renamable('g1', false);
+  assert.equal(nicknameProblem(guild), null);
+  setSetting('g1', 'chatProfile', addProfile({ ...fieldsOf(builtIn()), name: 'Pirate', personality: 'A pirate.', nickname: 'Captain' }, 'u1'));
+  assert.match(nicknameProblem(guild)!, /called \*\*Captain\*\*.*Change Nickname/);
+  // and chat goes by the name it has, not the one it couldn't take
+  assert.equal(nameAs(guild, activeProfile('g1')), 'Slopkeeper');
+  assert.equal(nicknameProblem(renamable('g1').guild), null, 'with the permission, it’s renamed');
+});
+
+test('a database from before nicknames gets the column', async () => {
+  db.exec('ALTER TABLE chat_profiles DROP COLUMN nickname');
+  await import(`../src/features/chatProfiles.ts?older=${Date.now()}`);
+  assert.ok(db.prepare("SELECT 1 FROM pragma_table_info('chat_profiles') WHERE name = 'nickname'").get());
+  assert.equal(profiles()[0]!.nickname, '');
 });

@@ -3,6 +3,8 @@ import { type Guild, type GuildMember, type GuildTextBasedChannel, MessageType, 
 import { config } from '../config.ts';
 import { setting } from '../settings.ts';
 import { answer, claimAnswer, finished, giveBack, readable, sourcesLine, type Heard, type Tried } from './chat.ts';
+import { activeProfile, type Profile } from './chatProfiles.ts';
+import { nameAs } from './profileNames.ts';
 import { NO_EFFECT, ownSpeech } from './say.ts';
 import { CHAT_MODELS, CHAT_VOICE } from './setup.ts';
 
@@ -66,9 +68,9 @@ export function inDiscord(guildId: string): string {
 /**
  * The bot's answer to `typed`, asked by `asker` in `channel` after `history`, with nothing done. Counts toward the
  * server's answers for the day and the month's cost, as the same answer in Discord would. `who` is whoever's trying it,
- * for their cooldown
+ * for their cooldown. With `profile`, it answers as that profile rather than the server's
  */
-export async function tryChat(guild: Guild, asker: GuildMember, channel: GuildTextBasedChannel, history: TryLine[], typed: string, who: string) {
+export async function tryChat(guild: Guild, asker: GuildMember, channel: GuildTextBasedChannel, history: TryLine[], typed: string, who: string, profile?: Profile) {
   if (!config.anthropicKey) throw new CantTry(409, 'Chat needs an Anthropic API key on the host (ANTHROPIC_API_KEY).');
   const claim = claimAnswer(guild.id, `try:${guild.id}:${who}`);
   if ('refused' in claim) {
@@ -106,7 +108,7 @@ export async function tryChat(guild: Guild, asker: GuildMember, channel: GuildTe
   };
   const message = { ...stand('you', typed, Date.now(), lines.length), id: SnowflakeUtil.generate().toString(), content, guild, channel: page, channelId: page.id, inGuild: () => true };
 
-  const tried: Tried = { would: [], heard: [], looked: [], cost: 0, names: new Map() };
+  const tried: Tried = { would: [], heard: [], looked: [], cost: 0, names: new Map(), profile };
   const started = performance.now();
   let made: Awaited<ReturnType<typeof answer>>;
   try {
@@ -126,7 +128,7 @@ export async function tryChat(guild: Guild, asker: GuildMember, channel: GuildTe
     if (made.spoke) quiet = 'It already said something aloud, so the answer isn’t said too.';
     else if (text.length > setting(guild.id, 'ttsMaxChars')) quiet = 'It’s longer than the longest line, so it wouldn’t be said aloud.';
     else {
-      const own = ownSpeech(guild.id);
+      const own = ownSpeech(guild.id, profile);
       aloud = { kind: 'speech', text, voice: own.voice.id, effect: own.effect?.id ?? NO_EFFECT };
     }
   }
@@ -143,5 +145,7 @@ export async function tryChat(guild: Guild, asker: GuildMember, channel: GuildTe
     model: CHAT_MODELS[claim.model],
     seconds: Math.round(seconds * 10) / 10,
     cost: tried.cost,
+    // What the bot's called as the profile it answered as
+    botName: nameAs(guild, profile ?? activeProfile(guild.id)),
   };
 }

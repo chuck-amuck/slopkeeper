@@ -493,6 +493,8 @@ test('chat tried in the web UI says what it needs, who can ask and where, and ch
   assert.deepEqual(start.members[1], { id: 'u2', name: 'Ben', username: 'ben', globalName: null, avatar: null });
   assert.deepEqual(start.channels.map((c: any) => c.name), ['first', 'second']);
   assert.deepEqual([start.me, start.speech], [null, false]);
+  // The profiles to try it as, with what the bot would be called
+  assert.deepEqual(start.profiles, [{ id: 'butler', name: 'Robot butler', botName: 'Slopkeeper', active: true }]);
   const asking = { text: 'roast @Ben', as: 'u1', channelId: 'c2', history: [{ from: 'you', text: 'hi', at: 1 }] };
   const post = (json: unknown) => ({ method: 'POST', headers: { 'x-slopkeeper': '1' }, json });
   assert.match(await refused(400, `/guilds/${GUILD}/chat-try`, post({ ...asking, text: '  ' })), /Type something/);
@@ -501,6 +503,7 @@ test('chat tried in the web UI says what it needs, who can ask and where, and ch
   // Not a voice channel, nor one the page doesn't offer
   for (const channelId of ['v1', 'nowhere']) assert.match(await refused(404, `/guilds/${GUILD}/chat-try`, post({ ...asking, channelId })), /text channel/);
   assert.match(await refused(400, `/guilds/${GUILD}/chat-try`, post({ ...asking, history: [{ from: 'them', text: 'hi', at: 1 }] })), /isn’t in a form/);
+  assert.match(await refused(404, `/guilds/${GUILD}/chat-try`, post({ ...asking, profile: 'gone' })), /isn’t there any more/);
   assert.match(await refused(409, `/guilds/${GUILD}/chat-try`, post(asking)), /ANTHROPIC_API_KEY/);
   assert.match(await refused(409, `/guilds/${GUILD}/chat-try/speech`, post({ text: 'hello' })), /Text to speech is off/);
   await refused(405, `/guilds/${GUILD}/chat-try`, { method: 'PUT', headers: { 'x-slopkeeper': '1' }, json: asking });

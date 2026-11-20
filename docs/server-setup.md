@@ -10,8 +10,9 @@ You need the **Manage Server** permission in the server.
    - **Manage Roles** lets `/notify` and `/gamerole` hand out roles below the bot's own. Without it, or for a role above the bot's, people are told to ask an admin, and Settings marks the role "an admin hands it out".
    - **Create Expressions** lets it copy sounds to the server's soundboard. **Manage Expressions** is only for swapping out or removing sounds other people added there.
    - **Create Events** lets game nights show in the server's Events list.
+   - **Change Nickname** lets a chat [profile](chat.md#profiles) with a nickname rename it. @everyone usually has it anyway.
 
-   A bot added with an older invite link may be missing **Create Events** or **Manage Expressions**. Open the new link again (it keeps the bot), or tick them on the bot's role.
+   A bot added with an older invite link may be missing **Create Events**, **Manage Expressions** or **Change Nickname**. Open the new link again (it keeps the bot), or tick them on the bot's role.
 2. **Pick the announce channel:** `/setup announce-channel channel:#somewhere`, where hop-on pings, recaps, leaderboards and sale alerts go. If the bot can't post there, it says which permission is missing.
 3. **Make a hop-on role** (optional): create a role such as `hop-on` in **Server Settings → Roles**, drag the bot's role above it (Discord only lets a bot hand out roles below its own), and run `/setup hopon-role role:@hop-on`.
 4. **Set the time zone** if it isn't the host's: `/setup timezone zone:Europe/London`. Free game posts are off until `/setup free-games enabled:True`.
@@ -128,7 +129,7 @@ Each setting goes by the name `/setup show` and `/setup reset` use. A few are se
 | Music search | web UI only | `MUSIC_SEARCH` (`spotify` or `youtube-music`) | Spotify |
 | Fall back to the other | web UI only | `MUSIC_SEARCH_FALLBACK` (`false` to turn off) | on |
 | Answer in chat | web UI only | `CHAT` (`false` to turn off) | on, with an `ANTHROPIC_API_KEY` |
-| Profile | web UI only | `CHAT_PERSONALITY` sets the Robot butler's personality | the Robot butler, a robot butler with impeccable manners and no brakes (see [Profiles](chat.md#profiles)) |
+| Profile | web UI only | `CHAT_PERSONALITY` sets the Robot butler's personality | the Robot butler, a robot butler with impeccable manners and no brakes (see [Profiles](chat.md#profiles)). A profile with a nickname renames the bot in the server |
 | Model | web UI only | `CHAT_MODEL` (`haiku`, `sonnet` or `opus`) | `haiku` |
 | Search the web | web UI only | `CHAT_WEB_SEARCH` (`false` to turn off) | on |
 | Take actions | web UI only | `CHAT_ACTIONS` (`false` to turn off) | on |

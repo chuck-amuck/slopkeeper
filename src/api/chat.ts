@@ -3,6 +3,8 @@ import { webUser } from '../activity.ts';
 import { config } from '../config.ts';
 import { setting } from '../settings.ts';
 import { chatNote } from '../features/chat.ts';
+import { activeProfile, profileById, profiles } from '../features/chatProfiles.ts';
+import { namesIn } from '../features/profileNames.ts';
 import { CantTry, inDiscord, LONGEST_TRY_TEXT, MOST_TRY_LINES, tryChat, type TryLine } from '../features/chatTry.ts';
 import { previewSpeech, TooSoon } from '../features/say.ts';
 import { canSee, sayableIn } from '../util.ts';
@@ -34,6 +36,8 @@ export async function chatRoutes({ guild, req, res, section, rest }: Ask) {
     const who = asking.getStore();
     const me = who && webUser(who.email)?.userId;
     const { ok, note } = chatNote(guild.id);
+    const active = activeProfile(guild.id).id;
+    const names = namesIn(guild);
     return {
       ready: ok,
       note,
@@ -47,6 +51,8 @@ export async function chatRoutes({ guild, req, res, section, rest }: Ask) {
       channels: tryChannels(guild),
       me: me && guild.members.cache.has(me) ? me : null,
       botName: guild.members.me?.displayName ?? 'The bot',
+      // To try it as another before picking it, under the name it would have
+      profiles: profiles().map((p) => ({ id: p.id, name: p.name, botName: names(p), active: p.id === active })),
       speech: Boolean(config.voiceUrl) && setting(guild.id, 'tts'),
       inDiscord: inDiscord(guild.id),
     };
@@ -62,8 +68,11 @@ export async function chatRoutes({ guild, req, res, section, rest }: Ask) {
     const channel = tryChannels(guild).some((c) => c.id === channelId) ? guild.channels.cache.get(channelId) : undefined;
     if (!channel) throw new Refused(404, 'Pick a text channel everyone here can see.');
     const who = asking.getStore()?.email ?? 'password';
+    // As the server's own profile, unless the page picked another
+    const profile = body.profile ? profileById(String(body.profile)) : undefined;
+    if (body.profile && !profile) throw new Refused(404, 'That profile isn’t there any more.');
     try {
-      return await tryChat(guild, asker, channel as GuildTextBasedChannel, historyFrom(body.history), typed, who);
+      return await tryChat(guild, asker, channel as GuildTextBasedChannel, historyFrom(body.history), typed, who, profile);
     } catch (err) {
       if (err instanceof CantTry) throw new Refused(err.status, err.message);
       throw err;

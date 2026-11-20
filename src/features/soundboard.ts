@@ -15,12 +15,13 @@ import { affectsLoopRoom, checkLoopRoom, noteLoopRoom, refreshLoopRoom, startLoo
 import { playJoinSound, setJoinSound } from './joinSounds.ts';
 import { INPUT, NEXT, PREV, SETTINGS, SOUND_GONE, STOP, UPLOAD, answerUpload, askAboutUpload, canChangeSounds, editPanel, isSetting, managersOnly, onSetting, pageCount, panel, refreshPanels, settingsMenu, soundSettings, storeUpload, submitUpload, trackPanel } from './soundPanel.ts';
 import { every } from '../schedule.ts';
+import { followProfile } from './profileNames.ts';
 
 /** The /sound subcommands that don't change any sound. Anything else needs the sound managers role, if there is one */
 const OPEN_TO_ALL = new Set(['play', 'stop', 'join', 'panel']);
 
 /** Puts changed settings into effect where they don't follow by themselves, from /setup and the web UI alike */
-export async function afterSettingsChanged(guild: Guild, keys: string[]) {
+export async function afterSettingsChanged(guild: Guild, keys: string[]): Promise<string | null> {
   // Discord's copies of the sounds, and audio already playing, have their own volume
   if (keys.includes('evenVolume')) await applyLevels(guild);
   if (keys.includes('soundVolume')) applySoundVolume(guild.id);
@@ -28,6 +29,8 @@ export async function afterSettingsChanged(guild: Guild, keys: string[]) {
   if (keys.includes('musicVolume')) applyMusicVolume(guild.id);
   if (keys.includes('musicAutoplay')) autoplayChanged(guild.id);
   if (keys.some(affectsLoopRoom)) await refreshLoopRoom(guild);
+  // The bot's nickname follows its profile. Why it couldn't, if it couldn't, for whoever changed it
+  return keys.includes('chatProfile') ? await followProfile(guild) : null;
 }
 
 export const soundboard: Feature = {

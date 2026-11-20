@@ -65,8 +65,23 @@ export let manageRoles = true;
 export const heldRoles = new Set<string>();
 export let failRoles = false;
 export let mentionEveryone = true;
+export let changeNickname = true;
 export const me = {
-  permissions: { has: (flag: bigint) => (flag === PermissionFlagsBits.ManageRoles ? manageRoles : flag === PermissionFlagsBits.MentionEveryone ? mentionEveryone : true) },
+  permissions: {
+    has: (flag: bigint) =>
+      flag === PermissionFlagsBits.ManageRoles ? manageRoles : flag === PermissionFlagsBits.MentionEveryone ? mentionEveryone : flag === PermissionFlagsBits.ChangeNickname ? changeNickname : true,
+  },
+  // Its nickname, and each one it was given, null for its own name
+  nickname: null as string | null,
+  renamed: [] as (string | null)[],
+  get displayName() {
+    return this.nickname ?? 'Slopkeeper';
+  },
+  user: { displayName: 'Slopkeeper' },
+  async setNickname(nickname: string | null) {
+    me.nickname = nickname;
+    me.renamed.push(nickname);
+  },
   roles: { highest: { name: 'Slopkeeper', position: 3 } },
 };
 for (const r of roles.values()) r.guild = { members: { me } };
@@ -194,6 +209,9 @@ beforeEach(() => {
   refuseDiscord = null;
   manageRoles = true;
   mentionEveryone = true;
+  changeNickname = true;
+  me.nickname = null;
+  me.renamed.length = 0;
   heldRoles.clear();
   failRoles = false;
   for (const id of roles.keys()) if (id.startsWith('made-')) roles.delete(id);
@@ -241,7 +259,7 @@ export const upload = (name: string, file = 'clip.wav', body: BodyInit = wav() a
 export const sounds = async () => (await ok(`/guilds/${GUILD}/sounds`)).sounds as any[];
 
 /** Changes the fakes' state for one test. Imported bindings can't be assigned, so tests go through this */
-export function setFake(changes: Partial<{ panelEdits: unknown[][]; permitted: bigint[]; failSend: boolean; refuseDiscord: Error | null; manageRoles: boolean; failRoles: boolean; mentionEveryone: boolean }>) {
+export function setFake(changes: Partial<{ panelEdits: unknown[][]; permitted: bigint[]; failSend: boolean; refuseDiscord: Error | null; manageRoles: boolean; failRoles: boolean; mentionEveryone: boolean; changeNickname: boolean }>) {
   if (changes.panelEdits !== undefined) panelEdits = changes.panelEdits;
   if (changes.permitted !== undefined) permitted = changes.permitted;
   if (changes.failSend !== undefined) failSend = changes.failSend;
@@ -249,6 +267,7 @@ export function setFake(changes: Partial<{ panelEdits: unknown[][]; permitted: b
   if (changes.manageRoles !== undefined) manageRoles = changes.manageRoles;
   if (changes.failRoles !== undefined) failRoles = changes.failRoles;
   if (changes.mentionEveryone !== undefined) mentionEveryone = changes.mentionEveryone;
+  if (changes.changeNickname !== undefined) changeNickname = changes.changeNickname;
 }
 
 export const plays = () => (db.prepare('SELECT user_id, name FROM sound_plays').all() as { user_id: string; name: string }[]).map((r) => `${r.user_id}:${r.name}`);

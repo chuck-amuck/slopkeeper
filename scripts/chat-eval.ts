@@ -8,6 +8,8 @@
 // ANTHROPIC_API_KEY, SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET set:
 //   node --disable-warning=ExperimentalWarning scripts/chat-eval.ts [scene filter | all] [haiku | sonnet | opus] [runs]
 // Runs a scene several times with `runs`, as the model doesn't answer the same way every time. Exits 1 if a check fails.
+// EVAL_PROFILE names a JSON file of profile fields (name, personality, the traits, nickname), to answer every scene as
+// that profile, to tune one before it's used; a scene's own profile changes go over it.
 import '../test/helpers.ts';
 import { createHash } from 'node:crypto';
 import { mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
@@ -31,6 +33,7 @@ if (!MODELS[modelKey] || !(runs >= 1)) throw new Error('Usage: chat-eval.ts [sce
 if (!config.anthropicKey) throw new Error('ANTHROPIC_API_KEY isn’t set.');
 if (!process.env.SPOTIFY_CLIENT_ID && !process.env.EVAL_MUSIC_URL) console.log('Neither SPOTIFY_CLIENT_ID nor EVAL_MUSIC_URL is set, so finding music will fail.');
 const searchFirst = process.env.EVAL_SEARCH === 'youtube-music' ? 'youtube-music' : 'spotify';
+const asProfile = process.env.EVAL_PROFILE ? (JSON.parse(readFileSync(process.env.EVAL_PROFILE, 'utf8')) as Partial<ProfileFields>) : {};
 if (searchFirst === 'youtube-music' && !process.env.EVAL_MUSIC_URL) throw new Error('EVAL_SEARCH=youtube-music needs EVAL_MUSIC_URL and EVAL_MUSIC_TOKEN.');
 
 // Nothing plays: the music and voice containers aren't there, so starting music or speech says why. Only searching
@@ -546,7 +549,10 @@ function server(scene: Scene) {
   setSetting(id, 'tts', true);
   setSetting(id, 'chatModel', modelKey);
   setSetting(id, 'musicSearch', searchFirst);
-  if (scene.profile) setSetting(id, 'chatProfile', addProfile({ ...fieldsOf(builtIn()), name: `Eval ${id}`, ...scene.profile }, 'eval'));
+  if (scene.profile || process.env.EVAL_PROFILE) setSetting(id, 'chatProfile', addProfile({ ...fieldsOf(builtIn()), ...asProfile, name: `Eval ${id}`, ...scene.profile }, 'eval'));
+  // Renamed by its profile, as it would be in Discord
+  const nickname = { ...asProfile, ...scene.profile }.nickname;
+  if (nickname) me.displayName = nickname;
   rememberCommands(id, registered);
 
   const said: { who: string; text: string; at: number }[] = (scene.earlier ?? []).map(([who, text, minutes], i) => ({ who, text, at: Date.now() - (minutes ?? 1) * 60_000 + i }));

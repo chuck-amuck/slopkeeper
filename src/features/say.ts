@@ -23,7 +23,7 @@ import { db, transaction } from '../db.ts';
 import { holdSounds, levelSpeech } from '../loudness.ts';
 import * as perf from '../perf.ts';
 import { DEFAULTS, idSetting, setSetting, setting, storedSetting } from '../settings.ts';
-import { activeProfile } from './chatProfiles.ts';
+import { activeProfile, type Profile } from './chatProfiles.ts';
 import type { Feature } from '../types.ts';
 import { canSee, humansIn, talksToBot } from '../util.ts';
 import { plural } from './gamestats.ts';
@@ -946,11 +946,10 @@ export function wouldSay(guild: Guild, typed: string, voiceId: string | undefine
 }
 
 /**
- * The voice and effect the bot says its own lines in: its profile's, or the server's default for what the profile leaves
- * to the server, and for a voice that's gone or still downloading
+ * The voice and effect the bot says its own lines in: its profile's (or `profile`'s, for one tried in the web UI), or the
+ * server's default for what the profile leaves to the server, and for a voice that's gone or still downloading
  */
-export function ownSpeech(guildId: string): { voice: Voice; effect: Effect | null } {
-  const profile = activeProfile(guildId);
+export function ownSpeech(guildId: string, profile: Profile = activeProfile(guildId)): { voice: Voice; effect: Effect | null } {
   return { voice: serverVoice(guildId, profile.voice ?? undefined), effect: serverEffect(guildId, profile.effect ?? undefined, profile.voice) };
 }
 

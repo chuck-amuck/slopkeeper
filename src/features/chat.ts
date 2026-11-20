@@ -12,7 +12,8 @@ import type { Feature } from '../types.ts';
 import { asksBot, canSee, isAnswer, listNames, playingGames, servedGuilds } from '../util.ts';
 import { canControl, time, musicPlaying, musicState, OUTSIDE_DJ, pauseMusic, queueArtist, queueFrom, queueOf, removeTracks, setAutoplay, shuffleQueue, skipMusic, startMusic, stopMusic } from './music.ts';
 import { busyElsewhere, effects, maySpeak, NO_EFFECT, ownSpeech, say, sayOut, voices, wouldSay } from './say.ts';
-import { activeProfile, howToTalk, moveChatPersonality, roastStyle } from './chatProfiles.ts';
+import { activeProfile, howToTalk, moveChatPersonality, type Profile, roastStyle } from './chatProfiles.ts';
+import { nameAs } from './profileNames.ts';
 import { act, ACTIONS, actionTools, nightTime } from './chatActions.ts';
 import { alreadySet, CHECK_EVERY, readReminderTime, sendDue } from './chatReminders.ts';
 import { every } from '../schedule.ts';
@@ -616,6 +617,7 @@ async function asked(
   member: GuildMember,
   botId: string,
   repliedTo: Message | null,
+  profile: Profile = activeProfile(message.guild.id),
 ): Promise<{ text: string; people: Map<string, string>; images: Anthropic.ImageBlockParam[] }> {
   const { guild } = message;
   // At the same time as the channel's history
@@ -663,19 +665,18 @@ async function asked(
     `${member.displayName} asks you:\n${line(guild, message, botId)}`,
     [seen, unseen].filter(Boolean).join(' '),
     // Last, where it weighs most: a butler's personality otherwise ends nearly every answer offering to be of service
-    `(A note for you, not to mention: ${activeProfile(guild.id).length === 'short' ? 'one or two sentences at most, then ' : ''}end once you’ve answered or said what you did, with no offer of help, service, options or anything more.)`,
+    `(A note for you, not to mention: ${profile.length === 'short' ? 'one or two sentences at most, then ' : ''}end once you’ve answered or said what you did, with no offer of help, service, options or anything more.)`,
   ]
     .filter(Boolean)
     .join('\n\n');
   return { text, people, images: images.shown };
 }
 
-function system(guild: Guild, botName: string) {
+function system(guild: Guild, botName: string, profile: Profile = activeProfile(guild.id)) {
   const commands = commandList(guild.id);
   const searches = searchable(guild.id);
   const actions = setting(guild.id, 'chatActions');
   const roasts = setting(guild.id, 'chatRoasts');
-  const profile = activeProfile(guild.id);
   return [
     `You are ${botName}, a bot in the Discord server “${guild.name}”, answering someone who @mentioned you or replied to you.`,
     `Your personality: ${profile.personality}`,
@@ -1032,18 +1033,19 @@ export interface Tried {
   cost: number;
   /** What find_music and artist_albums found, by ref, so what it would queue can be named */
   names: Map<string, string>;
+  /** The profile it answers as, when not the server's */
+  profile?: Profile;
 }
 
 /**
  * say_aloud's voice and effect, as say takes them: the ones asked for, or for a voice not asked for, the bot's own, from
  * its profile, with the profile's effect unless one was asked for. Undefined is the server's default
  */
-function aloud(guildId: string, voice: string, effect: string): [string | undefined, string | undefined] {
+function aloud(guildId: string, voice: string, effect: string, own: Profile = activeProfile(guildId)): [string | undefined, string | undefined] {
   const asked = /^(no effect|none)$/i.test(effect) ? NO_EFFECT : effect || undefined;
   if (voice) return [voice, asked];
-  const own = activeProfile(guildId);
   // A voice that's gone or still downloading is the server's default instead, as it is for the bot's other lines
-  return [own.voice ? ownSpeech(guildId).voice.id : undefined, asked ?? own.effect ?? undefined];
+  return [own.voice ? ownSpeech(guildId, own).voice.id : undefined, asked ?? own.effect ?? undefined];
 }
 
 /** What say_aloud tells the model when the line was said */
@@ -1114,7 +1116,7 @@ async function pretend(member: GuildMember, name: string, input: Record<string, 
     }
     case 'say_aloud': {
       if (!maySpeak(member)) return 'They don’t have the role that text to speech takes here.';
-      const [voiceId, effectId] = aloud(guild.id, text('voice'), text('effect'));
+      const [voiceId, effectId] = aloud(guild.id, text('voice'), text('effect'), tried.profile);
       const line = wouldSay(guild, text('text'), voiceId, member.id, effectId);
       if (typeof line === 'string') return line;
       tried.heard.push({ kind: 'speech', text: line.text, voice: line.voice.id, effect: line.effect?.id ?? NO_EFFECT });
@@ -1319,10 +1321,12 @@ export async function answer(
   const { guild } = message;
   const key = modelKey(guild.id);
   const model = MODELS[key].id;
-  const botName = guild.members.me?.displayName ?? 'the bot';
+  // Tried in the web UI, it can be as another profile than the server's
+  const profile = trying?.tried.profile ?? activeProfile(guild.id);
+  const botName = nameAs(guild, profile);
   let offered = tools(guild);
-  let instructions = system(guild, botName);
-  const { text: context, people, images } = await asked(message, member, botId, repliedTo);
+  let instructions = system(guild, botName, profile);
+  const { text: context, people, images } = await asked(message, member, botId, repliedTo, profile);
   // Images first, as the API reads them best before what's said about them. Cached, as each round of tools sends them again
   const messages: Anthropic.MessageParam[] = [
     { role: 'user', content: images.length ? [...images, { type: 'text', text: context, cache_control: { type: 'ephemeral' } }] : context },
@@ -1369,7 +1373,7 @@ export async function answer(
       // Only before anything's been searched, so nothing refers to it
       if (round === 0 && (searchRefused(err, offered) || fewerStrict(err))) {
         offered = tools(guild);
-        instructions = system(guild, botName);
+        instructions = system(guild, botName, profile);
         return send();
       }
       // Once something's been done, it's said so, so they don't ask again and have it done twice. Tried, nothing was

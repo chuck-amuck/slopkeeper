@@ -7,6 +7,7 @@ import { db } from './db.ts';
 import { idSetting, isAllowed } from './settings.ts';
 import { features, startOrder } from './features/all.ts';
 import { timeInteraction } from './features/health.ts';
+import { followProfile } from './features/profileNames.ts';
 import { markStarted, servedGuilds } from './util.ts';
 import { stopTimers } from './schedule.ts';
 
@@ -24,6 +25,8 @@ async function join(guild: Guild, isNew: boolean) {
   // Guild-scoped commands update instantly, unlike global ones
   rememberCommands(guild.id, (await guild.commands.set(registered)).values());
   console.log(`${registered.length} commands registered in ${guild.name} (${guild.id})`);
+  // Named as its profile has it, from the start
+  if (isNew) await followProfile(guild);
   if (idSetting(guild.id, 'announceChannel')) return;
   console.log(`${guild.name} has no announce channel yet; a server admin needs to run /setup announce-channel`);
   // Nothing gets announced until an admin picks a channel, so tell a newly joined server where it'll see it

@@ -104,18 +104,18 @@ export async function handleSettings(guild: Guild, req: IncomingMessage, key?: s
   if (req.method === 'DELETE') {
     setSetting(guild.id, settingKey, undefined);
     logActivity(guild.id, by(), `Put ${LABELS[settingKey]} back to the default`);
-    await settled();
-    return {};
+    const renamed = await settled();
+    return renamed ? { warning: plain(guild, renamed) } : {};
   }
   if (req.method !== 'PUT') throw new Refused(405, 'Not here.');
   const checked = checkSetting(guild, settingKey, (await readJson(req)).value);
   if ('error' in checked) throw new Refused(400, plain(guild, checked.error));
   setSetting(guild.id, settingKey, checked.value);
   logActivity(guild.id, by(), `Set ${LABELS[settingKey]} to ${show(settingKey, setting(guild.id, settingKey))}`);
-  await settled();
+  const renamed = await settled();
   // The speech is made now, so a voice container that's down shows here rather than as silence in the room
   const speechProblem = settingKey === 'loopText' || settingKey === 'loopVoice' || settingKey === 'loopEffect' ? await loopSpeechProblem(guild) : null;
-  return { warning: (checked.warning && plain(guild, checked.warning)) || speechProblem || undefined };
+  return { warning: (checked.warning && plain(guild, checked.warning)) || speechProblem || (renamed && plain(guild, renamed)) || undefined };
 }
 
 /** What chat remembers about people: listed, and forgotten one person at a time */
