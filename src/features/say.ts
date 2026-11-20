@@ -552,6 +552,29 @@ export function heldWords(text: string): { text: string; held: Held[] } {
   return { text: plain, held };
 }
 
+/**
+ * Sounds typed without a vowel, which Piper spells out ("hm" was "aitch em", "grr" "gee are are"), as it says them. One
+ * typed long ("mmmm", "grrrr") keeps its letters, to be held like any drawn-out word (heldWords). "mm" after a number is
+ * millimetres, and HM and MM can be short for something, so those stay
+ */
+const SOUNDS: [RegExp, (word: string) => string][] = [
+  [/^(?:h+r*m+|m{2,})$/i, (word) => `h${'m'.repeat(Math.max(2, count(word, 'm')))}`],
+  [/^h+m+(?:ph|f)+$/i, () => 'humph'],
+  [/^sh{2,}$/i, (word) => (count(word, 'h') < 3 ? 'shush' : `shus${'h'.repeat(count(word, 'h'))}`)],
+  [/^br{2,}$/i, (word) => `bu${'r'.repeat(count(word, 'r'))}`],
+  [/^gr{2,}$/i, (word) => `gu${'r'.repeat(count(word, 'r'))}`],
+];
+
+const count = (word: string, letter: string) => word.toLowerCase().split(letter).length - 1;
+
+function sound(word: string) {
+  if (word.length <= 2 && word === word.toUpperCase()) return word;
+  const said = SOUNDS.find(([is]) => is.test(word))?.[1](word);
+  if (!said) return word;
+  if (word === word.toUpperCase()) return said.toUpperCase();
+  return word[0] === word[0].toUpperCase() ? said[0].toUpperCase() + said.slice(1) : said;
+}
+
 /** A full stop after these doesn't end a sentence for Piper either, so the next word isn't given a capital */
 const NOT_AN_END = new Set(['etc', 'vs', 'approx']);
 
@@ -561,6 +584,7 @@ const NOT_AN_END = new Set(['etc', 'vs', 'approx']);
  * - Dr., Mr., Mrs. and St. end a sentence, though it reads them right (Saint or Street by what's around it) without the stop
  * Drawn-out words ("nooo") are left as typed, to be held when they're said (heldWords)
  * - "$5" was "dollar five"
+ * - "hm", "mmm", "hmph", "shh", "brr" and "grr" were spelled out (SOUNDS)
  */
 export function readable(text: string) {
   return (
@@ -568,6 +592,7 @@ export function readable(text: string) {
       .replace(/([$£€])(\d{1,3}(?:,\d{3})+|\d+)(?:\.(\d{1,2}))?(k|m|bn|b)?(?![\d\p{L}]|[.,]\d)/giu, (_, sign: string, whole: string, part?: string, scale?: string) =>
         money(sign, whole, part?.padEnd(scale ? 1 : 2, '0'), scale),
       )
+      .replace(/(?<![\p{L}\p{N}'’-]|\d\s)\p{L}+(?![\p{L}\p{N}'’-])/gu, sound)
       // Mr. and Mrs. never end one. St. and Dr. after a name are Street and Drive, which can
       .replace(/\b(Mr|Mrs)\.(?=\s+\S)/g, '$1')
       .replace(/(?<!\p{Lu}\p{L}*\s+)\b(Dr|St)\.(?=\s+\p{Lu})/gu, '$1')

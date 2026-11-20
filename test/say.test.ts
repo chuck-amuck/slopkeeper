@@ -658,6 +658,21 @@ test('what Piper reads oddly is fixed first', () => {
   assert.equal(readable("it's $5, ok? $5, $10 or $20"), "it's 5 dollars, ok? 5 dollars, 10 dollars or 20 dollars");
   assert.equal(readable('$5kg and $5.5'), '$5kg and 5 dollars 50');
   // Titles don't end a sentence
+  // Sounds with no vowel were spelled out. A hum keeps its length, to be held
+  assert.equal(readable('hm, Hmm. mm mmm HMMM hrm'), 'hmm, Hmm. Hmm hmmm HMMM hmm');
+  assert.equal(readable('Hmph! hmmph, shhh Shh, brrr grr GRRR'), 'Humph! humph, shushhh Shush, burrr gurr GURRR');
+  // One typed long is held
+  assert.deepEqual(heldWords(readable('mmmm grrr shhhh brrrrr')), {
+    text: 'hmm gur shush bur',
+    held: [
+      { word: 'hmm', nth: 0, sound: 'end', vowel: -1, seconds: 0.8 },
+      { word: 'gur', nth: 0, sound: 'end', vowel: -1, seconds: 0.6 },
+      { word: 'shush', nth: 0, sound: 'end', vowel: -1, seconds: 0.8 },
+      { word: 'bur', nth: 0, sound: 'end', vowel: -1, seconds: 1 },
+    ],
+  });
+  // Millimetres, short forms, words with them in, and ones joined by a dash stay
+  assert.equal(readable('a 9 mm, 5mm or 3 mmm; HM and MM; hmmus mmkay mm-hmm shhh-ing'), 'a 9 mm, 5mm or 3 mmm; HM and MM; hmmus mmkay mm-hmm shhh-ing');
   assert.equal(readable('Dr. Smith met Mr. and Mrs. Jones on St. Mark’s'), 'Dr Smith met Mr and Mrs Jones on St Mark’s');
   assert.equal(readable('Ms. Lee and Ms Park'), 'Miz Lee and Miz Park');
   assert.equal(readable('the end, Dr.'), 'the end, Dr.');

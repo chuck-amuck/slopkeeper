@@ -10,7 +10,7 @@ The bot reads out what people type, in a voice they pick. It needs the host's [v
 - Mentions are read as names, custom emoji by name, and links as "link". Spoilers and code blocks are skipped when reading a message.
 - There's a short pause between sentences, 0.2 seconds by default.
 - A drawn-out word is held: "nooooo" holds the o, and "yesss" the s. Three letters hold it for 0.6 seconds and each one more adds 0.2, up to 1.5 seconds, longer when the speech is slower.
-- Some text is tidied first, as the voices read it oddly: "$5.50" is said "5 dollars 50" (pounds and euros too), "..." is a pause, and "Dr." and "Mr." don't end a sentence. Text in brackets is read as it's typed: the voices can't act out a stage direction like "(whispers)".
+- Some text is tidied first, as the voices read it oddly: "$5.50" is said "5 dollars 50" (pounds and euros too), "..." is a pause, "Dr." and "Mr." don't end a sentence, and sounds like "hm", "mmm", "hmph", "shh", "brr" and "grr" are said rather than spelled out. Text in brackets is read as it's typed: the voices can't act out a stage direction like "(whispers)".
 - A line can be up to 4,000 characters by default (about 5 minutes), and 6,000 at most. A long line takes a few seconds to start.
 - Every line goes in the Activity tab with who said it, cut to its first 200 characters.
 - A line said again within half an hour, in the same voice, effect, speed and pause, plays straight away.
