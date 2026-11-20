@@ -1,4 +1,5 @@
 import './helpers.ts';
+import { DiscordAPIError } from 'discord.js';
 import assert from 'node:assert/strict';
 import { after, beforeEach, mock, test, type TestContext } from 'node:test';
 import { execFileSync, spawnSync } from 'node:child_process';
@@ -35,6 +36,7 @@ import {
   uploadFile,
   removeTrack,
   resetMusic,
+  postMusicPanel,
   restoreCards,
   resumeAfterRestart,
   shuffleQueue,
@@ -48,7 +50,7 @@ import {
 } from '../src/features/music.ts';
 import { soundboard } from '../src/features/soundboard.ts';
 import { stopPlayback } from '../src/features/voiceAudio.ts';
-import { setSetting } from '../src/settings.ts';
+import { setSetting, setting } from '../src/settings.ts';
 import type { Track } from '../src/spotify.ts';
 
 // yt-dlp is ready
@@ -1108,10 +1110,11 @@ const person = (guildId: string, channel: unknown = null, roles: string[] = []) 
 });
 
 /** Presses a button on a music card */
-async function pressCard(guild: import('discord.js').Guild, customId: string, member = person(guild.id)) {
+async function pressCard(guild: import('discord.js').Guild, customId: string, member = person(guild.id), messageId = 'card') {
   const out = { updates: [] as any[], replies: [] as any[], followUps: [] as any[] };
   await music.onButton!({
     customId,
+    message: { id: messageId },
     guildId: guild.id,
     guild,
     member,
@@ -1131,7 +1134,7 @@ test('the card shows what’s playing, how far in, and a page of what’s next',
   const { id, guild, channel } = server();
   let card = cardJson(musicCard(id));
   assert.equal(card.embed.description, 'The queue is empty. Add songs with /music play.');
-  assert.deepEqual(card.buttons.filter(([, , off]) => off).map(([, label]) => label), ['Play', 'Skip', 'Shuffle', 'Stop'], 'nothing to control');
+  assert.deepEqual(card.buttons.filter(([cid, , off]) => off && cid !== 'music:volume').map(([, label]) => label), ['Play', 'Skip', 'Shuffle', 'Stop'], 'nothing to control');
 
   addTracks(id, Array.from({ length: 23 }, (_, n) => song(n + 1, 180_000)), 'u1');
   card = cardJson(musicCard(id));
@@ -1146,12 +1149,12 @@ test('the card shows what’s playing, how far in, and a page of what’s next',
   assert.equal(card.embed.description, `Band · 3:00\nEnds <t:${Math.round((Date.now() + 120_000) / 1000)}:R> in <#voice>`);
   assert.equal(card.embed.fields![0].name, 'Up next: 22 songs, 66 min');
   assert.match(card.embed.fields![0].value, /^1\. \*\*Song 2\*\*/);
-  assert.deepEqual(card.buttons.map(([idText]) => idText), ['music:toggle:0', 'music:skip:0', 'music:shuffle:0', 'music:stop:0', 'music:show:0', 'music:show:-1', 'music:page', 'music:show:1', 'music:autoplay:0']);
+  assert.deepEqual(card.buttons.map(([idText]) => idText), ['music:toggle:0', 'music:skip:0', 'music:shuffle:0', 'music:stop:0', 'music:show:0', 'music:show:-1', 'music:page', 'music:show:1', 'music:autoplay:0', 'music:quieter:0', 'music:volume', 'music:louder:0']);
   assert.equal(card.buttons[0][1], 'Pause');
 
   card = cardJson(musicCard(id, 9));
   assert.match(card.embed.fields![0].value, /^21\. \*\*Song 22\*\*/, 'a page past the end shows the last');
-  assert.deepEqual(card.buttons.slice(5).map(([, label, off]) => [label, off]), [['Earlier', false], ['Page 3 of 3', true], ['Later', true], ['Autoplay: off', false]]);
+  assert.deepEqual(card.buttons.slice(5, 9).map(([, label, off]) => [label, off]), [['Earlier', false], ['Page 3 of 3', true], ['Later', true], ['Autoplay: off', false]]);
 
   pauseMusic(id);
   card = cardJson(musicCard(id));
@@ -1248,7 +1251,7 @@ test('after a restart the card is picked up again and redrawn, and one that was 
         isTextBased: () => true,
         messages: {
           edit: async (messageId: string, r: unknown) => {
-            if (deleted) throw new Error('Unknown Message');
+            if (deleted) throw new DiscordAPIError({ code: 10008, message: 'Unknown Message' }, 10008, 404, 'PATCH', '/x', {} as never);
             edits.push([messageId, r]);
           },
         },
@@ -1515,13 +1518,144 @@ test('Autoplay passes over songs too short or long, doesn’t bring back ones ta
   assert.equal(musicState(id).phase, 'stopped');
 });
 
+const unknownMessage = () => new DiscordAPIError({ code: 10008, message: 'Unknown Message' }, 10008, 404, 'PATCH', '/x', {} as never);
+
+test('a posted music panel follows the music, stays put when /music play posts its card, and is let go only once deleted', async (t) => {
+  const { id, guild, channel } = server();
+  const edits: [string, any][] = [];
+  const failures = new Map<string, Error>();
+  const client = {
+    channels: {
+      fetch: async () => ({
+        isTextBased: () => true,
+        messages: {
+          edit: async (messageId: string, r: unknown) => {
+            const failure = failures.get(messageId);
+            if (failure) throw failure;
+            edits.push([messageId, r]);
+          },
+        },
+      }),
+    },
+  };
+  const text = { id: 'text', guild: { id }, send: async (r: unknown) => (edits.push(['posted', r]), { id: 'panel-1' }) };
+  await postMusicPanel(client as never, text as never);
+  assert.equal(cardJson(edits[0][1]).embed.description, 'The queue is empty. Add songs with /music play.');
+  const panels = () => (db.prepare('SELECT message_id, channel_id FROM music_panels WHERE guild_id = ?').all(id) as { message_id: string; channel_id: string }[]).map((r) => [r.message_id, r.channel_id]);
+  assert.deepEqual(panels(), [['panel-1', 'text']]);
+
+  // /music play posts its card, twice: the first card moves along, the panel doesn't
+  addTracks(id, [song(1), song(2)], 'u1');
+  const play = (cardId: string) =>
+    music.commands![0].run({
+      inCachedGuild: () => true,
+      guildId: id,
+      guild,
+      client,
+      member: person(id, channel),
+      user: { id: 'u1' },
+      deferred: true,
+      options: { getSubcommand: () => 'play', getString: () => null, getBoolean: () => null },
+      deferReply: async () => {},
+      editReply: async () => ({ channelId: 'text', id: cardId }),
+    } as never);
+  await play('card-1');
+  await play('card-2');
+  await sleep(1_700);
+  const latest = (messageId: string) => edits.findLast(([m]) => m === messageId)?.[1];
+  assert.equal(latest('card-1').components.length, 0, 'the older card loses its buttons');
+  assert.equal(cardJson(latest('panel-1')).embed.title, 'Song 1', 'the panel shows the song playing');
+  assert.equal(cardJson(latest('card-2')).embed.title, 'Song 1');
+
+  // Discord not answering keeps it, said once, for the next change to try again
+  const errors = t.mock.method(console, 'error', () => {});
+  failures.set('panel-1', new Error('socket hang up'));
+  addTracks(id, [song(3)], 'u1');
+  await sleep(1_700);
+  assert.deepEqual(panels(), [['panel-1', 'text']]);
+  assert.equal(errors.mock.callCount(), 1);
+
+  // Deleted in Discord: let go
+  failures.set('panel-1', unknownMessage());
+  addTracks(id, [song(4)], 'u1');
+  await sleep(1_700);
+  assert.deepEqual(panels(), []);
+  assert.equal(errors.mock.callCount(), 1);
+});
+
+test('the card’s volume buttons step the music volume by 5%, from 0 to 200%, for the DJs', async () => {
+  const { id, guild } = server();
+  const button = (out: { updates: any[] }, customId: string) => cardJson(out.updates[0]).buttons.find(([cid]) => cid === customId)!;
+  setSetting(id, 'musicVolume', 18);
+  let out = await pressCard(guild, 'music:louder:0');
+  assert.equal(setting(id, 'musicVolume'), 20, 'to the next step up');
+  assert.equal(button(out, 'music:volume')[1], 'Volume 20%');
+  assert.equal(recentActivity(id, 1)[0].action, 'Set Music volume to 20%');
+  await pressCard(guild, 'music:quieter:0');
+  assert.equal(setting(id, 'musicVolume'), 15);
+
+  setSetting(id, 'musicVolume', 3);
+  out = await pressCard(guild, 'music:quieter:0');
+  assert.equal(setting(id, 'musicVolume'), 0);
+  assert.equal(button(out, 'music:quieter:0')[2], true, 'can’t go below nothing');
+  setSetting(id, 'musicVolume', 198);
+  out = await pressCard(guild, 'music:louder:0');
+  assert.equal(setting(id, 'musicVolume'), 200);
+  assert.equal(button(out, 'music:louder:0')[2], true, 'can’t go above 200%');
+
+  setSetting(id, 'musicDjRole', 'dj');
+  out = await pressCard(guild, 'music:quieter:0');
+  assert.match(out.replies[0].content, /^Only <@&dj>/);
+  assert.equal(setting(id, 'musicVolume'), 200);
+});
+
+test('/music panel posts one here for anyone, and says so when the bot can’t see the channel to keep it up to date', async () => {
+  const { id, guild } = server();
+  setSetting(id, 'musicDjRole', 'dj');
+  const replies: any[] = [];
+  const followUps: any[] = [];
+  let hidden = false;
+  const client = {
+    channels: {
+      fetch: async () => {
+        if (hidden) throw new DiscordAPIError({ code: 50001, message: 'Missing Access' }, 50001, 403, 'GET', '/x', {} as never);
+        return { isTextBased: () => true, messages: { edit: async () => {} } };
+      },
+    },
+  };
+  const panel = (messageId: string) =>
+    music.commands![0].run({
+      inCachedGuild: () => true,
+      guildId: id,
+      guild,
+      client,
+      member: person(id),
+      user: { id: 'u1' },
+      options: { getSubcommand: () => 'panel' },
+      reply: async (r: unknown) => (replies.push(r), { resource: { message: { id: messageId, channelId: 'text' } } }),
+      followUp: async (r: unknown) => followUps.push(r),
+    } as never);
+  await panel('panel-a');
+  assert.equal(cardJson(replies[0]).buttons[0][0], 'music:toggle:0', 'posted without the DJ role');
+  assert.equal(followUps.length, 0);
+  const errors = mock.method(console, 'error', () => {});
+  hidden = true;
+  await panel('panel-b');
+  errors.mock.restore();
+  assert.match(followUps[0].content, /can’t follow the music, because I can’t see this channel/);
+  assert.deepEqual(
+    (db.prepare('SELECT message_id FROM music_panels WHERE guild_id = ?').all(id) as { message_id: string }[]).map((r) => r.message_id),
+    ['panel-a', 'panel-b'],
+  );
+});
+
 test('the card and /music autoplay switch Autoplay, for the DJs, and the card marks its songs', async () => {
   const { id, guild, channel } = server();
   addTracks(id, [song(1)], 'u1');
   await startMusic(guild, channel);
   let out = await pressCard(guild, 'music:autoplay:0');
   await settle();
-  assert.equal(cardJson(out.updates[0]).buttons.at(-1)![1], 'Autoplay: on');
+  assert.equal(cardJson(out.updates[0]).buttons.find(([cid]) => cid === 'music:autoplay:0')![1], 'Autoplay: on');
   const card = cardJson(musicCard(id));
   assert.match(card.embed.fields![0].value, /^-# ♾️ Autoplay, like Song 1\n1\. \*\*Like 0001 1\*\* – Band · 3:20$/m);
 
@@ -1539,7 +1673,7 @@ test('the card and /music autoplay switch Autoplay, for the DJs, and the card ma
   await autoplay(null);
   assert.deepEqual(titles(id), ['Song 1'], 'switched off');
   await autoplay(false);
-  assert.equal(cardJson(musicCard(id)).buttons.at(-1)![1], 'Autoplay: off');
+  assert.equal(cardJson(musicCard(id)).buttons.find(([cid]) => cid === 'music:autoplay:0')![1], 'Autoplay: off');
   setSetting(id, 'musicDjRole', 'dj');
   await autoplay(true);
   out = await pressCard(guild, 'music:autoplay:0');

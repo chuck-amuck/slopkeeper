@@ -2,10 +2,12 @@ import {
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
+  DiscordAPIError,
   EmbedBuilder,
   InteractionContextType,
   MessageFlags,
   PermissionFlagsBits,
+  RESTJSONErrorCodes,
   SlashCommandBuilder,
   type AutocompleteInteraction,
   type ButtonInteraction,
@@ -13,6 +15,7 @@ import {
   type Client,
   type Guild,
   type GuildMember,
+  type GuildTextBasedChannel,
   type VoiceBasedChannel,
 } from 'discord.js';
 import { randomBytes } from 'node:crypto';
@@ -30,7 +33,7 @@ import { coverFor, isShortLink, MOST_FROM_LINK, myPlaylists, parseLink, pick, pl
 import { artistSongsFor, knownTrack, searchReady, searchSongs, searchSource, sourceNames, YTM_ALBUM_REF, ytmAlbumTracks } from '../musicSearch.ts';
 import type { Feature } from '../types.ts';
 import { humansIn } from '../util.ts';
-import { botChannelId, onMusicCheck, onPlaybackStop, playLong } from './voiceAudio.ts';
+import { applyMusicVolume, botChannelId, onMusicCheck, onPlaybackStop, playLong } from './voiceAudio.ts';
 import { EXTENSIONS } from './soundLibrary.ts';
 import { songLevel, songMultiplier } from '../songLevels.ts';
 
@@ -1614,14 +1617,23 @@ export function musicCard(guildId: string, page = 0) {
     );
   }
   more.addComponents(button('autoplay', autoplay ? 'Autoplay: on' : 'Autoplay: off', '♾️', false, autoplay ? ButtonStyle.Primary : ButtonStyle.Secondary));
-  return { embeds: [embed], components: [controls, more] };
+  const volume = setting(guildId, 'musicVolume');
+  const loudness = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    button('quieter', 'Quieter', '🔉', volume <= 0),
+    new ButtonBuilder().setCustomId('music:volume').setLabel(`Volume ${volume}%`).setStyle(ButtonStyle.Secondary).setDisabled(true),
+    button('louder', 'Louder', '🔊', volume >= MOST_VOLUME),
+  );
+  return { embeds: [embed], components: [controls, more, loudness] };
 }
+
+// The card's volume buttons step by this, up to /setup's limit
+const VOLUME_STEP = 5;
+const MOST_VOLUME = 200;
 
 interface Card {
   client: Client;
   channelId: string;
   messageId: string;
-  timer?: NodeJS.Timeout;
 }
 
 /** The card from the latest /music play in each server, which is redrawn as the music changes */
@@ -1648,15 +1660,48 @@ export function restoreCards(client: Client) {
   }
 }
 
-async function editCard(card: Card, edit: ReturnType<typeof musicCard> | { embeds: EmbedBuilder[]; components: [] }) {
-  const channel = await Promise.resolve()
-    .then(() => card.client.channels.fetch(card.channelId))
-    .catch(() => null);
-  if (!channel?.isTextBased()) return false;
-  return channel.messages.edit(card.messageId, edit).then(
-    () => true,
-    () => false,
+const stuckCards = new Map<string, string>();
+
+/**
+ * Edits a card or panel. 'gone' when its message or channel was deleted, so it can be let go; 'failed' for anything
+ * else, like Discord not answering, which the next change tries again
+ */
+async function editCard(card: Card, edit: ReturnType<typeof musicCard> | { embeds: EmbedBuilder[]; components: [] }): Promise<'ok' | 'gone' | 'failed'> {
+  try {
+    const channel = await card.client.channels.fetch(card.channelId);
+    if (!channel?.isTextBased()) return 'gone';
+    await channel.messages.edit(card.messageId, edit);
+    stuckCards.delete(card.messageId);
+    return 'ok';
+  } catch (err) {
+    const code = err instanceof DiscordAPIError ? err.code : null;
+    if (code === RESTJSONErrorCodes.UnknownMessage || code === RESTJSONErrorCodes.UnknownChannel) return 'gone';
+    const reason = err instanceof Error ? err.message : String(err);
+    if (stuckCards.get(card.messageId) !== reason) console.error(`Music card ${card.messageId} in channel ${card.channelId} can’t be updated:`, reason);
+    stuckCards.set(card.messageId, reason);
+    return 'failed';
+  }
+}
+
+/** The client panels are redrawn through, which is the bot's: known once music is set up, or a panel is posted */
+let panelClient: Client | null = null;
+const panelsOf = (guildId: string) =>
+  db.prepare('SELECT message_id, channel_id, page FROM music_panels WHERE guild_id = ? ORDER BY rowid').all(guildId) as { message_id: string; channel_id: string; page: number }[];
+
+export function trackMusicPanel(messageId: string, guildId: string, channelId: string, page = 0) {
+  db.prepare('INSERT INTO music_panels (message_id, guild_id, channel_id, page) VALUES (?, ?, ?, ?) ON CONFLICT(message_id) DO UPDATE SET page = excluded.page').run(
+    messageId,
+    guildId,
+    channelId,
+    page,
   );
+}
+
+/** Posts a music panel from outside Discord, which stays where it is and follows the music */
+export async function postMusicPanel(client: Client, channel: GuildTextBasedChannel) {
+  panelClient ??= client;
+  const message = await channel.send({ ...musicCard(channel.guild.id), allowedMentions: { parse: [] } });
+  trackMusicPanel(message.id, channel.guild.id, channel.id);
 }
 
 /** Keeps a newly posted card up to date. The card it takes over from loses its buttons, so only one is live */
@@ -1665,26 +1710,38 @@ function adoptCard(guildId: string, card: Card) {
   cards.set(guildId, card);
   saveCards();
   if (!old || old.messageId === card.messageId) return;
-  clearTimeout(old.timer);
   void editCard(old, { embeds: [new EmbedBuilder().setColor(0x99aab5).setDescription('🎵 The music card moved further down.')], components: [] });
 }
 
-/** Redraws the server's live card soon, once whatever changed has settled, and tells the web UI at once */
+const redraws = new Map<string, NodeJS.Timeout>();
+
+/** Redraws the server's live card and its panels soon, once whatever changed has settled, and tells the web UI at once */
 function cardChanged(guildId: string) {
   feeds.music.changed(guildId);
-  const card = cards.get(guildId);
-  if (!card || card.timer) return;
-  card.timer = setTimeout(() => {
-    card.timer = undefined;
-    void editCard(card, musicCard(guildId)).then((ok) => {
-      // A deleted card, or one in a channel the bot lost, is let go
-      if (!ok && cards.get(guildId) === card) {
-        cards.delete(guildId);
-        saveCards();
-      }
-    });
+  if (redraws.has(guildId)) return;
+  const timer = setTimeout(() => {
+    redraws.delete(guildId);
+    void redrawCards(guildId);
   }, CARD_DELAY_MS);
-  card.timer.unref();
+  timer.unref();
+  redraws.set(guildId, timer);
+}
+
+/** Redraws the cards when something they show changed outside the music, like its volume */
+export const musicCardsChanged = (guildId: string) => cardChanged(guildId);
+
+async function redrawCards(guildId: string) {
+  const card = cards.get(guildId);
+  // A deleted card is let go
+  if (card && (await editCard(card, musicCard(guildId))) === 'gone' && cards.get(guildId) === card) {
+    cards.delete(guildId);
+    saveCards();
+  }
+  if (!panelClient) return;
+  for (const p of panelsOf(guildId)) {
+    const panel = { client: panelClient, channelId: p.channel_id, messageId: p.message_id };
+    if ((await editCard(panel, musicCard(guildId, p.page))) === 'gone') db.prepare('DELETE FROM music_panels WHERE message_id = ?').run(p.message_id);
+  }
 }
 
 export const OUTSIDE_DJ = (guildId: string) => `Only <@&${idSetting(guildId, 'musicDjRole')}> and people with **Manage Server** can control the music.`;
@@ -1693,7 +1750,11 @@ export const OUTSIDE_DJ = (guildId: string) => `Only <@&${idSetting(guildId, 'mu
 async function onCardButton(i: ButtonInteraction<'cached'>) {
   const [, action, pageText] = i.customId.split(':');
   const page = Number(pageText) || 0;
-  if (action === 'show') return i.update(musicCard(i.guildId, page));
+  if (action === 'show') {
+    // A panel stays on the page it was turned to
+    db.prepare('UPDATE music_panels SET page = ? WHERE message_id = ?').run(page, i.message.id);
+    return i.update(musicCard(i.guildId, page));
+  }
   if (!canControl(i.member)) return i.reply({ content: OUTSIDE_DJ(i.guildId), flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
 
   if (action === 'shuffle') {
@@ -1702,6 +1763,16 @@ async function onCardButton(i: ButtonInteraction<'cached'>) {
   }
   if (action === 'autoplay') {
     setAutoplay(i.guildId, !setting(i.guildId, 'musicAutoplay'), i.user.id);
+    return i.update(musicCard(i.guildId, page));
+  }
+  if (action === 'quieter' || action === 'louder') {
+    // To the next multiple of the step, so 18% goes to 20% or 15%
+    const now = setting(i.guildId, 'musicVolume');
+    const next = action === 'louder' ? Math.min(MOST_VOLUME, Math.floor(now / VOLUME_STEP) * VOLUME_STEP + VOLUME_STEP) : Math.max(0, Math.ceil(now / VOLUME_STEP) * VOLUME_STEP - VOLUME_STEP);
+    setSetting(i.guildId, 'musicVolume', next);
+    applyMusicVolume(i.guildId);
+    logActivity(i.guildId, i.user.id, `Set Music volume to ${next}%`);
+    cardChanged(i.guildId);
     return i.update(musicCard(i.guildId, page));
   }
   if (action === 'stop') {
@@ -1787,6 +1858,18 @@ async function run(i: ChatInputCommandInteraction<'cached'>) {
   // What changes the music for everyone is said in the channel, so people can see who did it
   const announce = (content: string) => i.reply({ content, allowedMentions: { parse: [] } });
   if (sub === 'queue') return i.reply({ ...musicCard(i.guildId), flags: MessageFlags.Ephemeral });
+  if (sub === 'panel') {
+    panelClient ??= i.client;
+    const response = await i.reply({ ...musicCard(i.guildId), withResponse: true, allowedMentions: { parse: [] } });
+    const message = response.resource?.message;
+    if (!message) return;
+    trackMusicPanel(message.id, i.guildId, message.channelId);
+    // Slash commands work in channels the bot can't see, but it can't keep a panel up to date there
+    if ((await editCard({ client: i.client, channelId: message.channelId, messageId: message.id }, musicCard(i.guildId))) !== 'ok') {
+      await i.followUp({ content: 'This panel works, but it can’t follow the music, because I can’t see this channel. If it’s private, add me to it under **Edit Channel → Permissions**.', flags: MessageFlags.Ephemeral });
+    }
+    return;
+  }
   if (!canControl(i.member)) return reply(OUTSIDE_DJ(i.guildId));
 
   if (sub === 'play') {
@@ -1887,6 +1970,7 @@ export const music: Feature = {
         .addSubcommand((s) => s.setName('pause').setDescription('Pause the music, keeping the queue'))
         .addSubcommand((s) => s.setName('skip').setDescription('Skip to the next song'))
         .addSubcommand((s) => s.setName('queue').setDescription('Show what’s playing and what’s next'))
+        .addSubcommand((s) => s.setName('panel').setDescription('Post what’s playing here, with buttons, kept up to date as the music changes'))
         .addSubcommand((s) => s.setName('shuffle').setDescription('Put the songs waiting in a random order'))
         .addSubcommand((s) =>
           s
@@ -1911,7 +1995,10 @@ export const music: Feature = {
     autoplayToEnd();
     if (!config.musicUrl || !config.musicToken) return;
     exiting = false;
+    panelClient = client;
     restoreCards(client);
+    // The music may have moved on while the bot was away
+    for (const { guild_id } of db.prepare('SELECT DISTINCT guild_id FROM music_panels').all() as { guild_id: string }[]) cardChanged(guild_id);
     saver = setInterval(() => {
       if (sessions.size || !wroteNone) saveSessions();
     }, SAVE_EVERY_MS).unref();
@@ -1939,7 +2026,8 @@ export const music: Feature = {
   shutdown() {
     clearInterval(saver);
     for (const upload of uploads.values()) clearTimeout(upload.timer);
-    for (const card of cards.values()) clearTimeout(card.timer);
+    for (const timer of redraws.values()) clearTimeout(timer);
+    redraws.clear();
     listening?.abort();
     for (const s of [...sessions.values()]) endSession(s);
   },
@@ -1954,8 +2042,11 @@ export function resetMusic(next: PlayerStatus | null = null) {
   fetching.clear();
   toppingUp.clear();
   stillLooking.clear();
-  for (const card of cards.values()) clearTimeout(card.timer);
+  for (const timer of redraws.values()) clearTimeout(timer);
+  redraws.clear();
   cards.clear();
+  stuckCards.clear();
+  panelClient = null;
   for (const s of sessions.values()) s.turn++;
   sessions.clear();
   status = next;

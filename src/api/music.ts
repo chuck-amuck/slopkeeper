@@ -2,12 +2,13 @@ import { type Guild } from 'discord.js';
 import { type IncomingMessage } from 'node:http';
 import path from 'node:path';
 import { logActivity } from '../activity.ts';
-import { addTracks, AUTOPLAY, clearQueue, discardUpload, fileProblem, keepTrack, MOST_FILE_BYTES, moveTrack, musicChannelFor, musicState, pauseMusic, queueFrom, queueOf, queueUpload, removeTrack, seekMusic, shuffleQueue, skipMusic, startMusic, stopMusic, uploadFile } from '../features/music.ts';
+import { addTracks, AUTOPLAY, clearQueue, discardUpload, fileProblem, keepTrack, MOST_FILE_BYTES, moveTrack, musicChannelFor, musicState, pauseMusic, postMusicPanel, queueFrom, queueOf, queueUpload, removeTrack, seekMusic, shuffleQueue, skipMusic, startMusic, stopMusic, uploadFile } from '../features/music.ts';
 import { feeds } from '../changes.ts';
 import { setting } from '../settings.ts';
 import { COVER_HOSTS, SOURCES, searchSongs, YTM_SONG } from '../musicSearch.ts';
 import { myPlaylists, playlistsReady, SpotifyError, type Track } from '../spotify.ts';
-import { type Ask, Refused, by, plain, readJson, refuse, saveBody, voiceChannelFor, whoDid } from './common.ts';
+import { postedPanels } from '../postedPanels.ts';
+import { type Ask, Refused, by, cantPost, plain, postingChannel, readJson, refuse, saveBody, takeDown, voiceChannelFor, whoDid } from './common.ts';
 
 // The management API for the music queue and player
 
@@ -174,6 +175,15 @@ export async function handleMusic(guild: Guild, req: IncomingMessage, url: URL, 
 }
 
 export async function musicRoutes({ client, guild, req, res, url, section, rest }: Ask) {
+  // Panels: now playing with its buttons, posted to stay in a channel
+  if (section === 'music' && rest[0] === 'panels' && rest.length === 1 && req.method === 'POST') {
+    const channel = postingChannel(guild, (await readJson(req)).channelId);
+    await postMusicPanel(client, channel).catch(cantPost);
+    logActivity(guild.id, by(), `Posted a music panel in <#${channel.id}>`);
+    return {};
+  }
+  if (section === 'music' && rest[0] === 'panels' && rest.length === 1 && req.method === 'GET') return postedPanels(guild, 'music_panels');
+  if (section === 'music' && rest[0] === 'panels' && rest.length <= 2 && req.method === 'DELETE') return takeDown(client, guild, 'music_panels', 'music', rest[1]);
   if (section === 'music') return handleMusic(guild, req, url, rest);
   throw new Refused(404, 'Not found.');
 }

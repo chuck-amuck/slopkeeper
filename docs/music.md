@@ -9,11 +9,14 @@ The bot plays music in voice from a queue everyone shares. Songs are found on Sp
 | `/music play [song] [next] [shuffle]` | Adds a song, album or playlist, by search or by a Spotify, YouTube or SoundCloud link, and starts the music in your voice channel. `next` puts it after the song playing, and `shuffle` adds an album or playlist in random order. With no song, it carries on where it paused. |
 | `/music pause`, `skip`, `stop` | Said in the channel, so everyone sees who did it. **Stop** clears the queue too. |
 | `/music queue` | The music card, just for you. |
+| `/music panel` | Posts a music panel in this channel, which stays and keeps up with the music. Anyone can post one. |
 | `/music remove song` | Takes a song out of the queue, numbered as the card shows it. |
 | `/music shuffle` | Shuffles the songs waiting, leaving the one playing and Autoplay's songs alone. |
 | `/music autoplay [on]` | Turns Autoplay on or off. |
 
-`/music play` answers with a music card: the song playing, when it ends and what's next, with **Play/Pause**, **Skip**, **Shuffle**, **Stop**, **Refresh** and **Autoplay** buttons. It keeps up as songs change, and a newer card takes over from it.
+`/music play` answers with a music card: the song playing, when it ends and what's next, with **Play/Pause**, **Skip**, **Shuffle**, **Stop**, **Refresh** and **Autoplay** buttons, and 🔉 **Quieter** and 🔊 **Louder**, which change the music volume 5% at a time. It keeps up as songs change, and a newer card takes over from it.
+
+A **music panel** is the same card posted to stay: put one in a handy channel and pin it, and it keeps up with the music, whoever plays it and from wherever. Post one with `/music panel`, or **Post panel** on the web UI's Music tab, which asks for the channel. **Posted panels** there lists them, with a link to each, and **Take down** deletes one so the bot stops keeping it up to date. The buttons on a panel are for the DJ role, as everywhere else.
 
 The web UI's **Music** tab has all of this, plus search results to pick from, a progress bar to jump within a song, a volume slider and drag to reorder. Its **Upload** adds an audio file of up to 60 MB and 20 minutes, which plays like any song, even while the music container is down, and is deleted once it has played.
 

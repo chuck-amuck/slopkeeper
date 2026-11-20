@@ -2852,6 +2852,11 @@ textarea {
   border-top: 1px solid var(--line);
 }
 
+/* Posting the panel to Discord, apart from the controls at the end of the row */
+.now-panels {
+  margin-left: auto;
+}
+
 .music-search {
   display: grid;
   gap: 10px;

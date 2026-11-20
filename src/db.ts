@@ -195,6 +195,13 @@ db.exec(`
     channel_id TEXT NOT NULL,
     page INTEGER NOT NULL DEFAULT 0
   );
+  -- Music cards posted to stay, kept up to date as the music changes, unlike the one /music play moves along
+  CREATE TABLE IF NOT EXISTS music_panels (
+    message_id TEXT PRIMARY KEY,
+    guild_id TEXT NOT NULL,
+    channel_id TEXT NOT NULL,
+    page INTEGER NOT NULL DEFAULT 0
+  );
 
   CREATE TABLE IF NOT EXISTS game_facts (
     key TEXT PRIMARY KEY,

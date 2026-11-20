@@ -87,6 +87,8 @@ It applies the same rules as `/sound` and `/setup`, and every request needs an `
 | `DELETE /guilds/:id/music/queue` | Empties the queue, apart from the song playing |
 | `POST /guilds/:id/music/play` | Starts or carries on in a voice channel: `{ "channelId": "..." }` |
 | `POST /guilds/:id/music/pause`, `skip` and `stop` | As `/music` does. Stop clears the queue |
+| `POST /guilds/:id/music/panels` | Posts a music panel: `{ "channelId": "..." }` |
+| `GET /guilds/:id/music/panels` and `DELETE /guilds/:id/music/panels[/:messageId]` | Lists the posted music panels, or takes them down, as `sound-panels` does |
 | `GET /guilds/:id/game-nights` | Lists upcoming game nights and repeating series, and what a new night can be set to |
 | `POST /guilds/:id/game-nights` | Plans a night as `/gamenight plan` does: `{ "game", "when", "channelId", "hostId", "voiceChannelId", "details", "repeat" }`, where `repeat` is 7, 14 or null |
 | `GET /guilds/:id/game-nights/:night/friends` | Who's going but isn't Steam friends yet, with profile links: `strangers`, `unknown` where both lists are private, and `unlinked` |

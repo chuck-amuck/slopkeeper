@@ -2,13 +2,15 @@ import './helpers.ts';
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, readdirSync, truncateSync, writeFileSync } from 'node:fs';
 import { test } from 'node:test';
+import { PermissionFlagsBits } from 'discord.js';
 import path from 'node:path';
 import { config } from '../src/config.ts';
+import { db } from '../src/db.ts';
 import { recentActivity } from '../src/activity.ts';
 import { addTracks, AUTOPLAY, MOST_FILES_BYTES } from '../src/features/music.ts';
 import { resetMusicSearch } from '../src/musicSearch.ts';
 import { resetSpotify } from '../src/spotify.ts';
-import { GUILD, call, guild, ok, refused, wav } from './apiFixture.ts';
+import { GUILD, call, guild, ok, panelDeletes, refused, sent, setFake, wav } from './apiFixture.ts';
 
 // The music queue
 
@@ -214,4 +216,24 @@ test('Play next with nothing queued plays the song now, in the channel the page 
   music = await add(4, { next: true, channelId: '701' });
   assert.match(music.message, /^Added Song 4 to play next\. Music isn’t set up on this bot\./, 'it tried to play, which this bot can’t');
   await ok(`/guilds/${GUILD}/music/queue`, { method: 'DELETE' });
+});
+
+test('a music panel posts from the page, is listed with a link, and taken down again', async () => {
+  db.exec('DELETE FROM music_panels');
+  await ok(`/guilds/${GUILD}/music/panels`, { method: 'POST', json: { channelId: '111' } });
+  assert.equal(sent.at(-1)!.channelId, '111');
+  assert.ok(sent.at(-1)!.message.components.some((row: any) => row.toJSON().components.some((c: any) => c.custom_id === 'music:louder:0')));
+  assert.equal(recentActivity(GUILD, 1)[0].action, 'Posted a music panel in <#111>');
+  const [panel] = await ok(`/guilds/${GUILD}/music/panels`);
+  assert.deepEqual(panel, { messageId: panel.messageId, channelId: '111', channel: 'first', url: `https://discord.com/channels/${GUILD}/111/${panel.messageId}` });
+
+  assert.deepEqual(await ok(`/guilds/${GUILD}/music/panels/${panel.messageId}`, { method: 'DELETE' }), { removed: 1, failed: [] });
+  assert.deepEqual(panelDeletes, [panel.messageId]);
+  assert.equal(recentActivity(GUILD, 1)[0].action, 'Took down the music panel in <#111>');
+  assert.deepEqual(await ok(`/guilds/${GUILD}/music/panels`), []);
+
+  // Not where the bot can't post
+  setFake({ permitted: [PermissionFlagsBits.ViewChannel] });
+  await refused(400, `/guilds/${GUILD}/music/panels`, { method: 'POST', json: { channelId: '111' } });
+  assert.deepEqual(await ok(`/guilds/${GUILD}/music/panels`), []);
 });

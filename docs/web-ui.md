@@ -18,7 +18,7 @@ Everything updates live, whoever changed it and wherever, and a change waits whi
 
 **Soundboard:** **Play** has the volumes, a box to say something (with saved lines and a preview in headphones), a search, and the sounds as big buttons in their groups. **/** (or, on a wide screen, just typing) jumps to the search and **Enter** plays the first match. The star adds a sound to **Favourites**. **Manage** is where sounds are added, from files, folders or [a link](soundboard.md#adding-a-sound-from-a-link), and renamed, grouped, trimmed, turned up or down, downloaded, deleted and put on Discord's soundboard. **Cut another** makes a new sound from another part of the same video or sound. **Recently deleted** brings sounds back. Drag the handle at the start of a row to move a sound, or use Space and the arrow keys. **Post panel** posts a `/sound panel`, and **Posted panels** lists them and takes them down.
 
-**Music:** what's playing, Spotify search and the queue. See [Music](music.md).
+**Music:** what's playing, Spotify search and the queue. **Post panel** posts a [music panel](music.md#commands) and **Posted panels** lists them and takes them down. See [Music](music.md).
 
 **Game nights:** plan a night, answer **In**, **Maybe** or **Can't**, edit or cancel one, or stop a repeating one. Times show in your time zone, and in the server's when that's different.
 
@@ -36,7 +36,7 @@ Everything updates live, whoever changed it and wherever, and a change waits whi
 
 **Settings:** everything in `/setup`, plus [chat](chat.md) (what it remembers, and reminders waiting), game ping roles, everyone's join sounds and pings, and what's free and on sale now. Anything that needs fixing is listed first, with **Go to setting**. **Find a setting** searches them, a changed setting offers **Reset**, and **Post Choose games button** posts a `/gamerole menu`.
 
-Only a vote, a panel and the Choose games button post to Discord. Anyone with the password can change anyone's pings and Steam accounts.
+Only a vote, a soundboard or music panel and the Choose games button post to Discord. Anyone with the password can change anyone's pings and Steam accounts.
 
 ## Running it
 

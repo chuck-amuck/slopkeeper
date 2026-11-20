@@ -4,11 +4,12 @@ import { createHash, timingSafeEqual } from 'node:crypto';
 import { createWriteStream, rmSync } from 'node:fs';
 import { type IncomingMessage, type ServerResponse } from 'node:http';
 import { pipeline } from 'node:stream/promises';
-import { FROM_WEB, fromWebUser, webUser } from '../activity.ts';
+import { FROM_WEB, fromWebUser, logActivity, webUser } from '../activity.ts';
 import * as discordBoard from '../discordSounds.ts';
 import { checkSetting, missingToPost } from '../features/setup.ts';
 import { idSetting, setting } from '../settings.ts';
 import { canSee, humansIn, zonedTimeToUtc } from '../util.ts';
+import { type PanelTable, postedPanels, takeDownPanels } from '../postedPanels.ts';
 
 // What every part of the management API shares: refusals, reading requests, who is asking, and lookups that refuse what isn’t there
 
@@ -224,4 +225,13 @@ export function memberIn(guild: Guild, id: string) {
   const member = guild.members.cache.get(id);
   if (!member || member.user.bot) throw new Refused(404, 'They aren’t in this server.');
   return member;
+}
+
+/** Takes down posted panels, one or all, for the web UI, saying in Activity where they were */
+export async function takeDown(client: Client, guild: Guild, table: PanelTable, kind: string, only?: string) {
+  if (only && !postedPanels(guild, table).some((p) => p.messageId === only)) throw new Refused(404, 'That panel isn’t posted any more.');
+  const { removed, failed } = await takeDownPanels(client, guild, table, only);
+  if (removed.length === 1) logActivity(guild.id, by(), `Took down the ${kind} panel in <#${removed[0].channelId}>`);
+  else if (removed.length) logActivity(guild.id, by(), `Took down ${removed.length} ${kind} panels`);
+  return { removed: removed.length, failed };
 }

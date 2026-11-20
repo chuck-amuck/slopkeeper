@@ -15,8 +15,8 @@ import { playDiscordSound, playFromWeb, playingNow, stopPlayback, stopPlayingOne
 import { postPanel, refreshPanels } from '../features/soundPanel.ts';
 import { downloaded, downloadLink, LONGEST_PART, linksReady, partProblem, savePart, soundLinks, soundSource } from '../features/soundLinks.ts';
 import { setting } from '../settings.ts';
-import { type PanelTable, takeDownPanels, postedPanels } from '../postedPanels.ts';
-import { type Ask, Refused, by, cantDo, cantPost, memberList, nameOf, plain, postingChannel, readBody, readJson, refuse, untilGone, voiceChannelFor } from './common.ts';
+import { postedPanels } from '../postedPanels.ts';
+import { type Ask, Refused, by, cantDo, cantPost, takeDown, memberList, nameOf, plain, postingChannel, readBody, readJson, refuse, untilGone, voiceChannelFor } from './common.ts';
 
 // The management API for the sound library, Discord’s soundboard, the bin, join sounds, panels, what’s playing and speech
 
@@ -447,15 +447,6 @@ async function handleLinks(client: Client<true>, guild: Guild, req: IncomingMess
   logActivity(guild.id, by(), `${added.replaced ? 'Replaced' : 'Added'} sound **${saveAs}** from ${(to - from).toFixed(1)} s of ${of}`);
   await refreshPanels(client, guild.id);
   return { name: saveAs, replaced: added.replaced, discordProblem: added.problem && plain(guild, added.problem) };
-}
-
-/** Takes down posted panels, one or all, for the web UI, saying in Activity where they were */
-export async function takeDown(client: Client, guild: Guild, table: PanelTable, kind: string, only?: string) {
-  if (only && !postedPanels(guild, table).some((p) => p.messageId === only)) throw new Refused(404, 'That panel isn’t posted any more.');
-  const { removed, failed } = await takeDownPanels(client, guild, table, only);
-  if (removed.length === 1) logActivity(guild.id, by(), `Took down the ${kind} panel in <#${removed[0].channelId}>`);
-  else if (removed.length) logActivity(guild.id, by(), `Took down ${removed.length} ${kind} panels`);
-  return { removed: removed.length, failed };
 }
 
 export async function soundRoutes({ client, guild, req, res, url, section, rest }: Ask) {
