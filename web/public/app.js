@@ -218,10 +218,13 @@ function fitNav() {
   const header = app.querySelector('header');
   const nav = header?.querySelector('nav');
   if (!nav) return;
-  // Tried on one row first: anything that wraps starts below the logo
+  // Tried on one row first: anything that wraps starts below the first thing in it, the profile or the server
   header.classList.remove('tabs-below');
-  const brand = header.querySelector('.brand');
-  const ownRow = [...header.children].some((n) => n.offsetParent && n.offsetTop >= brand.offsetTop + brand.offsetHeight);
+  const shown = [...header.children].filter((n) => n.offsetParent);
+  const first = shown[0];
+  // Nothing to measure while the header isn't shown
+  if (!first) return;
+  const ownRow = shown.some((n) => n.offsetTop >= first.offsetTop + first.offsetHeight);
   header.classList.toggle('tabs-below', ownRow);
   header.style.top = ownRow ? `${-nav.offsetTop}px` : '';
   // Keyboard focus scrolls clear of the part of the header that stays on screen, and Settings' find bar sticks under it
@@ -320,8 +323,7 @@ function renderFrame() {
     el(
       'header',
       {},
-      el('div', { className: 'brand' }, el('img', { src: '/icon.svg', alt: '' }), el('span', {}, 'Slopkeeper')),
-      // Who the bot is here, as its face, left of the server, as it's for every page
+      // Who the bot is here, as its face, first in the header and left of the server, as it's for every page
       guild && profilePicker(),
       state.guilds.length === 1 && el('div', { className: 'guild' }, guildIcon, el('span', { className: 'guild-name' }, guild.name)),
       state.guilds.length > 1 &&
