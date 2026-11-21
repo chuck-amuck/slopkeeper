@@ -3,9 +3,10 @@ import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { existsSync, rmSync } from 'node:fs';
 import { beforeEach, mock, test } from 'node:test';
+import { setTimeout as sleep } from 'node:timers/promises';
 import { db } from '../src/db.ts';
 import { activeProfile } from '../src/features/chatProfiles.ts';
-import { followPhoto, PHOTO_WAITING, photoFile, photoTiming, resetPhotos } from '../src/features/profilePhotos.ts';
+import { followPhoto, PHOTO_TOO_FAST, PHOTO_WAITING, photoFile, photoTiming, resetPhotos } from '../src/features/profilePhotos.ts';
 import { setSetting } from '../src/settings.ts';
 import { GUILD, activityText, call, guild, me, ok, photoTrouble, refused, setFake } from './apiFixture.ts';
 
@@ -18,6 +19,7 @@ beforeEach(() => {
   db.exec("DELETE FROM chat_profiles; DELETE FROM guild_settings; DELETE FROM activity; DELETE FROM profile_photos; DELETE FROM kv WHERE key LIKE 'profile photo:%';");
   resetPhotos();
   photoTiming.waitMs = 10_000;
+  photoTiming.retryMs = 5 * 60_000;
 });
 
 /** An image of `size`, as a PNG, made with ffmpeg */
@@ -281,9 +283,24 @@ test('a photo Discord won’t take is said, shown in Settings and tried again; a
   await followPhoto(guild as never);
   assert.deepEqual(me.photos, [me.photos[0], null]);
 
+  // Too many changes too fast: said plainly, and tried again by itself
+  photoTiming.retryMs = 30;
+  photoTrouble.error = new Error('Invalid Form Body\navatar[AVATAR_RATE_LIMIT]: You are changing your avatar too fast. Try again later.');
+  const quiet = mock.method(console, 'warn', () => {});
+  assert.equal((await pick('pirate')).warning, PHOTO_TOO_FAST);
+  assert.equal(me.photos.length, 2);
+  photoTrouble.error = null;
+  await sleep(100);
+  assert.equal(me.photos.length, 3, 'tried again');
+  assert.ok(me.photos[2]);
+  assert.ok(!(await ok(`/guilds/${GUILD}/settings`)).problems.some((p: { text: string }) => /photo here/.test(p.text)));
+  photoTiming.retryMs = 5 * 60_000;
+  quiet.mock.restore();
+  await pick('butler');
+
   // A photo whose file went missing says so, rather than blaming Discord
   photoTiming.waitMs = 10_000;
   rmSync(photoFile('pirate'));
   assert.equal((await pick('pirate')).warning, 'Pirate’s photo is missing from the bot’s data folder. Choose it again in Settings → Profiles.');
-  assert.equal(me.photos.length, 2);
+  assert.equal(me.photos.length, 4, 'nothing sent');
 });

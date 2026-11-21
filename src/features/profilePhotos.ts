@@ -102,9 +102,33 @@ const hasPhoto = new Map<string, boolean>();
 /** Each server's changes, one at a time: the last one started, and one waiting to start, which any more join */
 const chains = new Map<string, { last: Promise<unknown>; next?: Promise<string | null> }>();
 
-/** How long a change from the web UI waits for Discord before answering anyway. For tests to shorten */
-export const photoTiming = { waitMs: 10_000 };
+/**
+ * How long a change from the web UI waits for Discord before answering anyway, and how long until a change Discord turned
+ * down for coming too fast is tried again, a wait that doubles each time, up to an hour. For tests to shorten
+ */
+export const photoTiming = { waitMs: 10_000, retryMs: 5 * 60_000 };
+const MOST_RETRY_MS = 60 * 60_000;
 export const PHOTO_WAITING = 'Discord is making the bot wait to change its photo here. It changes by itself in a moment.';
+// Discord lets a bot change its photo in a server about twice every few minutes
+export const PHOTO_TOO_FAST = 'Discord only lets the bot change its photo here a couple of times every few minutes. It changes by itself shortly.';
+/** A change waiting to be tried again, by server, and how many times it's been tried */
+const retries = new Map<string, { timer: NodeJS.Timeout; tries: number }>();
+
+function retryLater(guild: Guild) {
+  const before = retries.get(guild.id);
+  clearTimeout(before?.timer);
+  const tries = (before?.tries ?? 0) + 1;
+  const timer = setTimeout(() => void followPhoto(guild), Math.min(photoTiming.retryMs * 2 ** (tries - 1), MOST_RETRY_MS));
+  timer.unref();
+  retries.set(guild.id, { timer, tries });
+}
+
+/** It's up, or nothing's to be done: no problem to show, and nothing to try again */
+function settled(guildId: string) {
+  problems.delete(guildId);
+  clearTimeout(retries.get(guildId)?.timer);
+  retries.delete(guildId);
+}
 
 /**
  * Gives the bot its profile's photo in `guild`, or its own photo for a profile without one. Changes for one server run one
@@ -145,7 +169,7 @@ async function putUp(guild: Guild): Promise<string | null> {
     // The bot's photo here is only ever one it put up, so one without a profile photo goes. One whose record says it's up
     // but has none, as after a database restored from before, goes up again
     if (wanted ? getKv(putUpKey(guild.id)) === wanted && has : !has) {
-      problems.delete(guild.id);
+      settled(guild.id);
       return null;
     }
     let photo: Buffer | null = null;
@@ -159,11 +183,15 @@ async function putUp(guild: Guild): Promise<string | null> {
     } catch (err) {
       const why = (err as Error).message;
       console.warn(`Couldn’t change the bot’s photo in server ${guild.id}: ${why}`);
+      if (why.includes('AVATAR_RATE_LIMIT')) {
+        retryLater(guild);
+        return failed(PHOTO_TOO_FAST);
+      }
       const text = `Discord didn’t let me change my photo here: ${why.replace(/\.$/, '')}`;
       return failed(text, `${text}. It’s tried again when the bot restarts or the profile changes.`);
     }
     setKv(putUpKey(guild.id), wanted);
-    problems.delete(guild.id);
+    settled(guild.id);
     return null;
   } catch (err) {
     console.error(`Couldn’t work out the bot’s photo in server ${guild.id}:`, err);
@@ -182,4 +210,6 @@ export function resetPhotos() {
   chains.clear();
   problems.clear();
   hasPhoto.clear();
+  for (const { timer } of retries.values()) clearTimeout(timer);
+  retries.clear();
 }
