@@ -13,7 +13,7 @@ A web page for everything the bot does, running as a second container next to it
 - **Pop out:** in Chrome or Edge 116+, or Firefox 151+, over HTTPS, the Sounds panel and the music player can pop out into a small window that stays on top of everything, a game included.
 - **Undo:** removing a song, deleting a sound or saved line, taking a sound off Discord, **Never suggest this** and **Reset** on a setting each offer **Undo** for a few seconds.
 
-Everything updates live, whoever changed it and wherever, and a change waits while you're typing in something it would redraw. If the bot can't be reached, the page says so and retries by itself. After an update, a page left open offers **Reload**. Each tab has its own address, like `#music`, and a phone can add the page to its home screen. Settings → **On this device** hides the music player or the Sounds button in that browser.
+Everything updates live, whoever changed it and wherever, and a change waits while you're typing in something it would redraw. If the bot can't be reached, the page says so and retries by itself. After an update, a page left open offers **Reload**. Each tab has its own address, like `#music`, and a phone can add the page to its home screen. Settings → Basics → **This browser** hides the music player or the Sounds button in that browser.
 
 ## Tabs
 
@@ -35,7 +35,7 @@ Everything updates live, whoever changed it and wherever, and a change waits whi
 
 **Activity:** who changed what, from here or Discord: sounds, games, pings, Steam accounts, music, settings and game nights.
 
-**Settings:** everything in `/setup`, plus [chat](chat.md) (what it remembers, and reminders waiting), game ping roles, everyone's join sounds and pings, and what's free and on sale now. Anything that needs fixing is listed first, with **Go to setting**. **Find a setting** searches them, a changed setting offers **Reset**, and **Post Choose games button** posts a `/gamerole menu`.
+**Settings:** everything in `/setup`, plus [chat](chat.md) (what it remembers, and reminders waiting), game ping roles, everyone's join sounds and pings, and what's free and on sale now. They're in sections: Basics, Voice and pings, Games, Deals, Soundboard, Music, Speech, Chat and Looping room, listed down the side, or on a phone as a list to tap into, with **‹ Settings** back to it. Each has an address of its own, like `#settings/music`. Anything that needs fixing is listed first in Basics, with **Go to setting**, and a section with something to fix shows how many beside its name. **Find a setting** searches every section at once. A feature that's off shows only its switch until it's turned on, fine-tuning like delays and cooldowns is under **More options**, and a long explanation shows its first sentence, with the rest under **More**. A changed setting offers **Reset**, and **Post Choose games button** posts a `/gamerole menu`.
 
 Only a vote, a soundboard or music panel and the Choose games button post to Discord. Anyone with the password can change anyone's pings and Steam accounts.
 

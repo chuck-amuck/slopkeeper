@@ -307,21 +307,45 @@ function roleWarning(guild: Guild, role: Role): string {
   return `${admins}${pingWarning(role)}`;
 }
 
-/** The settings in the groups the web UI shows them in, so both read the same way */
+/**
+ * The settings in the groups the web UI shows them in, so both read the same way: related ones together, each group's
+ * fine-tuning last
+ */
 export const GROUPS: [string, SettingKey[]][] = [
   ['Posting', ['announceChannel', 'timezone']],
-  ['Hop-on pings', ['hopOnRole', 'hopOnMinPeople', 'hopOnCooldownMin']],
+  ['Who can use what', ['soundManagerRole', 'musicDjRole', 'ttsRole']],
+  ['Hop-on pings', ['hopOnRole', 'hopOnMinPeople', 'hopOnCooldownMin', 'ttsHopOn']],
   ['Voice sessions', ['sessionRecap', 'recapMinMinutes', 'sessionGraceMin']],
   ['Leaderboard and recap', ['weeklyLeaderboard', 'weeklyPostDay', 'weeklyPostHour', 'monthlyRecap']],
-  ['Games', ['steamCountry', 'steamStatus', 'gameNightReminderMin']],
-  ['Sale alerts', ['saleMinDiscount', 'salePostHour', 'saleSteamWishlists', 'saleOtherStores', 'saleMultiplayer', 'bundleAlerts', 'bundlesLikeWePlay', 'saleChannel']],
+  ['Game nights', ['gameNightReminderMin', 'ttsNightReminders']],
+  ['Steam', ['steamCountry', 'steamStatus']],
   ['Patch notes', ['patchNotes', 'patchNotesChannel']],
+  ['Sale alerts', ['saleMinDiscount', 'salePostHour', 'saleSteamWishlists', 'saleOtherStores', 'saleMultiplayer', 'saleChannel']],
+  ['Bundles', ['bundleAlerts', 'bundlesLikeWePlay']],
   ['Free games', ['freeGames', 'freeGamesChannel', 'freeGamesMinRating', 'freeGamesTaste', 'freeGamesMultiplayer', 'freeGamesUnlisted']],
-  ['Soundboard', ['soundVolume', 'evenVolume', 'joinSounds', 'joinSoundDelayMs', 'joinSoundCooldownMin', 'soundManagerRole']],
-  ['Music', ['musicVolume', 'evenMusic', 'musicDucksForPeople', 'musicAutoplay', 'musicSearch', 'musicSearchFallback', 'musicDjRole']],
-  ['Looping sound room', ['loopRoom', 'loopSound', 'loopVolume', 'loopEvery', 'loopText', 'loopVoice', 'loopEffect', 'loopTextVolume', 'loopTextEvery', 'loopIntro', 'loopIntroDelayMs', 'loopSoundDelayMs', 'loopTextDelayMs']],
-  ['Chat', ['chat', 'chatProfile', 'chatModel', 'chatWebSearch', 'chatActions', 'chatRoasts', 'chatPostLines', 'chatVoice', 'chatDailyLimit']],
-  ['Text to speech', ['tts', 'ttsVoice', 'ttsEffect', 'ttsSpeed', 'ttsPauseMs', 'ttsVolume', 'ttsChannel', 'ttsChannelWho', 'ttsGreet', 'ttsGreeting', 'ttsNightReminders', 'ttsHopOn', 'ttsRole', 'ttsMaxChars', 'ttsCooldownSec']],
+  ['Sounds', ['soundVolume', 'evenVolume']],
+  ['Join sounds', ['joinSounds', 'ttsGreet', 'ttsGreeting', 'joinSoundDelayMs', 'joinSoundCooldownMin']],
+  ['Music', ['musicVolume', 'musicDucksForPeople', 'musicAutoplay', 'evenMusic']],
+  ['Music search', ['musicSearch', 'musicSearchFallback']],
+  ['Text to speech', ['tts', 'ttsVoice', 'ttsEffect', 'ttsVolume', 'ttsSpeed', 'ttsPauseMs', 'ttsMaxChars', 'ttsCooldownSec']],
+  ['Read chat aloud', ['ttsChannel', 'ttsChannelWho']],
+  ['Chat', ['chat', 'chatModel', 'chatVoice', 'chatWebSearch', 'chatActions', 'chatRoasts', 'chatPostLines', 'chatDailyLimit']],
+  ['Profile', ['chatProfile']],
+  ['Looping room', ['loopRoom', 'loopSound', 'loopVolume', 'loopEvery', 'loopIntro', 'loopIntroDelayMs', 'loopSoundDelayMs']],
+  ['Looping speech', ['loopText', 'loopVoice', 'loopEffect', 'loopTextVolume', 'loopTextEvery', 'loopTextDelayMs']],
+];
+
+/** The web UI's Settings sections, one shown at a time, each with the groups above that it holds, in order */
+export const SECTIONS: { id: string; title: string; about: string; groups: string[] }[] = [
+  { id: 'basics', title: 'Basics', about: 'Where posts go, the time zone, and who can use what', groups: ['Posting', 'Who can use what'] },
+  { id: 'pings', title: 'Voice and pings', about: 'Hop-on and game pings, session recaps and the leaderboard', groups: ['Hop-on pings', 'Voice sessions', 'Leaderboard and recap'] },
+  { id: 'games', title: 'Games', about: 'Game night reminders, Steam and patch notes', groups: ['Game nights', 'Steam', 'Patch notes'] },
+  { id: 'deals', title: 'Deals', about: 'Sale, bundle and free game alerts', groups: ['Sale alerts', 'Bundles', 'Free games'] },
+  { id: 'soundboard', title: 'Soundboard', about: 'How loud sounds play, and join sounds', groups: ['Sounds', 'Join sounds'] },
+  { id: 'music', title: 'Music', about: 'How loud it plays, autoplay, and where songs are found', groups: ['Music', 'Music search'] },
+  { id: 'speech', title: 'Speech', about: 'Text to speech, its voices, and reading chat aloud', groups: ['Text to speech', 'Read chat aloud'] },
+  { id: 'chat', title: 'Chat', about: 'Answers in chat, who the bot is, and what it remembers', groups: ['Chat', 'Profile'] },
+  { id: 'loop', title: 'Looping room', about: 'A channel where a sound and speech play nonstop', groups: ['Looping room', 'Looping speech'] },
 ];
 
 /** Something that stops the bot doing what its settings ask, and the setting to change, if one will fix it */

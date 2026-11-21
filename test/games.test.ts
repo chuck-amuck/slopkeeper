@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import { recentActivity } from '../src/activity.ts';
 import { choose, games, hiddenGames } from '../src/features/games.ts';
 import { hopOn, onTheWay } from '../src/features/hopon.ts';
-import { GROUPS, setup } from '../src/features/setup.ts';
+import { GROUPS, SECTIONS, setup } from '../src/features/setup.ts';
 import { DiscordAPIError } from 'discord.js';
 import { db } from '../src/db.ts';
 import { DEFAULTS, setSetting } from '../src/settings.ts';
@@ -113,6 +113,14 @@ test('every setting is in exactly one group', () => {
   const grouped = GROUPS.flatMap(([, keys]) => keys);
   assert.equal(new Set(grouped).size, grouped.length);
   assert.deepEqual([...grouped].sort(), Object.keys(DEFAULTS).sort());
+});
+
+test('every group is in exactly one section of the web UI, in the same order as /setup show', () => {
+  const placed = SECTIONS.flatMap((s) => s.groups);
+  assert.deepEqual(placed, GROUPS.map(([name]) => name));
+  assert.equal(new Set(SECTIONS.map((s) => s.id)).size, SECTIONS.length);
+  // Discord's limit on an embed's fields, which /setup show has one of per group
+  assert.ok(GROUPS.length <= 25);
 });
 
 test('Never suggest this hides a game, and /game unhide lets it back', async () => {

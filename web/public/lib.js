@@ -243,6 +243,9 @@ export function newPage() {
   pageLife = new AbortController();
 }
 
+/** A link to a setting, which opens its section of Settings with the cursor in it */
+export const settingLink = (key, text) => el('a', { href: `#settings?key=${encodeURIComponent(key)}` }, text);
+
 /** What's turned on or off in Settings for this device alone, each on until it's turned off: musicPlayer, soundsButton */
 export const devicePref = {
   on: (name) => recall(`device:${name}`) !== 'off',

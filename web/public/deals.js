@@ -1,4 +1,4 @@
-import { ago, api, attempt, el, notice, recall, remember, request, state } from './lib.js';
+import { ago, api, attempt, el, notice, recall, remember, request, settingLink, state } from './lib.js';
 import { follow } from './updates.js';
 
 const HOUR = 3_600_000;
@@ -123,9 +123,10 @@ export function renderDeals(main) {
     if (data.bundles === null) {
       const why = {
         'no-key': 'Bundles need an IsThereAnyDeal key, which the bot doesn’t have.',
-        off: 'Bundles are turned off in Settings → Sale alerts.',
+        off: ['Bundles are turned off in ', settingLink('bundleAlerts', 'Settings'), '.'],
       };
-      bundlesBody.replaceChildren(notice('empty', why[data.bundlesOff] ?? 'Bundles haven’t been looked through yet. They are within a few minutes of the bot starting.', { compact: true }));
+      const said = why[data.bundlesOff] ?? 'Bundles haven’t been looked through yet. They are within a few minutes of the bot starting.';
+      bundlesBody.replaceChildren(notice('empty', ...[said].flat(), { compact: true }));
       bundlesTitle.textContent = 'Bundles';
       return;
     }

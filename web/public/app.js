@@ -51,8 +51,11 @@ history.replaceState(null, '', fromHash() === tab ? location.hash : `#${tab}`);
 addEventListener('popstate', () => {
   const id = fromHash();
   if (!isTab(id)) return history.replaceState(null, '', `#${tab}`);
-  // The same tab with something else open in it, like another Stats range: drawn again from the address
+  // The same tab with something else open in it, like another Stats range: drawn again from the address, unless the
+  // page follows its own address, as Settings' sections do
   if (id === tab) {
+    const main = app.querySelector(':scope > main');
+    if (main?.followHash) return main.followHash();
     if (location.hash.slice(1) !== id && app.querySelector('.bottom-nav')) renderFrame();
     return;
   }

@@ -114,7 +114,7 @@ export function profilePicker() {
 
   function edit() {
     toggle(false);
-    location.hash = 'settings/profiles';
+    location.hash = 'settings/chat?card=profiles';
   }
 
   function moveInMenu(e) {
@@ -451,10 +451,8 @@ export function profilesCard(main, data, onChange) {
     el('div', { className: 'field' }, el('div', {}, el('div', { className: 'series-name' }, 'Add a profile'), el('p', { className: 'hint' }, 'Starts with the usual traits, for a personality of your own.')), el('div', { className: 'control' }, addButton)),
   );
   card.reload = () => attempt(() => load());
-  // Opened from the header's Edit profiles…: the address goes back to plain Settings, and the card comes into view once
-  // its list is drawn, when the cards above it have their height
-  const opened = location.hash === '#settings/profiles';
-  if (opened) history.replaceState(null, '', '#settings');
+  // For the header's Edit profiles…, which opens Settings at this card
+  card.bringIntoView = () => bringIntoView();
   // A profile picked in the header, or changed elsewhere, after what the card was drawn from. Not while someone's typing
   // in a setting, which redrawing the fields would get in the way of
   let followed = false;
@@ -468,7 +466,6 @@ export function profilesCard(main, data, onChange) {
     } catch (err) {
       body.replaceChildren(notice('error', err.message, { compact: true }));
     }
-    if (opened && card.isConnected) bringIntoView();
   });
 
   /**

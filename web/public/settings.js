@@ -1,4 +1,4 @@
-import { ago, api, attempt, confirmButton, devicePref, el, formProblem, icon, notice, openDialog, postDialog, request, RequestError, state, toast, undoToast } from './lib.js';
+import { ago, api, attempt, confirmButton, devicePref, el, formProblem, icon, notice, openDialog, postDialog, recall, remember, request, RequestError, state, toast, undoToast, volumeControl } from './lib.js';
 import { voicesCard } from './voicesettings.js';
 import { profilesCard } from './profiles.js';
 
@@ -11,15 +11,15 @@ const FIELDS = {
   hopOnMinPeople: { kind: 'number', unit: 'people', hint: 'People in a voice channel before pinging.' },
   hopOnCooldownMin: { kind: 'number', unit: 'min', hint: 'Time between pings.' },
   sessionRecap: { kind: 'boolean', hint: 'Posts who was there and what was played when a voice session ends. Sessions count in stats either way.' },
-  recapMinMinutes: { kind: 'number', unit: 'min', hint: 'Shorter sessions don’t get a recap or count in stats.' },
-  sessionGraceMin: { kind: 'number', unit: 'min', hint: 'How long a channel stays empty before its session ends.' },
+  recapMinMinutes: { kind: 'number', unit: 'min', more: true, hint: 'Shorter sessions don’t get a recap or count in stats.' },
+  sessionGraceMin: { kind: 'number', unit: 'min', more: true, hint: 'How long a channel stays empty before its session ends.' },
   weeklyLeaderboard: { kind: 'boolean', hint: 'Posts the past week’s voice leaderboard on the day and hour below.' },
   weeklyPostDay: { kind: 'day' },
   weeklyPostHour: { kind: 'hour', hint: 'In the server’s time zone. The monthly recap posts at this hour too.' },
   monthlyRecap: { kind: 'boolean', hint: 'Posts a recap of the month on the 1st.' },
   steamCountry: { kind: 'country', hint: 'Two-letter country code for sale prices, like us or gb.' },
   saleMinDiscount: { kind: 'number', unit: '% off', hint: 'Smaller sales aren’t posted, but still show in /sales.' },
-  salePostHour: { kind: 'hour', hint: 'In the server’s time zone. Prices are checked through the day, and everything new is posted together once a day at this hour, with bundles in a post of their own.' },
+  salePostHour: { kind: 'hour', hint: 'When the day’s new sales are posted together, in the server’s time zone. Prices are checked through the day, and bundles get a post of their own.' },
   saleSteamWishlists: { kind: 'boolean', hint: 'Watches games on members’ Steam wishlists, if their profile allows it.' },
   saleOtherStores: { kind: 'boolean', hint: 'Also posts when an official store like Humble, Fanatical or Green Man Gaming sells a Steam key for less than Steam, by at least the discount above. Copies for GOG, Epic and other launchers are left out. Prices come from IsThereAnyDeal, and need its API key on the bot. With a gg.deals key too, the cheapest key reseller is shown beside a sale, but never posts one by itself.' },
   saleMultiplayer: { kind: 'boolean', hint: 'Only posts sales of games Steam lists as multiplayer, co-op or PvP, and of games someone asked for with /game want. Bundle posts follow it too. /sales and the Deals tab still show every sale.' },
@@ -36,23 +36,23 @@ const FIELDS = {
   freeGamesMultiplayer: { kind: 'boolean', hint: 'Skips games with no multiplayer or co-op.' },
   freeGamesUnlisted: { kind: 'boolean', hint: 'Shows games with no Steam page, which can’t be rated or compared.' },
   gameNightReminderMin: { kind: 'number', unit: 'min before (0 = off)', hint: 'Pings the people who are in.' },
-  evenVolume: { kind: 'boolean', hint: 'Levels sounds so they play about as loud as each other. Your files aren’t changed, so this can be turned off at any time.' },
+  evenVolume: { kind: 'boolean', more: true, hint: 'Levels sounds so they play about as loud as each other. Your files aren’t changed, so this can be turned off at any time.' },
   joinSounds: { kind: 'boolean', hint: 'Lets people pick a sound that plays when they join voice, with /sound join.' },
-  joinSoundCooldownMin: { kind: 'number', unit: 'min', hint: 'Shortest time between one person’s join sounds.' },
-  joinSoundDelayMs: { kind: 'number', unit: 'ms', hint: 'How long the bot waits after connecting before it plays a join sound, so it clears Discord’s joining noises. 500 is half a second.' },
-  soundManagerRole: { kind: 'role', none: 'Everyone', hint: 'Who can change sounds in Discord, along with people with Manage Server. Anyone can still play them. This page isn’t limited by it: it only asks for the password.' },
+  joinSoundCooldownMin: { kind: 'number', unit: 'min', more: true, hint: 'Shortest time between one person’s join sounds or greetings.' },
+  joinSoundDelayMs: { kind: 'number', unit: 'ms', more: true, hint: 'How long the bot waits after connecting before it plays a join sound or greeting, so it clears Discord’s joining noises. 500 is half a second.' },
+  soundManagerRole: { kind: 'role', none: 'Everyone', hint: 'Who can add, change and remove sounds in Discord. Anyone can still play them.' },
   tts: { kind: 'boolean', hint: 'Lets people have the bot read out what they type, with /say or on the Soundboard tab.' },
   ttsVoice: { kind: 'speaker', hint: 'Used when nobody picks one.' },
   ttsEffect: { kind: 'effect', hint: 'Said through when nobody picks one: messages read out, greetings and announcements too. Each effect is matched to each voice’s loudness.' },
   ttsSpeed: { kind: 'number', unit: '%', hint: 'How fast it talks. 100 is the voice’s natural speed, and lower is slower.' },
-  ttsPauseMs: { kind: 'number', unit: 'ms', hint: 'The pause between sentences. 200 is a fifth of a second, and 0 runs them together.' },
-  ttsVolume: { kind: 'number', unit: '%', hint: 'How loud it talks. 100 is a little louder than a sound with even volume on, to be heard over people talking, and above that it’s held back from distorting. The Speech slider on the Soundboard tab and the Volume button change this too.' },
+  ttsPauseMs: { kind: 'number', unit: 'ms', more: true, hint: 'The pause between sentences. 200 is a fifth of a second, and 0 runs them together.' },
+  ttsVolume: { kind: 'volume', hint: 'How loud it talks. 100 is a little louder than a sound with even volume on, to be heard over people talking, and above that it’s held back from distorting. The Speech slider on the Soundboard tab and the Volume button change this too.' },
   ttsChannel: { kind: 'channel', none: 'Off', hint: 'The bot reads out what people type here, in the voice channel they’re in, or else where the bot is or where most people are.' },
   ttsChannelWho: { kind: 'choice', options: [['everyone', 'Everyone'], ['voice', 'Only people in voice']], hint: 'Only people in voice leaves out anyone who’s only typing.' },
-  soundVolume: { kind: 'number', unit: '%', hint: 'How loud every sound plays, including join sounds and the looping sound. Speech has its own volume. The Sounds slider on the Soundboard tab and the Volume button change this too.' },
-  musicVolume: { kind: 'number', unit: '%', hint: 'How loud music plays. At 100% it sits well under the bot’s speech, as background music should. It drops to under a third while the bot is talking, and while people are, unless that’s turned off below. The slider on the Music tab and the Volume button change this too.' },
+  soundVolume: { kind: 'volume', hint: 'How loud every sound plays, including join sounds and the looping sound. Speech has its own volume. The Sounds slider on the Soundboard tab and the Volume button change this too.' },
+  musicVolume: { kind: 'volume', hint: 'How loud music plays. At 100% it sits well under the bot’s speech, as background music should. It drops to under a third while the bot is talking, and while people are, unless that’s turned off below. The slider on the Music tab and the Volume button change this too.' },
   musicDucksForPeople: { kind: 'boolean', hint: 'Music drops to under a third while anyone in the call is talking, as it does under the bot, and comes back up gently a moment after they stop. For this the bot isn’t deafened in the call: it notices when people start and stop talking, and never decodes, records or keeps what anyone says. Off, it’s deafened again.' },
-  evenMusic: { kind: 'boolean', hint: 'Plays each song about as loud as the others, so a quiet old recording and a loud new one don’t need the volume changed between them. The files aren’t changed, and it takes effect from the next song.' },
+  evenMusic: { kind: 'boolean', more: true, hint: 'Plays each song about as loud as the others, so a quiet old recording and a loud new one don’t need the volume changed between them. The files aren’t changed, and it takes effect from the next song.' },
   musicAutoplay: { kind: 'boolean', hint: 'Keeps three songs waiting at the end of the queue, from YouTube, like the last song in it that someone added, so the music carries on in that style. Songs people add play first, and Autoplay’s change to follow the last of them. Turning it off takes out the ones it added. The switch on the Music tab and the /music card change this too.' },
   musicSearch: {
     kind: 'choice',
@@ -62,33 +62,33 @@ const FIELDS = {
     ],
     hint: 'Where /music play, the Music tab and chat look for songs by name. Either way the song plays from YouTube. A service the bot isn’t set up for is passed over.',
   },
-  musicSearchFallback: { kind: 'boolean', hint: 'Asks the other service when this one fails, is making the bot wait, or finds nothing.' },
-  musicDjRole: { kind: 'role', none: 'Everyone', hint: 'Who can add, skip, pause, shuffle and stop music with /music, along with people with Manage Server. Anyone can see the queue. This page isn’t limited by it.' },
+  musicSearchFallback: { kind: 'boolean', more: true, hint: 'Asks the other service when this one fails, is making the bot wait, or finds nothing.' },
+  musicDjRole: { kind: 'role', none: 'Everyone', hint: 'Who can add, skip, pause, shuffle and stop music with /music. Anyone can see the queue.' },
   loopRoom: { kind: 'voice', none: 'Off', hint: 'While anyone’s in this channel, the bot plays the looping sound and speech there nonstop. Join sounds don’t play there.' },
   loopSound: { kind: 'sound', none: 'Not set', hint: 'A sound from the library.' },
-  loopVolume: { kind: 'number', unit: '%', hint: 'The looping sound’s, on top of its own level. It never stops, so it starts at half.' },
-  loopTextVolume: { kind: 'number', unit: '%', hint: 'The looping speech’s, apart from the sound’s. It starts at half too.' },
-  loopSoundDelayMs: { kind: 'number', unit: 'ms', hint: 'How long the looping sound waits after the intro ends, or after the loop starts with no intro. 1000 is a second.' },
-  loopTextDelayMs: { kind: 'number', unit: 'ms', hint: 'How long the looping speech waits after the intro ends, or after the loop starts with no intro. 1000 is a second.' },
+  loopVolume: { kind: 'volume', hint: 'The looping sound’s, on top of its own level. It never stops, so it starts at half.' },
+  loopTextVolume: { kind: 'volume', hint: 'The looping speech’s, apart from the sound’s. It starts at half too.' },
+  loopSoundDelayMs: { kind: 'number', unit: 'ms', more: true, hint: 'How long the looping sound waits after the intro ends, or after the loop starts with no intro. 1000 is a second.' },
+  loopTextDelayMs: { kind: 'number', unit: 'ms', more: true, hint: 'How long the looping speech waits after the intro ends, or after the loop starts with no intro. 1000 is a second.' },
   loopText: { hint: 'Words said over and over in the room, on top of the sound, up to 500 characters. Leave it empty for none.' },
   loopVoice: { kind: 'speaker', none: 'Same as the default voice', hint: 'Who says the looping speech.' },
   loopEffect: { kind: 'effect', none: 'Same as the default effect', hint: 'What the looping speech is said through.' },
   loopTextEvery: { kind: 'number', unit: 'seconds', hint: 'Starts the speech again this often, layered over the last if it’s still talking. 0 says it again straight away.' },
   loopIntro: { kind: 'sound', none: 'Off', hint: 'Played once, at its own level, before the loop starts. Someone else coming in stops the loop and starts again from the intro.' },
-  loopIntroDelayMs: { kind: 'number', unit: 'ms', hint: 'How long after someone comes in the intro plays. 250 is a quarter of a second.' },
+  loopIntroDelayMs: { kind: 'number', unit: 'ms', more: true, hint: 'How long after someone comes in the intro plays. 250 is a quarter of a second.' },
   loopEvery: { kind: 'number', unit: 'seconds', hint: 'Starts a fresh copy this often, layered on top of the ones still playing, like 0.5 or 1. Up to 8 play at once. 0 loops it without a gap.' },
-  ttsGreet: { hint: 'Says who joined voice, for people with no join sound. Uses the join sound cooldown and delay.' },
+  ttsGreet: { hint: 'Says who joined voice, for people with no join sound, after the same delay and cooldown.' },
   ttsGreeting: { hint: 'What it says, with {name} for the person.' },
   ttsNightReminders: { hint: 'Says the reminder in the night’s voice channel too, if people are in it.' },
   ttsHopOn: { hint: 'Says the hop-on ping in voice too, in the channel it was about.' },
-  ttsRole: { kind: 'role', none: 'Everyone', hint: 'Who can use /say and have their messages read out, along with people with Manage Server. This page isn’t limited by it.' },
-  ttsMaxChars: { kind: 'number', unit: 'characters', hint: 'Up to 6000. 1000 is about a minute and a quarter of speech, and 4000 a whole paragraph of about 5 minutes.' },
-  ttsCooldownSec: { kind: 'number', unit: 'seconds', hint: 'Shortest time between one person’s lines. The page counts as one person.' },
+  ttsRole: { kind: 'role', none: 'Everyone', hint: 'Who can use /say and have their messages read out.' },
+  ttsMaxChars: { kind: 'number', unit: 'characters', more: true, hint: 'The most it says in one go, up to 6000. 1000 is about a minute and a quarter of speech, and 4000 about 5 minutes.' },
+  ttsCooldownSec: { kind: 'number', unit: 'seconds', more: true, hint: 'Shortest time between one person’s lines. The page counts as one person.' },
   chat: { kind: 'boolean', hint: 'Answers anyone who @mentions the bot or replies to it, in character, and does what they ask: music, sounds and speech, as they could themselves. Their message and the channel’s last 20 messages go to Anthropic to answer it.' },
-  chatProfile: { kind: 'profile', hint: 'Who the bot is: its personality, how it talks, its name and its voice. Made and changed in Profiles, below.' },
+  chatProfile: { kind: 'profile', hint: 'Who the bot is in this server: its personality, how it talks, its name, photo and voice. Made and changed in Profiles, below.' },
   chatWebSearch: { kind: 'boolean', hint: 'Searches the web when someone asks for a game’s strategy, builds, guides or news, through Anthropic, and links the sources. A search costs a cent, plus the pages it reads.' },
   chatActions: { kind: 'boolean', hint: 'Lets it plan, change and answer game nights, start votes on what to play, set reminders and make sounds from links when someone asks, with the same permissions as the commands. Off, it points people to the game night and vote commands, and doesn’t set reminders.' },
-  chatRoasts: { kind: 'boolean', hint: 'When someone is rude to it, or asks it to roast someone, it looks up their games and hits back with an insult about something different each time: a game they’ve put hours into, what they’ve played lately, one they never played, or their backlog. How harsh is set in its profile. Never about looks, family, race, religion, gender, sexuality or health. Off, it shrugs rudeness off in character.' },
+  chatRoasts: { kind: 'boolean', hint: 'When someone is rude to it, or asks it to roast someone, it hits back with an insult about their games. It picks something different each time: a game they’ve put hours into, what they’ve played lately, one they never played, or their backlog. How harsh is set in its profile. Never about looks, family, race, religion, gender, sexuality or health. Off, it shrugs rudeness off in character.' },
   chatPostLines: { kind: 'boolean', hint: 'Adds a line in its personality above the bot’s automatic posts (hop-on pings, recaps, leaderboards, sales, bundles, free games and patch notes), written by the chat model from what the post says. Each costs a small fraction of a cent, and the post goes out without one if the model is slow or down.' },
   chatModel: { kind: 'choice', options: [['haiku', 'Claude Haiku 5.5 (cheapest and quickest)'], ['sonnet', 'Claude Sonnet 5.5 (better answers, about 20 times the cost)'], ['opus', 'Claude Opus 5.5 (smartest, about 40 times the cost)']], hint: 'Which model answers.' },
   chatVoice: {
@@ -102,8 +102,31 @@ const FIELDS = {
   },
   chatDailyLimit: { kind: 'number', unit: 'answers', hint: 'The most answers a day, in the server’s time zone, so the cost can’t run away. Each person waits 10 seconds between answers too.' },
 };
-// Folded until opened, with what they're set to on the fold: long, and rarely changed once set up
-const FOLDED = new Set(['Looping sound room', 'Free games']);
+/**
+ * Settings that only matter while another is on, hidden until it is, so a feature that's off is one line. `line` says
+ * so under the switch, for a switch that hides a lot. A search still finds them
+ */
+const LOOP_KEYS = ['loopSound', 'loopVolume', 'loopEvery', 'loopIntro', 'loopIntroDelayMs', 'loopSoundDelayMs', 'loopText', 'loopVoice', 'loopEffect', 'loopTextVolume', 'loopTextEvery', 'loopTextDelayMs'];
+const RULES = [
+  { from: 'tts', on: (v) => v.tts, keys: ['ttsVoice', 'ttsEffect', 'ttsVolume', 'ttsSpeed', 'ttsPauseMs', 'ttsMaxChars', 'ttsCooldownSec', 'ttsChannel', 'ttsChannelWho'], line: 'Turn on Text to speech to set the rest.' },
+  { from: 'chat', on: (v) => v.chat, keys: ['chatModel', 'chatVoice', 'chatWebSearch', 'chatActions', 'chatRoasts', 'chatPostLines', 'chatDailyLimit'], line: 'Turn on Answer in chat to set the rest.' },
+  { from: 'freeGames', on: (v) => v.freeGames, keys: ['freeGamesChannel', 'freeGamesMinRating', 'freeGamesTaste', 'freeGamesMultiplayer', 'freeGamesUnlisted'], line: 'Turn on Free game alerts to set the rest.' },
+  { from: 'loopRoom', on: (v) => Boolean(v.loopRoom), keys: LOOP_KEYS, line: 'Pick a channel to set the rest.' },
+  // Greetings wait the same delay and cooldown as join sounds
+  { from: 'joinSounds', on: (v) => v.joinSounds || v.ttsGreet, keys: ['joinSoundDelayMs', 'joinSoundCooldownMin'] },
+  { from: 'ttsGreet', on: (v) => v.ttsGreet, keys: ['ttsGreeting'] },
+  { from: 'patchNotes', on: (v) => v.patchNotes !== 'off', keys: ['patchNotesChannel'] },
+  { from: 'ttsChannel', on: (v) => Boolean(v.ttsChannel), keys: ['ttsChannelWho'] },
+  { from: 'loopText', on: (v) => Boolean(v.loopText), keys: ['loopVoice', 'loopEffect', 'loopTextVolume', 'loopTextEvery', 'loopTextDelayMs'] },
+  // The patch notes digest goes out on the leaderboard's day too. The hour stays, as the monthly recap uses it
+  { from: 'weeklyLeaderboard', on: (v) => v.weeklyLeaderboard || v.patchNotes === 'digest', keys: ['weeklyPostDay'] },
+];
+/** Each section's icon in the list of them */
+const SECTION_ICONS = { basics: 'sliders', pings: 'user', games: 'star', deals: 'tag', soundboard: 'speaker', music: 'note', speech: 'volume', chat: 'bubble', loop: 'infinity' };
+/** A hint longer than this shows its first sentence, with the rest behind More */
+const HINT_SHORT = 110;
+// Below this, a phone's width: the list of sections, or one of them with a way back to the list
+const NARROW = '(max-width: 759px)';
 // How long "Saved" shows beside a field
 const SAVED_MS = 2000;
 
@@ -153,6 +176,34 @@ const DEVICE = [
   ['soundsButton', 'Sounds button', 'Beside Volume on every page but the Soundboard: the sounds and a line to say, without leaving the page.'],
 ];
 
+/** Whether a setting is an on and off switch: a boolean, or one with no kind given whose value is true or false */
+const isSwitch = (spec, value) => spec.kind === 'boolean' || (!spec.kind && typeof value === 'boolean');
+
+/** A setting's hint, with all but its first sentence behind More when it's long. All of it is searched */
+function hintNode(text, label) {
+  if (!text) return null;
+  const first = text.length > HINT_SHORT ? /^(.+?[.!?:])\s+(?=[A-Z0-9“(/])/.exec(text) : null;
+  if (!first) return el('p', { className: 'hint' }, text);
+  const rest = el('span', { className: 'hint-rest', hidden: true }, ` ${text.slice(first[0].length)}`);
+  const more = el(
+    'button',
+    {
+      type: 'button',
+      className: 'link hint-more',
+      ariaExpanded: 'false',
+      ariaLabel: `More about ${label}`,
+      onclick: () => {
+        rest.hidden = !rest.hidden;
+        more.ariaExpanded = String(!rest.hidden);
+        more.textContent = rest.hidden ? 'More' : 'Less';
+        more.ariaLabel = `${more.textContent} about ${label}`;
+      },
+    },
+    'More',
+  );
+  return el('p', { className: 'hint' }, first[1], rest, ' ', more);
+}
+
 function deviceCard() {
   const row = ([name, label, hint]) => {
     const id = `device-${name}`;
@@ -163,28 +214,59 @@ function deviceCard() {
       el('div', { className: 'control' }, el('label', { className: 'toggle' }, el('input', { id, type: 'checkbox', checked: devicePref.on(name), onchange: (e) => devicePref.set(name, e.target.checked) }))),
     );
   };
-  return el('section', { className: 'card', id: 'settings-on-this-device' }, el('h2', {}, 'On this device'), el('p', { className: 'card-note' }, 'Just for this browser. Everything else here is for the whole server.'), DEVICE.map(row));
+  return el('section', { className: 'card', id: 'settings-this-browser' }, el('h2', {}, 'This browser'), el('p', { className: 'card-note' }, 'Just for this browser. Everything else here is for the whole server.'), DEVICE.map(row));
 }
 
 export function renderSettings(main) {
   const guildId = state.guildId;
   const loading = notice('loading', 'Loading settings…');
   main.append(loading);
+  main.classList.add('settings-page');
   const fields = new Map();
-
-  /** The folded groups, whose summary follows their first setting */
-  const folds = [];
+  /** Each setting's row, to hide while what it needs is off */
+  const rows = new Map();
+  /** The lines that say a switch hides the rest, each with its rule */
+  const needLines = [];
+  /** The groups' cards and their More options folds, hidden when everything in them is */
+  const hideable = [];
+  /** Which section each setting is in, and each section's badge and place in the list */
+  const sectionOf = new Map();
+  const badges = new Map();
+  const navItems = new Map();
+  /** What the page was last drawn from, for which settings are on */
+  let latest = null;
 
   async function refreshFields() {
     const fresh = await request(api('/settings'));
     if (guildId !== state.guildId || !main.isConnected) return;
+    latest = fresh;
     for (const [key, update] of fields) update(fresh.settings.find((s) => s.key === key), fresh);
-    for (const fold of folds) fold.paint(fresh);
     paintProblems(fresh.problems);
+    paintNeeds();
+  }
+
+  const valuesOf = (data) => Object.fromEntries(data.settings.map((s) => [s.key, s.value]));
+  /** The rule that hides a setting right now, if any. One with a problem shows anyway, with the problem under it */
+  const hiddenBy = (key) => {
+    if ((latest.problems ?? []).some((p) => p.key === key)) return undefined;
+    const values = valuesOf(latest);
+    return RULES.find((r) => r.keys.includes(key) && !r.on(values));
+  };
+
+  /** Hides the settings whose switch is off, and a group or fold left with nothing to show */
+  function paintNeeds() {
+    if (!latest) return;
+    const values = valuesOf(latest);
+    for (const [key, row] of rows) row.classList.toggle('off', Boolean(hiddenBy(key)));
+    for (const { rule, line } of needLines) line.hidden = rule.on(values);
+    for (const node of hideable) {
+      const inside = [...node.querySelectorAll('.field')];
+      node.classList.toggle('off', inside.length > 0 && inside.every((r) => r.classList.contains('off')));
+    }
   }
 
   /** What stops the bot doing what the settings ask, each with a way to the setting that fixes it */
-  const problemsBox = el('section', { className: 'card problems', id: 'settings-problems', hidden: true, ariaLabelledBy: 'settings-problems-title' });
+  const problemsBox = el('section', { className: 'card problems', id: 'settings-problems', hidden: true, 'aria-labelledby': 'settings-problems-title' });
   function paintProblems(problems = []) {
     problemsBox.hidden = !problems.length;
     problemsBox.replaceChildren(
@@ -203,11 +285,31 @@ export function renderSettings(main) {
         ),
       ),
     );
+    // How many each section has, beside it in the list. Those with no setting to change are with the list, in the first
+    const counts = new Map();
+    for (const p of problems) {
+      const at = (p.key && sectionOf.get(p.key)) || [...badges.keys()][0];
+      counts.set(at, (counts.get(at) ?? 0) + 1);
+    }
+    for (const [id, badge] of badges) {
+      const n = counts.get(id) ?? 0;
+      badge.hidden = !n;
+      badge.replaceChildren(String(n), el('span', { className: 'visually-hidden' }, n === 1 ? ' thing to fix' : ' things to fix'));
+    }
   }
 
-  /** Opens a setting's group if it's folded, and puts the cursor in it */
+  /**
+   * Opens a setting's section, and its More options if it's in them, and puts the cursor in it. One hidden until another's
+   * turned on gets the switch that shows it instead
+   */
   function goTo(key) {
-    const input = document.getElementById(`setting-${key}`);
+    const section = sectionOf.get(key);
+    if (!section) return;
+    showSection(section);
+    // Kept in the address, so a reload comes back to it
+    history.replaceState(history.state, '', `#settings/${section}?key=${encodeURIComponent(key)}`);
+    const by = hiddenBy(key);
+    const input = document.getElementById(`setting-${by ? by.from : key}`);
     if (!input) return;
     const fold = input.closest('details');
     if (fold) fold.open = true;
@@ -217,6 +319,7 @@ export function renderSettings(main) {
 
   function control(setting, spec, data, save) {
     const value = setting.value;
+    if (isSwitch(spec, value)) return el('label', { className: 'toggle' }, el('input', { id: `setting-${setting.key}`, type: 'checkbox', checked: value, onchange: (e) => save(e.target.checked) }));
     const change = (e) => save(e.target.value);
     const select = (options) =>
       el(
@@ -252,8 +355,20 @@ export function renderSettings(main) {
         return select(DAYS.map((day, idx) => [idx, day]));
       case 'hour':
         return select(Array.from({ length: 24 }, (_, hour) => [hour, `${String(hour).padStart(2, '0')}:00`]));
-      case 'boolean':
-        return el('label', { className: 'toggle' }, el('input', { id: `setting-${setting.key}`, type: 'checkbox', checked: value, onchange: (e) => save(e.target.checked) }));
+      case 'volume': {
+        // The same slider as the Volume button's
+        const [min, max] = setting.limits ?? [0, 200];
+        // An arrow key held down saves once it's let go, rather than at every step
+        let timer;
+        const later = (percent) => {
+          clearTimeout(timer);
+          timer = setTimeout(() => save(percent), NUMBER_SAVE_MS);
+        };
+        const volume = volumeControl({ min, max, label: setting.label, onSave: later });
+        volume.set(value);
+        volume.node.querySelector('input[type=range]').id = `setting-${setting.key}`;
+        return volume.node;
+      }
       case 'number':
         return el('input', {
           id: `setting-${setting.key}`,
@@ -289,9 +404,7 @@ export function renderSettings(main) {
       case 'longtext':
         return el('textarea', { id: `setting-${setting.key}`, value: value ?? '', rows: 4, maxLength: spec.maxLength, onchange: change });
       default:
-        return typeof value === 'boolean'
-          ? el('label', { className: 'toggle' }, el('input', { id: `setting-${setting.key}`, type: 'checkbox', checked: value, onchange: (e) => save(e.target.checked) }))
-          : el('input', { id: `setting-${setting.key}`, value: value ?? '', onchange: (e) => save(typeof value === 'number' ? Number(e.target.value) : e.target.value) });
+        return el('input', { id: `setting-${setting.key}`, value: value ?? '', onchange: (e) => save(typeof value === 'number' ? Number(e.target.value) : e.target.value) });
     }
   }
 
@@ -395,14 +508,17 @@ export function renderSettings(main) {
 
     update(setting, data);
     fields.set(setting.key, update);
-    return el(
+    // A switch sits beside its name even on a phone, where other controls go under it
+    const row = el(
       'div',
-      { className: 'field' },
-      el('div', {}, el('label', { htmlFor: `setting-${setting.key}` }, setting.label), spec.hint && el('p', { className: 'hint' }, spec.hint)),
+      { className: isSwitch(spec, setting.value) ? 'field toggle-field' : 'field' },
+      el('div', {}, el('label', { htmlFor: `setting-${setting.key}` }, setting.label), hintNode(spec.hint, setting.label)),
       box,
       status,
       message,
     );
+    rows.set(setting.key, row);
+    return row;
   }
 
   const freeBody = el('div');
@@ -611,7 +727,7 @@ export function renderSettings(main) {
     paint(first);
     return el(
       'section',
-      { className: 'card' },
+      { className: 'card', id: 'settings-game-pings' },
       el('h2', {}, 'Game pings'),
       el('p', { className: 'card-note' }, 'People pick theirs with /pings. Anyone with this page’s password can add and remove these, which makes and deletes Discord roles.'),
       games,
@@ -728,118 +844,249 @@ export function renderSettings(main) {
       return result;
     });
     paint(first.joinSounds);
-    return el('section', { className: 'card' }, el('h2', {}, 'Join sounds'), body, set);
+    return el('section', { className: 'card', id: 'settings-join-sound-list' }, el('h2', {}, 'People’s join sounds'), body, set);
   }
+
+  /** What the address asks for: #settings/deals, #settings?key=bundleAlerts or #settings/chat?card=profiles */
+  function fromAddress() {
+    const [path, query = ''] = location.hash.slice(1).split('?');
+    const params = new URLSearchParams(query);
+    const section = path.split('/')[1] ?? '';
+    // The header's Edit profiles… used to open this
+    if (section === 'profiles') return { section: 'chat', card: 'profiles' };
+    return { section, key: params.get('key'), card: params.get('card') };
+  }
+
+  // Set once the page is drawn
+  let showSection = () => {};
+  let find = null;
+  let filter = () => {};
 
   void attempt(async () => {
     try {
       const [data, joinSounds, gamePings] = await Promise.all([request(api('/settings')), request(api('/join-sounds')), request(api('/game-pings'))]);
       if (guildId !== state.guildId || !main.isConnected) return;
+      latest = data;
       const byKey = new Map(data.settings.map((s) => [s.key, s]));
-      paintProblems(data.problems);
-      // The bot says how to group them, the same way /setup show does
-      // (an older bot sends none, and its settings all go under Other until it's updated)
+      // The bot says how to group them, the same way /setup show does, and which groups go in each section
+      // (an older bot sends no sections, and its settings all go in one until it's updated)
       const given = data.groups ?? [];
       const grouped = new Set(given.flatMap(([, keys]) => keys));
       const others = data.settings.filter((s) => !grouped.has(s.key)).map((s) => s.key);
-      const groups = others.length ? [...given, ['Other', others]] : given;
+      const groups = new Map(others.length ? [...given, ['Other', others]] : given);
+      let sections = data.sections?.length ? data.sections : [{ id: 'basics', title: 'Settings', about: '', groups: [...groups.keys()] }];
+      // A group no section names goes in the last one
+      const placed = new Set(sections.flatMap((s) => s.groups));
+      const left = [...groups.keys()].filter((title) => !placed.has(title));
+      if (left.length) sections = [...sections.slice(0, -1), { ...sections.at(-1), groups: [...sections.at(-1).groups, ...left] }];
+      for (const section of sections) for (const title of section.groups) for (const key of groups.get(title) ?? []) sectionOf.set(key, section.id);
       const slug = (title) => `settings-${title.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
-      const cards = groups.flatMap(([title, keys]) => {
+
+      // A line at the top of a group, about the whole of it
+      const notes = {
+        'Who can use what': () =>
+          el('p', { className: 'card-note' }, 'For the bot’s commands in Discord, which people with Manage Server can always use. This page isn’t limited by them: anyone with its password can change everything here.'),
+        'Looping room': () => data.loopBot && el('p', { className: `card-note${data.loopBot.ok ? '' : ' warning'}`, id: 'loop-bot-status' }, data.loopBot.note),
+        Chat: () => data.chat && el('p', { className: `card-note${data.chat.ok ? '' : ' warning'}`, id: 'chat-status' }, data.chat.note),
+      };
+
+      function groupCard(title, keys) {
         const shown = keys.filter((key) => byKey.has(key));
-        const parts = [
-          title === 'Looping sound room' && data.loopBot && el('p', { className: `card-note${data.loopBot.ok ? '' : ' warning'}`, id: 'loop-bot-status' }, data.loopBot.note),
-          title === 'Chat' && data.chat && el('p', { className: `card-note${data.chat.ok ? '' : ' warning'}`, id: 'chat-status' }, data.chat.note),
-          shown.map((key) => field(byKey.get(key), data)),
-        ];
-        let card;
-        if (FOLDED.has(title)) {
-          // The fold says what the group's first setting is, such as the room's channel or Off
-          const value = el('span', { className: 'fold-value' });
-          const paintValue = () => {
-            const first = byKey.get(shown[0]);
-            value.textContent = first ? describe(FIELDS[first.key] ?? {}, first.value, data) : '';
-          };
-          paintValue();
-          folds.push({ key: shown[0], paint: (fresh) => (byKey.set(shown[0], fresh.settings.find((x) => x.key === shown[0])), paintValue()) });
-          card = el('details', { className: 'card fold', id: slug(title) }, el('summary', {}, el('h2', {}, title), value), ...parts);
-        } else card = el('section', { className: 'card', id: slug(title) }, el('h2', {}, title), ...parts);
-        // Built only for its own group: the previews share one body each
-        const extras = {
-          'Hop-on pings': () => [gamePingCard(gamePings)],
-          'Sale alerts': () => [salesCard()],
-          'Free games': () => [freeGamesCard()],
-          'Text to speech': () => (data.speech ? [voicesCard(main, refreshFields)] : []),
-          // Reminders waiting are still posted with chat off, so they can still be cancelled
-          Chat: () => [
-            profilesCard(main, data, refreshFields),
-            ...(data.chat?.ok && data.chat.notes ? [chatNotesCard(data.chat.notes)] : []),
-            ...(data.chat?.ok || data.chat?.reminders?.length ? [chatRemindersCard(data.chat.reminders ?? [])] : []),
-          ],
-        }[title]?.();
-        return [card, ...(extras ?? []).filter(Boolean)];
-      });
-      const joinCard = joinSoundCard(joinSounds);
-      joinCard.id = 'settings-join-sounds';
+        const parts = [];
+        for (const key of shown.filter((k) => !FIELDS[k]?.more)) {
+          parts.push(field(byKey.get(key), data));
+          for (const rule of RULES.filter((r) => r.from === key && r.line)) {
+            const line = el('p', { className: 'needs-line' }, rule.line);
+            needLines.push({ rule, line });
+            parts.push(line);
+          }
+        }
+        // The fine-tuning, folded away at the end
+        const more = shown.filter((k) => FIELDS[k]?.more);
+        if (more.length) {
+          const fold = el('details', { className: 'more-options' }, el('summary', {}, 'More options'), more.map((key) => field(byKey.get(key), data)));
+          hideable.push(fold);
+          parts.push(fold);
+        }
+        const card = el('section', { className: 'card group', id: slug(title) }, el('h2', {}, title), notes[title]?.(), ...parts);
+        hideable.push(card);
+        return card;
+      }
+
+      // Cards that aren't settings: after a group, or at a section's start or end
+      const after = {
+        'Hop-on pings': () => [gamePingCard(gamePings)],
+        'Join sounds': () => [joinSoundCard(joinSounds)],
+        Profile: () => [profilesCard(main, data, refreshFields)],
+      };
+      const start = { basics: () => [problemsBox] };
+      const end = {
+        basics: () => [deviceCard()],
+        deals: () => [salesCard(), freeGamesCard()],
+        speech: () => (data.speech ? [voicesCard(main, refreshFields)] : []),
+        // Reminders waiting are still posted with chat off, so they can still be cancelled
+        chat: () => [...(data.chat?.ok && data.chat.notes ? [chatNotesCard(data.chat.notes)] : []), ...(data.chat?.ok || data.chat?.reminders?.length ? [chatRemindersCard(data.chat.reminders ?? [])] : [])],
+      };
+      // Each in its section, or in the last for a section the bot didn't send, like an older bot's one section
+      const ids = new Set(sections.map((s) => s.id));
+      const place = (from) => {
+        const at = new Map();
+        for (const [id, make] of Object.entries(from)) {
+          const home = ids.has(id) ? id : sections.at(-1).id;
+          at.set(home, [...(at.get(home) ?? []), make]);
+        }
+        return (id) => (at.get(id) ?? []).flatMap((make) => make());
+      };
+      const startCards = place(start);
+      const endCards = place(end);
+
+      const narrow = () => matchMedia(NARROW).matches;
+      /** The section shown, and whether a phone shows the list of them instead */
+      let current = sections[0].id;
+      let listing = false;
+      const layout = el('div', { className: 'settings-layout' });
+
+      function back() {
+        // Opened from the list, which Back goes to, however it was come back to since
+        if (history.state?.fromList) return history.back();
+        history.replaceState(null, '', '#settings');
+        showSection(current, { list: true });
+        navItems.get(current)?.focus();
+      }
+
+      const sectionNodes = sections.map((s) =>
+        el(
+          'section',
+          { className: 'settings-section', id: `settings-section-${s.id}`, 'aria-labelledby': `settings-title-${s.id}`, hidden: true, 'data-id': s.id },
+          el(
+            'div',
+            { className: 'section-head' },
+            el('button', { type: 'button', className: 'quiet settings-back with-icon', onclick: back }, icon('left'), 'Settings'),
+            el('h2', { className: 'section-title', id: `settings-title-${s.id}`, tabIndex: -1 }, s.title),
+          ),
+          ...startCards(s.id),
+          ...s.groups.flatMap((title) => [groupCard(title, groups.get(title) ?? []), ...(after[title]?.() ?? [])]),
+          ...endCards(s.id),
+        ),
+      );
+
+      function pick(id) {
+        const fromList = listing && narrow();
+        showSection(id);
+        const hash = `#settings/${id}`;
+        // On a phone, Back goes from a section to the list. Beside the list, it leaves Settings, as Stats' views do
+        if (fromList) history.pushState({ fromList: true }, '', hash);
+        else history.replaceState(history.state, '', hash);
+        scrollTo({ top: 0 });
+        if (narrow()) document.getElementById(`settings-title-${id}`)?.focus({ preventScroll: true });
+      }
+
+      const nav = el(
+        'nav',
+        { className: 'settings-nav', ariaLabel: 'Settings sections' },
+        sections.map((s) => {
+          const badge = el('span', { className: 'settings-badge', hidden: true });
+          badges.set(s.id, badge);
+          const item = el(
+            'button',
+            { type: 'button', className: 'settings-item', onclick: () => pick(s.id) },
+            icon(SECTION_ICONS[s.id] ?? 'sliders'),
+            el('span', { className: 'settings-item-text' }, el('span', { className: 'settings-item-title' }, s.title), s.about && el('span', { className: 'settings-item-about' }, s.about)),
+            badge,
+            icon('right'),
+          );
+          navItems.set(s.id, item);
+          return item;
+        }),
+      );
+
+      showSection = (id, { list = false } = {}) => {
+        current = ids.has(id) ? id : sections[0].id;
+        listing = list;
+        remember('settingsSection', current);
+        layout.classList.toggle('listing', list);
+        if (find.value) find.value = '';
+        filter('');
+        for (const [sid, item] of navItems) {
+          if (sid === current) item.setAttribute('aria-current', 'page');
+          else item.removeAttribute('aria-current');
+        }
+      };
+
       const nothing = notice('empty', '', { compact: true });
       nothing.hidden = true;
 
-      /** Hides the settings whose name and hint don't have the words typed, and groups left with none */
-      const filter = (text) => {
+      /**
+       * Shows the settings that have every word typed, in their name, hint, status or choices, from every section, and the
+       * groups and sections they're in. A group or section whose title matches shows whole. With nothing typed, the
+       * section that was open
+       */
+      filter = (text) => {
         const words = text.toLowerCase().split(/\s+/).filter(Boolean);
+        const searching = words.length > 0;
+        const has = (node) => words.every((word) => node?.textContent.toLowerCase().includes(word));
+        layout.classList.toggle('searching', searching);
         let any = false;
-        for (const card of main.querySelectorAll('.settings-cards > .card')) {
-          const rows = [...card.querySelectorAll(':scope > .field, :scope > div > .field')];
-          let shownRows = 0;
-          for (const row of rows) {
-            const match = words.every((word) => row.textContent.toLowerCase().includes(word));
-            row.hidden = words.length > 0 && !match;
-            if (match) shownRows++;
-          }
-          const titleMatch = words.every((word) => card.querySelector('h2')?.textContent.toLowerCase().includes(word));
-          // A group whose title matches shows whole
-          if (titleMatch) for (const row of rows) row.hidden = false;
-          card.hidden = words.length > 0 && !titleMatch && !shownRows;
-          // Opened to show what matched, and folded again once the search is cleared. A preview isn't a setting, and
-          // opening one would start its slow check
-          if (card.tagName === 'DETAILS' && !card.classList.contains('preview')) {
-            if (words.length && !card.hidden && !card.open) {
-              card.open = true;
-              card.dataset.foundOpen = '1';
-            } else if (!words.length && card.dataset.foundOpen) {
-              card.open = false;
-              delete card.dataset.foundOpen;
+        for (const section of sectionNodes) {
+          const wholeSection = searching && has(section.querySelector('.section-title'));
+          let found = false;
+          for (const card of section.querySelectorAll(':scope > .card:not(.problems)')) {
+            const cardRows = [...card.querySelectorAll(':scope > .field, :scope > div > .field, :scope > details > .field')];
+            const whole = wholeSection || has(card.querySelector('h2'));
+            let shownRows = 0;
+            for (const row of cardRows) {
+              const match = !searching || whole || has(row);
+              row.hidden = !match;
+              if (match) shownRows++;
             }
+            card.hidden = searching && !whole && !shownRows;
+            // More options opened to show what matched, and folded again once the search is cleared. A preview isn't a
+            // setting, and opening one would start its slow check
+            for (const fold of card.querySelectorAll(':scope > details.more-options')) {
+              const matched = [...fold.querySelectorAll('.field')].some((row) => !row.hidden);
+              if (searching && matched && !fold.open) {
+                fold.open = true;
+                fold.dataset.foundOpen = '1';
+              } else if (!searching && fold.dataset.foundOpen) {
+                fold.open = false;
+                delete fold.dataset.foundOpen;
+              }
+            }
+            found ||= !card.hidden;
           }
-          any ||= !card.hidden;
+          section.hidden = searching ? !found : section.dataset.id !== current;
+          any ||= found;
         }
-        nothing.hidden = any || !words.length;
+        nothing.hidden = any || !searching;
         nothing.textContent = `No setting matches “${text.trim()}”.`;
       };
-      const find = el('input', { type: 'search', placeholder: 'Find a setting', ariaLabel: 'Find a setting', enterKeyHint: 'search', oninput: (e) => filter(e.target.value) });
-      const jump = el(
-        'select',
-        {
-          ariaLabel: 'Jump to a group',
-          onchange: () => {
-            const target = document.getElementById(jump.value);
-            jump.value = '';
-            if (!target) return;
-            if (target.tagName === 'DETAILS') target.open = true;
-            target.scrollIntoView({ behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
-            target.querySelector('summary, h2')?.focus?.();
-          },
-        },
-        el('option', { value: '' }, 'Jump to…'),
-        el('option', { value: 'settings-on-this-device' }, 'On this device'),
-        groups.flatMap(([title]) => [el('option', { value: slug(title) }, title), title === 'Text to speech' && data.speech && el('option', { value: 'settings-voices' }, 'Voices')].filter(Boolean)),
-        el('option', { value: 'settings-join-sounds' }, 'Join sounds'),
-      );
-      main.replaceChildren(
-        el('datalist', { id: 'time-zones' }, data.timeZones.map((zone) => el('option', { value: zone }))),
-        el('div', { className: 'toolbar settings-find' }, find, jump),
-        nothing,
-        el('div', { className: 'settings-cards stack' }, problemsBox, deviceCard(), ...cards, joinCard),
-      );
+      find = el('input', { type: 'search', placeholder: 'Find a setting', ariaLabel: 'Find a setting', enterKeyHint: 'search', oninput: (e) => filter(e.target.value) });
+
+      layout.append(el('div', { className: 'settings-side' }, el('div', { className: 'settings-find' }, find), nav), el('div', { className: 'settings-body' }, nothing, ...sectionNodes));
+      main.replaceChildren(el('datalist', { id: 'time-zones' }, data.timeZones.map((zone) => el('option', { value: zone }))), layout);
+      paintProblems(data.problems);
+      paintNeeds();
+
+      /** Shows what the address asks for: a section, a setting in one, or a card, or else the list (beside the last section) */
+      function follow() {
+        const asked = fromAddress();
+        if (asked.key && sectionOf.has(asked.key)) return goTo(asked.key);
+        if (ids.has(asked.section)) {
+          showSection(asked.section);
+          if (asked.card) {
+            history.replaceState(history.state, '', `#settings/${asked.section}`);
+            const card = document.getElementById(`settings-${asked.card}`);
+            if (card?.bringIntoView) card.bringIntoView();
+            else card?.scrollIntoView({ block: 'start' });
+          }
+          return;
+        }
+        const last = recall('settingsSection');
+        showSection(ids.has(last) ? last : sections[0].id, { list: true });
+      }
+      // Back and Forward within Settings, and links to it from Settings itself, without drawing it again
+      main.followHash = follow;
+      follow();
     } catch (err) {
       loading.replaceWith(notice('error', err.message));
       throw err;

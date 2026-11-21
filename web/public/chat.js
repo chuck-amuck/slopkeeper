@@ -1,4 +1,4 @@
-import { api, el, fetchAudio, icon, notice, pageSignal, player, recall, remember, request, RequestError, soundPath, state, toast } from './lib.js';
+import { api, el, fetchAudio, icon, notice, pageSignal, player, recall, remember, request, RequestError, settingLink, soundPath, state, toast } from './lib.js';
 import { matching, withPicked } from './mentions.js';
 
 // Chat tried here: the bot's real answer, as if asked in a channel, with nothing done in Discord. What it would have
@@ -287,7 +287,7 @@ function draw(body, setup, guildId) {
   }
 
   body.append(
-    setup.chatOn ? '' : notice('empty', 'Chat is off in this server’s settings, so the bot doesn’t answer in Discord. It still answers here, to try it first.'),
+    setup.chatOn ? '' : notice('empty', 'Chat is off in ', settingLink('chat', 'this server’s settings'), ', so the bot doesn’t answer in Discord. It still answers here, to try it first.'),
     el(
       'div',
       { className: 'toolbar try-options' },

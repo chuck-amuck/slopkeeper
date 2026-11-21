@@ -108,15 +108,87 @@ const PAGES: [string, string, Record<string, string>?, string?, string?][] = [
     `(() => { const box = document.querySelector('.try-ask textarea'); box.focus(); box.value = 'roast @'; box.setSelectionRange(7, 7); box.dispatchEvent(new Event('input')); box.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true })); })()`,
   ],
   ['activity', 'Activity'],
+  // Settings with no section asked for: the list of them on a phone, and beside it the first, with what needs fixing
   [
     'settings',
     'Settings',
+    {},
+    `(() => {
+      const layout = document.querySelector('.settings-layout');
+      const shown = (n) => !!n && n.getClientRects().length > 0;
+      const items = [...document.querySelectorAll('.settings-item')];
+      const basics = document.querySelector('#settings-section-basics');
+      const sections = items.length === 9 && items[0].textContent.startsWith('Basics') && !items[0].querySelector('.settings-badge').hidden;
+      return sections && layout.classList.contains('listing') && (innerWidth < 760
+        ? shown(document.querySelector('.settings-nav')) && !shown(basics) && shown(items[0].querySelector('.settings-item-about'))
+        : shown(basics) && items[0].getAttribute('aria-current') === 'page' && shown(document.querySelector('#settings-problems')) && shown(document.querySelector('#settings-this-browser')));
+    })()`,
+  ],
+  ['settings/pings', 'Settings: Voice and pings', {}, `!!document.querySelector('#settings-game-pings') && !document.querySelector('#settings-section-pings').hidden`],
+  ['settings/games', 'Settings: Games'],
+  ['settings/deals', 'Settings: Deals', {}, `!!document.querySelector('#settings-free-games') && [...document.querySelectorAll('#settings-section-deals details.preview')].length === 2`],
+  // Join sounds with their list under them, and their delay and cooldown folded away
+  ['settings/soundboard', 'Settings: Soundboard', {}, `!!document.querySelector('#settings-join-sounds + #settings-join-sound-list') && !document.querySelector('#settings-join-sounds .more-options').open && !!document.querySelector('#setting-soundVolume[type=range]')`],
+  ['settings/music', 'Settings: Music'],
+  // With no channel picked, the looping room is one line, and its speech isn't shown
+  [
+    'settings/loop',
+    'Settings: Looping room off',
+    {},
+    `(() => { const line = document.querySelector('#settings-looping-room .needs-line'); return !!line && line.getClientRects().length > 0 && document.querySelector('#settings-looping-speech').getClientRects().length === 0 && document.querySelector('#setting-loopSound').closest('.field').getClientRects().length === 0; })()`,
+  ],
+  // A link to one setting: its section opened, its More options too, and the cursor in it, at the section's own address
+  [
+    'settings?key=musicSearchFallback',
+    'Settings: a link to a setting',
+    {},
+    `location.hash === '#settings/music?key=musicSearchFallback' && document.activeElement?.id === 'setting-musicSearchFallback' && document.querySelector('#settings-music-search .more-options').open`,
+  ],
+  // A search finds settings in every section, even folded or hidden ones, and clearing it goes back to the one open.
+  // Basics has the Sounds button, beside Volume
+  [
+    'settings/music',
+    'Settings: a search',
+    {},
+    `window.searched === 'basics,soundboard,music,speech,loop|music'`,
+    `(async () => {
+      const find = document.querySelector('.settings-find input');
+      const type = (text) => { find.value = text; find.dispatchEvent(new Event('input')); };
+      type('volume');
+      const found = [...document.querySelectorAll('.settings-section')].filter((n) => !n.hidden).map((n) => n.dataset.id).join();
+      const folded = document.querySelector('#setting-evenVolume')?.closest('details').open && document.querySelector('#setting-loopVolume').closest('.field').getClientRects().length > 0;
+      type('');
+      const after = [...document.querySelectorAll('.settings-section')].filter((n) => !n.hidden).map((n) => n.dataset.id).join();
+      window.searched = folded ? found + '|' + after : 'not opened';
+    })()`,
+  ],
+  // On a phone, a section from the list, and Back to the list. Beside the list, another section in its place
+  [
+    'settings',
+    'Settings: into a section and back',
+    {},
+    `window.wentBack === true`,
+    `(async () => {
+      const wait = () => new Promise((r) => setTimeout(r, 300));
+      const layout = document.querySelector('.settings-layout');
+      [...document.querySelectorAll('.settings-item')].find((b) => b.textContent.startsWith('Speech')).click();
+      await wait();
+      const opened = location.hash === '#settings/speech' && !document.querySelector('#settings-section-speech').hidden && !layout.classList.contains('listing');
+      if (innerWidth >= 760) return (window.wentBack = opened && document.querySelector('#settings-section-basics').hidden);
+      document.querySelector('#settings-section-speech .settings-back').click();
+      await wait();
+      window.wentBack = opened && location.hash === '#settings' && layout.classList.contains('listing') && document.querySelector('.settings-nav').getClientRects().length > 0;
+    })()`,
+  ],
+  [
+    'settings/chat',
+    'Settings: Chat',
     {},
     `/A grumpy pirate with a long name to wrapUsing/.test(document.querySelector('#settings-profiles')?.textContent ?? '') && document.querySelector('#setting-chatProfile')?.value === 'pirate' && document.querySelector('#settings-chat-notes')?.textContent.includes('Captain') && /for .+, .+check the oven \\(set by .+\\)Cancel/.test(document.querySelector('#settings-chat-reminders')?.textContent ?? '')`,
   ],
   // Profiles: the one in use, and its settings
   [
-    'settings',
+    'settings/chat',
     'Settings: Edit a profile',
     {},
     `(() => { const d = document.querySelector('dialog[open]'); return !!d && /Edit A grumpy pirate/.test(d.textContent) && d.querySelectorAll('select').length === 6 && d.querySelector('#profile-swearing').value === 'freely' && d.querySelector('#profile-voice').value === 'scottish' && d.querySelector('#profile-effect').value === 'robot' && d.querySelector('#profile-nickname').value === 'Captain Grump' && /\\d+ of 1000 characters/.test(d.textContent); })()`,
@@ -124,7 +196,7 @@ const PAGES: [string, string, Record<string, string>?, string?, string?][] = [
   ],
   // Added voices: one ready with speakers, one downloading and one that failed, and the ready one's settings
   [
-    'settings',
+    'settings/speech',
     'Settings: Edit a voice',
     {},
     `(() => { const d = document.querySelector('dialog[open]'); return !!d && /Edit Narrator/.test(d.textContent) && d.querySelectorAll('select').length === 5 && d.querySelector('#voice-effect').options.length === 16 && /Measured: Middle, -2.5 dB/.test(d.textContent) && [...d.querySelectorAll('button')].some((b) => b.textContent === 'Use measured') && /Downloading, 40%/.test(document.body.innerText) && /Couldn’t download/.test(document.body.innerText); })()`,
@@ -132,7 +204,7 @@ const PAGES: [string, string, Record<string, string>?, string?, string?][] = [
   ],
   // An import, from a file picked, says what it would do first
   [
-    'settings',
+    'settings/speech',
     'Settings: Import voices',
     {},
     `(() => { const d = document.querySelector('dialog[open]'); return !!d && /Added \\(1\\)/.test(d.textContent) && /Skipped \\(1\\)/.test(d.textContent) && /Already the same \\(1\\)/.test(d.textContent); })()`,
@@ -190,7 +262,7 @@ const PAGES: [string, string, Record<string, string>?, string?, string?][] = [
     'music',
     'Header: Edit profiles',
     {},
-    `location.hash === '#settings' && window.profilesInView === true && document.querySelector('.profile-menu').hidden`,
+    `location.hash === '#settings/chat' && window.profilesInView === true && document.querySelector('.profile-menu').hidden`,
     `(async () => {
       document.querySelector('.profile-face').click();
       [...document.querySelectorAll('.profile-menu [role=menuitem]')].find((b) => b.textContent === 'Edit profiles…').click();

@@ -6,7 +6,7 @@ import { chatNote, chatNotes, noteOf, setNote } from '../features/chat.ts';
 import { cancelReminder, chatReminders } from '../features/chatReminders.ts';
 import { effects, voices } from '../features/say.ts';
 import { canGiveRole } from '../util.ts';
-import { checkSetting, GROUPS, LABELS, LIMITS, POSTING_CHANNELS, settingProblems, show, source, STEPS } from '../features/setup.ts';
+import { checkSetting, GROUPS, LABELS, LIMITS, POSTING_CHANNELS, SECTIONS, settingProblems, show, source, STEPS } from '../features/setup.ts';
 import { afterSettingsChanged } from '../features/soundboard.ts';
 import { listSounds } from '../features/soundLibrary.ts';
 import { loopBotStatus, loopSpeechProblem } from '../features/loopRoom.ts';
@@ -33,6 +33,8 @@ function settingList(guild: Guild) {
       step: STEPS[key as keyof typeof LIMITS] ?? 1,
     })),
     groups: GROUPS,
+    // Which groups go together in the web UI's sections
+    sections: SECTIONS,
     channels: textChannels(guild),
     voiceChannels: [...guild.channels.cache.values()]
       .filter((c): c is VoiceChannel => c.type === ChannelType.GuildVoice && c.id !== guild.afkChannelId && listed(guild)(c))

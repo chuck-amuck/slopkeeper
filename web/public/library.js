@@ -2,7 +2,7 @@ import { pickClip } from './clip.js';
 import { emojiPicker } from './emojipicker.js';
 import { downloadLink, pickPart } from './linkclip.js';
 import { byUse, EVERYTHING_ELSE } from './soundgrid.js';
-import { announce, api, attempt, confirmButton, el, emojiNode, icon, keepFocus, needsVoice, notice, openDialog, panelsDialog, player, postDialog, recall, remember, request, RequestError, soundPath, state, toast, undoToast, volumeControl } from './lib.js';
+import { announce, api, attempt, confirmButton, el, emojiNode, icon, keepFocus, needsVoice, notice, openDialog, panelsDialog, player, postDialog, recall, remember, request, RequestError, settingLink, soundPath, state, toast, undoToast, volumeControl } from './lib.js';
 import { pickTrim } from './trim.js';
 import { followWhenIdle, older } from './updates.js';
 import { voiceBar } from './voice.js';
@@ -955,7 +955,7 @@ export function renderLibrary(main) {
   }
 
   function levelNote({ gainDb }) {
-    if (!data.evenVolume) return 'Even volume is off in Settings, so only this slider applies.';
+    if (!data.evenVolume) return ['Even volume is off in ', settingLink('evenVolume', 'Settings'), ', so only this slider applies.'];
     if (gainDb === null) return 'Even volume hasn’t measured this one yet.';
     if (gainDb === 0) return 'Even volume left this one as it is.';
     return `Even volume turned this one ${gainDb > 0 ? 'up' : 'down'} by ${Math.abs(gainDb)} dB. This slider goes on top of that.`;
@@ -1032,7 +1032,7 @@ export function renderLibrary(main) {
         await request(soundPath(sound.name), { method: 'PATCH', json: { volume: percent } });
         await load();
         sound = data.sounds.find((s) => s.name === sound.name) ?? sound;
-        note.textContent = levelNote(sound);
+        note.replaceChildren(...[levelNote(sound)].flat());
       });
     // From the slider, since saving takes a moment and preview shouldn't play the old level until it's done
     const loudness = () => (sound.loudness * control.value()) / sound.percent;
