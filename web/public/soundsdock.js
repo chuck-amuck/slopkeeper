@@ -32,7 +32,7 @@ export function soundsDock(openBoard, extra = null) {
       type: 'button',
       className: 'volume-fab sounds-fab with-icon',
       ariaLabel: 'Sounds',
-      title: 'Play a sound or say something, from any page',
+      title: 'Sounds: play a sound or say something, from any page',
       ariaExpanded: 'false',
       'aria-controls': panel.id,
       onclick: () => toggle(panel.hidden, true),

@@ -1183,8 +1183,8 @@ test('tried in the web UI, an answer is said as it would be in voice, and what i
   // Not with Answer in voice off, as it wouldn't be in Discord
   replies = [turn('end_turn', text('Of course, @Sam, at once!'))];
   const unsaid = await tryChat(guild as never, robin as never, channel as never, [], 'tell @Sam hi', 'a');
-  assert.equal(unsaid.aloud, null);
-  assert.match(unsaid.quiet!, /Answer in voice is off/);
+  // The page says that once, above the answers, rather than on each
+  assert.deepEqual([unsaid.aloud, unsaid.quiet], [null, null]);
   assert.match(inDiscord(guild.id), /Answer in voice is off/);
   for (const voice of ['also', 'only']) {
     setSetting(guild.id, 'chatVoice', voice);

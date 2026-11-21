@@ -8,8 +8,9 @@ A web page for everything the bot does, running as a second container next to it
 - **Profile:** left of the server, the face of the [profile](chat.md#profiles) the bot is in this server: its photo, or its initials on a colour of its own. Hover over it for its name, and click or tap it for a menu of the profiles to pick another, or **Edit profiles…** to open them in Settings.
 - **Stop:** while sounds or speech play, a red button in the bottom corner stops them, with what's playing listed above it to stop one at a time. Music carries on, but the toast after Stop offers **Pause music**.
 - **Music player:** while music plays, a card at the bottom shows the song with **Pause**, **Skip** and **+** to add a song.
-- **Sounds:** a button that opens the server's sounds, the volumes and a line to say over any page.
-- **Volume:** the sounds', speech's and music's volumes, for everyone in the server. Sliders run to 100% at the tick, and the orange last quarter goes past it. What's playing follows a slider as you drag it, and letting go saves it for everyone. The box beside each takes an exact number, and the arrow keys move 5% at a time.
+- **Sounds:** a round button in the bottom corner that opens the server's sounds and a line to say over any page.
+- **Volume:** a round button beside it with the sounds', speech's and music's volumes, for everyone in the server. Sliders run to 100% at the tick, and the orange last quarter goes past it. What's playing follows a slider as you drag it, and letting go saves it for everyone. The box beside each takes an exact number, and the arrow keys move 5% at a time.
+- **The corner's buttons** keep clear of the page: on a wide screen there's room beside the page for them (and their names, on a very wide one), and on a phone or a narrow window they slide away while you scroll down and come back when you scroll up, or as soon as something plays.
 - **Pop out:** in Chrome or Edge 116+, or Firefox 151+, over HTTPS, the Sounds panel and the music player can pop out into a small window that stays on top of everything, a game included.
 - **Undo:** removing a song, deleting a sound or saved line, taking a sound off Discord, **Never suggest this** and **Reset** on a setting each offer **Undo** for a few seconds.
 
@@ -17,9 +18,9 @@ Everything updates live, whoever changed it and wherever, and a change waits whi
 
 ## Tabs
 
-**Soundboard:** **Play** has the volumes, a box to say something (with saved lines and a preview in headphones), a search, and the sounds as big buttons in their groups. **/** (or, on a wide screen, just typing) jumps to the search and **Enter** plays the first match. The star adds a sound to **Favourites**. **Manage** is where sounds are added, from files, folders or [a link](soundboard.md#adding-a-sound-from-a-link), and renamed, grouped, trimmed, turned up or down, downloaded, deleted and put on Discord's soundboard. **Cut another** makes a new sound from another part of the same video or sound. **Recently deleted** brings sounds back. Drag the handle at the start of a row to move a sound, or use Space and the arrow keys. **Post panel** posts a `/sound panel`, and **Posted panels** lists them and takes them down.
+**Soundboard:** **Play** has the volumes (on a phone, behind the Volume button), a box to say something (with saved lines and a preview in headphones), a search, and the sounds as big buttons in their groups. **/** (or, on a wide screen, just typing) jumps to the search and **Enter** plays the first match. The star adds a sound to **Favourites**. **Manage** is where sounds are added, from files, folders or [a link](soundboard.md#adding-a-sound-from-a-link) (first, or in a column beside the sounds on a wide screen, with Discord's soundboard), and renamed, grouped, trimmed, turned up or down, downloaded, deleted and put on Discord's soundboard. **Cut another** makes a new sound from another part of the same video or sound. **Recently deleted** brings sounds back. Drag the handle at the start of a row to move a sound, or use Space and the arrow keys. The **Discord** menu syncs the sounds to Discord's soundboard, posts a `/sound panel`, and lists the panels posted to take them down.
 
-**Music:** what's playing, Spotify search and the queue. **Post panel** posts a [music panel](music.md#commands) and **Posted panels** lists them and takes them down. See [Music](music.md).
+**Music:** what's playing, Spotify search and the queue. The **Discord** menu posts a [music panel](music.md#commands), and lists them to take them down. See [Music](music.md).
 
 **Game nights:** plan a night, answer **In**, **Maybe** or **Can't**, edit or cancel one, or stop a repeating one. Times show in your time zone, and in the server's when that's different.
 
@@ -29,9 +30,9 @@ Everything updates live, whoever changed it and wherever, and a change waits whi
 
 **Deals:** what's on sale that this server plays or wants, compared with the lowest price ever, plus running [bundles](deals.md#bundles) and [free games](deals.md#free-games). **Just mine** keeps only what you want or wishlisted, once the page knows who you are.
 
-**Stats:** pick a range, from presets or dates on a calendar. **Overview** has game time, games, people, voice time, sounds and game nights, each compared with the stretch before, then charts of game time, days in voice, when people are on, the top games and people, and what's trending. Pick a person or game to see just theirs. **Sounds & music** has the sounds, songs and speech, never what was said. **Compare** and **Monthly recap** match `/compare` and `/recap`, and **Health** shows how the bot is doing (see [Health](api.md#health)). **Merge games** and **Not a game** fix how games are counted (see [Stats](stats.md#game-names)).
+**Stats:** pick a range, from presets or dates on a calendar (on a phone, from a list). **Overview** has game time, games, people, voice time, sounds and game nights, each compared with the stretch before, then charts of game time, days in voice, when people are on, the top games and people, and what's trending. Pick a person or game to see just theirs. **Sounds & music** has the sounds, songs and speech, never what was said. **Compare** and **Monthly recap** match `/compare` and `/recap`, and **Health** shows how the bot is doing (see [Health](api.md#health)). **Merge games** and **Not a game** fix how games are counted (see [Stats](stats.md#game-names)).
 
-**Chat:** ask the bot as you would in Discord, as anyone in the server, and see its answer, what it would have done and who it would have pinged, with nothing done or posted. What it would say aloud plays here. See [Chat](chat.md#trying-it-in-the-web-ui).
+**Chat:** ask the bot as you would in Discord, as anyone in the server, and see its answer, what it would have done and who it would have pinged, with nothing done or posted. What it would say aloud plays here, and the line above the conversation says how the same answer goes out in Discord. See [Chat](chat.md#trying-it-in-the-web-ui).
 
 **Activity:** who changed what, from here or Discord: sounds, games, pings, Steam accounts, music, settings and game nights.
 

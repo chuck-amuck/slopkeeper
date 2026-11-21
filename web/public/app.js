@@ -36,6 +36,11 @@ const TABS = [
 ];
 // What a phone's bottom bar has room for, in the same order as the tabs on a wider screen. The rest are under More
 const BAR = ['board', 'music', 'games', 'nights'];
+/** A tab's name on a phone's bottom bar: the shorter one, where it has one */
+const shortName = (id) => {
+  const [, label, , , short] = TABS.find(([t]) => t === id);
+  return short ?? label;
+};
 // Sounds was its own tab, and is now the Soundboard's Manage view
 if (recall('tab') === 'library') {
   remember('tab', 'board');
@@ -370,10 +375,11 @@ function renderFrame() {
       'nav',
       { className: 'bottom-nav', ariaLabel: 'Pages' },
       BAR.map((id) => {
-        const [, label, , iconName, short] = TABS.find(([t]) => t === id);
-        return el('button', { type: 'button', ...(tab === id && { 'aria-current': 'page' }), onclick: () => openTab(id) }, icon(iconName), el('span', {}, short ?? label));
+        const [, , , iconName] = TABS.find(([t]) => t === id);
+        return el('button', { type: 'button', ...(tab === id && { 'aria-current': 'page' }), onclick: () => openTab(id) }, icon(iconName), el('span', {}, shortName(id)));
       }),
-      el('button', { type: 'button', ...(!BAR.includes(tab) && { 'aria-current': 'page' }), ariaHasPopup: 'dialog', onclick: () => moreSheet(main) }, icon('more'), el('span', {}, BAR.includes(tab) ? 'More' : TABS.find(([t]) => t === tab)[1])),
+      // More, or the page open from under it, by its shorter name where it has one
+      el('button', { type: 'button', ...(!BAR.includes(tab) && { 'aria-current': 'page' }), ariaHasPopup: 'dialog', onclick: () => moreSheet(main) }, icon('more'), el('span', {}, BAR.includes(tab) ? 'More' : shortName(tab))),
     ),
     // In the corner of every page, so they're always in reach. The Soundboard has every sound already
     ...(guild ? [stopDock(volumeDock(), tab === 'board' ? noSoundsDock() : soundsDock(() => openTab('board'), popOutButton()))] : []),

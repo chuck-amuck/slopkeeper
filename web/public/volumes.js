@@ -106,7 +106,7 @@ export function volumeDock() {
       type: 'button',
       className: 'volume-fab with-icon',
       ariaLabel: 'Volume',
-      title: 'How loud the bot plays sounds, speech and music, for everyone',
+      title: 'Volume: how loud the bot plays sounds, speech and music, for everyone',
       ariaExpanded: 'false',
       'aria-controls': panel.id,
       onclick: () => toggle(panel.hidden),

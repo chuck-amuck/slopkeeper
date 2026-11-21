@@ -1,4 +1,4 @@
-import { el, icon, openDialog } from './lib.js';
+import { el, icon, keepFocus, openDialog, pageSignal } from './lib.js';
 
 /**
  * The time range a Stats view covers, with presets, a calendar for any dates, a toggle to compare with the stretch
@@ -58,6 +58,10 @@ export function rangeBar({ presets, value, onChange, earliestMs = null, compare,
   /** Ranges zoomed out of, newest last */
   const back = [];
   const node = el('div', { className: 'range-bar' });
+  // A phone has room for one of the presets at a time, so they're a list
+  const narrow = matchMedia('(max-width: 640px)');
+  const onNarrow = () => (node.isConnected ? paint() : narrow.removeEventListener('change', onNarrow));
+  narrow.addEventListener('change', onNarrow, { signal: pageSignal() });
 
   function set(range, remember = false) {
     if (remember) back.push(current);
@@ -103,15 +107,39 @@ export function rangeBar({ presets, value, onChange, earliestMs = null, compare,
     });
   }
 
+  /** The presets as one list, with the dates picked, if they were, and Pick dates… */
+  function presetList(custom) {
+    const select = el(
+      'select',
+      {
+        className: 'range-select',
+        ariaLabel: 'Time range',
+        onchange: () => {
+          if (select.value === 'pick') {
+            // Back to what's shown, in case the calendar's cancelled
+            select.value = custom ? 'custom' : current.preset;
+            pickDates();
+          } else if (select.value !== 'custom') set({ preset: select.value });
+        },
+      },
+      presets.map(([id, label]) => el('option', { value: id, selected: current.preset === id }, label)),
+      custom && el('option', { value: 'custom', selected: true }, rangeText(current, timeZone)),
+      el('option', { value: 'pick' }, 'Pick dates…'),
+    );
+    return select;
+  }
+
   function paint() {
     const custom = !current.preset;
     const parts = [
-      el(
-        'div',
-        { className: 'views range-presets', role: 'group', ariaLabel: 'Time range' },
-        presets.map(([id, label]) => el('button', { type: 'button', ariaPressed: String(current.preset === id), onclick: () => set({ preset: id }) }, label)),
-        el('button', { type: 'button', ariaPressed: String(custom), ariaHaspopup: 'dialog', onclick: pickDates }, custom ? rangeText(current, timeZone) : 'Pick dates…'),
-      ),
+      narrow.matches
+        ? presetList(custom)
+        : el(
+            'div',
+            { className: 'views range-presets', role: 'group', ariaLabel: 'Time range' },
+            presets.map(([id, label]) => el('button', { type: 'button', ariaPressed: String(current.preset === id), onclick: () => set({ preset: id }) }, label)),
+            el('button', { type: 'button', ariaPressed: String(custom), ariaHaspopup: 'dialog', onclick: pickDates }, custom ? rangeText(current, timeZone) : 'Pick dates…'),
+          ),
       back.length > 0 &&
         el(
           'button',
@@ -145,7 +173,8 @@ export function rangeBar({ presets, value, onChange, earliestMs = null, compare,
           'Compare with before',
         ),
     ];
-    node.replaceChildren(...parts.filter(Boolean));
+    // The list, or a button, keeps the focus, as the arrows on a list change the range at each step
+    keepFocus(node, () => node.replaceChildren(...parts.filter(Boolean)));
   }
 
   paint();

@@ -120,14 +120,13 @@ export async function tryChat(guild: Guild, asker: GuildMember, channel: GuildTe
   }
   const seconds = (performance.now() - started) / 1000;
   const done = made.text ? finished(guild.id, made.text, made.people, sourcesLine(made.sources)) : null;
-  // Said aloud as it would be in voice, unless Answer in voice is off, it already said something there, or it's past the
-  // longest line
+  // Said aloud as it would be in voice, unless Answer in voice is off (which the page says once, above the answers), it
+  // already said something there, or it's past the longest line
   let aloud: Heard | null = null;
   let quiet: string | null = null;
-  if (done && config.voiceUrl && setting(guild.id, 'tts')) {
+  if (done && config.voiceUrl && setting(guild.id, 'tts') && setting(guild.id, 'chatVoice') !== 'off') {
     const text = readable(guild, done.reply);
-    if (setting(guild.id, 'chatVoice') === 'off') quiet = 'Answer in voice is off in Settings, so the answer isn’t said aloud.';
-    else if (made.spoke) quiet = 'It already said something aloud, so the answer isn’t said too.';
+    if (made.spoke) quiet = 'It already said something aloud, so the answer isn’t said too.';
     else if (text.length > setting(guild.id, 'ttsMaxChars')) quiet = 'It’s longer than the longest line, so it wouldn’t be said aloud.';
     else {
       const own = ownSpeech(guild.id, profile);

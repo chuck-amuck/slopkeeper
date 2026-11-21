@@ -31,9 +31,10 @@ export function renderSoundboard(main) {
     else main.append(next);
     body = next;
     slot.replaceChildren();
-    // Play spreads out on a wide screen, with Speech in a column beside the sounds
-    main.classList.toggle('play-wide', id === 'play');
-    // Play's empty board opens Manage, and Play's search goes beside the switch on a wide screen
+    // Both views spread out on a wide screen, with a column beside the sounds: Speech on Play, adding sounds on Manage.
+    // The same width for both, so Play | Manage stays put
+    main.classList.add('board-wide');
+    // Play's empty board opens Manage, and each view's search goes beside the switch on a wide screen
     VIEWS.find(([view]) => view === id)[2](next, () => show('manage'), slot);
     if (popOut) slot.append(popOut);
   }
@@ -41,7 +42,7 @@ export function renderSoundboard(main) {
   // On a desktop browser that can, the music and sounds in a small window that stays on top
   const popOut = popOutButton();
 
-  // Room beside the switch for Play's search on a wide screen, over the sounds
+  // Room beside the switch for the view's search on a wide screen, over the sounds
   const slot = el('div', { className: 'view-slot' });
   main.append(el('div', { className: 'view-head' }, views, slot));
   show(recall(VIEW_KEY) === 'manage' ? 'manage' : 'play');

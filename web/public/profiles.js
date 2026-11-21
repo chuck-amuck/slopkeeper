@@ -1,5 +1,5 @@
 import { tryProfile } from './chat.js';
-import { api, attempt, confirmButton, el, fetchAudio, formProblem, icon, notice, openDialog, player, request, RequestError, state, toast } from './lib.js';
+import { api, attempt, confirmButton, el, fetchAudio, formProblem, icon, menuToggle, notice, openDialog, player, request, RequestError, state, toast } from './lib.js';
 import { effectOptions } from './speech.js';
 import { follow, followWhenIdle } from './updates.js';
 
@@ -45,7 +45,7 @@ export function profilePicker() {
   let known = null;
   let drawn = '';
   const tip = el('span', { className: 'profile-tip', ariaHidden: 'true' });
-  const menu = el('div', { className: 'profile-menu', id: 'profile-menu', role: 'menu', ariaLabel: 'Profiles', hidden: true, onkeydown: moveInMenu });
+  const menu = el('div', { className: 'profile-menu', id: 'profile-menu', role: 'menu', ariaLabel: 'Profiles', hidden: true });
   const face = el('button', {
     type: 'button',
     className: 'profile-face',
@@ -53,15 +53,11 @@ export function profilePicker() {
     ariaExpanded: 'false',
     'aria-controls': menu.id,
     onclick: () => toggle(menu.hidden),
-    // The arrows open it too, at the first or last
-    onkeydown: (e) => {
-      if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
-      e.preventDefault();
-      toggle(true, e.key === 'ArrowUp' ? 'last' : 'first');
-    },
   });
   const node = el('div', { className: 'profile-pick', hidden: true }, face, tip, menu);
   const items = () => [...menu.querySelectorAll('[role^="menuitem"]')];
+  // Opened at the profile picked
+  const toggle = menuToggle({ node, button: face, menu, first: (all) => all.find((b) => b.ariaChecked === 'true') ?? all[0], onToggle: (open) => node.classList.toggle('open', open) });
 
   function paint() {
     if (!known) return;
@@ -115,54 +111,6 @@ export function profilePicker() {
   function edit() {
     toggle(false);
     location.hash = 'settings/chat?card=profiles';
-  }
-
-  function moveInMenu(e) {
-    const all = items();
-    const at = all.indexOf(document.activeElement);
-    const to = { ArrowDown: at + 1, ArrowUp: at - 1, Home: 0, End: all.length - 1 }[e.key];
-    if (to !== undefined) {
-      e.preventDefault();
-      all[(to + all.length) % all.length]?.focus();
-    } else if (e.key === 'Tab') {
-      // Out of the menu, from the face onwards
-      toggle(false);
-      face.focus();
-    }
-  }
-
-  // While it's open: a press outside it, or Escape from anywhere, closes it, as the Volume panel does
-  let listening = null;
-  function toggle(open, focus = 'picked') {
-    menu.hidden = !open;
-    face.ariaExpanded = String(open);
-    node.classList.toggle('open', open);
-    listening?.abort();
-    listening = null;
-    if (!open) return;
-    const all = items();
-    (focus === 'first' ? all[0] : focus === 'last' ? all.at(-1) : (all.find((b) => b.ariaChecked === 'true') ?? all[0]))?.focus();
-    listening = new AbortController();
-    const { signal } = listening;
-    document.addEventListener(
-      'pointerdown',
-      (e) => {
-        if (!node.isConnected) return listening?.abort();
-        if (!node.contains(e.target)) toggle(false);
-      },
-      { signal, capture: true },
-    );
-    document.addEventListener(
-      'keydown',
-      (e) => {
-        if (!node.isConnected) return listening?.abort();
-        if (e.key !== 'Escape' || document.querySelector('dialog[open]')) return;
-        const within = node.contains(document.activeElement);
-        toggle(false);
-        if (within) face.focus();
-      },
-      { signal },
-    );
   }
 
   follow('profile', node, (data) => {

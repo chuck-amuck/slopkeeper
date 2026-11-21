@@ -1,8 +1,9 @@
+import { WIDE } from './board.js';
 import { pickClip } from './clip.js';
 import { emojiPicker } from './emojipicker.js';
 import { downloadLink, pickPart } from './linkclip.js';
 import { byUse, EVERYTHING_ELSE } from './soundgrid.js';
-import { announce, api, attempt, confirmButton, el, emojiNode, icon, keepFocus, needsVoice, notice, openDialog, panelsDialog, player, postDialog, recall, remember, request, RequestError, settingLink, soundPath, state, toast, undoToast, volumeControl } from './lib.js';
+import { announce, api, attempt, confirmButton, el, emojiNode, icon, keepFocus, menuButton, needsVoice, notice, openDialog, pageSignal, panelsDialog, player, postDialog, recall, remember, request, RequestError, settingLink, soundPath, state, toast, undoToast, volumeControl } from './lib.js';
 import { pickTrim } from './trim.js';
 import { followWhenIdle, older } from './updates.js';
 import { voiceBar } from './voice.js';
@@ -40,7 +41,7 @@ async function filesIn(entry) {
  * Manage: adding sounds, Discord's own soundboard, and sorting the sounds into groups, which Play and Discord's panel
  * follow
  */
-export function renderLibrary(main) {
+export function renderLibrary(main, _openManage, head = null) {
   const guildId = state.guildId;
   let data = null;
   // The version of the sounds shown, so an answer that's been overtaken isn't shown over a newer one
@@ -82,37 +83,40 @@ export function renderLibrary(main) {
     el('summary', {}, el('span', {}, 'Discord’s soundboard'), slots),
     boardBody,
   );
-  const sync = el(
-    'button',
-    {
-      onclick: () =>
-        attempt(async () => {
-          sync.disabled = true;
-          sync.textContent = 'Syncing…';
-          try {
-            report(await request(api('/discord-sync'), { method: 'POST' }));
-            await load();
-          } finally {
-            sync.disabled = false;
-            sync.textContent = 'Sync to Discord';
-          }
-        }),
-    },
-    'Sync to Discord',
+  // What's done in Discord, in one menu: rarely needed mid-call, so it's here rather than on Play. While a sync runs, the
+  // button says so, and stays enabled so the keyboard's place on it isn't lost
+  let syncing = false;
+  const discord = menuButton(
+    'Discord',
+    [
+      [
+        'Sync to Discord’s soundboard',
+        () =>
+          !syncing &&
+          attempt(async () => {
+            syncing = true;
+            discord.label.textContent = 'Syncing…';
+            try {
+              report(await request(api('/discord-sync'), { method: 'POST' }));
+              await load();
+            } finally {
+              syncing = false;
+              discord.label.textContent = 'Discord';
+            }
+          }),
+      ],
+      [
+        'Post the sounds panel…',
+        () =>
+          postDialog(main, 'Post a panel', 'Puts the soundboard buttons in a Discord channel. The panel keeps itself up to date as sounds change.', async (channelId, channel) => {
+            await request(api('/sound-panels'), { method: 'POST', json: { channelId } });
+            toast(`Panel posted in ${channel}.`);
+          }),
+      ],
+      ['Posted panels…', () => panelsDialog(main, 'Posted panels', '/sound-panels', 'soundboard')],
+    ],
+    { end: true },
   );
-  // Rarely needed mid-call, so it's here rather than on Play
-  const postPanel = el(
-    'button',
-    {
-      onclick: () =>
-        postDialog(main, 'Post a panel', 'Puts the soundboard buttons in a Discord channel. The panel keeps itself up to date as sounds change.', async (channelId, channel) => {
-          await request(api('/sound-panels'), { method: 'POST', json: { channelId } });
-          toast(`Panel posted in ${channel}.`);
-        }),
-    },
-    'Post panel',
-  );
-  const postedPanels = el('button', { onclick: () => panelsDialog(main, 'Posted panels', '/sound-panels', 'soundboard') }, 'Posted panels');
   const picker = el('input', {
     type: 'file',
     multiple: true,
@@ -181,18 +185,24 @@ export function renderLibrary(main) {
   const makeGroup = el('button', { type: 'button', className: 'with-icon', onclick: () => newGroup() }, icon('plus'), el('span', {}, 'New group'));
   const bin = el('div', { className: 'stack bin' });
 
-  main.append(
-    voice.node,
-    el('div', { className: 'toolbar' }, search, makeGroup, sync, postPanel, postedPanels),
-    board,
-    dropzone,
-    linkForm,
-    picker,
-    queueBox,
-    listHint,
-    list,
-    bin,
-  );
+  // Adding sounds first, with Discord's soundboard: a column of their own beside the sounds on a wide screen
+  const tools = el('div', { className: 'toolbar manage-tools' }, search, makeGroup, discord.node);
+  const area = el('div', { className: 'manage-main' }, tools, listHint, list, bin);
+  main.classList.add('manage-view');
+  main.append(voice.node, el('div', { className: 'manage-side' }, dropzone, linkForm, picker, queueBox, board), area);
+
+  // The search and its buttons go beside Play | Manage on a wide screen, as Play's search does, and over the sounds
+  // otherwise
+  const wide = matchMedia(WIDE);
+  const placeTools = () => {
+    // Moved only when it's somewhere else, as moving it loses the focus, as in its menu
+    const to = wide.matches && head ? head : area;
+    if (tools.parentNode !== to) to.prepend(tools);
+  };
+  placeTools();
+  // A Manage that's been swapped out for Play lets go itself
+  const onWide = () => (main.isConnected ? placeTools() : wide.removeEventListener('change', onWide));
+  wide.addEventListener('change', onWide, { signal: pageSignal() });
   list.append(notice('loading', 'Loading sounds…'));
 
   function report({ added, tooLong, failed, waiting, blocker }) {
@@ -905,7 +915,7 @@ export function renderLibrary(main) {
             { className: 'sheet-list' },
             item('volume', `Volume (${sound.percent}%)`, () => pickVolume(sound)),
             item('scissors', sound.trimmed ? 'Trim or restore' : 'Trim', () => attempt(() => trim(sound))),
-            item('copy', 'Cut another', () => attempt(() => cutAnother(sound))),
+            item('cut-new', 'Cut another', () => attempt(() => cutAnother(sound))),
             item('download', 'Download', () => download(sound)),
             item('pencil', 'Rename', rename),
             grouping && item('grip', 'Move to group', () => moveSheet(sound, group)),
@@ -939,12 +949,13 @@ export function renderLibrary(main) {
         el(
           'button',
           { className: 'quiet icon emoji', title: 'Set emoji', ariaLabel: `Emoji for ${sound.name}`, onclick: () => pickEmoji(sound) },
-          sound.emoji ? emojiNode(sound.emoji, 'emoji') : el('span', { className: 'none' }, icon('plus')),
+          // A faint face where there's none: a plus read as adding a sound
+          sound.emoji ? emojiNode(sound.emoji, 'emoji') : el('span', { className: 'none' }, icon('smile')),
         ),
         nameBox,
         el('button', { className: 'quiet icon sound-extra', title: 'Volume', ariaLabel: `Volume for ${sound.name}`, onclick: () => pickVolume(sound) }, icon('volume')),
         el('button', { className: 'quiet icon sound-extra', title: 'Trim', ariaLabel: `Trim ${sound.name}`, onclick: () => attempt(() => trim(sound)) }, icon('scissors')),
-        el('button', { className: 'quiet icon sound-extra', title: 'Cut another sound from this one', ariaLabel: `Cut another sound from ${sound.name}`, onclick: () => attempt(() => cutAnother(sound)) }, icon('copy')),
+        el('button', { className: 'quiet icon sound-extra', title: 'Cut another sound from this one', ariaLabel: `Cut another sound from ${sound.name}`, onclick: () => attempt(() => cutAnother(sound)) }, icon('cut-new')),
         el('button', { className: 'quiet icon sound-extra', title: 'Download', ariaLabel: `Download ${sound.name}`, onclick: () => download(sound) }, icon('download')),
         el('label', { className: 'toggle' }, toggle, el('span', {}, 'On Discord')),
         remove,

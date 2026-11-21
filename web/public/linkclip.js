@@ -80,7 +80,7 @@ export function pickPart(main, got, { longest, clipSeconds, isSound, sound = nul
       el('input', { type: 'number', min: 0, max: seconds, step: STEP, ariaLabel: label, required: true, oninput: (e) => Number.isFinite(e.target.valueAsNumber) && change(e.target.valueAsNumber, true) });
     const startInput = box('Start in seconds', moveStart);
     const endInput = box('End in seconds', moveEnd);
-    const here = (label, move) => el('button', { type: 'button', className: 'quiet', title: `${label} where the player is`, onclick: () => move(media.currentTime) }, label);
+    const here = (label, move) => el('button', { type: 'button', title: `${label} where the player is`, onclick: () => move(media.currentTime) }, label);
     const preview = el('button', { type: 'button', disabled: true, onclick: () => (stopAt !== null ? stop() : play()) }, 'Preview');
     const save = el('button', { className: 'primary', type: 'submit' }, sound ? 'Replace' : 'Save');
     // Saves and moves on to the part after, for chopping one video or sound into several
@@ -207,7 +207,7 @@ export function pickPart(main, got, { longest, clipSeconds, isSound, sound = nul
     canvas.addEventListener('pointerup', () => (dragging = null));
 
     const node = openDialog(main, {
-      title: sound ? `Pick again for ${sound.name}` : from ? `Cut another from ${from.name}` : 'Add a sound from a link',
+      title: sound ? `Pick again for ${sound.name}` : from ? `Cut a new sound from ${from.name}` : 'Add a sound from a link',
       className: 'link-dialog',
       body: [
         got.url ? el('p', { className: 'link-source' }, el('a', { href: got.url, target: '_blank', rel: 'noopener noreferrer' }, got.title), got.artist && ` · ${got.artist}`) : null,

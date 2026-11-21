@@ -1,4 +1,4 @@
-import { timeChart } from './charts.js';
+import { dragNote, timeChart } from './charts.js';
 import { api, attempt, el, icon, notice, recall, remember, request, state } from './lib.js';
 import { rangeBar, rangeFromQuery, rangeQuery } from './rangebar.js';
 import { followWhenIdle } from './updates.js';
@@ -620,17 +620,15 @@ export function health(main, address) {
       ...[
         compare && !r.previous && el('p', { className: 'hint' }, 'Health keeps the last 30 days, so there’s nothing before this to compare with.'),
         verdictCard(r),
+        // What the verdict and all under it are about
+        el('p', { className: 'hint stats-note' }, 'All but the slow list cover the whole bot, which every server it’s in shares. Fine, slow and bad are judged over the range picked.'),
         tiles(r),
         containersCard(r),
         machineCard(r, common),
         // An older bot sends no browser or machine part, which would print as false
         ...charts(r, common),
+        dragNote('a chart') && el('p', { className: 'hint' }, dragNote('a chart').trim()),
         slowCard(r),
-        el(
-          'p',
-          { className: 'hint' },
-          'All but the slow list cover the whole bot, which every server it’s in shares. Fine, slow and bad are judged over the range picked. Drag across a chart with a mouse to look closer.',
-        ),
       ].filter(Boolean),
     );
   }

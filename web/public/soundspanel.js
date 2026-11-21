@@ -13,10 +13,10 @@ const VOLUMES_KEY = 'soundsVolumesOpen';
  * match, and the server's sounds in their
  * groups, folded as on the Soundboard, to play in the channel picked in Play in. `openBoard` goes to the Soundboard,
  * where sounds are added, and `slash` says / goes to the search there. `parts` go in the panel in order, and paint()
- * shows a voice picked on the Soundboard since. `volumes` fold away above the line to say, closed until opened on this
- * device
+ * shows a voice picked on the Soundboard since. `volumes`, if any, fold away above the line to say, closed until opened on
+ * this device: the pop-out window's, as the Sounds panel has the Volume button beside it
  */
-export function soundsBody(openBoard, { slash = false, volumes = ['sounds', 'speech', 'music'] } = {}) {
+export function soundsBody(openBoard, { slash = false, volumes = [] } = {}) {
   const guildId = state.guildId;
   const voice = voiceBar(paint, { sliders: false });
   const grid = soundGrid({
@@ -85,9 +85,9 @@ export function soundsBody(openBoard, { slash = false, volumes = ['sounds', 'spe
     paint();
   });
 
-  const levels = el('div', { className: 'sounds-volumes' }, volumeSliders(volumes));
-  const levelsHead = foldHead('Volume', recall(VOLUMES_KEY) === 'open', levels, (open) => (open ? remember(VOLUMES_KEY, 'open') : forget(VOLUMES_KEY)));
-  const volume = el('section', { className: 'sounds-volume', title: 'For everyone in the server, not just you' }, levelsHead, levels);
+  const levels = volumes.length ? el('div', { className: 'sounds-volumes' }, volumeSliders(volumes)) : null;
+  const levelsHead = levels && foldHead('Volume', recall(VOLUMES_KEY) === 'open', levels, (open) => (open ? remember(VOLUMES_KEY, 'open') : forget(VOLUMES_KEY)));
+  const volume = levels && el('section', { className: 'sounds-volume', title: 'For everyone in the server, not just you' }, levelsHead, levels);
 
-  return { parts: [voice.node, volume, say, search, el('div', { className: 'sounds-scroll' }, grid.node)], search, paint };
+  return { parts: [voice.node, ...(volume ? [volume] : []), say, search, el('div', { className: 'sounds-scroll' }, grid.node)], search, paint };
 }

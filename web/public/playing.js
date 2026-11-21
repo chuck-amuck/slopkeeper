@@ -1,4 +1,4 @@
-import { api, attempt, el, icon, request, state, toast } from './lib.js';
+import { api, attempt, el, icon, pageSignal, request, state, toast } from './lib.js';
 import { follow } from './updates.js';
 
 // Speech shows as its first few words
@@ -95,6 +95,7 @@ export function stopDock(volume, sounds = null) {
   const paintList = (playing) => {
     shownPlaying = playing;
     stop.paint(playing);
+    if (playing.length) node.classList.remove('away');
     if (playing.length < 2) expanded = false;
     // One sound on its own is named on Stop already. Speech and a loop show, for what's said and that it loops
     list.hidden = !playing.length || (playing.length === 1 && playing[0].kind !== 'speech' && !playing[0].loop);
@@ -151,6 +152,28 @@ export function stopDock(volume, sounds = null) {
     );
   };
   onPlaying(node, paintList);
+
+  // Where style.css says the buttons would cover the page (--slides), they slide away while it's scrolled down, and come
+  // back as soon as it's scrolled up or reaches its end, or the keyboard reaches them. Never while something's playing,
+  // a panel's open or one of them has the focus
+  const slides = () => getComputedStyle(node).getPropertyValue('--slides').trim() === '1';
+  let lastY = scrollY;
+  const busy = () => !stop.button.hidden || !volume.panel.hidden || (sounds && !sounds.panel.hidden) || node.contains(document.activeElement);
+  addEventListener(
+    'scroll',
+    () => {
+      const y = Math.max(0, scrollY);
+      // A few pixels either way is a hand resting on the screen, not a scroll
+      if (Math.abs(y - lastY) < 6) return;
+      const down = y > lastY;
+      lastY = y;
+      const atEnd = innerHeight + y >= document.documentElement.scrollHeight - 4;
+      node.classList.toggle('away', down && !atEnd && !busy() && slides());
+    },
+    { passive: true, signal: pageSignal() },
+  );
+  addEventListener('resize', () => slides() || node.classList.remove('away'), { passive: true, signal: pageSignal() });
+  node.addEventListener('focusin', () => node.classList.remove('away'));
   const onNarrow = () => (node.isConnected ? paintList(shownPlaying) : narrow.removeEventListener('change', onNarrow));
   narrow.addEventListener('change', onNarrow);
   // Toasts sit above the corner, wherever its top is now: above what's playing and a panel when one's open. Measured

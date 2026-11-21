@@ -1,4 +1,4 @@
-import { announce, api, attempt, confirmButton, el, icon, keepFocus, needsVoice, NOBODY_IN_VOICE, notice, panelsDialog, postDialog, request, RequestError, session, state, toast, undoToast, volumeControl } from './lib.js';
+import { announce, api, attempt, confirmButton, el, icon, keepFocus, menuButton, needsVoice, NOBODY_IN_VOICE, notice, panelsDialog, postDialog, request, RequestError, session, state, toast, undoToast, volumeControl } from './lib.js';
 import { follow, followWhenIdle, older } from './updates.js';
 import { voiceBar } from './voice.js';
 import { volumePreview } from './volumes.js';
@@ -212,26 +212,30 @@ export function renderMusic(main) {
     volume.node,
   );
 
-  // What's playing with its buttons, posted to stay in a Discord channel, as the Soundboard's panel is
-  const postPanel = el(
-    'button',
-    {
-      title: 'Posts what’s playing, with its buttons, in a Discord channel',
-      onclick: () =>
-        postDialog(main, 'Post a music panel', 'Puts what’s playing and its buttons in a Discord channel. The panel keeps itself up to date as the music changes.', async (channelId, channel) => {
-          await request(api('/music/panels'), { method: 'POST', json: { channelId } });
-          toast(`Panel posted in ${channel}.`);
-        }),
-    },
-    'Post panel',
+  // What's playing with its buttons, posted to stay in a Discord channel, as the Soundboard's panel is. In one menu, as
+  // on the Soundboard, so the controls keep to one row on a phone
+  const discord = menuButton(
+    'Discord',
+    [
+      [
+        'Post the music panel…',
+        () =>
+          postDialog(main, 'Post a music panel', 'Puts what’s playing and its buttons in a Discord channel. The panel keeps itself up to date as the music changes.', async (channelId, channel) => {
+            await request(api('/music/panels'), { method: 'POST', json: { channelId } });
+            toast(`Panel posted in ${channel}.`);
+          }),
+      ],
+      ['Posted panels…', () => panelsDialog(main, 'Posted music panels', '/music/panels', 'music')],
+    ],
+    // ⋯ on a phone, to keep to the controls' row
+    { end: true, small: 'more' },
   );
-  const postedPanels = el('button', { onclick: () => panelsDialog(main, 'Posted music panels', '/music/panels', 'music') }, 'Posted panels');
 
   const now = el(
     'section',
     { className: 'card music now' },
     el('div', { className: 'now-main' }, nowCover, el('div', { className: 'now-text' }, nowTitle, nowArtist, nowNote), progress),
-    el('div', { className: 'toolbar now-controls' }, playButton, skipButton, stopButton, el('span', { className: 'toolbar now-panels' }, postPanel, postedPanels)),
+    el('div', { className: 'toolbar now-controls' }, playButton, skipButton, stopButton, el('span', { className: 'now-panels' }, discord.node)),
   );
   // How loud, at the top as on the Soundboard
   const voiceRow = el('div', { className: 'toolbar voice music-voice', hidden: true }, volumeLabel);
@@ -260,7 +264,7 @@ export function renderMusic(main) {
   let mode = 'songs';
   // Loaded the first time they're shown, then filtered as you type
   let playlists = null;
-  const modes = el('div', { className: 'views' });
+  const modes = el('div', { className: 'views', role: 'group', ariaLabel: 'Search for' });
   const MODES = [
     ['songs', 'Songs', 'Search or paste a link', () => `Searches ${searchFrom}. A Spotify, YouTube or SoundCloud link works too, or upload an audio file (up to ${MOST_FILE_MB} MB and 20 minutes).`],
     ['playlists', 'My playlists', 'Find a playlist or paste a link', () => 'Your saved playlists, or a link to any public one.'],

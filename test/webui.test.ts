@@ -45,9 +45,20 @@ function ringPng(size: number) {
 const PASSWORD = 'browser-test';
 // A sound this device saw last time, that's since been deleted
 const STALE = { sounds: [{ name: 'deleted since', plays: 3 }], groups: [] };
+// The corner's buttons keep clear of the page wherever there's room beside it for them, as there is from 1140px
+const CLEAR_OF_PAGE = `(() => { if (innerWidth < 1140) return true; const main = document.querySelector('main'); const right = main.getBoundingClientRect().right - parseFloat(getComputedStyle(main).paddingRight); const buttons = [...document.querySelectorAll('.stop-dock .volume-fab')]; return buttons.length > 0 && buttons.every((b) => b.getBoundingClientRect().left >= right); })()`;
+// Each sound's name ends inside its tile, and on a phone a long one has its two lines, ending in … rather than cut through
+const NAMES_FIT = `[...document.querySelectorAll('.tile')].every((t) => { const n = t.querySelector('.tile-name'); if (!n) return true; const name = n.getBoundingClientRect(); const lines = Math.round(name.height / parseFloat(getComputedStyle(n).lineHeight)); return name.bottom <= t.getBoundingClientRect().bottom - parseFloat(getComputedStyle(t).paddingBottom) + 0.5 && (innerWidth > 640 || !/very-long/.test(n.textContent) || lines === 2); })`;
 // A page's address, its name, what it remembers, what must be true of it once it's shown, and what to do on it first
 const PAGES: [string, string, Record<string, string>?, string?, string?][] = [
-  ['board', 'Soundboard'],
+  ['board', 'Soundboard', {}, `${CLEAR_OF_PAGE} && ${NAMES_FIT} && !!document.querySelector('.view-slot input[type=search]') === innerWidth >= 1100`],
+  // Play | Manage stays where it is as the view changes, and Manage has its search and buttons beside it on a wide screen
+  [
+    'board',
+    'Soundboard: Play | Manage stays put',
+    {},
+    `(async () => { const views = document.querySelector('.views[aria-label="Soundboard view"]'); const at = () => views.getBoundingClientRect().left; const play = at(); views.querySelector('button:last-child').click(); await new Promise((r) => setTimeout(r, 800)); return play === at() && !!document.querySelector('.manage-view') && !!document.querySelector('.view-slot .manage-tools') === innerWidth >= 1100 && ${CLEAR_OF_PAGE}; })()`,
+  ],
   // An effect picked beside the voice. A pick remembered from when the effects were voices becomes the voice and effect
   [
     'board',
@@ -63,21 +74,60 @@ const PAGES: [string, string, Record<string, string>?, string?, string?][] = [
     { guild: GUILD, sessionUntil: String(Date.now() + 86_400_000), [`soundsShown:${GUILD}`]: JSON.stringify(STALE), lastStart: JSON.stringify({ guildId: GUILD, guilds: [{ id: GUILD, name: 'Old server name', icon: null }], me: null }) },
     `![...document.querySelectorAll('.tile-name')].some((n) => n.textContent === 'deleted since') && !document.body.innerText.includes('Old server name')`,
   ],
-  ['board', 'Soundboard: Manage', { soundboardView: 'manage' }],
+  // Discord's three actions in one menu, opened at the first
+  [
+    'board',
+    'Soundboard: Manage',
+    { soundboardView: 'manage' },
+    `(() => { const items = [...document.querySelectorAll('.manage-tools .action-menu:not([hidden]) [role=menuitem]')].map((b) => b.textContent); return items.join('|') === 'Sync to Discord’s soundboard|Post the sounds panel…|Posted panels…' && document.activeElement?.textContent === items[0] && document.querySelector('.manage-tools .menu-button').ariaExpanded === 'true'; })()`,
+    `document.querySelector('.manage-tools .menu-button').click()`,
+  ],
   // Cut another, from a sound that has no link, opens the picker on all of it with both ways to save
   [
     'board',
     'Soundboard: Cut another',
     { soundboardView: 'manage' },
-    `(() => { const d = document.querySelector('dialog[open]'); return !!d && /Cut another from airhorn/.test(d.textContent) && [...d.querySelectorAll('button')].some((b) => b.textContent === 'Save and cut another') && d.querySelector('input[aria-label="Sound name"]').value === 'airhorn-2'; })()`,
+    `(() => { const d = document.querySelector('dialog[open]'); const here = [...d.querySelectorAll('button')].find((b) => b.textContent === 'Start here'); return !!d && /Cut a new sound from airhorn/.test(d.textContent) && [...d.querySelectorAll('button')].some((b) => b.textContent === 'Save and cut another') && d.querySelector('input[aria-label="Sound name"]').value === 'airhorn-2' && !!here && !here.classList.contains('quiet'); })()`,
     `document.querySelector('[aria-label="Cut another sound from airhorn"]').click()`,
   ],
-  ['music', 'Music'],
+  ['music', 'Music', {}, `${CLEAR_OF_PAGE} && document.querySelectorAll('.now-panels [role=menuitem]').length === 2`],
   ['games', 'Games'],
   ['nights', 'Game nights'],
   ['pick', 'Pick a game'],
-  ['deals', 'Deals'],
-  ['stats/overview', 'Stats: Overview'],
+  // A note under Bundles' title isn't boxed in by a line under it too
+  ['deals', 'Deals', {}, `(() => { const note = document.querySelector('.card-note'); const row = note?.nextElementSibling?.querySelector('.free-game'); return !note || note.hidden || !row || getComputedStyle(row).borderTopWidth === '0px'; })()`],
+  // The views as tabs on one row, the dates a list on a phone, and the corner's buttons out of the way while scrolling
+  // down a phone, and back on the way up or when the keyboard reaches them
+  [
+    'stats/overview',
+    'Stats: Overview',
+    {},
+    `(async () => {
+      const tabs = [...document.querySelectorAll('.view-tabs button')];
+      const oneRow = tabs.length === 5 && tabs.every((t) => t.offsetTop === tabs[0].offsetTop);
+      const phone = innerWidth <= 640;
+      const dates = phone ? !!document.querySelector('select.range-select') && !document.querySelector('.range-presets') : !!document.querySelector('.range-presets') && !document.querySelector('select.range-select');
+      const dock = document.querySelector('.stop-dock');
+      const wait = () => new Promise((r) => setTimeout(r, 400));
+      scrollTo(0, 800);
+      await wait();
+      const gone = () => dock.classList.contains('away') && getComputedStyle(dock).pointerEvents === 'none';
+      const away = gone();
+      scrollBy(0, -200);
+      await wait();
+      const back = !gone();
+      // Down again, and Tab brings them back
+      scrollTo(0, 1200);
+      await wait();
+      const awayAgain = gone();
+      dock.querySelector('.volume-fab').focus();
+      await wait();
+      const byKeys = !gone();
+      document.activeElement.blur();
+      scrollTo(0, 0);
+      return oneRow && dates && (phone ? away && back && awayAgain && byKeys : !away);
+    })()`,
+  ],
   ['stats/compare', 'Stats: Compare'],
   ['stats/sounds', 'Stats: Sounds & music'],
   ['stats/recap', 'Stats: Monthly recap'],
@@ -87,7 +137,7 @@ const PAGES: [string, string, Record<string, string>?, string?, string?][] = [
     'chat',
     'Chat',
     { 'try-chat:speak': 'off' },
-    `(() => { const bot = [...document.querySelectorAll('.try-line.bot')].at(-1); const you = [...document.querySelectorAll('.try-line.you')].at(-1); return !!bot && /Right away, @Ben!/.test(bot.textContent) && /Claude Haiku/.test(bot.textContent) && you?.querySelector('.mention')?.textContent === '@Ben' && !document.querySelector('.try-ask textarea').value && document.querySelector('.mention-picker').hidden; })()`,
+    `(() => { const bot = [...document.querySelectorAll('.try-line.bot')].at(-1); const you = [...document.querySelectorAll('.try-line.you')].at(-1); return !!bot && /Right away, @Ben!/.test(bot.textContent) && /Claude Haiku/.test(bot.textContent) && !/Answer in voice is off in Settings/.test(bot.textContent) && [...document.querySelectorAll('main .page-note')].filter((n) => !n.hidden).length === 1 && !document.querySelector('.try-chat-head').hidden && you?.querySelector('.mention')?.textContent === '@Ben' && !document.querySelector('.try-ask textarea').value && document.querySelector('.mention-picker').hidden; })()`,
     // Picked from the @ list as in Discord: Ben's the only one whose name starts "Be"
     `(() => { const box = document.querySelector('.try-ask textarea'); box.focus(); box.value = 'say hi to @Be'; box.setSelectionRange(13, 13); box.dispatchEvent(new Event('input')); const shown = [...document.querySelectorAll('.mention-choice')].map((c) => c.textContent); if (shown.join() !== 'BBen') throw new Error('The @ list shows ' + shown.join()); document.querySelector('.mention-choice').click(); if (box.value !== 'say hi to @Ben ') throw new Error('Picked as ' + box.value); document.querySelector('.try-ask').requestSubmit(); })()`,
   ],
@@ -507,6 +557,8 @@ test('every page of the web UI opens cleanly, on a computer and a phone', { skip
     if (method === 'Network.loadingFailed' && !p.canceled && p.errorText !== 'net::ERR_ABORTED') problems.push(`request failed: ${p.errorText}`);
   });
   await Promise.all(['Runtime.enable', 'Network.enable', 'Page.enable'].map((m) => page.send(m)));
+  // Focus events fire as in a window that has the focus, which a headless one never does
+  await page.send('Emulation.setFocusEmulationEnabled', { enabled: true });
 
   // Signed in as someone who typed the password
   const login = await fetch(`${site}/auth/login`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-slopkeeper': '1' }, body: JSON.stringify({ password: PASSWORD }) });

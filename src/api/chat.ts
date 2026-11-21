@@ -73,7 +73,8 @@ export async function chatRoutes({ guild, req, res, section, rest }: Ask) {
     const profile = body.profile ? profileById(String(body.profile)) : undefined;
     if (body.profile && !profile) throw new Refused(404, 'That profile isn’t there any more.');
     try {
-      return await tryChat(guild, asker, channel as GuildTextBasedChannel, historyFrom(body.history), typed, who, profile);
+      // With how it goes out in Discord now, for the page's note, as Answer in voice may have changed since it opened
+      return { ...(await tryChat(guild, asker, channel as GuildTextBasedChannel, historyFrom(body.history), typed, who, profile)), inDiscord: inDiscord(guild.id) };
     } catch (err) {
       if (err instanceof CantTry) throw new Refused(err.status, err.message);
       throw err;

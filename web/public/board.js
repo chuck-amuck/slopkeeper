@@ -162,7 +162,7 @@ function sayBox(voice) {
 }
 
 // Wide enough for Speech in a column of its own beside the sounds, as style.css lays it out
-const WIDE = '(min-width: 1100px)';
+export const WIDE = '(min-width: 1100px)';
 
 /**
  * Big buttons for playing sounds during a game: the server's groups in their order, then whatever gets played most.

@@ -248,6 +248,24 @@ button.confirm.icon > span:last-child {
   justify-items: end;
   gap: var(--space-2);
   max-width: calc(100vw - 32px);
+  transition:
+    transform 0.2s ease,
+    opacity 0.2s ease;
+}
+
+/* Where the buttons would cover the page, they slide away while it's scrolled down (playing.js says when). Still there
+   for the keyboard, which brings them back */
+.stop-dock.away {
+  transform: translateY(calc(100% + var(--space-4)));
+  opacity: 0;
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .stop-dock,
+  .stop-dock.away {
+    transition: none;
+  }
 }
 
 .now-sounds {
@@ -341,10 +359,12 @@ button.stop-all:hover:not(:disabled) {
   min-width: 0;
 }
 
+/* Round, named on hover and by its label, unless there's room beside the page for its word (--fab-word below) */
 button.volume-fab {
   flex: none;
+  width: var(--fab-width, 48px);
   min-height: 48px;
-  padding-inline: 18px;
+  padding: 0 var(--fab-pad, 0px);
   border-color: var(--line);
   border-radius: var(--radius-pill);
   background: var(--surface);
@@ -361,6 +381,60 @@ button.volume-fab .ico {
 button.volume-fab[aria-expanded='true'] {
   border-color: var(--accent);
   color: var(--accent);
+}
+
+.volume-fab-word {
+  display: var(--fab-word, none);
+  white-space: nowrap;
+}
+
+/* The words fit beside a 900px page from 1460px, beside Settings from 1760px and the Soundboard's wide one from 2000px */
+@media (min-width: 1460px) {
+  main:not(.settings-page, .board-wide) ~ .stop-dock {
+    --fab-word: inline;
+    --fab-width: auto;
+    --fab-pad: 18px;
+  }
+}
+
+@media (min-width: 1760px) {
+  main.settings-page ~ .stop-dock {
+    --fab-word: inline;
+    --fab-width: auto;
+    --fab-pad: 18px;
+  }
+}
+
+@media (min-width: 2000px) {
+  main.board-wide ~ .stop-dock {
+    --fab-word: inline;
+    --fab-width: auto;
+    --fab-pad: 18px;
+  }
+}
+
+/* From 1140px, pages wider than 900px leave a strip on the right for the round buttons, where the screen has no room
+   beside them: two buttons beside Settings, and the Volume button alone beside the Soundboard. A 900px page has room
+   beside it. Narrower than that, they'd cover the page, so they slide away while it's scrolled down: --slides tells
+   playing.js */
+.stop-dock {
+  --slides: 0;
+}
+
+@media (max-width: 1139px) {
+  .stop-dock {
+    --slides: 1;
+  }
+}
+
+@media (min-width: 1140px) {
+  main.settings-page {
+    padding-right: clamp(var(--space-4), calc(136px - (100% - 1180px) / 2), 136px);
+  }
+
+  main.board-wide {
+    padding-right: clamp(var(--space-4), calc(80px - (100% - 1440px) / 2), 80px);
+  }
 }
 
 /* The song playing, in a card at the bottom of every page but Music, above a phone's tabs, with the corner's buttons
@@ -1065,6 +1139,19 @@ main {
   min-width: 0;
 }
 
+/* Manage's search and buttons, beside Play | Manage on a wide screen */
+.view-slot > .manage-tools {
+  flex: 1 1 auto;
+  flex-wrap: nowrap;
+}
+
+/* On a phone the search has a row, and New group and Discord share the next */
+@media (max-width: 640px) {
+  .manage-tools input[type='search'] {
+    flex-basis: 100%;
+  }
+}
+
 /* What to say, the voice to say it in, and Say, in one row */
 .say-form {
   display: flex;
@@ -1192,9 +1279,16 @@ button.fold-toggle[aria-expanded='false'] .ico {
   min-width: 4em;
 }
 
-/* On a phone, and in Play's side column on a wide screen, Sounds and Speech share a row, each with its name and
-   percentage over its slider */
-@media (max-width: 640px), (min-width: 1100px) {
+/* A phone has them on the Volume button alone, so the sounds start higher */
+@media (max-width: 640px) {
+  .board-side > .voice-box {
+    display: none;
+  }
+}
+
+/* In Play's side column on a wide screen, Sounds and Speech share a row, each with its name and percentage over its
+   slider */
+@media (min-width: 1100px) {
   .voice-box .volume-sliders {
     flex-wrap: nowrap;
     gap: var(--space-4);
@@ -1515,6 +1609,12 @@ button.fold-toggle[aria-expanded='false'] .ico {
 .sound .emoji .none {
   color: var(--muted);
   font-size: var(--text-base);
+  opacity: 0.5;
+}
+
+.sound .emoji:hover .none,
+.sound .emoji:focus-visible .none {
+  opacity: 1;
 }
 
 .sound .name,
@@ -2027,9 +2127,12 @@ dialog input {
   color: var(--warn);
 }
 
-/* Play: the volumes and Speech, then the sounds. On a wide screen they're two columns, and the first stays put */
+/* Play: the volumes and Speech, then the sounds. Manage: adding sounds and Discord's soundboard, then the sounds. On a
+   wide screen they're two columns, and the first stays put */
 .board-side,
-.board-main {
+.board-main,
+.manage-side,
+.manage-main {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   gap: var(--space-4);
@@ -2037,25 +2140,27 @@ dialog input {
 }
 
 @media (min-width: 1100px) {
-  main.play-wide {
+  main.board-wide {
     --side-w: 320px;
     width: min(1440px, 100%);
   }
 
   /* Play | Manage over the side column, and the search over the sounds */
-  main.play-wide .view-head {
+  main.board-wide .view-head {
     display: grid;
     grid-template-columns: var(--side-w) minmax(0, 1fr);
     gap: var(--space-5);
   }
 
-  main.play-wide .play-view {
+  main.board-wide .play-view,
+  main.board-wide .manage-view {
     grid-template-columns: var(--side-w) minmax(0, 1fr);
     align-items: start;
     gap: var(--space-5);
   }
 
-  .board-side {
+  .board-side,
+  .manage-side {
     position: sticky;
     top: calc(var(--header-visible, 60px) + var(--space-4));
     max-height: calc(100vh - var(--header-visible, 60px) - 2 * var(--space-4) - var(--player-h));
@@ -2420,6 +2525,24 @@ dialog .start input {
   font-variant-numeric: tabular-nums;
 }
 
+/* On a phone, Start and End one above the other, their boxes and buttons lined up */
+@media (max-width: 640px) {
+  .trim-times {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .trim-times .start {
+    display: grid;
+    grid-template-columns: 3em minmax(0, 1fr);
+  }
+
+  .trim-times output {
+    grid-column: 1 / -1;
+    justify-self: end;
+  }
+}
+
 /* Game nights */
 
 .stack {
@@ -2495,6 +2618,11 @@ dialog .start input {
 }
 
 .card-note + .field {
+  border-top: 0;
+}
+
+/* A note under a card's title, like when Bundles were looked through, isn't boxed in by a line under it as well */
+.card-note + div > .free-game:first-child {
   border-top: 0;
 }
 
@@ -3170,6 +3298,14 @@ button.music-upload:hover:not(:disabled) {
   gap: var(--space-2);
 }
 
+/* Two to a row on a phone, and the last of an odd number takes the row, rather than leaving a gap beside it */
+@media (max-width: 640px) {
+  .stats > :last-child:nth-child(odd),
+  .health-tiles > :last-child:nth-child(odd) {
+    grid-column: 1 / -1;
+  }
+}
+
 .stat {
   padding: 12px 16px;
   background: var(--surface);
@@ -3522,20 +3658,6 @@ header.tabs-below nav button {
     flex-basis: 100%;
   }
 
-  /* The word goes, the speaker says it */
-  .volume-fab-word {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    overflow: hidden;
-    clip-path: inset(50%);
-  }
-
-  button.volume-fab {
-    width: 48px;
-    padding: 0;
-  }
-
   /* Two lines for a long name rather than cutting it off */
   .tile-name {
     display: -webkit-box;
@@ -3651,8 +3773,15 @@ header.tabs-below nav button {
     grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
   }
 
+  /* Room for the emoji and two lines of name, which ends in … rather than being cut through its letters */
   .tile {
-    height: 92px;
+    height: 96px;
+    padding: 8px 6px;
+    gap: 4px;
+  }
+
+  .tile-name {
+    flex: none;
   }
 
   .event {
@@ -3720,7 +3849,7 @@ header.tabs-below nav button {
     font-size: var(--text-xs);
   }
 
-  /* Volume, Trim and Delete are in the ⋯ list instead */
+  /* Volume, Trim, Cut another, Download and Delete are in the ⋯ list instead */
   .sound .sound-extra {
     display: none;
   }
@@ -4132,6 +4261,45 @@ span.steam-family {
   background: var(--accent-fill);
   color: var(--accent-text);
   font-weight: 500;
+}
+
+/* Stats' views as tabs along a line, unlike the date buttons under them, in one row that scrolls on a phone */
+.views.view-tabs {
+  display: flex;
+  flex-wrap: nowrap;
+  justify-self: stretch;
+  overflow-x: auto;
+  scrollbar-width: none;
+  box-shadow: inset 0 -1px 0 var(--line);
+}
+
+.views.view-tabs button,
+.views.view-tabs button + button,
+.views.view-tabs button:first-child,
+.views.view-tabs button:last-child {
+  flex: none;
+  margin: 0;
+  padding: 8px 14px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  background: none;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.views.view-tabs button:hover {
+  background: none;
+  color: var(--text);
+}
+
+.views.view-tabs button[aria-current='page'],
+.views.view-tabs button[aria-current='page']:hover {
+  border-color: transparent;
+  border-bottom-color: var(--accent);
+  background: none;
+  color: var(--text);
+  font-weight: 600;
 }
 
 .pick-people {
@@ -5132,6 +5300,11 @@ video.link-media {
   white-space: nowrap;
 }
 
+.range-select {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
 .range-compare[aria-pressed='true'] {
   border-color: var(--accent);
   color: var(--accent);
@@ -5484,6 +5657,26 @@ button.health-slow-row:hover {
   max-width: 240px;
 }
 
+/* The conversation, with Start over in its corner once something's been asked */
+.try-chat-box {
+  display: grid;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.try-chat-head {
+  display: flex;
+  justify-content: flex-end;
+  padding: var(--space-1) var(--space-2) 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.try-chat-head[hidden] {
+  display: none;
+}
+
 .try-chat {
   display: flex;
   flex-direction: column;
@@ -5492,9 +5685,6 @@ button.health-slow-row:hover {
   max-height: min(60vh, 640px);
   overflow-y: auto;
   padding: var(--space-3);
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  background: var(--surface);
 }
 
 .try-chat .empty-text {
@@ -5828,7 +6018,8 @@ a,
   opacity: 1;
 }
 
-.profile-menu {
+.profile-menu,
+.action-menu {
   position: absolute;
   top: calc(100% + 8px);
   left: 0;
@@ -5847,11 +6038,13 @@ a,
   box-shadow: 0 8px 24px rgb(0 0 0 / 0.18);
 }
 
-.profile-menu[hidden] {
+.profile-menu[hidden],
+.action-menu[hidden] {
   display: none;
 }
 
-.profile-menu button {
+.profile-menu button,
+.action-menu button {
   display: flex;
   align-items: center;
   gap: var(--space-2);
@@ -5867,13 +6060,81 @@ a,
 }
 
 .profile-menu button:hover,
-.profile-menu button:focus-visible {
+.profile-menu button:focus-visible,
+.action-menu button:hover,
+.action-menu button:focus-visible {
   background: var(--raised);
   outline: none;
 }
 
-.profile-menu button:focus-visible {
+.profile-menu button:focus-visible,
+.action-menu button:focus-visible {
   box-shadow: inset 0 0 0 2px var(--accent);
+}
+
+/* A button's menu of actions (lib.js menuButton), under it */
+.menu-pick {
+  position: relative;
+  flex: none;
+}
+
+.action-menu {
+  top: calc(100% + 4px);
+  min-width: 220px;
+}
+
+.action-menu button {
+  min-height: 40px;
+  padding: 8px 10px;
+}
+
+.action-menu.end {
+  right: 0;
+  left: auto;
+}
+
+.menu-button .ico-chevron {
+  width: 16px;
+  height: 16px;
+}
+
+.menu-button[aria-expanded='true'] .ico-chevron {
+  transform: rotate(180deg);
+}
+
+/* Its small icon shows only where there's no room for its words */
+.menu-button.has-small > .ico:first-child {
+  display: none;
+}
+
+@media (max-width: 640px) {
+  .now-panels .menu-button.has-small {
+    width: var(--control-h);
+    padding: 0;
+    justify-content: center;
+  }
+
+  .now-panels .menu-button.has-small > .ico:first-child {
+    display: block;
+  }
+
+  .now-panels .menu-button.has-small > span {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  .now-panels .menu-button.has-small > .ico-chevron {
+    display: none;
+  }
+
+  /* Play, Skip, Stop and clear and ⋯ on one row */
+  .now-controls {
+    column-gap: var(--space-2);
+  }
 }
 
 .profile-menu .profile-photo {

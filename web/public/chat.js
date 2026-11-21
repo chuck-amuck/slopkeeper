@@ -96,14 +96,7 @@ async function speechUrl(line) {
 export function renderChat(main) {
   const guildId = state.guildId;
   const body = el('div', { className: 'try-chat-page' }, notice('loading', 'Loading…'));
-  main.append(
-    el(
-      'p',
-      { className: 'page-note' },
-      'Ask the bot as you would in Discord, and it answers as it would there. Nothing it does happens: no music is queued, nobody is pinged and nothing is posted, but what it would say or play aloud plays here. Each answer costs about what one in Discord does, and counts toward the day’s answers.',
-    ),
-    body,
-  );
+  main.append(body);
   void (async () => {
     let setup;
     try {
@@ -161,10 +154,12 @@ function draw(body, setup, guildId) {
   }
   showProfile();
   const speak = el('input', { type: 'checkbox', checked: recall(SPEAK_KEY) !== 'off', onchange: () => remember(SPEAK_KEY, speak.checked ? 'on' : 'off') });
-  const clear = el(
+  // In the conversation's corner, as it empties that and nothing else: who's asking, where and the profile stay
+  const startOver = el(
     'button',
     {
       type: 'button',
+      className: 'quiet with-icon',
       onclick: () => {
         playing++;
         player.stop();
@@ -174,9 +169,13 @@ function draw(body, setup, guildId) {
         text.focus();
       },
     },
-    'Clear',
+    icon('refresh'),
+    el('span', {}, 'Start over'),
   );
   const log = el('div', { className: 'try-chat', role: 'log', ariaLive: 'polite', ariaLabel: 'Conversation' });
+  const chatHead = el('div', { className: 'try-chat-head' }, startOver);
+  // Kept up to date by each answer, as Answer in voice may change while the page is open
+  const inDiscordNote = el('span', {}, setup.inDiscord);
   // The @ list, as in Discord: who's been picked, by the name put in for them, and who it shows for what's typed
   const picked = new Map();
   const picker = el('div', { className: 'mention-picker', role: 'listbox', id: 'try-mentions', ariaLabel: 'Members' });
@@ -287,7 +286,7 @@ function draw(body, setup, guildId) {
   }
 
   body.append(
-    setup.chatOn ? '' : notice('empty', 'Chat is off in ', settingLink('chat', 'this server’s settings'), ', so the bot doesn’t answer in Discord. It still answers here, to try it first.'),
+    setup.chatOn ? '' : notice('empty', 'Chat is off in ', settingLink('chat', 'this server’s settings'), ', so the bot doesn’t answer in Discord. It still answers here, to try it first.', { compact: true }),
     el(
       'div',
       { className: 'toolbar try-options' },
@@ -295,16 +294,17 @@ function draw(body, setup, guildId) {
       el('label', {}, el('span', { className: 'voice-label' }, 'In'), inChannel),
       profiles.length > 1 ? el('label', {}, el('span', { className: 'voice-label' }, 'Profile'), asProfile) : '',
       setup.speech ? el('label', { className: 'check' }, speak, 'Say answers aloud') : '',
-      clear,
     ),
-    el('p', { className: 'page-note' }, setup.inDiscord),
+    // Once, for every answer: what trying it does, and what the same answer does in Discord
+    el('p', { className: 'page-note' }, 'Answers here do nothing in Discord, but each costs about what one there does. ', inDiscordNote),
     profileNote,
-    log,
+    el('div', { className: 'try-chat-box' }, chatHead, log),
     form,
   );
   paint();
 
   function paint() {
+    chatHead.hidden = !lines.length;
     log.replaceChildren(...(lines.length ? lines.map(bubble) : [el('p', { className: 'empty-text' }, 'Nothing asked yet.')]));
     log.scrollTop = log.scrollHeight;
   }
@@ -375,6 +375,7 @@ function draw(body, setup, guildId) {
       const result = await request(api('/chat-try'), { method: 'POST', json: { text: asked, as: asWho.value, channelId: inChannel.value, history, ...(asProfile.value && { profile: asProfile.value }) } });
       // Cleared while it was coming: the answer goes with what it answered
       if (!lines.includes(waiting)) return;
+      if (result.inDiscord) inDiscordNote.textContent = result.inDiscord;
       lines.splice(lines.indexOf(waiting), 1, { from: 'bot', at: Date.now(), result });
       saveLines(guildId, lines);
       if (!body.isConnected) return;

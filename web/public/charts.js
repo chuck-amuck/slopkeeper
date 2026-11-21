@@ -41,9 +41,16 @@ function colour(value) {
 /** Lines hidden by their legend button, by chart and line, so they stay hidden as the numbers come again */
 const hidden = new Map();
 
-/** Time labels on the axis, as fine as the span shown */
-function tickFormat(span, timeZone) {
-  const options = span <= 2 * 86_400_000 ? { hour: 'numeric', minute: '2-digit' } : span <= 120 * 86_400_000 ? { month: 'short', day: 'numeric' } : { month: 'short', year: 'numeric' };
+/** Said under a chart where there's a mouse to drag across it with: a finger scrolls the page instead */
+export const dragNote = (what = 'the chart') => (matchMedia('(any-pointer: fine)').matches ? ` Drag across ${what} to look closer.` : '');
+
+/**
+ * Time labels on the axis, as fine as the span shown, but never hours on a chart whose points are a day or more apart
+ * (`gap`), as a few days' records would otherwise show midnight after midnight
+ */
+function tickFormat(span, timeZone, gap) {
+  const hours = span <= 2 * 86_400_000 && gap < 43_200_000;
+  const options = hours ? { hour: 'numeric', minute: '2-digit' } : span <= 120 * 86_400_000 ? { month: 'short', day: 'numeric' } : { month: 'short', year: 'numeric' };
   const format = new Intl.DateTimeFormat(undefined, { ...options, timeZone });
   return (ms) => format.format(ms);
 }
@@ -87,6 +94,10 @@ export function timeChart({
   /** Where the last point's stretch ends */
   const last = times ? (until ?? end) : end + step;
   const shown = () => series.filter((s) => !off.has(s.id));
+  // How far apart the points are, the shortest step where they differ, as months do. A day's steps can be 23 or 25 hours
+  // A single point with nothing to say how long it is counts as a day, which labels no hours
+  const gap = times ? (points > 1 ? Math.min(...times.slice(1).map((t, i) => t - times[i])) : until !== null ? until - end : 86_400_000) : step;
+  const days = gap >= 43_200_000;
 
   const plot = el('div', { className: 'echart', style: `height: ${height}px` });
   const pick = el('div', { className: 'chart-pick', hidden: true });
@@ -147,7 +158,9 @@ export function timeChart({
         axisLine: { lineStyle: { color: line } },
         axisTick: { show: false },
         splitLine: { show: false },
-        axisLabel: { color: ink, hideOverlap: true, formatter: tickFormat(end - start, timeZone) },
+        // Days apart, the ticks are whole days, so no two say the same date
+        minInterval: days ? 86_400_000 : undefined,
+        axisLabel: { color: ink, hideOverlap: true, formatter: tickFormat(end - start, timeZone, gap) },
       },
       yAxis: {
         type: 'value',

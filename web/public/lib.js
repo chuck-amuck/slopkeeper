@@ -49,6 +49,8 @@ const ICONS = {
   pads: '<rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="4" width="7" height="7" rx="1.5"/><rect x="4" y="13" width="7" height="7" rx="1.5"/><rect x="13" y="13" width="7" height="7" rx="1.5"/>',
   speaker: '<path d="M3.5 9.5h3l5-4v13l-5-4h-3z"/><path d="M15 9.5a3.5 3.5 0 0 1 0 5"/><path d="M17.5 6.5a7.5 7.5 0 0 1 0 11"/>',
   scissors: '<circle cx="6" cy="7" r="2.5"/><circle cx="6" cy="17" r="2.5"/><path d="M8.2 8.3 19 17M8.2 15.7 19 7"/>',
+  // Scissors with a plus: a new sound cut from this one
+  'cut-new': '<circle cx="5.5" cy="9" r="2.5"/><circle cx="5.5" cy="19" r="2.5"/><path d="M7.7 10.3 16 18M7.7 17.7 14.5 11.5"/><path d="M18.5 3.5v6M15.5 6.5h6"/>',
   x: '<path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/>',
   up: '<path d="M12 19V5M6.5 10.5 12 5l5.5 5.5"/>',
   left: '<path d="M14.5 6 8.5 12l6 6"/>',
@@ -241,6 +243,113 @@ export const pageSignal = () => pageLife.signal;
 export function newPage() {
   pageLife.abort();
   pageLife = new AbortController();
+}
+
+/**
+ * Opens and closes `menu`, under `button` in `node`, as every menu here does: the arrows open it from the button and move
+ * through its items, Escape or a press outside closes it, and Tab closes it and carries on from the button. `first(items)`
+ * is the item a click opens it at, and `onToggle(open)` hears it open, before an item takes the focus, and close.
+ * Returns toggle(open, at), where `at` is 'first' or 'last' to open it at either end
+ */
+export function menuToggle({ node, button, menu, first = (items) => items[0], onToggle = () => {} }) {
+  const items = () => [...menu.querySelectorAll('[role^="menuitem"]')];
+  let listening = null;
+
+  function toggle(open, at = null) {
+    menu.hidden = !open;
+    button.ariaExpanded = String(open);
+    onToggle(open);
+    listening?.abort();
+    listening = null;
+    if (!open) return;
+    const all = items();
+    (at === 'first' ? all[0] : at === 'last' ? all.at(-1) : first(all))?.focus();
+    listening = new AbortController();
+    const { signal } = listening;
+    // While it's open: a press outside it, or Escape from anywhere, closes it
+    document.addEventListener(
+      'pointerdown',
+      (e) => {
+        if (!node.isConnected) return listening?.abort();
+        if (!node.contains(e.target)) toggle(false);
+      },
+      { signal, capture: true },
+    );
+    document.addEventListener(
+      'keydown',
+      (e) => {
+        if (!node.isConnected) return listening?.abort();
+        if (e.key !== 'Escape' || document.querySelector('dialog[open]')) return;
+        const within = node.contains(document.activeElement);
+        toggle(false);
+        if (within) button.focus();
+      },
+      { signal },
+    );
+  }
+
+  button.addEventListener('keydown', (e) => {
+    if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+    e.preventDefault();
+    toggle(true, e.key === 'ArrowUp' ? 'last' : 'first');
+  });
+  menu.addEventListener('keydown', (e) => {
+    const all = items();
+    const at = all.indexOf(document.activeElement);
+    const to = { ArrowDown: at + 1, ArrowUp: at - 1, Home: 0, End: all.length - 1 }[e.key];
+    if (to !== undefined) {
+      e.preventDefault();
+      all[(to + all.length) % all.length]?.focus();
+    } else if (e.key === 'Tab') {
+      // Out of the menu, from the button onwards
+      toggle(false);
+      button.focus();
+    }
+  });
+  return toggle;
+}
+
+let menus = 0;
+
+/**
+ * A button that opens a short menu of actions under it (menuToggle above). `items` are [label, run] pairs, and an item
+ * runs once the menu's closed. `end` lines the menu up with the button's right edge where it fits, and otherwise its
+ * left. `small` is an icon the button shows instead of its words where style.css says there's no room. `label` is the
+ * button's text, for a busy word
+ */
+export function menuButton(text, items, { end = false, small = null } = {}) {
+  const menu = el('div', { className: 'action-menu', id: `action-menu-${++menus}`, role: 'menu', ariaLabel: text, hidden: true });
+  const label = el('span', {}, text);
+  const button = el(
+    'button',
+    {
+      type: 'button',
+      className: `with-icon menu-button${small ? ' has-small' : ''}`,
+      title: text,
+      ariaHasPopup: 'menu',
+      ariaExpanded: 'false',
+      'aria-controls': menu.id,
+      onclick: () => toggle(menu.hidden),
+    },
+    small && icon(small),
+    label,
+    icon('chevron'),
+  );
+  menu.append(...items.map(([itemText, run]) => el('button', { type: 'button', role: 'menuitem', tabIndex: -1, onclick: () => (toggle(false), button.focus(), run()) }, itemText)));
+  const node = el('div', { className: 'menu-pick' }, button, menu);
+  const toggle = menuToggle({
+    node,
+    button,
+    menu,
+    // Where it fits, as it's measured once it shows
+    onToggle: (open) => {
+      if (!open) return;
+      const at = button.getBoundingClientRect();
+      const width = menu.offsetWidth;
+      menu.classList.toggle('end', end ? at.right - width >= 8 : at.left + width > document.documentElement.clientWidth - 8);
+    },
+  });
+  return { node, button, label };
 }
 
 /** A link to a setting, which opens its section of Settings with the cursor in it */

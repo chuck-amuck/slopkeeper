@@ -1,6 +1,6 @@
 import { achievementsView } from './achievements.js';
 import { health } from './health.js';
-import { calendarChart, HOURS, timeChart, weekChart, WEEKDAYS_LONG } from './charts.js';
+import { calendarChart, dragNote, HOURS, timeChart, weekChart, WEEKDAYS_LONG } from './charts.js';
 import { ago, api, attempt, duration, el, formProblem, icon, notice, openDialog, recall, remember, request, state, toast, undoToast } from './lib.js';
 import { rangeBar, rangeFromQuery, rangeQuery } from './rangebar.js';
 
@@ -137,11 +137,13 @@ function fromAddress() {
 
 export function renderStats(main) {
   const body = el('div', { className: 'stack' });
-  const tabs = el('div', { className: 'views' });
+  // Tabs along a line, which look unlike the date buttons under them, in one row that scrolls on a phone
+  const tabs = el('div', { className: 'views view-tabs', role: 'group', ariaLabel: 'Stats view' });
   const open = (id, params = new URLSearchParams()) => {
     remember('statsView', id);
     const [, , render] = VIEWS.find(([view]) => view === id);
     tabs.replaceChildren(...VIEWS.map(([view, label]) => el('button', { ...(view === id && { 'aria-current': 'page' }), onclick: () => open(view) }, label)));
+    tabs.querySelector('[aria-current]')?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
     const view = el('div', { className: 'stack' });
     body.replaceChildren(view);
     const write = (query) => {
@@ -185,13 +187,13 @@ function compare(main) {
         tile(`${a.name}’s game time`, duration(a.ms)),
         tile(`${b.name}’s game time`, duration(b.ms)),
       ),
+      el('p', { className: 'hint stats-note' }, `Played together means the same game in the same voice channel. They spent up to ${duration(data.voice.ms)} in voice together: only each person’s total is kept, so that’s the most it could be.`),
       ...(data.games.length ? [card('Played together most', ranked(data.games.map((g) => ({ label: g.name, ms: g.ms }))))] : []),
       card(
         `Both own (${data.shared.length})`,
-        data.shared.length ? el('p', { className: 'shared-games' }, data.shared.join(', ')) : el('p', { className: 'hint' }, 'Nothing yet. Link Steam or mark games on the Games page.'),
+        data.shared.length ? el('p', { className: 'shared-games' }, data.shared.join(', ')) : el('p', { className: 'hint' }, 'Nothing yet. Link Steam or mark games on ', el('a', { href: '#games' }, 'the Games page'), '.'),
       ),
       ...(data.steamGames.length ? [achievementsCard(data)] : []),
-      el('p', { className: 'hint' }, `Played together means the same game in the same voice channel. They spent up to ${duration(data.voice.ms)} in voice together: only each person’s total is kept, so that’s the most it could be.`),
     );
   }
 
@@ -502,6 +504,7 @@ function overview(main, address) {
         height: 200,
         onPick: (from, to) => bar.zoom(from, to),
       }),
+      el('p', { className: 'hint' }, `Games played in a voice channel. A game’s time is how long anyone was playing it, so its players can add up to more. From Discord’s “Playing” status, so it only counts people who share it.${dragNote()}`),
     );
   }
 
@@ -626,7 +629,6 @@ function overview(main, address) {
         ? [card(game ? 'Who played' : 'Most game time', ranked(data.players.map((p) => ({ id: p.id, label: p.name, ms: p.ms, note: notes(game ? lastPlayed(p.last) : count(p.games, 'game'), movedNote(p.ms, p.previousMs)) })), pickUser))]
         : []),
       ...(data.voice.length ? [card('Time in voice', ranked(data.voice.map((p) => ({ id: p.id, label: p.name, ms: p.ms, note: notes(count(p.nights, 'night'), movedNote(p.ms, p.previousMs)) })), user ? null : pickUser))] : []),
-      el('p', { className: 'hint' }, 'Games played in a voice channel. A game’s time is how long anyone was playing it, so its players can add up to more. From Discord’s “Playing” status, so it only counts people who share it. Drag across the chart with a mouse to look closer.'),
       ].filter(Boolean),
     );
   }
@@ -739,6 +741,7 @@ function soundsAndMusic(main, address) {
         height: 180,
         onPick: (from, to) => bar.zoom(from, to),
       }),
+      dragNote() && el('p', { className: 'hint' }, dragNote().trim()),
     );
     // Where songs were found, when that was noted
     const sources = data.sources.filter((s) => s.source !== 'unknown').map((s) => `${s.songs} from ${SOURCES[s.source] ?? s.source}`).join(', ');
@@ -765,7 +768,7 @@ function soundsAndMusic(main, address) {
           card('Voices', ranked(data.voices.map((v) => ({ label: v.name, ...counted(v.lines, 'line') }))), ways && el('p', { className: 'hint' }, `${ways[0].toUpperCase()}${ways.slice(1)}. What was said isn’t kept.`)),
         data.effects?.length > 0 && card('Effects', ranked(data.effects.map((e) => ({ label: e.name, ...counted(e.lines, 'line') })))),
         data.speakers.length > 0 && card('Who says the most', ranked(data.speakers.map((p) => ({ label: p.name, ...counted(p.lines, 'line') })))),
-        el('p', { className: 'hint' }, 'Only people still in the server are listed. Drag across the chart with a mouse to look closer.'),
+        el('p', { className: 'hint' }, 'Only people still in the server are listed.'),
       ].filter(Boolean),
     );
   }
