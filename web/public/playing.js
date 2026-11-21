@@ -70,7 +70,8 @@ export function stopButton() {
 export function stopDock(volume, sounds = null) {
   const list = el('ul', { className: 'now-sounds', ariaLabel: 'Playing now', hidden: true });
   const stop = stopButton();
-  const node = el('div', { className: 'stop-dock' }, list, volume.panel, sounds?.panel, el('div', { className: 'dock-row' }, stop.button, sounds?.button, volume.button));
+  const row = el('div', { className: 'dock-row' }, stop.button, sounds?.button, volume.button);
+  const node = el('div', { className: 'stop-dock' }, list, volume.panel, sounds?.panel, row);
   if (sounds) {
     volume.onOpen = sounds.close;
     sounds.onOpen = volume.close;
@@ -176,9 +177,9 @@ export function stopDock(volume, sounds = null) {
   node.addEventListener('focusin', () => node.classList.remove('away'));
   const onNarrow = () => (node.isConnected ? paintList(shownPlaying) : narrow.removeEventListener('change', onNarrow));
   narrow.addEventListener('change', onNarrow);
-  // Toasts sit above the corner, wherever its top is now: above what's playing and a panel when one's open. Measured
-  // once it's on the page and whenever any of them changes size. The page's end keeps clear of all but the Sounds
-  // panel, which is tall, and on a wide screen made to be used beside the page
+  // Toasts sit above the corner, wherever its top is now: above what's playing, a panel when one's open, and Stop when
+  // it's over the buttons. Measured once it's on the page and whenever any of them changes size. The page's end keeps
+  // clear of all but the Sounds panel, which is tall, and on a wide screen made to be used beside the page
   const sizes = new ResizeObserver(() => {
     // A dock left behind by a redraw lets go, rather than being watched for the rest of the visit
     if (!node.isConnected) {
@@ -186,12 +187,14 @@ export function stopDock(volume, sounds = null) {
       return sizes.disconnect();
     }
     const height = (part) => (part?.offsetHeight ? part.offsetHeight + 8 : 0);
-    const page = height(list) + height(volume.panel);
+    // The buttons' own row is allowed for already, but not Stop on a row above them
+    const page = height(list) + height(volume.panel) + Math.max(0, row.offsetHeight - volume.button.offsetHeight);
     document.documentElement.style.setProperty('--dock-extra', `${page + height(sounds?.panel)}px`);
     document.documentElement.style.setProperty('--dock-page', `${page}px`);
   });
   sizes.observe(list);
   sizes.observe(volume.panel);
+  sizes.observe(row);
   if (sounds) sizes.observe(sounds.panel);
   return node;
 }

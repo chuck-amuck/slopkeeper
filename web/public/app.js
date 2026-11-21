@@ -3,7 +3,7 @@ import { renderChat } from './chat.js';
 import { renderDeals } from './deals.js';
 import { renderGames } from './games.js';
 import { renderHealth } from './health.js';
-import { api, askEarly, attempt, devicePref, el, formProblem, icon, newPage, notice, openDialog, pageSignal, player, recall, remember, request, RequestError, session, SESSION_KEY, sessionLasts, state, toast } from './lib.js';
+import { api, askEarly, attempt, el, formProblem, icon, newPage, notice, openDialog, player, recall, remember, request, RequestError, session, SESSION_KEY, sessionLasts, state, toast } from './lib.js';
 import { musicPlayer, noMusicPlayer } from './miniplayer.js';
 import { renderMusic } from './music.js';
 import { renderNights } from './nights.js';
@@ -13,7 +13,6 @@ import { stopDock } from './playing.js';
 import { noSoundsDock, soundsDock } from './soundsdock.js';
 import { volumeDock } from './volumes.js';
 import { stopWatchingUpdates, watchUpdates } from './updates.js';
-import { playInPicker } from './voice.js';
 import { profilePicker } from './profiles.js';
 import { renderSettings } from './settings.js';
 import { renderSoundboard, VIEW_KEY } from './soundboard.js';
@@ -46,9 +45,6 @@ const TABS = [
 ];
 // What a phone's bottom bar has room for, in the same order as the tabs on a wider screen. The rest are under More
 const BAR = ['board', 'music', 'games', 'stats'];
-// The pages that play in voice, which have Play in in the header. The rest have it in the Sounds panel, or in the
-// header too while the Sounds button's turned off in this browser
-const PLAYS = ['board', 'music'];
 /** A tab's name on a phone's bottom bar: the shorter one, where it has one */
 const shortName = (id) => {
   const [, label, , , short] = TABS.find(([t]) => t === id);
@@ -249,7 +245,7 @@ function meDialog(main) {
 
 /**
  * Where the header doesn't fit on one row, as on a tablet or a small laptop, the tabs get a row of their own under
- * the server, and Play in where it's shown. The header sticks with only that row showing, and the row scrolls to the tab that's open,
+ * the server. The header sticks with only that row showing, and the row scrolls to the tab that's open,
  * which may be past the edge of the screen. A phone has its tabs along the bottom instead
  */
 function fitNav() {
@@ -340,12 +336,6 @@ function renderFrame() {
   const main = el('main');
   const guild = state.guilds.find((g) => g.id === state.guildId);
   const guildIcon = guild?.icon ? el('img', { src: guild.icon, alt: '' }) : null;
-  // Where sounds, speech and music play, beside the server, on the pages that play them and wherever the Sounds panel
-  // can't be opened to pick it
-  const playIn = guild ? playInPicker() : null;
-  const paintPlayIn = () => playIn && (playIn.hidden = !PLAYS.includes(tab) && devicePref.on('soundsButton'));
-  paintPlayIn();
-  addEventListener('device-pref', (e) => e.detail === 'soundsButton' && (paintPlayIn(), fitNav()), { signal: pageSignal() });
   // Outside main, as a page may redraw all of main. Only screen readers see it
   const title = el('h1', { className: 'visually-hidden', tabIndex: -1, id: 'page-title' }, TABS.find(([id]) => id === tab)[1]);
 
@@ -390,7 +380,6 @@ function renderFrame() {
             state.guilds.map((g) => el('option', { value: g.id, selected: g.id === state.guildId }, g.name)),
           ),
         ),
-      playIn,
       el(
         'nav',
         { ariaLabel: 'Pages' },
@@ -416,8 +405,9 @@ function renderFrame() {
       // More, or the page open from under it, by its shorter name where it has one
       el('button', { type: 'button', ...(!BAR.includes(tab) && { 'aria-current': 'page' }), ariaHasPopup: 'dialog', onclick: () => moreSheet(main) }, icon('more'), el('span', {}, BAR.includes(tab) ? 'More' : shortName(tab))),
     ),
-    // In the corner of every page, so they're always in reach. The Soundboard has every sound already
-    ...(guild ? [stopDock(volumeDock(), tab === 'board' ? noSoundsDock() : soundsDock(() => openTab('board'), popOutButton(), { playIn: !PLAYS.includes(tab) }))] : []),
+    // In the corner of every page, so they're always in reach. The Soundboard has every sound already. Play in is on
+    // the Soundboard and Music themselves, and at the top of the Sounds panel everywhere else
+    ...(guild ? [stopDock(volumeDock(), tab === 'board' ? noSoundsDock() : soundsDock(() => openTab('board'), popOutButton(), { playIn: tab !== 'music' }))] : []),
   );
   // The pop-out window, if it's open, shows the server picked here, and closes if there isn't one
   if (guild) popOutFollows();

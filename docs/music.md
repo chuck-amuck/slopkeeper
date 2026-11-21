@@ -18,7 +18,7 @@ The bot plays music in voice from a queue everyone shares. Songs are found on Sp
 
 A **music panel** is the same card posted to stay: put one in a handy channel and pin it, and it keeps up with the music, whoever plays it and from wherever. Post one with `/music panel`, or **Discord** → **Post the music panel…** on the web UI's Music tab, which asks for the channel. **Posted panels…** in the same menu lists them, with a link to each, and **Take down** deletes one so the bot stops keeping it up to date. The buttons on a panel are for the DJ role, as everywhere else.
 
-The web UI's **Music** tab has all of this, plus search results to pick from, a progress bar to jump within a song, a volume slider and drag to reorder. Its **Upload** adds an audio file of up to 60 MB and 20 minutes, which plays like any song, even while the music container is down, and is deleted once it has played.
+The web UI's **Music** tab has all of this, plus search results to pick from, a progress bar to jump within a song, a volume slider on the player card and drag to reorder. Its **Upload** adds an audio file of up to 60 MB and 20 minutes, which plays like any song, even while the music container is down, and is deleted once it has played.
 
 ## Playlists and links
 

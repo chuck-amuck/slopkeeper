@@ -112,7 +112,6 @@ export function volumeDock() {
       onclick: () => toggle(panel.hidden),
     },
     icon('volume'),
-    el('span', { className: 'volume-fab-word' }, 'Volume'),
   );
 
   // onOpen hears it open, so the Sounds panel can close: one panel at a time

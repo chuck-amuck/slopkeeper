@@ -49,21 +49,18 @@ const STALE = { sounds: [{ name: 'deleted since', plays: 3 }], groups: [] };
 const CLEAR_OF_PAGE = `(() => { if (innerWidth < 1140) return true; const main = document.querySelector('main'); const right = main.getBoundingClientRect().right - parseFloat(getComputedStyle(main).paddingRight); const buttons = [...document.querySelectorAll('.stop-dock .volume-fab')]; return buttons.length > 0 && buttons.every((b) => b.getBoundingClientRect().left >= right); })()`;
 // Each sound's name ends inside its tile, and on a phone a long one has its two lines, ending in … rather than cut through
 const NAMES_FIT = `[...document.querySelectorAll('.tile')].every((t) => { const n = t.querySelector('.tile-name'); if (!n) return true; const name = n.getBoundingClientRect(); const lines = Math.round(name.height / parseFloat(getComputedStyle(n).lineHeight)); return name.bottom <= t.getBoundingClientRect().bottom - parseFloat(getComputedStyle(t).paddingBottom) + 0.5 && (innerWidth > 640 || !/very-long/.test(n.textContent) || lines === 2); })`;
-// Play in is in the header only on the pages that play in voice, unless the Sounds button's turned off
-const PLAY_IN_HEADER = `(document.querySelector('header .play-in')?.getClientRects().length > 0)`;
-// Games' three views, with the one named open at its own address, Play in out of the header and, on a phone, Games and
-// Stats on the bottom bar
+// Games' three views, with the one named open at its own address and, on a phone, Games and Stats on the bottom bar
 const GAMES_VIEW = (id: string, label: string) =>
-  `(() => { const views = document.querySelector('.view-tabs[aria-label="Games view"]'); const tabs = [...views.querySelectorAll('button')].map((t) => t.textContent); return tabs.join('|') === 'Library|Game nights|Pick a game' && views.querySelector('[aria-current=page]')?.textContent === '${label}' && location.hash === '#games/${id}' && !${PLAY_IN_HEADER} && (innerWidth > 640 || [...document.querySelectorAll('.bottom-nav button')].map((b) => b.textContent).join('|') === 'Sounds|Music|Games|Stats|More'); })()`;
+  `(() => { const views = document.querySelector('.view-tabs[aria-label="Games view"]'); const tabs = [...views.querySelectorAll('button')].map((t) => t.textContent); return tabs.join('|') === 'Library|Game nights|Pick a game' && views.querySelector('[aria-current=page]')?.textContent === '${label}' && location.hash === '#games/${id}' && (innerWidth > 640 || [...document.querySelectorAll('.bottom-nav button')].map((b) => b.textContent).join('|') === 'Sounds|Music|Games|Stats|More'); })()`;
 // A page's address, its name, what it remembers, what must be true of it once it's shown, and what to do on it first
 const PAGES: [string, string, Record<string, string>?, string?, string?][] = [
-  ['board', 'Soundboard', {}, `${CLEAR_OF_PAGE} && ${NAMES_FIT} && ${PLAY_IN_HEADER} && !!document.querySelector('.view-slot input[type=search]') === innerWidth >= 1100`],
+  ['board', 'Soundboard', {}, `${CLEAR_OF_PAGE} && ${NAMES_FIT} && !!document.querySelector('.view-slot > .play-in select') && !!document.querySelector('.view-slot input[type=search]') === innerWidth >= 1100`],
   // Play | Manage stays where it is as the view changes, and Manage has its search and buttons beside it on a wide screen
   [
     'board',
     'Soundboard: Play | Manage stays put',
     {},
-    `(async () => { const views = document.querySelector('.views[aria-label="Soundboard view"]'); const at = () => views.getBoundingClientRect().left; const play = at(); views.querySelector('button:last-child').click(); await new Promise((r) => setTimeout(r, 800)); return play === at() && !!document.querySelector('.manage-view') && !!document.querySelector('.view-slot .manage-tools') === innerWidth >= 1100 && ${CLEAR_OF_PAGE}; })()`,
+    `(async () => { const views = document.querySelector('.views[aria-label="Soundboard view"]'); const at = () => views.getBoundingClientRect().left; const play = at(); views.querySelector('button:last-child').click(); await new Promise((r) => setTimeout(r, 800)); return play === at() && !!document.querySelector('.manage-view') && !!document.querySelector('.view-slot .manage-tools') === innerWidth >= 1100 && !!document.querySelector('.view-slot > .play-in select') && ${CLEAR_OF_PAGE}; })()`,
   ],
   // An effect picked beside the voice. A pick remembered from when the effects were voices becomes the voice and effect
   [
@@ -96,7 +93,13 @@ const PAGES: [string, string, Record<string, string>?, string?, string?][] = [
     `(() => { const d = document.querySelector('dialog[open]'); const here = [...d.querySelectorAll('button')].find((b) => b.textContent === 'Start here'); return !!d && /Cut a new sound from airhorn/.test(d.textContent) && [...d.querySelectorAll('button')].some((b) => b.textContent === 'Save and cut another') && d.querySelector('input[aria-label="Sound name"]').value === 'airhorn-2' && !!here && !here.classList.contains('quiet'); })()`,
     `document.querySelector('[aria-label="Cut another sound from airhorn"]').click()`,
   ],
-  ['music', 'Music', {}, `${CLEAR_OF_PAGE} && ${PLAY_IN_HEADER} && document.querySelectorAll('.now-panels [role=menuitem]').length === 2`],
+  // Where it plays and how loud on the player card, as music apps have them, rather than above it
+  [
+    'music',
+    'Music',
+    {},
+    `${CLEAR_OF_PAGE} && document.querySelectorAll('.now-panels [role=menuitem]').length === 2 && !!document.querySelector('.now .now-where .play-in select') && !document.querySelector('.now .now-volume').hidden && !document.querySelector('main > .toolbar input[type=range]') && (innerWidth <= 640 || (() => { const shown = [...document.querySelectorAll('.now-controls > *')].filter((n) => n.getClientRects().length); return shown.every((n) => n.getBoundingClientRect().top === shown[0].getBoundingClientRect().top); })())`,
+  ],
   // On a phone its toolbar is the search, then two to a row, with nothing left on a row of its own
   [
     'games/library',
@@ -119,7 +122,7 @@ const PAGES: [string, string, Record<string, string>?, string?, string?][] = [
   ['pick', 'Games: the old Pick a game address', {}, GAMES_VIEW('pick', 'Pick a game')],
   ['games', 'Games: remembered from the old Pick a game tab', { tab: 'pick' }, GAMES_VIEW('pick', 'Pick a game')],
   // A note under Bundles' title isn't boxed in by a line under it too
-  ['deals', 'Deals', {}, `!${PLAY_IN_HEADER} && (() => { const note = document.querySelector('.card-note'); const row = note?.nextElementSibling?.querySelector('.free-game'); return !note || note.hidden || !row || getComputedStyle(row).borderTopWidth === '0px'; })()`],
+  ['deals', 'Deals', {}, `(() => { const note = document.querySelector('.card-note'); const row = note?.nextElementSibling?.querySelector('.free-game'); return !note || note.hidden || !row || getComputedStyle(row).borderTopWidth === '0px'; })()`],
   // The views as tabs on one row, the dates a list on a phone, and the corner's buttons out of the way while scrolling
   // down a phone, and back on the way up or when the keyboard reaches them
   [
@@ -128,7 +131,7 @@ const PAGES: [string, string, Record<string, string>?, string?, string?][] = [
     {},
     `(async () => {
       const tabs = [...document.querySelectorAll('.view-tabs button')];
-      const oneRow = tabs.length === 4 && tabs.every((t) => t.offsetTop === tabs[0].offsetTop) && !${PLAY_IN_HEADER};
+      const oneRow = tabs.length === 4 && tabs.every((t) => t.offsetTop === tabs[0].offsetTop);
       const phone = innerWidth <= 640;
       const dates = phone ? !!document.querySelector('select.range-select') && !document.querySelector('.range-presets') : !!document.querySelector('.range-presets') && !document.querySelector('select.range-select');
       const dock = document.querySelector('.stop-dock');
@@ -189,11 +192,27 @@ const PAGES: [string, string, Record<string, string>?, string?, string?][] = [
     'activity',
     'Sounds panel: its own Play in',
     {},
-    `(() => { const panel = document.querySelector('.sounds-float'); return !panel.hidden && panel.querySelector('.sounds-head + .play-in select')?.ariaLabel === 'Play in' && !${PLAY_IN_HEADER}; })()`,
+    `(() => { const panel = document.querySelector('.sounds-float'); return !panel.hidden && panel.querySelector('.sounds-head + .play-in select')?.ariaLabel === 'Play in'; })()`,
     `document.querySelector('.sounds-fab').click()`,
   ],
-  // With the Sounds button turned off in this browser, Play in stays in the header
-  ['activity', 'Activity: the Sounds button off', { 'device:soundsButton': 'off' }, `${PLAY_IN_HEADER} && document.querySelector('.sounds-fab').hidden`],
+  // With the music player showing, the corner's round buttons sit beside it on a computer and above it on a phone, as
+  // round icons, and Stop goes above them rather than moving them
+  [
+    'deals',
+    'Corner buttons beside the music player',
+    {},
+    `(() => {
+      // Shown here, as the bot's own word that nothing's playing may have hidden it since
+      document.querySelector('.dock-row .stop-all').hidden = false;
+      const player = document.querySelector('.mini-player').getBoundingClientRect();
+      const buttons = [...document.querySelectorAll('.dock-row .volume-fab')].map((b) => b.getBoundingClientRect());
+      const stop = document.querySelector('.dock-row .stop-all').getBoundingClientRect();
+      const placed = innerWidth <= 640 ? buttons.every((b) => b.bottom <= player.top) : buttons.every((b) => b.left >= player.right && b.bottom > player.top);
+      const still = buttons.every((b, i) => Math.abs(b.top - window.buttonsAt[i]) < 1);
+      return buttons.length === 2 && placed && still && stop.height > 0 && stop.bottom <= Math.min(...buttons.map((b) => b.top)) && buttons.every((b) => b.width <= 48.5);
+    })()`,
+    `(() => { document.documentElement.classList.add('with-player'); document.querySelector('.mini-player').hidden = false; window.buttonsAt = [...document.querySelectorAll('.dock-row .volume-fab')].map((b) => b.getBoundingClientRect().top); document.querySelector('.dock-row .stop-all').hidden = false; })()`,
+  ],
   // Settings with no section asked for: the list of them on a phone, and beside it the first, with what needs fixing
   [
     'settings',
@@ -630,10 +649,12 @@ test('every page of the web UI opens cleanly, on a computer and a phone', { skip
         await page.evaluate(act);
         await sleep(1500);
       }
-      const look = await page.evaluate<{ text: number; errors: string[]; wide: number; width: number; past: string[] }>(`(() => {
+      const look = await page.evaluate<{ text: number; errors: string[]; wide: number; width: number; past: string[]; playInHeader: boolean }>(`(() => {
         const main = document.querySelector('main');
         return {
           text: main ? main.innerText.trim().length : 0,
+          // Never in the header, so the header's the same on every page: it's on the pages that play, and in the Sounds panel
+          playInHeader: (document.querySelector('header .play-in')?.getClientRects().length ?? 0) > 0,
           errors: [...document.querySelectorAll('.notice.error, [role=alert]')].filter((n) => n.offsetParent && n.textContent.trim()).map((n) => n.textContent.trim().slice(0, 120)),
           // On a phone, Chrome zooms out to fit a page that's too wide, so the screen's width is the measure
           wide: Math.max(document.documentElement.scrollWidth, document.body.scrollWidth),
@@ -669,6 +690,7 @@ test('every page of the web UI opens cleanly, on a computer and a phone', { skip
       if (!shown) failures.push(`${where}: still loading after 10 seconds`);
       if (expect && !(await page.evaluate<boolean>(expect))) failures.push(`${where}: isn't so: ${expect}`);
       if (look.text < 20) failures.push(`${where}: next to nothing on the page`);
+      if (look.playInHeader) failures.push(`${where}: Play in is in the header`);
       for (const error of look.errors) failures.push(`${where}: shows "${error}"`);
       if (Math.max(look.wide, look.width) > screen.width + 1) failures.push(`${where}: scrolls sideways (${look.wide} px wide on a ${screen.width} px screen): ${look.past.join('; ')}`);
       for (const problem of problems) failures.push(`${where}: ${problem}`);

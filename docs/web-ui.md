@@ -4,13 +4,13 @@ A web page for everything the bot does, running as a second container next to it
 
 ## On every page
 
-- **Play in:** the voice channel sounds, speech and music play in, with who's in each: beside the server in the header on the Soundboard and Music, and at the top of the Sounds panel on the other pages (in the header there too, if the Sounds button is turned off in that browser). When that channel empties, the next one with people takes over. The music player's Play names the channel it plays in.
+- **Play in:** the voice channel sounds, speech and music play in, with who's in each: beside **Play | Manage** on the Soundboard, on Music's player card, and at the top of the Sounds panel on the other pages. When that channel empties, the next one with people takes over. The music player's Play names the channel it plays in.
 - **Profile:** left of the server, the face of the [profile](chat.md#profiles) the bot is in this server: its photo, or its initials on a colour of its own. Hover over it for its name, and click or tap it for a menu of the profiles to pick another, or **Edit profiles…** to open them in Settings.
 - **Stop:** while sounds or speech play, a red button in the bottom corner stops them, with what's playing listed above it to stop one at a time. Music carries on, but the toast after Stop offers **Pause music**.
 - **Music player:** while music plays, a card at the bottom shows the song with **Pause**, **Skip** and **+** to add a song.
 - **Sounds:** a round button in the bottom corner that opens the server's sounds and a line to say over any page.
 - **Volume:** a round button beside it with the sounds', speech's and music's volumes, for everyone in the server. Sliders run to 100% at the tick, and the orange last quarter goes past it. What's playing follows a slider as you drag it, and letting go saves it for everyone. The box beside each takes an exact number, and the arrow keys move 5% at a time.
-- **The corner's buttons** keep clear of the page: on a wide screen there's room beside the page for them (and their names, on a very wide one), and on a phone or a narrow window they slide away while you scroll down and come back when you scroll up, or as soon as something plays.
+- **The corner's buttons** keep clear of the page: on a wide screen there's room beside the page for them, and on a phone or a narrow window they slide away while you scroll down and come back when you scroll up, or as soon as something plays. On a computer they sit beside the music player, and while it shows, Stop goes above them, so they stay put.
 - **Pop out:** in Chrome or Edge 116+, or Firefox 151+, over HTTPS, the Sounds panel and the music player can pop out into a small window that stays on top of everything, a game included.
 - **Undo:** removing a song, deleting a sound or saved line, taking a sound off Discord, **Never suggest this** and **Reset** on a setting each offer **Undo** for a few seconds.
 
@@ -20,7 +20,7 @@ Everything updates live, whoever changed it and wherever, and a change waits whi
 
 **Soundboard:** **Play** has the volumes (on a phone, behind the Volume button), a box to say something (with saved lines and a preview in headphones), a search, and the sounds as big buttons in their groups. **/** (or, on a wide screen, just typing) jumps to the search and **Enter** plays the first match. The star adds a sound to **Favourites**. **Manage** is where sounds are added, from files, folders or [a link](soundboard.md#adding-a-sound-from-a-link) (first, or in a column beside the sounds on a wide screen, with Discord's soundboard), and renamed, grouped, trimmed, turned up or down, downloaded, deleted and put on Discord's soundboard. **Cut another** makes a new sound from another part of the same video or sound. **Recently deleted** brings sounds back. Drag the handle at the start of a row to move a sound, or use Space and the arrow keys. The **Discord** menu syncs the sounds to Discord's soundboard, posts a `/sound panel`, and lists the panels posted to take them down.
 
-**Music:** what's playing, Spotify search and the queue. The **Discord** menu posts a [music panel](music.md#commands), and lists them to take them down. See [Music](music.md).
+**Music:** what's playing, with Play in and the music's volume on its card, then Spotify search and the queue. The **Discord** menu posts a [music panel](music.md#commands), and lists them to take them down. See [Music](music.md).
 
 **Games** has three views, as tabs along the top:
 

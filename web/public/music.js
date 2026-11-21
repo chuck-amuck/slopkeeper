@@ -1,6 +1,6 @@
 import { announce, api, attempt, confirmButton, el, icon, keepFocus, menuButton, needsVoice, NOBODY_IN_VOICE, notice, panelsDialog, postDialog, request, RequestError, session, state, toast, undoToast, volumeControl } from './lib.js';
 import { follow, followWhenIdle, older } from './updates.js';
-import { voiceBar } from './voice.js';
+import { playInPicker, voiceBar } from './voice.js';
 import { volumePreview } from './volumes.js';
 
 // A playlist adds this many songs, the first or at random
@@ -193,7 +193,7 @@ export function renderMusic(main) {
   });
   const progress = songBar.node;
 
-  // The channel is Play in's, in the header. The music's volume is the only one here
+  // The channel is Play in's, on the card. The music's volume is the only one here
   const voice = voiceBar(() => {
     followMusic();
     paintControls();
@@ -204,13 +204,9 @@ export function renderMusic(main) {
   // The music follows the slider as it's dragged, and letting go saves it
   const preview = volumePreview('music');
   const volume = volumeControl({ min: 0, max: 200, label: 'Music volume', onInput: preview.move, onSave: preview.save });
-  const volumeLabel = el(
-    'span',
-    { className: 'voice-volume', title: 'How loud music plays for everyone in the server. It’s the Music volume in Settings.' },
-    // Named as the Soundboard's Sounds and Speech and the Volume button's sliders are, now that it's on its own
-    el('span', { className: 'voice-label' }, 'Music'),
-    volume.node,
-  );
+  // Shown once the bot says what it's at, so it can't be dragged from a made-up value
+  // Named rather than a speaker, as Play in beside it has one
+  const volumeLabel = el('span', { className: 'now-volume', hidden: true, title: 'How loud music plays for everyone in the server. It’s the Music volume in Settings.' }, el('span', { className: 'voice-label' }, 'Volume'), volume.node);
 
   // What's playing with its buttons, posted to stay in a Discord channel, as the Soundboard's panel is. In one menu, as
   // on the Soundboard, so the controls keep to one row on a phone
@@ -235,10 +231,9 @@ export function renderMusic(main) {
     'section',
     { className: 'card music now' },
     el('div', { className: 'now-main' }, nowCover, el('div', { className: 'now-text' }, nowTitle, nowArtist, nowNote), progress),
-    el('div', { className: 'toolbar now-controls' }, playButton, skipButton, stopButton, el('span', { className: 'now-panels' }, discord.node)),
+    // Where it plays and how loud, at the right of the controls as music apps have them. On a phone, a row of their own
+    el('div', { className: 'toolbar now-controls' }, playButton, skipButton, stopButton, el('div', { className: 'now-where' }, playInPicker(), volumeLabel), el('span', { className: 'now-panels' }, discord.node)),
   );
-  // How loud, at the top as on the Soundboard
-  const voiceRow = el('div', { className: 'toolbar voice music-voice', hidden: true }, volumeLabel);
   // Kept up with a change from the Volume button or anywhere else, apart from while it's being dragged or typed in
   followWhenIdle('volumes', volumeLabel, () => [volumeLabel], (levels) => levels.music !== null && volume.set(levels.music));
 
@@ -797,9 +792,9 @@ export function renderMusic(main) {
     modes.hidden = !data.playlistsReady;
     if (!data.playlistsReady && mode === 'playlists') setMode('songs');
     query.disabled = searchButton.disabled = !data.searchReady;
-    if (voiceRow.hidden) {
+    if (volumeLabel.hidden) {
       volume.set(data.volume);
-      voiceRow.hidden = false;
+      volumeLabel.hidden = false;
     }
     if (!savingAutoplay) autoplayBox.checked = !!data.autoplay;
 
@@ -819,7 +814,7 @@ export function renderMusic(main) {
     paintQueue();
   }
 
-  main.append(voice.node, problem, voiceRow, now, searchCard, queueCard);
+  main.append(voice.node, problem, now, searchCard, queueCard);
   list.append(notice('loading', 'Loading the queue…', { compact: true, tag: 'li' }));
   // From the bot the moment it changes. Who's in voice comes through voiceBar
   follow('music', main, (fresh, at) => show(fresh, performance.now() - at));

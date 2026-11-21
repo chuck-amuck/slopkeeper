@@ -22,7 +22,7 @@ export function noSoundsDock() {
 /**
  * The Sounds button in the corner of every page but the Soundboard, and the panel it opens above itself: a line to
  * say, a search, and the server's sounds in their groups, folded as on the Soundboard, to play in the channel picked
- * in Play in: at the top of the panel when `playIn`, as on pages without one in the header. On a wide screen the panel
+ * in Play in: at the top of the panel when `playIn`, as on pages without one of their own. On a wide screen the panel
  * stays open while you use the page, until the button, ✕ or Escape closes it; on a phone a press anywhere else closes
  * it too. `openBoard` goes to the Soundboard
  */
@@ -40,7 +40,6 @@ export function soundsDock(openBoard, extra = null, { playIn = false } = {}) {
       onclick: () => toggle(panel.hidden, true),
     },
     icon('pads'),
-    el('span', { className: 'volume-fab-word' }, 'Sounds'),
   );
   const dock = { button, panel, close: () => toggle(false), onOpen: () => {} };
   const narrow = matchMedia('(max-width: 640px)');

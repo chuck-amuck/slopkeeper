@@ -101,8 +101,10 @@ html.with-player {
   --player-h: 64px;
 }
 
-/* Wide enough for the corner's buttons, even with a long Stop, to sit down beside the 640px player in the middle */
-@media (min-width: 1800px) {
+/* Wide enough for the corner's two round buttons to sit down beside the 640px player in the middle, with room to spare
+   for a scrollbar. Stop goes above them while the player shows (.dock-row below), so they stay put when something starts
+   playing */
+@media (min-width: 960px) {
   html {
     --dock-lift: 0px;
   }
@@ -359,12 +361,38 @@ button.stop-all:hover:not(:disabled) {
   min-width: 0;
 }
 
-/* Round, named on hover and by its label, unless there's room beside the page for its word (--fab-word below) */
+/* While the music player shows, Stop goes above the round buttons rather than beside them, so they don't move when
+   something starts playing, and stay clear of the player beside them. The space beside the buttons under Stop lets
+   presses through to the player */
+html.with-player .dock-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  justify-items: end;
+  pointer-events: none;
+}
+
+html.with-player .dock-row > * {
+  pointer-events: auto;
+}
+
+html.with-player .dock-row .stop-all {
+  grid-column: 1 / -1;
+}
+
+html.with-player .dock-row .sounds-fab {
+  grid-column: 2;
+}
+
+html.with-player .dock-row .volume-fab:not(.sounds-fab) {
+  grid-column: 3;
+}
+
+/* Round, named on hover and by its label */
 button.volume-fab {
   flex: none;
-  width: var(--fab-width, 48px);
+  width: 48px;
   min-height: 48px;
-  padding: 0 var(--fab-pad, 0px);
+  padding: 0;
   border-color: var(--line);
   border-radius: var(--radius-pill);
   background: var(--surface);
@@ -381,36 +409,6 @@ button.volume-fab .ico {
 button.volume-fab[aria-expanded='true'] {
   border-color: var(--accent);
   color: var(--accent);
-}
-
-.volume-fab-word {
-  display: var(--fab-word, none);
-  white-space: nowrap;
-}
-
-/* The words fit beside a 900px page from 1460px, beside Settings from 1760px and the Soundboard's wide one from 2000px */
-@media (min-width: 1460px) {
-  main:not(.settings-page, .board-wide) ~ .stop-dock {
-    --fab-word: inline;
-    --fab-width: auto;
-    --fab-pad: 18px;
-  }
-}
-
-@media (min-width: 1760px) {
-  main.settings-page ~ .stop-dock {
-    --fab-word: inline;
-    --fab-width: auto;
-    --fab-pad: 18px;
-  }
-}
-
-@media (min-width: 2000px) {
-  main.board-wide ~ .stop-dock {
-    --fab-word: inline;
-    --fab-width: auto;
-    --fab-pad: 18px;
-  }
 }
 
 /* From 1140px, pages wider than 900px leave a strip on the right for the round buttons, where the screen has no room
@@ -1118,10 +1116,6 @@ main {
   .guild select {
     max-width: 160px;
   }
-
-  .play-in select {
-    max-width: 160px;
-  }
 }
 
 /* Sounds */
@@ -1269,7 +1263,7 @@ button.fold-toggle[aria-expanded='false'] .ico {
   min-width: 5.5em;
 }
 
-/* The sounds' and speech's volumes, on Play (Play in is in the header) */
+/* The sounds' and speech's volumes, on Play */
 .voice-box {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
@@ -1478,22 +1472,6 @@ button.fold-toggle[aria-expanded='false'] .ico {
   color: var(--muted);
   font-size: var(--text-sm);
   white-space: nowrap;
-}
-
-/* On a phone the music's volume runs the width of the screen */
-@media (max-width: 640px) {
-  .toolbar.music-voice {
-    flex-wrap: wrap;
-  }
-
-  .music-voice .voice-volume {
-    flex: 1 1 100%;
-  }
-
-  .music-voice .voice-volume input[type='range'] {
-    flex: 1 1 auto;
-    width: auto;
-  }
 }
 
 .slots {
@@ -3003,6 +2981,72 @@ textarea {
   margin-left: auto;
 }
 
+/* Where the music plays and how loud, at the right of the controls, before Discord */
+.now-where {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+  min-width: 0;
+  margin-left: auto;
+}
+
+.now-where + .now-panels {
+  margin-left: 0;
+}
+
+.now-where .play-in select {
+  width: 12em;
+  max-width: 170px;
+}
+
+.now-volume {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.now-volume input[type='range'] {
+  width: 100px;
+}
+
+/* Too narrow for one row: Play, Skip, Stop and clear and Discord, then where and how loud on a row of their own */
+@media (max-width: 899px) {
+  .now-where {
+    flex: 1 1 100%;
+    flex-wrap: wrap;
+    order: 1;
+    margin-left: 0;
+  }
+
+  .now-where + .now-panels {
+    margin-left: auto;
+  }
+}
+
+/* On a phone, Play in and the volume each the width of the card */
+@media (max-width: 640px) {
+  .now-where .play-in,
+  .now-volume {
+    flex: 1 1 100%;
+  }
+
+  .now-where .play-in select {
+    width: 100%;
+    max-width: none;
+  }
+
+  .now-volume .volume-control {
+    flex: 1 1 auto;
+  }
+
+  .now-volume input[type='range'] {
+    flex: 1 1 auto;
+    width: auto;
+    min-width: 0;
+  }
+}
+
 .music-search {
   display: grid;
   gap: 10px;
@@ -3500,7 +3544,7 @@ button.music-upload:hover:not(:disabled) {
   color: var(--bad);
 }
 
-/* Too narrow for the tabs beside the server and Play in, so app.js gives them a row of their own. The header sticks
+/* Too narrow for the tabs beside the server, so app.js gives them a row of their own. The header sticks
    with only that row showing: app.js sets top to minus the height above it */
 header.tabs-below nav {
   order: 1;
@@ -3752,22 +3796,20 @@ header.tabs-below nav button {
     min-width: 0;
   }
 
-  /* The server and Play in share the row (Play in in the Sounds panel or the pop-out keeps to its own height) */
-  header > .guild,
-  header > .play-in {
-    flex: 1 1 0;
-  }
-
+  /* Play in fills what's left of its row, beside Play | Manage, in the Sounds panel or in the pop-out */
   .play-in select {
     width: 100%;
     max-width: none;
     min-width: 0;
   }
 
+  .view-slot > .play-in {
+    flex: 1 1 auto;
+  }
+
   .spacer {
     display: none;
   }
-
 
   .toggle span {
     display: none;

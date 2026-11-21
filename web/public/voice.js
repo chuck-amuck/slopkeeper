@@ -3,9 +3,9 @@ import { follow } from './updates.js';
 import { volumeSliders } from './volumes.js';
 
 /**
- * The voice channel that sounds, speech and music play in. It's picked once, with Play in: in the header of the
- * Soundboard and Music, and in the Sounds panel and the pop-out window elsewhere. Every page that plays something
- * follows that one choice
+ * The voice channel that sounds, speech and music play in. It's picked once, with Play in: beside Play | Manage on the
+ * Soundboard, on Music's player card, and in the Sounds panel and the pop-out window elsewhere. Every page that plays
+ * something follows that one choice
  */
 
 /** Who's in which voice channel on the server shown, as the bot last said: { guildId, channels }, or null */

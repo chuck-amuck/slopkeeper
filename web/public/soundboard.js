@@ -2,6 +2,7 @@ import { renderBoard } from './board.js';
 import { renderLibrary } from './library.js';
 import { el, keepFocus, player, recall, remember } from './lib.js';
 import { popOutButton } from './popout.js';
+import { playInPicker } from './voice.js';
 
 const VIEWS = [
   ['play', 'Play', renderBoard],
@@ -36,9 +37,12 @@ export function renderSoundboard(main) {
     main.classList.add('board-wide');
     // Play's empty board opens Manage, and each view's search goes beside the switch on a wide screen
     VIEWS.find(([view]) => view === id)[2](next, () => show('manage'), slot);
+    slot.append(playIn);
     if (popOut) slot.append(popOut);
   }
 
+  // Where both views play, after the view's search
+  const playIn = playInPicker();
   // On a desktop browser that can, the music and sounds in a small window that stays on top
   const popOut = popOutButton();
 
