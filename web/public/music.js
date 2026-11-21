@@ -193,7 +193,7 @@ export function renderMusic(main) {
   });
   const progress = songBar.node;
 
-  // The channel is Play in, in the header. The music's volume is the only one here
+  // The channel is Play in's, in the header. The music's volume is the only one here
   const voice = voiceBar(() => {
     followMusic();
     paintControls();

@@ -684,7 +684,8 @@ body.popout .mini-player {
   padding: var(--space-3) var(--space-3) 0;
 }
 
-.popout-main .play-in select {
+.popout-main .play-in select,
+.sounds-float .play-in select {
   width: 100%;
   max-width: none;
 }
@@ -3734,9 +3735,9 @@ header.tabs-below nav button {
     min-width: 0;
   }
 
-  /* The server and Play in share the row */
-  .guild,
-  .play-in {
+  /* The server and Play in share the row (Play in in the Sounds panel or the pop-out keeps to its own height) */
+  header > .guild,
+  header > .play-in {
     flex: 1 1 0;
   }
 
@@ -5042,7 +5043,7 @@ video.link-media {
   flex: 1 1 200px;
 }
 
-/* Stats → Health */
+/* Health */
 
 .refreshing {
   opacity: 0.6;

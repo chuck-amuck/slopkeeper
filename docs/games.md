@@ -17,7 +17,7 @@ The answer also shows **Also works** (other games everyone owns, most played fir
 
 - **🎲 Reroll** picks again, for the same people and options. Anyone can press it.
 - **🗳️ Vote** starts a 1-minute vote on up to 10 of the games: the 5 played most here, then a random mix. Everyone in the channel gets one vote, it closes when they've all voted, and a tie is settled at random.
-- **Never suggest this** hides the game from future picks. `/game unhide` or the web UI's Games page brings it back.
+- **Never suggest this** hides the game from future picks. `/game unhide` or the web UI's Games → **Library** brings it back.
 
 ## Steam accounts
 
@@ -34,7 +34,7 @@ The bot knows who owns what from linked Steam libraries, which sync every 6 hour
 | `/steam lobbies` | Who's in a joinable Steam lobby right now. |
 | `/steam refresh` | Re-reads every linked library now, say right after someone buys a game. |
 
-The web UI's Games page does all of this for anyone, under **Steam accounts**.
+The web UI's Games → **Library** does all of this for anyone, under **Steam accounts**.
 
 **Steam families:** Steam doesn't say who's in a family, so you tell the bot (up to 6 people, in every server). Someone in a family counts as owning a game a family member owns, if Steam tags it for Family Sharing. Each person playing at once needs their own copy, so two people sharing one copy show as one short. The bot can't see whether an owner outside the group is using their copy, and games only marked by hand don't count for the family.
 

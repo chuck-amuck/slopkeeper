@@ -1,8 +1,8 @@
 import { achievementsView } from './achievements.js';
-import { health } from './health.js';
 import { calendarChart, dragNote, HOURS, timeChart, weekChart, WEEKDAYS_LONG } from './charts.js';
 import { ago, api, attempt, duration, el, formProblem, icon, notice, openDialog, recall, remember, request, state, toast, undoToast } from './lib.js';
 import { rangeBar, rangeFromQuery, rangeQuery } from './rangebar.js';
+import { viewTabs } from './viewtabs.js';
 
 /** Ranges up to now, from midnight in the server's time zone where it's whole days */
 const PERIODS = [
@@ -126,40 +126,9 @@ const VIEWS = [
   ['compare', 'Compare', compare],
   ['sounds', 'Sounds & music', soundsAndMusic],
   ['recap', 'Monthly recap', recap],
-  ['health', 'Health', health],
 ];
 
-/** The view and its query in the page's address: #stats/health?range=7d */
-function fromAddress() {
-  const [path, query = ''] = location.hash.slice(1).split('?');
-  return { view: path.split('/')[1], params: new URLSearchParams(query) };
-}
-
-export function renderStats(main) {
-  const body = el('div', { className: 'stack' });
-  // Tabs along a line, which look unlike the date buttons under them, in one row that scrolls on a phone
-  const tabs = el('div', { className: 'views view-tabs', role: 'group', ariaLabel: 'Stats view' });
-  const open = (id, params = new URLSearchParams()) => {
-    remember('statsView', id);
-    const [, , render] = VIEWS.find(([view]) => view === id);
-    tabs.replaceChildren(...VIEWS.map(([view, label]) => el('button', { ...(view === id && { 'aria-current': 'page' }), onclick: () => open(view) }, label)));
-    tabs.querySelector('[aria-current]')?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
-    const view = el('div', { className: 'stack' });
-    body.replaceChildren(view);
-    const write = (query) => {
-      // Not once someone's moved on to another tab
-      if (!view.isConnected || !location.hash.startsWith('#stats')) return;
-      const text = query.toString();
-      history.replaceState(null, '', `#stats/${id}${text ? `?${text}` : ''}`);
-    };
-    write(params);
-    render(view, { params, write });
-  };
-  main.append(tabs, body);
-  const asked = fromAddress();
-  if (VIEWS.some(([view]) => view === asked.view)) open(asked.view, asked.params);
-  else open(VIEWS.some(([view]) => view === recall('statsView')) ? recall('statsView') : 'overview');
-}
+export const renderStats = (main) => viewTabs(main, { tab: 'stats', label: 'Stats view', views: VIEWS, key: 'statsView' });
 
 function compare(main) {
   const guildId = state.guildId;
@@ -191,7 +160,7 @@ function compare(main) {
       ...(data.games.length ? [card('Played together most', ranked(data.games.map((g) => ({ label: g.name, ms: g.ms }))))] : []),
       card(
         `Both own (${data.shared.length})`,
-        data.shared.length ? el('p', { className: 'shared-games' }, data.shared.join(', ')) : el('p', { className: 'hint' }, 'Nothing yet. Link Steam or mark games on ', el('a', { href: '#games' }, 'the Games page'), '.'),
+        data.shared.length ? el('p', { className: 'shared-games' }, data.shared.join(', ')) : el('p', { className: 'hint' }, 'Nothing yet. Link Steam or mark games on ', el('a', { href: '#games/library' }, 'Games → Library'), '.'),
       ),
       ...(data.steamGames.length ? [achievementsCard(data)] : []),
     );

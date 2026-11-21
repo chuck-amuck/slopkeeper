@@ -176,7 +176,7 @@ scrape_configs:
 
 ### Health
 
-Stats → **Health** in the web UI shows these numbers to anyone who can open it, over the last hour, 24 hours, 7 days or 30 days, or any days of the last 30 picked on a calendar. Dragging across a chart with a mouse looks closer at that stretch, and **Back** returns to the range before. A preset keeps up as each minute is kept. Everything but the slow list covers the whole bot, which every server it's in shares.
+The web UI's **Health** tab shows these numbers to anyone who can open it, over the last hour, 24 hours, 7 days or 30 days, or any days of the last 30 picked on a calendar. Dragging across a chart with a mouse looks closer at that stretch, and **Back** returns to the range before. A preset keeps up as each minute is kept. Everything but the slow list covers the whole bot, which every server it's in shares.
 
 - **What held it back?:** whether the machine was short of CPU, memory or disk, a container reached its own CPU or memory limit, or garbage collection paused the bot. If none of those, but something people waited on was slow, it says so: that's the bot's own work or what it waited on, like YouTube or Discord, and Slowest recently shows which step.
 - **Summary:** Discord, commands and buttons, sounds, speech, music, stutter, the bot, the web UI, and the web UI as people see it in their browsers, at home and away and on phones and computers, each marked **Fine**, **Slow** or **Bad** over the range. Speech is judged by lines of 300 characters or fewer, as a paragraph takes seconds more to make.

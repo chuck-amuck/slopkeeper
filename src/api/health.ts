@@ -3,7 +3,7 @@ import { customWindow, healthNumbers, presetWindow, RANGES, slowList, type Healt
 import { setting } from '../settings.ts';
 import { type Ask, Refused, datesWindow } from './common.ts';
 
-// How the bot and its containers are doing, for the Health view under Stats
+// How the bot and its containers are doing, for the web UI's Health tab
 
 /**
  * Every tab showing Health asks again as each minute is kept, so each range is worked out once a minute for all of

@@ -67,7 +67,7 @@ export function renderLibrary(main, _openManage, head = null) {
       renderList();
     },
   });
-  // The channel is Play in, in the header, and the volumes are behind the Volume button
+  // The channel is Play in's, in the header, and the volumes are behind the Volume button
   const voice = voiceBar(
     () => {
       players.forEach((button, name) => paintPlay(name, button));

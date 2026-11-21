@@ -35,7 +35,7 @@ export const updates: Record<FeedName, (guild: Guild) => object | Promise<object
   activity: (guild) => activityList(guild),
   sounds: (guild) => soundsNow(guild),
   volumes: (guild) => volumesOf(guild),
-  // Only that there's more: the Health view asks for the range it shows
+  // Only that there's more: the Health tab asks for the range it shows
   health: () => ({}),
   // Likewise: the Deals tab asks for the lot again
   deals: () => ({}),

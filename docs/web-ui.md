@@ -1,10 +1,10 @@
 # Web UI
 
-A web page for everything the bot does, running as a second container next to it, for your home network or behind a sign-in proxy like [Pangolin](#signing-in-through-pangolin). It has tabs for the Soundboard, Music, Games, Nights, Pick a game, Deals, Stats, Chat, Activity and Settings. On a phone they're a bar along the bottom, with the rest under **More**.
+A web page for everything the bot does, running as a second container next to it, for your home network or behind a sign-in proxy like [Pangolin](#signing-in-through-pangolin). It has tabs for the Soundboard, Music, Games, Deals, Stats, Chat, Activity, Settings and Health. On a phone the Soundboard, Music, Games and Stats are a bar along the bottom, with the rest under **More**.
 
 ## On every page
 
-- **Play in:** beside the server in the header, the voice channel sounds, speech and music play in, with who's in each. When that channel empties, the next one with people takes over.
+- **Play in:** the voice channel sounds, speech and music play in, with who's in each: beside the server in the header on the Soundboard and Music, and at the top of the Sounds panel on the other pages (in the header there too, if the Sounds button is turned off in that browser). When that channel empties, the next one with people takes over. The music player's Play names the channel it plays in.
 - **Profile:** left of the server, the face of the [profile](chat.md#profiles) the bot is in this server: its photo, or its initials on a colour of its own. Hover over it for its name, and click or tap it for a menu of the profiles to pick another, or **Edit profiles…** to open them in Settings.
 - **Stop:** while sounds or speech play, a red button in the bottom corner stops them, with what's playing listed above it to stop one at a time. Music carries on, but the toast after Stop offers **Pause music**.
 - **Music player:** while music plays, a card at the bottom shows the song with **Pause**, **Skip** and **+** to add a song.
@@ -14,7 +14,7 @@ A web page for everything the bot does, running as a second container next to it
 - **Pop out:** in Chrome or Edge 116+, or Firefox 151+, over HTTPS, the Sounds panel and the music player can pop out into a small window that stays on top of everything, a game included.
 - **Undo:** removing a song, deleting a sound or saved line, taking a sound off Discord, **Never suggest this** and **Reset** on a setting each offer **Undo** for a few seconds.
 
-Everything updates live, whoever changed it and wherever, and a change waits while you're typing in something it would redraw. If the bot can't be reached, the page says so and retries by itself. After an update, a page left open offers **Reload**. Each tab has its own address, like `#music`, and a phone can add the page to its home screen. Settings → Basics → **This browser** hides the music player or the Sounds button in that browser.
+Everything updates live, whoever changed it and wherever, and a change waits while you're typing in something it would redraw. If the bot can't be reached, the page says so and retries by itself. After an update, a page left open offers **Reload**. Each tab has its own address, like `#music`, and so does each view in a tab, like `#games/nights`. A phone can add the page to its home screen. Settings → Basics → **This browser** hides the music player or the Sounds button in that browser.
 
 ## Tabs
 
@@ -22,21 +22,23 @@ Everything updates live, whoever changed it and wherever, and a change waits whi
 
 **Music:** what's playing, Spotify search and the queue. The **Discord** menu posts a [music panel](music.md#commands), and lists them to take them down. See [Music](music.md).
 
-**Game nights:** plan a night, answer **In**, **Maybe** or **Can't**, edit or cancel one, or stop a repeating one. Times show in your time zone, and in the server's when that's different.
+**Games** has three views, as tabs along the top:
 
-**Games:** the game library with who owns, needs and wants each game, and any sale. Add games from what members own on Steam, by name or by store link. **Steam accounts** links, changes and unlinks anyone's account and sets Steam families. Each game's **Manage** has its player limit, Steam link, **Never suggest this** and who owns it.
-
-**Pick a game:** pick a voice channel, or tick people to plan before anyone's on, and see the games everyone owns or is one purchase away from, as `/whatdoweplay` does. Each game shows time played here and on Steam, and opening one shows who's playing it now, its latest patch and **Achievements**. Filter to co-op, PvP or Steam Deck, then **Pick for us** or **Start a vote** in a channel.
+- **Library:** the game library with who owns, needs and wants each game, and any sale. Add games from what members own on Steam, by name or by store link. **Steam accounts** links, changes and unlinks anyone's account and sets Steam families. Each game's **Manage** has its player limit, Steam link, **Never suggest this** and who owns it.
+- **Game nights:** plan a night, answer **In**, **Maybe** or **Can't**, edit or cancel one, or stop a repeating one. Times show in your time zone, and in the server's when that's different.
+- **Pick a game:** pick a voice channel, or tick people to plan before anyone's on, and see the games everyone owns or is one purchase away from, as `/whatdoweplay` does. Each game shows time played here and on Steam, and opening one shows who's playing it now, its latest patch and **Achievements**. Filter to co-op, PvP or Steam Deck, then **Pick for us** or **Start a vote** in a channel.
 
 **Deals:** what's on sale that this server plays or wants, compared with the lowest price ever, plus running [bundles](deals.md#bundles) and [free games](deals.md#free-games). **Just mine** keeps only what you want or wishlisted, once the page knows who you are.
 
-**Stats:** pick a range, from presets or dates on a calendar (on a phone, from a list). **Overview** has game time, games, people, voice time, sounds and game nights, each compared with the stretch before, then charts of game time, days in voice, when people are on, the top games and people, and what's trending. Pick a person or game to see just theirs. **Sounds & music** has the sounds, songs and speech, never what was said. **Compare** and **Monthly recap** match `/compare` and `/recap`, and **Health** shows how the bot is doing (see [Health](api.md#health)). **Merge games** and **Not a game** fix how games are counted (see [Stats](stats.md#game-names)).
+**Stats:** pick a range, from presets or dates on a calendar (on a phone, from a list). **Overview** has game time, games, people, voice time, sounds and game nights, each compared with the stretch before, then charts of game time, days in voice, when people are on, the top games and people, and what's trending. Pick a person or game to see just theirs. **Sounds & music** has the sounds, songs and speech, never what was said. **Compare** and **Monthly recap** match `/compare` and `/recap`. **Merge games** and **Not a game** fix how games are counted (see [Stats](stats.md#game-names)).
 
 **Chat:** ask the bot as you would in Discord, as anyone in the server, and see its answer, what it would have done and who it would have pinged, with nothing done or posted. What it would say aloud plays here, and the line above the conversation says how the same answer goes out in Discord. See [Chat](chat.md#trying-it-in-the-web-ui).
 
 **Activity:** who changed what, from here or Discord: sounds, games, pings, Steam accounts, music, settings and game nights.
 
 **Settings:** everything in `/setup`, plus [chat](chat.md) (what it remembers, and reminders waiting), game ping roles, everyone's join sounds and pings, and what's free and on sale now. They're in sections: Basics, Voice and pings, Games, Deals, Soundboard, Music, Speech, Chat and Looping room, listed down the side, or on a phone as a list to tap into, with **‹ Settings** back to it. Each has an address of its own, like `#settings/music`. Anything that needs fixing is listed first in Basics, with **Go to setting**, and a section with something to fix shows how many beside its name. **Find a setting** searches every section at once. A feature that's off shows only its switch until it's turned on, fine-tuning like delays and cooldowns is under **More options**, and a long explanation shows its first sentence, with the rest under **More**. A changed setting offers **Reset**, and **Post Choose games button** posts a `/gamerole menu`.
+
+**Health:** how the bot itself is doing, for whoever runs it: how quickly it answered, its containers, the machine it runs on, what held it back and the slowest moments in this server, over the last hour, day, week or month, or dates from the last 30 days. See [Health](api.md#health).
 
 Only a vote, a soundboard or music panel and the Choose games button post to Discord. Anyone with the password can change anyone's pings and Steam accounts.
 

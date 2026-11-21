@@ -1,5 +1,6 @@
 import { devicePref, el, icon, pageSignal, secondWindow, state } from './lib.js';
 import { soundsBody } from './soundspanel.js';
+import { playInPicker } from './voice.js';
 
 /** Whether the Sounds panel is open. It stays open from page to page until it's closed */
 let open = false;
@@ -21,10 +22,11 @@ export function noSoundsDock() {
 /**
  * The Sounds button in the corner of every page but the Soundboard, and the panel it opens above itself: a line to
  * say, a search, and the server's sounds in their groups, folded as on the Soundboard, to play in the channel picked
- * in the header. On a wide screen the panel stays open while you use the page, until the button, ✕ or Escape closes
- * it; on a phone a press anywhere else closes it too. `openBoard` goes to the Soundboard
+ * in Play in: at the top of the panel when `playIn`, as on pages without one in the header. On a wide screen the panel
+ * stays open while you use the page, until the button, ✕ or Escape closes it; on a phone a press anywhere else closes
+ * it too. `openBoard` goes to the Soundboard
  */
-export function soundsDock(openBoard, extra = null) {
+export function soundsDock(openBoard, extra = null, { playIn = false } = {}) {
   const panel = el('section', { className: 'sounds-float', id: 'sounds-float', hidden: true, ariaLabel: 'Sounds' });
   const button = el(
     'button',
@@ -54,7 +56,11 @@ export function soundsDock(openBoard, extra = null) {
       kept = { guildId: state.guildId, ...body, scroller: body.parts.at(-1) };
     } else scrollTo = kept.scroller.scrollTop;
     const close = el('button', { type: 'button', className: 'icon quiet', ariaLabel: 'Close Sounds', title: 'Close', onclick: () => toggle(false, true) }, icon('x'));
-    panel.append(el('div', { className: 'sounds-head' }, el('h2', {}, 'Sounds'), el('button', { type: 'button', className: 'link', onclick: goToBoard }, 'Soundboard'), extra, close), ...kept.parts);
+    panel.append(
+      el('div', { className: 'sounds-head' }, el('h2', {}, 'Sounds'), el('button', { type: 'button', className: 'link', onclick: goToBoard }, 'Soundboard'), extra, close),
+      ...(playIn ? [playInPicker()] : []),
+      ...kept.parts,
+    );
   }
 
   function goToBoard() {

@@ -4,7 +4,7 @@ import { MINUTES_KEPT_MS, POLL_MS, ROLLUP_MS, ROLLUPS_KEPT_MS, SAMPLE_MS } from 
 import { voiceName } from './say.ts';
 
 /**
- * The Health view's numbers: how the bot and its containers did over the last hour, day, week or month, from what
+ * The Health tab's numbers: how the bot and its containers did over the last hour, day, week or month, from what
  * features/health.ts keeps. Each range is read at its own grain, so every chart has 60 to 168 points
  */
 
@@ -240,7 +240,7 @@ export function slowList(guildId: string, start: number, end = Number.MAX_SAFE_I
   return items.filter((item) => listed.has(item));
 }
 
-/** Everything the Health view shows for a window but the slow list, which is each server's own */
+/** Everything the Health tab shows for a window but the slow list, which is each server's own */
 export function healthNumbers(window: Window, now = Date.now()) {
   const { range, start, step, points } = window;
   const found = read(start, step, points);
@@ -546,7 +546,7 @@ export function verdictOf({ machine, containers, gc, slowed }: { machine: Machin
 
 export type HealthNumbers = ReturnType<typeof healthNumbers>;
 
-/** Everything the Health view shows for a window or preset range, with the slow list for `guildId` */
+/** Everything the Health tab shows for a window or preset range, with the slow list for `guildId` */
 export function healthReport(guildId: string, window: Window | Range, now = Date.now()) {
   const numbers = healthNumbers(typeof window === 'string' ? presetWindow(window, now) : window, now);
   return { ...numbers, slow: slowList(guildId, numbers.start, numbers.start + numbers.step * numbers.points) };

@@ -33,7 +33,7 @@ const HOUR = 3_600_000;
 // How long after its start a night stays on the web UI's list
 const LISTED_AFTER_START = 3 * HOUR;
 
-/** Every change to what the web UI's Nights tab shows comes through here, so an open tab redraws */
+/** Every change to what the web UI's Game nights view shows comes through here, so an open one redraws */
 const nightsChanged = (guildId: string) => feeds.nights.changed(guildId);
 const DAY = 24 * HOUR;
 /** How far ahead a repeating night's next card goes up, so it's there soon after the last night but pings at a sensible time */

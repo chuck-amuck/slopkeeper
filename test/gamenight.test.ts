@@ -389,7 +389,7 @@ test('the host edits a night from its card, and people who are in hear when it m
   assert.equal(recentActivity('edits', 1)[0].action, 'Changed the time, details of **Valheim** night');
 });
 
-test('a night dropping off the web UI’s list three hours in tells an open Nights tab, once', async (t) => {
+test('a night dropping off the web UI’s list three hours in tells an open Game nights view, once', async (t) => {
   t.mock.timers.enable({ apis: ['Date'], now: Date.now() });
   const client = fakeClient([], async () => {});
   await tick(client);

@@ -49,9 +49,15 @@ const STALE = { sounds: [{ name: 'deleted since', plays: 3 }], groups: [] };
 const CLEAR_OF_PAGE = `(() => { if (innerWidth < 1140) return true; const main = document.querySelector('main'); const right = main.getBoundingClientRect().right - parseFloat(getComputedStyle(main).paddingRight); const buttons = [...document.querySelectorAll('.stop-dock .volume-fab')]; return buttons.length > 0 && buttons.every((b) => b.getBoundingClientRect().left >= right); })()`;
 // Each sound's name ends inside its tile, and on a phone a long one has its two lines, ending in … rather than cut through
 const NAMES_FIT = `[...document.querySelectorAll('.tile')].every((t) => { const n = t.querySelector('.tile-name'); if (!n) return true; const name = n.getBoundingClientRect(); const lines = Math.round(name.height / parseFloat(getComputedStyle(n).lineHeight)); return name.bottom <= t.getBoundingClientRect().bottom - parseFloat(getComputedStyle(t).paddingBottom) + 0.5 && (innerWidth > 640 || !/very-long/.test(n.textContent) || lines === 2); })`;
+// Play in is in the header only on the pages that play in voice, unless the Sounds button's turned off
+const PLAY_IN_HEADER = `(document.querySelector('header .play-in')?.getClientRects().length > 0)`;
+// Games' three views, with the one named open at its own address, Play in out of the header and, on a phone, Games and
+// Stats on the bottom bar
+const GAMES_VIEW = (id: string, label: string) =>
+  `(() => { const views = document.querySelector('.view-tabs[aria-label="Games view"]'); const tabs = [...views.querySelectorAll('button')].map((t) => t.textContent); return tabs.join('|') === 'Library|Game nights|Pick a game' && views.querySelector('[aria-current=page]')?.textContent === '${label}' && location.hash === '#games/${id}' && !${PLAY_IN_HEADER} && (innerWidth > 640 || [...document.querySelectorAll('.bottom-nav button')].map((b) => b.textContent).join('|') === 'Sounds|Music|Games|Stats|More'); })()`;
 // A page's address, its name, what it remembers, what must be true of it once it's shown, and what to do on it first
 const PAGES: [string, string, Record<string, string>?, string?, string?][] = [
-  ['board', 'Soundboard', {}, `${CLEAR_OF_PAGE} && ${NAMES_FIT} && !!document.querySelector('.view-slot input[type=search]') === innerWidth >= 1100`],
+  ['board', 'Soundboard', {}, `${CLEAR_OF_PAGE} && ${NAMES_FIT} && ${PLAY_IN_HEADER} && !!document.querySelector('.view-slot input[type=search]') === innerWidth >= 1100`],
   // Play | Manage stays where it is as the view changes, and Manage has its search and buttons beside it on a wide screen
   [
     'board',
@@ -90,12 +96,24 @@ const PAGES: [string, string, Record<string, string>?, string?, string?][] = [
     `(() => { const d = document.querySelector('dialog[open]'); const here = [...d.querySelectorAll('button')].find((b) => b.textContent === 'Start here'); return !!d && /Cut a new sound from airhorn/.test(d.textContent) && [...d.querySelectorAll('button')].some((b) => b.textContent === 'Save and cut another') && d.querySelector('input[aria-label="Sound name"]').value === 'airhorn-2' && !!here && !here.classList.contains('quiet'); })()`,
     `document.querySelector('[aria-label="Cut another sound from airhorn"]').click()`,
   ],
-  ['music', 'Music', {}, `${CLEAR_OF_PAGE} && document.querySelectorAll('.now-panels [role=menuitem]').length === 2`],
-  ['games', 'Games'],
-  ['nights', 'Game nights'],
-  ['pick', 'Pick a game'],
+  ['music', 'Music', {}, `${CLEAR_OF_PAGE} && ${PLAY_IN_HEADER} && document.querySelectorAll('.now-panels [role=menuitem]').length === 2`],
+  ['games/library', 'Games: Library', {}, `${GAMES_VIEW('library', 'Library')} && /Steam accounts/.test(document.querySelector('main').innerText)`],
+  ['games/nights', 'Games: Game nights', {}, `${GAMES_VIEW('nights', 'Game nights')} && /Plan a game night/.test(document.querySelector('main').innerText)`],
+  ['games/pick', 'Games: Pick a game', {}, `${GAMES_VIEW('pick', 'Pick a game')} && !!document.querySelector('main select')`],
+  // Picking a view is a step Back undoes, without drawing the page again
+  [
+    'games/library',
+    'Games: Back to the last view',
+    {},
+    `window.pickedPick === true && window.samePage === document.querySelector('main') && ${GAMES_VIEW('library', 'Library')}`,
+    `(async () => { window.samePage = document.querySelector('main'); [...document.querySelectorAll('.view-tabs button')].at(-1).click(); await new Promise((r) => setTimeout(r, 300)); window.pickedPick = location.hash === '#games/pick' && !!document.querySelector('main select'); history.back(); })()`,
+  ],
+  // Game nights and Pick a game were tabs of their own: their addresses, and a device that had one open, go to their view
+  ['nights', 'Games: the old Game nights address', {}, GAMES_VIEW('nights', 'Game nights')],
+  ['pick', 'Games: the old Pick a game address', {}, GAMES_VIEW('pick', 'Pick a game')],
+  ['games', 'Games: remembered from the old Pick a game tab', { tab: 'pick' }, GAMES_VIEW('pick', 'Pick a game')],
   // A note under Bundles' title isn't boxed in by a line under it too
-  ['deals', 'Deals', {}, `(() => { const note = document.querySelector('.card-note'); const row = note?.nextElementSibling?.querySelector('.free-game'); return !note || note.hidden || !row || getComputedStyle(row).borderTopWidth === '0px'; })()`],
+  ['deals', 'Deals', {}, `!${PLAY_IN_HEADER} && (() => { const note = document.querySelector('.card-note'); const row = note?.nextElementSibling?.querySelector('.free-game'); return !note || note.hidden || !row || getComputedStyle(row).borderTopWidth === '0px'; })()`],
   // The views as tabs on one row, the dates a list on a phone, and the corner's buttons out of the way while scrolling
   // down a phone, and back on the way up or when the keyboard reaches them
   [
@@ -104,7 +122,7 @@ const PAGES: [string, string, Record<string, string>?, string?, string?][] = [
     {},
     `(async () => {
       const tabs = [...document.querySelectorAll('.view-tabs button')];
-      const oneRow = tabs.length === 5 && tabs.every((t) => t.offsetTop === tabs[0].offsetTop);
+      const oneRow = tabs.length === 4 && tabs.every((t) => t.offsetTop === tabs[0].offsetTop) && !${PLAY_IN_HEADER};
       const phone = innerWidth <= 640;
       const dates = phone ? !!document.querySelector('select.range-select') && !document.querySelector('.range-presets') : !!document.querySelector('.range-presets') && !document.querySelector('select.range-select');
       const dock = document.querySelector('.stop-dock');
@@ -131,7 +149,9 @@ const PAGES: [string, string, Record<string, string>?, string?, string?][] = [
   ['stats/compare', 'Stats: Compare'],
   ['stats/sounds', 'Stats: Sounds & music'],
   ['stats/recap', 'Stats: Monthly recap'],
-  ['stats/health', 'Stats: Health'],
+  ['health', 'Health', {}, `location.hash.startsWith('#health?range=') && !!document.querySelector('.health-tiles')`],
+  // Health was a view in Stats
+  ['stats/health?range=7d', 'Health: the old address', {}, `location.hash === '#health?range=7d' && document.title.startsWith('Health')`],
   // Chat tried here: asked something, answered with who it would ping, and nothing said aloud, as that's turned off
   [
     'chat',
@@ -158,6 +178,16 @@ const PAGES: [string, string, Record<string, string>?, string?, string?][] = [
     `(() => { const box = document.querySelector('.try-ask textarea'); box.focus(); box.value = 'roast @'; box.setSelectionRange(7, 7); box.dispatchEvent(new Event('input')); box.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true })); })()`,
   ],
   ['activity', 'Activity'],
+  // Away from the Soundboard and Music, the Sounds panel has Play in at its top
+  [
+    'activity',
+    'Sounds panel: its own Play in',
+    {},
+    `(() => { const panel = document.querySelector('.sounds-float'); return !panel.hidden && panel.querySelector('.sounds-head + .play-in select')?.ariaLabel === 'Play in' && !${PLAY_IN_HEADER}; })()`,
+    `document.querySelector('.sounds-fab').click()`,
+  ],
+  // With the Sounds button turned off in this browser, Play in stays in the header
+  ['activity', 'Activity: the Sounds button off', { 'device:soundsButton': 'off' }, `${PLAY_IN_HEADER} && document.querySelector('.sounds-fab').hidden`],
   // Settings with no section asked for: the list of them on a phone, and beside it the first, with what needs fixing
   [
     'settings',

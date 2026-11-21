@@ -2,7 +2,8 @@ import { renderActivity } from './activity.js';
 import { renderChat } from './chat.js';
 import { renderDeals } from './deals.js';
 import { renderGames } from './games.js';
-import { api, askEarly, attempt, el, formProblem, icon, newPage, notice, openDialog, player, recall, remember, request, RequestError, session, SESSION_KEY, sessionLasts, state, toast } from './lib.js';
+import { renderHealth } from './health.js';
+import { api, askEarly, attempt, devicePref, el, formProblem, icon, newPage, notice, openDialog, pageSignal, player, recall, remember, request, RequestError, session, SESSION_KEY, sessionLasts, state, toast } from './lib.js';
 import { musicPlayer, noMusicPlayer } from './miniplayer.js';
 import { renderMusic } from './music.js';
 import { renderNights } from './nights.js';
@@ -19,23 +20,35 @@ import { renderSoundboard, VIEW_KEY } from './soundboard.js';
 import { SHOWN_PREFIX } from './soundgrid.js';
 import { renderStats } from './stats.js';
 import { startSpeed, stopSpeed } from './speed.js';
+import { tabInAddress, viewTabs } from './viewtabs.js';
 
 const app = document.getElementById('app');
+// Games has the library, game nights and picking one as views, as Stats has its own
+const GAMES_VIEW = 'gamesView';
+const GAME_VIEWS = [
+  ['library', 'Library', renderGames],
+  ['nights', 'Game nights', renderNights],
+  ['pick', 'Pick a game', renderPick],
+];
+const renderGamesTab = (main) => viewTabs(main, { tab: 'games', label: 'Games view', views: GAME_VIEWS, key: GAMES_VIEW });
 // id, label, page, icon, and the shorter label a phone's bottom bar uses
 const TABS = [
   ['board', 'Soundboard', renderSoundboard, 'speaker', 'Sounds'],
   ['music', 'Music', renderMusic, 'note'],
-  ['games', 'Games', renderGames, 'star'],
-  ['nights', 'Game nights', renderNights, 'calendar', 'Nights'],
-  ['pick', 'Pick a game', renderPick, 'dice', 'Pick'],
+  ['games', 'Games', renderGamesTab, 'star'],
   ['deals', 'Deals', renderDeals, 'tag'],
   ['stats', 'Stats', renderStats, 'chart'],
   ['chat', 'Chat', renderChat, 'bubble'],
   ['activity', 'Activity', renderActivity, 'clock'],
   ['settings', 'Settings', renderSettings, 'sliders'],
+  // How the bot itself is doing, for whoever runs it, so last
+  ['health', 'Health', renderHealth, 'pulse'],
 ];
 // What a phone's bottom bar has room for, in the same order as the tabs on a wider screen. The rest are under More
-const BAR = ['board', 'music', 'games', 'nights'];
+const BAR = ['board', 'music', 'games', 'stats'];
+// The pages that play in voice, which have Play in in the header. The rest have it in the Sounds panel, or in the
+// header too while the Sounds button's turned off in this browser
+const PLAYS = ['board', 'music'];
 /** A tab's name on a phone's bottom bar: the shorter one, where it has one */
 const shortName = (id) => {
   const [, label, , , short] = TABS.find(([t]) => t === id);
@@ -46,14 +59,31 @@ if (recall('tab') === 'library') {
   remember('tab', 'board');
   remember(VIEW_KEY, 'manage');
 }
+// Game nights and Pick a game were tabs of their own, and are now Games' views. Health was a view in Stats
+if (['nights', 'pick'].includes(recall('tab'))) {
+  remember(GAMES_VIEW, recall('tab'));
+  remember('tab', 'games');
+}
+if (recall('statsView') === 'health') {
+  remember('statsView', 'overview');
+  if (recall('tab') === 'stats') remember('tab', 'health');
+}
+/** Where an address from before those moves is now, as a bookmark, a shared link or Back may still have one */
+function movedHash() {
+  const hash = location.hash.slice(1);
+  const moved = /^(nights|pick)(?=$|[/?])/.test(hash) ? `games/${hash}` : /^stats\/health(?=$|[/?])/.test(hash) ? hash.slice('stats/'.length) : null;
+  if (moved) history.replaceState(history.state, '', `#${moved}`);
+}
 const isTab = (id) => TABS.some(([t]) => t === id);
 // The address names the tab, so Back, a bookmark or a shared link opens it. Without one, the tab used last. After the
-// tab, a tab may name what it has open, like Stats' view and range: #stats/health?range=7d
-const fromHash = () => location.hash.slice(1).split(/[/?]/)[0];
+// tab, a tab may name what it has open, like a view and its range: #stats/overview?range=week
+const fromHash = tabInAddress;
+movedHash();
 let tab = isTab(fromHash()) ? fromHash() : isTab(recall('tab')) ? recall('tab') : 'board';
 history.replaceState(null, '', fromHash() === tab ? location.hash : `#${tab}`);
 
 addEventListener('popstate', () => {
+  movedHash();
   const id = fromHash();
   if (!isTab(id)) return history.replaceState(null, '', `#${tab}`);
   // The same tab with something else open in it, like another Stats range: drawn again from the address, unless the
@@ -219,7 +249,7 @@ function meDialog(main) {
 
 /**
  * Where the header doesn't fit on one row, as on a tablet or a small laptop, the tabs get a row of their own under
- * the server and Play in. The header sticks with only that row showing, and the row scrolls to the tab that's open,
+ * the server, and Play in where it's shown. The header sticks with only that row showing, and the row scrolls to the tab that's open,
  * which may be past the edge of the screen. A phone has its tabs along the bottom instead
  */
 function fitNav() {
@@ -310,6 +340,12 @@ function renderFrame() {
   const main = el('main');
   const guild = state.guilds.find((g) => g.id === state.guildId);
   const guildIcon = guild?.icon ? el('img', { src: guild.icon, alt: '' }) : null;
+  // Where sounds, speech and music play, beside the server, on the pages that play them and wherever the Sounds panel
+  // can't be opened to pick it
+  const playIn = guild ? playInPicker() : null;
+  const paintPlayIn = () => playIn && (playIn.hidden = !PLAYS.includes(tab) && devicePref.on('soundsButton'));
+  paintPlayIn();
+  addEventListener('device-pref', (e) => e.detail === 'soundsButton' && (paintPlayIn(), fitNav()), { signal: pageSignal() });
   // Outside main, as a page may redraw all of main. Only screen readers see it
   const title = el('h1', { className: 'visually-hidden', tabIndex: -1, id: 'page-title' }, TABS.find(([id]) => id === tab)[1]);
 
@@ -354,8 +390,7 @@ function renderFrame() {
             state.guilds.map((g) => el('option', { value: g.id, selected: g.id === state.guildId }, g.name)),
           ),
         ),
-      // Where sounds, speech and music play, beside the server, as it's for every page
-      guild && playInPicker(),
+      playIn,
       el(
         'nav',
         { ariaLabel: 'Pages' },
@@ -382,7 +417,7 @@ function renderFrame() {
       el('button', { type: 'button', ...(!BAR.includes(tab) && { 'aria-current': 'page' }), ariaHasPopup: 'dialog', onclick: () => moreSheet(main) }, icon('more'), el('span', {}, BAR.includes(tab) ? 'More' : shortName(tab))),
     ),
     // In the corner of every page, so they're always in reach. The Soundboard has every sound already
-    ...(guild ? [stopDock(volumeDock(), tab === 'board' ? noSoundsDock() : soundsDock(() => openTab('board'), popOutButton()))] : []),
+    ...(guild ? [stopDock(volumeDock(), tab === 'board' ? noSoundsDock() : soundsDock(() => openTab('board'), popOutButton(), { playIn: !PLAYS.includes(tab) }))] : []),
   );
   // The pop-out window, if it's open, shows the server picked here, and closes if there isn't one
   if (guild) popOutFollows();

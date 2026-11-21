@@ -10,7 +10,7 @@ import type { MachineReading } from '../src/machine.ts';
 import * as perf from '../src/perf.ts';
 import { GUILD, ok, refused } from './apiFixture.ts';
 
-// The Health view's numbers: each range at its own grain, percentiles from buckets, and each server's own slow list
+// The Health tab's numbers: each range at its own grain, percentiles from buckets, and each server's own slow list
 
 const NOW = Date.UTC(2026, 10, 15, 12, 30, 20);
 const MINUTE = 60_000;

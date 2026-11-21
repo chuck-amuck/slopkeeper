@@ -380,7 +380,9 @@ export function renderPick(main) {
               'p',
               { className: 'hint pick-people-note' },
               pickable.size ? 'Only people whose games the bot knows are listed.' : 'Nobody’s games are known yet.',
-              ' Link Steam under Games → Steam accounts, or mark the games people have there.',
+              ' Link Steam with Steam accounts in ',
+              el('a', { href: '#games/library' }, 'Library'),
+              ', or mark the games people have there.',
             ),
           ]
         : []),

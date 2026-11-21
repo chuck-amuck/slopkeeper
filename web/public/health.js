@@ -2,9 +2,10 @@ import { dragNote, timeChart } from './charts.js';
 import { api, attempt, el, icon, notice, recall, remember, request, state } from './lib.js';
 import { rangeBar, rangeFromQuery, rangeQuery } from './rangebar.js';
 import { followWhenIdle } from './updates.js';
+import { addressWriter } from './viewtabs.js';
 
 /**
- * Stats → Health: how the bot, its containers and the machine they run on have been doing over the last hour, day,
+ * Health, a tab of its own: how the bot, its containers and the machine they run on have been doing over the last hour, day,
  * week or month, or any stretch of the last 30 days, what held them back, and the slowest things people waited on in
  * this server. It fetches again as each minute is kept
  */
@@ -576,11 +577,18 @@ function previousQuery(r) {
   return new URLSearchParams({ from: String(r.start - span), to: String(r.start) });
 }
 
+/** The Health tab, with its range in the page's address: #health?range=7d */
+export function renderHealth(main) {
+  const box = el('div', { className: 'stack' });
+  main.append(box);
+  health(box, { params: new URLSearchParams(location.hash.split('?')[1] ?? ''), write: addressWriter(box, 'health') });
+}
+
 /**
- * `address`: the query after the view in the page's address, and `write(params)` to change it, so a reload or a link
+ * `address`: the query in the page's address, and `write(params)` to change it, so a reload or a link
  * opens the same range
  */
-export function health(main, address) {
+function health(main, address) {
   const guildId = state.guildId;
   let range = rangeFromQuery(address.params, RANGES) ?? (RANGES.some(([id]) => id === recall('healthRange')) ? { preset: recall('healthRange') } : { preset: '24h' });
   let compare = address.params.get('compare') === '1' || (!address.params.has('range') && recall('healthCompare') === '1');

@@ -3,8 +3,9 @@ import { follow } from './updates.js';
 import { volumeSliders } from './volumes.js';
 
 /**
- * The voice channel that sounds, speech and music play in. It's picked once, with Play in in the header of every page,
- * and every page that plays something follows that one choice
+ * The voice channel that sounds, speech and music play in. It's picked once, with Play in: in the header of the
+ * Soundboard and Music, and in the Sounds panel and the pop-out window elsewhere. Every page that plays something
+ * follows that one choice
  */
 
 /** Who's in which voice channel on the server shown, as the bot last said: { guildId, channels }, or null */
@@ -60,7 +61,7 @@ function choose(id, hand) {
   tell();
 }
 
-/** Play in, for the header: the channel everything plays in, with who's in each */
+/** Play in: the channel everything plays in, with who's in each */
 export function playInPicker() {
   // What the options were drawn from, as rebuilding them would close the list if it's open
   let drawn = '';
@@ -91,7 +92,7 @@ export function playInPicker() {
 }
 
 /**
- * For a page that plays in voice: the channel picked in the header, kept up as it or who's in voice changes, which
+ * For a page that plays in voice: the channel picked in Play in, kept up as it or who's in voice changes, which
  * runs onChange. `node` holds the server's volumes for sounds and speech, unless `sliders` is false (then it's an
  * empty, hidden box that only marks the page as still shown). Every volume is also behind the Volume button
  */
@@ -110,7 +111,7 @@ export function voiceBar(onChange, { sliders = true } = {}) {
       return channels === null ? null : channels.find((c) => c.id === chosen());
     },
     loaded: () => channelsNow() !== null,
-    /** Makes `id` the channel, here and in the header, unless someone's picked one by hand on this server since load */
+    /** Makes `id` the channel, here and in Play in, unless someone's picked one by hand on this server since load */
     prefer: (id) => byHand.has(state.guildId) || choose(id, false),
     play: (name) => request(soundPath(name, '/play'), { method: 'POST', json: { channelId: chosen() } }),
     say: (text, voice, effect) => request(api('/say'), { method: 'POST', json: { channelId: chosen(), text, voice, effect } }),

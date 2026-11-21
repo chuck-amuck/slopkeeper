@@ -41,7 +41,7 @@ export function store(all = false) {
     for (const m of minutes) insertMinute.run(m.at, 1, m.name, JSON.stringify(m.labels), m.count, m.sum, m.max, m.buckets && JSON.stringify(m.buckets));
     for (const s of slow) insertSlow.run(s.at, s.guildId, s.what, s.seconds, JSON.stringify(s.steps), JSON.stringify(s.detail));
   });
-  // A Health view on screen fetches again once there's another minute to show
+  // A Health tab on screen fetches again once there's another minute to show
   if (minutes.length) feeds.health.changedEverywhere();
 }
 

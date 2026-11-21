@@ -195,7 +195,9 @@ export function musicPlayer(openMusic, { inWindow = false, extra = null } = {}) 
       playButton.replaceChildren(icon(paused ? 'play' : 'pause'));
     }
     playButton.ariaLabel = paused ? 'Play' : 'Pause';
-    playButton.title = !paused ? 'Pause, keeping the queue' : cant || (playing ? 'Play on from where it paused, in the channel picked in Play in' : 'Play the queue in the channel picked in Play in');
+    // In the channel picked in Play in, which isn't on every page, so it's named
+    const where = voice.channel()?.name;
+    playButton.title = !paused ? 'Pause, keeping the queue' : cant || (playing ? `Play on from where it paused${where ? `, in ${where}` : ''}` : `Play the queue${where ? ` in ${where}` : ''}`);
     playButton.disabled = starting || (!!cant && cant !== NOBODY_IN_VOICE);
     needsVoice(playButton, cant !== NOBODY_IN_VOICE);
     skipButton.disabled = false;
