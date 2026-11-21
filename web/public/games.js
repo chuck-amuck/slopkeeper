@@ -491,7 +491,7 @@ export function renderGames(main) {
   );
   const add = el('button', { className: 'primary', onclick: () => addDialog(main, load) }, 'Add a game');
   const accounts = el('button', { onclick: () => accountsDialog(main, load) }, 'Steam accounts');
-  main.append(el('div', { className: 'toolbar' }, search, picker, order, accounts, add), box);
+  main.append(el('div', { className: 'toolbar games-tools' }, search, picker, order, accounts, add), box);
 
   const gameRow = (g) =>
     el(

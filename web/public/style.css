@@ -1151,6 +1151,23 @@ main {
   .manage-tools input[type='search'] {
     flex-basis: 100%;
   }
+
+  /* Likewise the Library's search, then its two lists side by side, then Steam accounts and Add a game */
+  .games-tools {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: var(--space-2);
+  }
+
+  .games-tools input[type='search'] {
+    grid-column: 1 / -1;
+  }
+
+  .games-tools select {
+    width: 100%;
+    max-width: none;
+    min-width: 0;
+  }
 }
 
 /* What to say, the voice to say it in, and Say, in one row */

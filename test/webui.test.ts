@@ -97,7 +97,13 @@ const PAGES: [string, string, Record<string, string>?, string?, string?][] = [
     `document.querySelector('[aria-label="Cut another sound from airhorn"]').click()`,
   ],
   ['music', 'Music', {}, `${CLEAR_OF_PAGE} && ${PLAY_IN_HEADER} && document.querySelectorAll('.now-panels [role=menuitem]').length === 2`],
-  ['games/library', 'Games: Library', {}, `${GAMES_VIEW('library', 'Library')} && /Steam accounts/.test(document.querySelector('main').innerText)`],
+  // On a phone its toolbar is the search, then two to a row, with nothing left on a row of its own
+  [
+    'games/library',
+    'Games: Library',
+    {},
+    `${GAMES_VIEW('library', 'Library')} && /Steam accounts/.test(document.querySelector('main').innerText) && (innerWidth > 640 || (() => { const rows = new Map(); for (const n of document.querySelector('.games-tools').children) rows.set(n.offsetTop, (rows.get(n.offsetTop) ?? 0) + 1); return [...rows.values()].join() === '1,2,2'; })())`,
+  ],
   ['games/nights', 'Games: Game nights', {}, `${GAMES_VIEW('nights', 'Game nights')} && /Plan a game night/.test(document.querySelector('main').innerText)`],
   ['games/pick', 'Games: Pick a game', {}, `${GAMES_VIEW('pick', 'Pick a game')} && !!document.querySelector('main select')`],
   // Picking a view is a step Back undoes, without drawing the page again
