@@ -90,7 +90,7 @@ export function renderPick(main) {
   const opened = new Set();
   const playing = new Map();
 
-  const who = el('select', { ariaLabel: 'Who’s playing', onchange: () => changed() });
+  const who = el('select', { className: 'pick-who', ariaLabel: 'Who’s playing', onchange: () => changed() });
   const pickButton = el('button', { className: 'primary', disabled: true, onclick: () => pickOne() }, 'Pick for us');
   const voteButton = el('button', { disabled: true, onclick: () => voteDialog(main, options, voice(), filtered() ? shownReady().map((g) => g.name) : null) }, 'Start a vote');
   const people = el('div', { className: 'pick-people', hidden: true });

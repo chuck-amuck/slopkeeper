@@ -4518,6 +4518,12 @@ span.steam-family {
   font-weight: 400;
 }
 
+/* Who's playing: a voice channel's long list of names cut short rather than past the page's edge */
+.pick-who {
+  min-width: 0;
+  max-width: 100%;
+}
+
 .pick-actions,
 .card-actions {
   display: flex;
