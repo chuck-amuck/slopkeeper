@@ -6,6 +6,7 @@
 #                                             playlist or SoundCloud set, picked at random with `shuffle`
 #   {"similar"}                               songs like a YouTube video, from YouTube Music's mix for it
 #   {"url", "clip": true, "dir"}              a video or track to cut a soundboard sound from, downloaded with its picture
+import functools
 import json
 import os
 import random
@@ -18,8 +19,12 @@ from urllib.parse import quote, urlparse
 SLACK = 5
 # Longer than this is a mix or an album, not a song
 LONGEST = 20 * 60
-# How many of YouTube Music's results have their length looked up, which takes a request each
+# How many of YouTube Music's results that aren't another version are weighed, as it lists the official recording first
 LOOKED_UP = 2
+# How long its API may take to answer before the song is found from its page instead
+MUSIC_API_WAIT_S = 5
+# yt-dlp's errors for a video no client can get, which aren't asked again with the usual clients
+GONE = re.compile(r'video unavailable|private video|has been removed|account .* terminated|not available in your country', re.I)
 OTHER_VERSIONS = re.compile(r'\b(live|en vivo|cover|karaoke|instrumental|remix|sped up|slowed|8d|reverb|demo|session|acoustic|acústico)\b', re.I)
 LINK = re.compile(r'^https?://((www|m|music)\.)?(youtube\.com|youtu\.be|soundcloud\.com)/', re.I)
 VIDEO = re.compile(r'^https://(?:(?:www|m|music)\.)?(?:youtube\.com/watch\?(?:.*&)?v=|youtu\.be/)(?P<video>[\w-]{11})')
@@ -37,6 +42,10 @@ CLIP_HOSTS = ('youtube.com', 'youtu.be', 'soundcloud.com', 'tiktok.com', 'instag
 # here to join a separate picture and sound. Without one, it's the sound alone, as from SoundCloud
 CLIP_FORMAT = 'b[height<=?480]/b/ba'
 CLIP_MAX_BYTES = 200 * 1024 * 1024
+# YouTube's Vision Pro client gives the same audio as the others without first holding it back for as long as a pre-roll ad
+# would play, which yt-dlp waits out, often 5 seconds or more. If it fails, as when YouTube changes it, yt-dlp's usual
+# clients are asked
+QUICK_CLIENT = {'youtube': {'player_client': ['visionos']}}
 # What a video's title says besides the song, like (Official Video) or [4K Remaster]
 EXTRAS = re.compile(r'\s*[(\[][^)\]]*\b(official|video|audio|lyrics?|visuali[sz]er|remaster(ed)?|hd|4k|mv)\b[^)\]]*[)\]]', re.I)
 
@@ -70,11 +79,63 @@ def listed(url, count=5):
     return [e for e in (info.get('entries') or []) if e]
 
 
+def connect():
+    # Only here, so the tests can answer without ytmusicapi installed
+    import requests
+    from ytmusicapi import YTMusic
+
+    session = requests.Session()
+    session.request = functools.partial(session.request, timeout=MUSIC_API_WAIT_S)
+    return YTMusic(requests_session=session)
+
+
+def music_songs(words):
+    """YouTube Music's songs for some words, with their lengths, from its API, or None when it can't be asked"""
+    try:
+        return connect().search(words, filter='songs', limit=5) or []
+    except Exception:
+        return None
+
+
+def from_music(found, song):
+    """The first of YouTube Music's songs that's the right length, of the first few that aren't another version"""
+    looked = 0
+    for e in found:
+        if not e.get('videoId') or not e.get('title') or other_version(e['title'], song['title']):
+            continue
+        looked += 1
+        if looked > LOOKED_UP:
+            break
+        if close_enough(e.get('duration_seconds'), song['durationMs']):
+            return f"https://music.youtube.com/watch?v={e['videoId']}"
+    return None
+
+
 def find(song):
     """The best upload of a Spotify song: YouTube Music's official audio, then YouTube, then SoundCloud"""
     artist = song['artist'].split(',')[0].strip()
     words = f"{artist} {song['title']}"
-    # YouTube Music lists the official recording first, but without lengths, so the first few that aren't another version are looked up
+    # Its API gives each song's length with the search, so no song's page need be opened
+    found = music_songs(words)
+    if found:
+        url = from_music(found, song)
+        if url:
+            return 'youtube', url
+    else:
+        # Without an answer from its API, from its page instead, which takes a few seconds more
+        listed_music = find_listed(song, words)
+        if listed_music:
+            return 'youtube', listed_music
+    for source, query in [('youtube', f"ytsearch5:{artist} - {song['title']} audio"), ('soundcloud', f'scsearch5:{words}')]:
+        found = pick_listed(listed(query), song)
+        if found:
+            return source, found.get('url') or found.get('webpage_url')
+    return None, None
+
+
+def find_listed(song, words):
+    """The song from YouTube Music's page, as yt-dlp lists it, when its API can't be asked or answers nothing"""
+    # It lists the official recording first, but without lengths, so the first few that aren't another version are looked up
     looked = 0
     for e in listed(f'https://music.youtube.com/search?q={quote(words)}#songs'):
         if not e.get('title') or '/watch' not in (e.get('url') or '') or other_version(e['title'], song['title']):
@@ -85,12 +146,12 @@ def find(song):
         with ydl() as y:
             info = y.extract_info(e['url'], download=False, process=False)
         if close_enough(info.get('duration'), song['durationMs']):
-            return 'youtube', e['url']
-    for source, query in [('youtube', f"ytsearch5:{artist} - {song['title']} audio"), ('soundcloud', f'scsearch5:{words}')]:
-        found = pick_listed(listed(query), song)
-        if found:
-            return source, found.get('url') or found.get('webpage_url')
-    return None, None
+            return e['url']
+    return None
+
+
+class TooLong(ValueError):
+    pass
 
 
 def download(url, folder):
@@ -99,11 +160,24 @@ def download(url, folder):
             return f'it’s over {LONGEST // 60} minutes long'
         return None
 
-    with ydl({'format': 'bestaudio/best', 'outtmpl': f'{folder}/%(extractor)s-%(id)s.%(ext)s', 'match_filter': short_enough, 'noplaylist': True}) as y:
-        info = y.extract_info(url, download=True)
-        if not info or not info.get('requested_downloads'):
-            raise ValueError(f'It’s over {LONGEST // 60} minutes long.')
-        return info, info['requested_downloads'][0]['filepath']
+    def fetch(extra):
+        with ydl({'format': 'bestaudio/best', 'outtmpl': f'{folder}/%(extractor)s-%(id)s.%(ext)s', 'match_filter': short_enough, 'noplaylist': True, **extra}) as y:
+            info = y.extract_info(url, download=True)
+            if not info or not info.get('requested_downloads'):
+                raise TooLong(f'It’s over {LONGEST // 60} minutes long.')
+            return info, info['requested_downloads'][0]['filepath']
+
+    if VIDEO.match(url):
+        try:
+            return fetch({'extractor_args': QUICK_CLIENT})
+        except TooLong:
+            raise
+        except Exception as err:
+            if GONE.search(str(err)):
+                raise
+            # Started over rather than carrying on from what the quick client left, which may be another file
+            return fetch({'continuedl': False})
+    return fetch({})
 
 
 def about(info, url):
