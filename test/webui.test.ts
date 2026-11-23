@@ -53,7 +53,9 @@ const NAMES_FIT = `[...document.querySelectorAll('.tile')].every((t) => { const 
 // A hint's More is easy to tap on a phone without spacing out the lines around it: each hint a whole number of lines
 const HINTS_EVEN = `!!document.querySelector('p.hint .hint-more') && [...document.querySelectorAll('p.hint')].filter((p) => p.querySelector('.hint-more') && p.getClientRects().length).every((p) => { const probe = p.cloneNode(false); probe.textContent = 'x'; p.after(probe); const line = probe.getBoundingClientRect().height; probe.remove(); const n = p.getBoundingClientRect().height / line; return Math.abs(n - Math.round(n)) < 0.15; })`;
 // A count beside a bar, like "205 plays", on one line, and every view's tab in sight without scrolling them
-const STATS_FIT = `[...document.querySelectorAll('.rank-value')].every((v) => { const r = document.createRange(); r.selectNodeContents(v); return new Set([...r.getClientRects()].map((x) => Math.round(x.top))).size <= 1; }) && (() => { const t = document.querySelector('.view-tabs'); return t.scrollWidth <= t.clientWidth + 1; })()`;
+// (a symbol like ▲ from another font sits a little higher or lower on the same line, so only text below the first line's
+// bottom counts as wrapped)
+const STATS_FIT = `[...document.querySelectorAll('.rank-value')].every((v) => { const r = document.createRange(); r.selectNodeContents(v); const lines = [...r.getClientRects()]; return lines.every((x) => x.top < lines[0].bottom - 2); }) && (() => { const t = document.querySelector('.view-tabs'); return t.scrollWidth <= t.clientWidth + 1; })()`;
 // A row's control, a switch or a button, beside its name and hint rather than under them
 const BESIDE = (rows: string, control: string) =>
   `(() => { const all = [...document.querySelectorAll('${rows}')]; return all.length > 0 && all.every((f) => f.querySelector('${control}').getBoundingClientRect().top < f.querySelector('.hint').getBoundingClientRect().bottom); })()`;
