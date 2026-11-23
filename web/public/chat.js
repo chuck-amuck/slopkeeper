@@ -192,7 +192,7 @@ function draw(body, setup, guildId) {
     'aria-autocomplete': 'list',
     'aria-controls': 'try-mentions',
     'aria-expanded': 'false',
-    placeholder: 'Ask the bot something, like “roast @Sam” or “what should we play tonight?”',
+    placeholder: 'Ask something, like “roast @Sam” or “what should we play?”',
     onkeydown: (e) => {
       if (!picker.hidden && !e.isComposing) {
         if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {

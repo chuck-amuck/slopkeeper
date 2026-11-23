@@ -209,7 +209,7 @@ function deviceCard() {
     const id = `device-${name}`;
     return el(
       'div',
-      { className: 'field' },
+      { className: 'field toggle-field' },
       el('div', {}, el('label', { htmlFor: id }, label), el('p', { className: 'hint' }, hint)),
       el('div', { className: 'control' }, el('label', { className: 'toggle' }, el('input', { id, type: 'checkbox', checked: devicePref.on(name), onchange: (e) => devicePref.set(name, e.target.checked) }))),
     );
@@ -819,7 +819,8 @@ export function renderSettings(main) {
           ? current.map((row) =>
               el(
                 'div',
-                { className: 'field' },
+                // Remove beside the person, even on a phone
+                { className: 'field beside-field' },
                 el('div', {}, el('div', { className: 'series-name' }, row.who), el('p', { className: 'hint' }, row.name)),
                 el(
                   'div',

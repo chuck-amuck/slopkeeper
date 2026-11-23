@@ -14,6 +14,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { config } from '../src/config.ts';
 import { resetChat } from '../src/features/chat.ts';
 import { db, setKv } from '../src/db.ts';
+import * as perf from '../src/perf.ts';
 import { createWeb } from '../web/src/server.ts';
 
 /** A small PNG of an orange ring on teal, made without ffmpeg, which the host running this may not have */
@@ -49,6 +50,13 @@ const STALE = { sounds: [{ name: 'deleted since', plays: 3 }], groups: [] };
 const CLEAR_OF_PAGE = `(() => { if (innerWidth < 1140) return true; const main = document.querySelector('main'); const right = main.getBoundingClientRect().right - parseFloat(getComputedStyle(main).paddingRight); const buttons = [...document.querySelectorAll('.stop-dock .volume-fab')]; return buttons.length > 0 && buttons.every((b) => b.getBoundingClientRect().left >= right); })()`;
 // Each sound's name ends inside its tile, and on a phone a long one has its two lines, ending in … rather than cut through
 const NAMES_FIT = `[...document.querySelectorAll('.tile')].every((t) => { const n = t.querySelector('.tile-name'); if (!n) return true; const name = n.getBoundingClientRect(); const lines = Math.round(name.height / parseFloat(getComputedStyle(n).lineHeight)); return name.bottom <= t.getBoundingClientRect().bottom - parseFloat(getComputedStyle(t).paddingBottom) + 0.5 && (innerWidth > 640 || !/very-long/.test(n.textContent) || lines === 2); })`;
+// A hint's More is easy to tap on a phone without spacing out the lines around it: each hint a whole number of lines
+const HINTS_EVEN = `!!document.querySelector('p.hint .hint-more') && [...document.querySelectorAll('p.hint')].filter((p) => p.querySelector('.hint-more') && p.getClientRects().length).every((p) => { const probe = p.cloneNode(false); probe.textContent = 'x'; p.after(probe); const line = probe.getBoundingClientRect().height; probe.remove(); const n = p.getBoundingClientRect().height / line; return Math.abs(n - Math.round(n)) < 0.15; })`;
+// A count beside a bar, like "205 plays", on one line, and every view's tab in sight without scrolling them
+const STATS_FIT = `[...document.querySelectorAll('.rank-value')].every((v) => { const r = document.createRange(); r.selectNodeContents(v); return new Set([...r.getClientRects()].map((x) => Math.round(x.top))).size <= 1; }) && (() => { const t = document.querySelector('.view-tabs'); return t.scrollWidth <= t.clientWidth + 1; })()`;
+// A row's control, a switch or a button, beside its name and hint rather than under them
+const BESIDE = (rows: string, control: string) =>
+  `(() => { const all = [...document.querySelectorAll('${rows}')]; return all.length > 0 && all.every((f) => f.querySelector('${control}').getBoundingClientRect().top < f.querySelector('.hint').getBoundingClientRect().bottom); })()`;
 // Games' three views, with the one named open at its own address and, on a phone, Games and Stats on the bottom bar
 const GAMES_VIEW = (id: string, label: string) =>
   `(() => { const views = document.querySelector('.view-tabs[aria-label="Games view"]'); const tabs = [...views.querySelectorAll('button')].map((t) => t.textContent); return tabs.join('|') === 'Library|Game nights|Pick a game' && views.querySelector('[aria-current=page]')?.textContent === '${label}' && location.hash === '#games/${id}' && (innerWidth > 640 || [...document.querySelectorAll('.bottom-nav button')].map((b) => b.textContent).join('|') === 'Sounds|Music|Games|Stats|More'); })()`;
@@ -98,7 +106,9 @@ const PAGES: [string, string, Record<string, string>?, string?, string?][] = [
     'music',
     'Music',
     {},
-    `${CLEAR_OF_PAGE} && document.querySelectorAll('.now-panels [role=menuitem]').length === 2 && !!document.querySelector('.now .now-where .play-in select') && !document.querySelector('.now .now-volume').hidden && !document.querySelector('main > .toolbar input[type=range]') && (innerWidth <= 640 || (() => { const shown = [...document.querySelectorAll('.now-controls > *')].filter((n) => n.getClientRects().length); return shown.every((n) => n.getBoundingClientRect().top === shown[0].getBoundingClientRect().top); })())`,
+    `${CLEAR_OF_PAGE} && document.querySelectorAll('.now-panels [role=menuitem]').length === 2 && !!document.querySelector('.now .now-where .play-in select') && !document.querySelector('.now .now-volume').hidden && !document.querySelector('main > .toolbar input[type=range]') && (innerWidth <= 640
+      ? (() => { const buttons = [...document.querySelectorAll('.now-controls > button')].filter((n) => n.getClientRects().length).map((n) => n.getBoundingClientRect()); const panels = document.querySelector('.now-panels').getBoundingClientRect(); return buttons.length === 3 && buttons.every((b) => b.top === buttons[0].top) && panels.bottom <= document.querySelector('.now-controls').getBoundingClientRect().top && document.querySelector('.now-title').getBoundingClientRect().right <= panels.left; })()
+      : (() => { const shown = [...document.querySelectorAll('.now-controls > *')].filter((n) => n.getClientRects().length); return shown.every((n) => n.getBoundingClientRect().top === shown[0].getBoundingClientRect().top); })())`,
   ],
   // On a phone its toolbar is the search, then two to a row, with nothing left on a row of its own
   [
@@ -108,7 +118,12 @@ const PAGES: [string, string, Record<string, string>?, string?, string?][] = [
     `${GAMES_VIEW('library', 'Library')} && /Steam accounts/.test(document.querySelector('main').innerText) && (innerWidth > 640 || (() => { const rows = new Map(); for (const n of document.querySelector('.games-tools').children) rows.set(n.offsetTop, (rows.get(n.offsetTop) ?? 0) + 1); return [...rows.values()].join() === '1,2,2'; })())`,
   ],
   ['games/nights', 'Games: Game nights', {}, `${GAMES_VIEW('nights', 'Game nights')} && /Plan a game night/.test(document.querySelector('main').innerText)`],
-  ['games/pick', 'Games: Pick a game', {}, `${GAMES_VIEW('pick', 'Pick a game')} && !!document.querySelector('main select')`],
+  [
+    'games/pick',
+    'Games: Pick a game',
+    {},
+    `${GAMES_VIEW('pick', 'Pick a game')} && !!document.querySelector('main select') && (innerWidth > 640 || (() => { const rows = new Map(); for (const n of document.querySelector('.pick-tools').children) rows.set(n.offsetTop, (rows.get(n.offsetTop) ?? 0) + 1); return [...rows.values()].join() === '1,2,1'; })())`,
+  ],
   // Picking a view is a step Back undoes, without drawing the page again
   [
     'games/library',
@@ -155,10 +170,18 @@ const PAGES: [string, string, Record<string, string>?, string?, string?][] = [
       return oneRow && dates && (phone ? away && back && awayAgain && byKeys : !away);
     })()`,
   ],
-  ['stats/compare', 'Stats: Compare'],
-  ['stats/sounds', 'Stats: Sounds & music'],
-  ['stats/recap', 'Stats: Monthly recap'],
-  ['health', 'Health', {}, `location.hash.startsWith('#health?range=') && !!document.querySelector('.health-tiles')`],
+  ['stats/compare', 'Stats: Compare', {}, STATS_FIT],
+  ['stats/sounds', 'Stats: Sounds & music', {}, STATS_FIT],
+  ['stats/recap', 'Stats: Monthly recap', {}, STATS_FIT],
+  // Top games' buttons plain in its head, with no line of their own
+  ['stats/overview', 'Stats: Top games', {}, `${STATS_FIT} && (() => { const actions = [...document.querySelectorAll('.card-head .card-actions')]; return actions.length > 0 && actions.every((a) => getComputedStyle(a).borderTopWidth === '0px'); })()`],
+  // Each container's lines apart, and none running out of its box
+  [
+    'health',
+    'Health',
+    {},
+    `location.hash.startsWith('#health?range=') && !!document.querySelector('.health-tiles') && (() => { const rows = [...document.querySelectorAll('.health-container')]; return rows.length > 0 && rows.every((c) => { const parts = [...c.children].filter((x) => x.getClientRects().length); const boxes = parts.map((x) => x.getBoundingClientRect()); return parts.every((x) => x.scrollWidth <= x.clientWidth + 1) && boxes.every((a, i) => boxes.every((b, j) => j <= i || a.bottom <= b.top + 1 || b.bottom <= a.top + 1 || a.right <= b.left + 1 || b.right <= a.left + 1)); }); })()`,
+  ],
   // Health was a view in Stats
   ['stats/health?range=7d', 'Health: the old address', {}, `location.hash === '#health?range=7d' && document.title.startsWith('Health')`],
   // Chat tried here: asked something, answered with who it would ping, and nothing said aloud, as that's turned off
@@ -187,12 +210,13 @@ const PAGES: [string, string, Record<string, string>?, string?, string?][] = [
     `(() => { const box = document.querySelector('.try-ask textarea'); box.focus(); box.value = 'roast @'; box.setSelectionRange(7, 7); box.dispatchEvent(new Event('input')); box.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true })); })()`,
   ],
   ['activity', 'Activity'],
+  ['chat', 'Chat: Ask as, In and Profile lined up on a phone', {}, `innerWidth > 640 || (() => { const lefts = [...document.querySelectorAll('.try-options select')].map((n) => Math.round(n.getBoundingClientRect().left)); return lefts.length >= 2 && new Set(lefts).size === 1; })()`],
   // Away from the Soundboard and Music, the Sounds panel has Play in at its top
   [
     'activity',
     'Sounds panel: its own Play in',
     {},
-    `(() => { const panel = document.querySelector('.sounds-float'); return !panel.hidden && panel.querySelector('.sounds-head + .play-in select')?.ariaLabel === 'Play in'; })()`,
+    `(() => { const panel = document.querySelector('.sounds-float'); const say = panel.querySelector('.sounds-say'); const top = (n) => Math.round(n.getBoundingClientRect().top); const [voice, effect, preview] = [say.querySelector('.say-voice'), say.querySelector('.say-effect'), say.lastElementChild]; return !panel.hidden && panel.querySelector('.sounds-head + .play-in select')?.ariaLabel === 'Play in' && !say.hidden && top(say.querySelector('.say-field')) === top(say.querySelector('.say-send')) && top(voice) === top(effect) && top(effect) === top(preview) && top(voice) > top(say.querySelector('.say-field')); })()`,
     `document.querySelector('.sounds-fab').click()`,
   ],
   // With the music player showing, the corner's round buttons sit beside it on a computer and above it on a phone, as
@@ -233,7 +257,12 @@ const PAGES: [string, string, Record<string, string>?, string?, string?][] = [
   ['settings/games', 'Settings: Games'],
   ['settings/deals', 'Settings: Deals', {}, `!!document.querySelector('#settings-free-games') && [...document.querySelectorAll('#settings-section-deals details.preview')].length === 2`],
   // Join sounds with their list under them, and their delay and cooldown folded away
+  // Each person's join sound with Remove beside it, and More in the hints without spacing their lines out
   ['settings/soundboard', 'Settings: Soundboard', {}, `!!document.querySelector('#settings-join-sounds + #settings-join-sound-list') && !document.querySelector('#settings-join-sounds .more-options').open && !!document.querySelector('#setting-soundVolume[type=range]')`],
+  ['settings/soundboard', 'Settings: Remove beside each join sound', {}, BESIDE('#settings-join-sound-list .beside-field', 'button')],
+  ['settings/soundboard', 'Settings: More in a hint without spacing its lines out', {}, HINTS_EVEN],
+  // This browser's switches beside their names, as every other switch is
+  ['settings/basics', 'Settings: This browser', {}, BESIDE('#settings-this-browser .field', '.toggle')],
   ['settings/music', 'Settings: Music'],
   // With no channel picked, the looping room is one line, and its speech isn't shown
   [
@@ -475,6 +504,16 @@ after(async () => {
 
 /** Somewhere for each view to have something to show */
 function seed() {
+  // A container on Health, and someone's join sound in Settings
+  perf.gauge('container_up', 1, { container: 'web' });
+  perf.gauge('container_memory_bytes', 60e6, { container: 'web' });
+  perf.gauge('container_memory_limit_bytes', 134e6, { container: 'web' });
+  db.prepare("INSERT INTO join_sounds (guild_id, user_id, name) VALUES (?, 'u1', 'airhorn')").run(GUILD);
+  // Steam libraries, so Pick a game has games and its filters
+  for (const [user, steam] of [['u1', '76561190000000001'], ['u2', '76561190000000002']]) {
+    db.prepare('INSERT INTO steam_links (user_id, steam_id, refreshed_at) VALUES (?, ?, ?)').run(user, steam, Date.now());
+    db.prepare("INSERT INTO steam_owned (steam_id, appid, name, playtime) VALUES (?, 489830, 'The Elder Scrolls V: Skyrim Special Edition', 600)").run(steam);
+  }
   // Sounds, so the Soundboard has tiles and Manage has rows, one with the longest name there can be
   mkdirSync(soundFolder, { recursive: true });
   for (const name of ['airhorn', 'a-very-long-sound-name-for-rows']) writeFileSync(path.join(soundFolder, `${name}.wav`), wav(1));
@@ -624,6 +663,8 @@ test('every page of the web UI opens cleanly, on a computer and a phone', { skip
   const failures: string[] = [];
   for (const screen of SCREENS) {
     await page.send('Emulation.setDeviceMetricsOverride', { width: screen.width, height: screen.height, deviceScaleFactor: 1, mobile: screen.mobile });
+    // A phone's touch, so its bigger tap areas are what's tested
+    await page.send('Emulation.setTouchEmulationEnabled', { enabled: screen.mobile });
     for (const [hash, label, stored = {}, expect, act] of PAGES) {
       // A fresh page each time, with what it remembers set first, and chat's wait between questions over, as two pages ask
       // within seconds

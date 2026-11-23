@@ -58,10 +58,10 @@ export function soundsBody(openBoard, { slash = false, volumes = [] } = {}) {
       },
     },
     text,
+    send,
     picker,
     effect,
     previewButton(picker, text, effect),
-    send,
   );
 
   function paint() {

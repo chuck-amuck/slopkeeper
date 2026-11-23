@@ -303,7 +303,7 @@ export function renderPick(main) {
     content.replaceChildren(
       ...data.notes.map((note) => el('p', { className: 'hint' }, note)),
       // The filters come first, as the pick and the vote both go by them
-      ...(data.counted ? [el('div', { className: 'toolbar' }, search, kindFilter, deckFilter, sorter), el('div', { className: 'toolbar' }, pickButton, voteButton), result, lists] : []),
+      ...(data.counted ? [el('div', { className: 'toolbar pick-tools' }, search, kindFilter, deckFilter, sorter), el('div', { className: 'toolbar' }, pickButton, voteButton), result, lists] : []),
     );
     paintResult();
     if (data.counted) paintLists();

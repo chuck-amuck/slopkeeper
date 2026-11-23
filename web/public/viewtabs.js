@@ -26,11 +26,14 @@ function fromAddress() {
  * A tab whose page has views, like Stats and Games: tabs along a line, which look unlike the buttons in a view, in one
  * row that scrolls on a phone. The address names the view and anything it has open, #<tab>/<view>?<query>, so Back,
  * a bookmark or a link opens it; without one, the view used last on this device. Picking a view is a step Back undoes.
- * `views` are [id, label, render(box, { params, write })], where write(params) changes the query, as a range does
+ * `views` are [id, label, render(box, { params, write }), short], where write(params) changes the query, as a range does,
+ * and short, if any, is the name a phone shows, where there's no room for every view's whole name
  */
 export function viewTabs(main, { tab, label, views, key }) {
   const known = (id) => views.some(([view]) => view === id);
-  const buttons = views.map(([id, name]) => el('button', { type: 'button', onclick: () => pick(id) }, name));
+  const buttons = views.map(([id, name, , short]) =>
+    el('button', { type: 'button', onclick: () => pick(id) }, short ? [el('span', { className: 'view-long' }, name), el('span', { className: 'view-short' }, short)] : name),
+  );
   const tabs = el('div', { className: 'views view-tabs', role: 'group', ariaLabel: label }, buttons);
   const body = el('div', { className: 'stack' });
   let shown = null;

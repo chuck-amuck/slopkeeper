@@ -124,8 +124,8 @@ const lastPlayed = (ms) => `last played ${ago(ms)}`;
 const VIEWS = [
   ['overview', 'Overview', overview],
   ['compare', 'Compare', compare],
-  ['sounds', 'Sounds & music', soundsAndMusic],
-  ['recap', 'Monthly recap', recap],
+  ['sounds', 'Sounds & music', soundsAndMusic, 'Sounds'],
+  ['recap', 'Monthly recap', recap, 'Recap'],
 ];
 
 export const renderStats = (main) => viewTabs(main, { tab: 'stats', label: 'Stats view', views: VIEWS, key: 'statsView' });

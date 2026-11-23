@@ -27,6 +27,8 @@ const STATUS = {
   slow: ['Slow', 'alert'],
   bad: ['Bad', 'x'],
   quiet: ['Nothing yet', null],
+  // Something measured, but too little to say whether it's fine
+  few: ['Too few to judge', null],
 };
 
 export function seconds(s) {
@@ -80,7 +82,13 @@ function tile(title, status, value, ...notes) {
 function tiles(r) {
   const { discord, commands, sounds, speech, music, stutter, bot, web, browser } = r;
   // From a bot older than this page, until both are redeployed
-  const both = (label, a, b, aLabel, bLabel) => (a !== null || b !== null ? `${label}: ${[a !== null && `${aLabel} ${seconds(a)}`, b !== null && `${bLabel} ${seconds(b)}`].filter(Boolean).join(', ')}` : null);
+  // Taps at home: 0.2 s, away from home: 1.6 s
+  const both = (label, a, b, aLabel, bLabel) => {
+    const parts = [a !== null && `${aLabel}: ${seconds(a)}`, b !== null && `${bLabel}: ${seconds(b)}`].filter(Boolean);
+    return parts.length ? `${label} ${parts.join(', ')}` : null;
+  };
+  // A line the bot measured too few of to judge, which its status leaves out
+  const tooFew = (count) => (browser?.fewest && count < browser.fewest ? ', too few to judge' : '');
   return el(
     'div',
     { className: 'health-tiles' },
@@ -139,12 +147,12 @@ function tiles(r) {
       'Web UI as people see it',
       browser.status,
       browser.taps.count ? seconds(browser.taps.p95) : browser.status === 'quiet' ? 'None' : '–',
-      browser.taps.count > 0 && `Taps answered: 95% of ${plural(browser.taps.count, 'tap')}, typically ${seconds(browser.taps.p50)}`,
-      both('Taps', browser.home.taps, browser.away.taps, 'at home', 'away'),
-      both('Taps', browser.phone, browser.computer, 'phones', 'computers'),
+      browser.taps.count > 0 && `Taps answered: 95% of ${plural(browser.taps.count, 'tap')}, typically ${seconds(browser.taps.p50)}${tooFew(browser.taps.count)}`,
+      both('Taps', browser.home.taps, browser.away.taps, 'at home', 'away from home'),
+      both('Taps', browser.phone, browser.computer, 'on phones', 'on computers'),
       browser.networkShare !== null && `${percent(browser.networkShare)} of their wait was the network, not the bot`,
-      browser.shown.count > 0 && `Opens within ${seconds(browser.shown.p95)} for 95%`,
-      browser.responses.count > 0 && `Reacts to taps within ${seconds(browser.responses.p95)} for 95%`,
+      browser.shown.count > 0 && `Opens within ${seconds(browser.shown.p95)} for 95%${tooFew(browser.shown.count)}`,
+      browser.responses.count > 0 && `Reacts to taps within ${seconds(browser.responses.p95)} for 95%${tooFew(browser.responses.count)}`,
     ),
   );
 }
