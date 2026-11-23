@@ -55,7 +55,9 @@ const HINTS_EVEN = `!!document.querySelector('p.hint .hint-more') && [...documen
 // A count beside a bar, like "205 plays", on one line, and every view's tab in sight without scrolling them
 // (a symbol like ▲ from another font sits a little higher or lower on the same line, so only text below the first line's
 // bottom counts as wrapped)
-const STATS_FIT = `[...document.querySelectorAll('.rank-value')].every((v) => { const r = document.createRange(); r.selectNodeContents(v); const lines = [...r.getClientRects()]; return lines.every((x) => x.top < lines[0].bottom - 2); }) && (() => { const t = document.querySelector('.view-tabs'); return t.scrollWidth <= t.clientWidth + 1; })()`;
+const COUNTS_ONE_LINE = `[...document.querySelectorAll('.rank-value')].every((v) => { const r = document.createRange(); r.selectNodeContents(v); const lines = [...r.getClientRects()]; return lines.every((x) => x.top < lines[0].bottom - 2); })`;
+const TABS_IN_SIGHT = `(() => { const t = document.querySelector('.view-tabs'); return t.scrollWidth <= t.clientWidth + 1; })()`;
+const STATS_FIT = `${COUNTS_ONE_LINE} && ${TABS_IN_SIGHT}`;
 // A row's control, a switch or a button, beside its name and hint rather than under them
 const BESIDE = (rows: string, control: string) =>
   `(() => { const all = [...document.querySelectorAll('${rows}')]; return all.length > 0 && all.every((f) => f.querySelector('${control}').getBoundingClientRect().top < f.querySelector('.hint').getBoundingClientRect().bottom); })()`;
@@ -176,7 +178,19 @@ const PAGES: [string, string, Record<string, string>?, string?, string?][] = [
   ['stats/sounds', 'Stats: Sounds & music', {}, STATS_FIT],
   ['stats/recap', 'Stats: Monthly recap', {}, STATS_FIT],
   // Top games' buttons plain in its head, with no line of their own
-  ['stats/overview', 'Stats: Top games', {}, `${STATS_FIT} && (() => { const actions = [...document.querySelectorAll('.card-head .card-actions')]; return actions.length > 0 && actions.every((a) => getComputedStyle(a).borderTopWidth === '0px'); })()`],
+  // (once it's drawn, which can be after the rest of the page on a slow machine)
+  [
+    'stats/overview',
+    'Stats: Top games',
+    {},
+    `(async () => {
+      for (let i = 0; i < 50 && !document.querySelector('.card-head .card-actions'); i++) await new Promise((r) => setTimeout(r, 100));
+      const actions = [...document.querySelectorAll('.card-head .card-actions')];
+      return actions.length > 0 && actions.every((a) => getComputedStyle(a).borderTopWidth === '0px');
+    })()`,
+  ],
+  ['stats/overview', 'Stats: Overview’s counts on one line', {}, COUNTS_ONE_LINE],
+  ['stats/overview', 'Stats: Overview’s views in sight', {}, TABS_IN_SIGHT],
   // Each container's lines apart, and none running out of its box
   [
     'health',
