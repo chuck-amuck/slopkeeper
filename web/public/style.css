@@ -4397,6 +4397,14 @@ span.steam-family {
     display: none;
   }
 
+  /* Closer together, so Stats' four fit a phone even in a wide font, the one picked in bold */
+  .views.view-tabs button,
+  .views.view-tabs button + button,
+  .views.view-tabs button:first-child,
+  .views.view-tabs button:last-child {
+    padding-inline: 10px;
+  }
+
   .view-tabs .view-short {
     display: inline;
   }
