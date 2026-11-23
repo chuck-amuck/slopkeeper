@@ -1358,6 +1358,53 @@ button.fold-toggle[aria-expanded='false'] .ico {
   min-width: 0;
 }
 
+/* Under Say once a line's been said: Add “…” to the soundboard, the line cut short to fit one row */
+button.keep-line {
+  display: flex;
+  align-self: flex-start;
+  justify-self: start;
+  align-items: center;
+  max-width: 100%;
+  min-height: 0;
+  padding: 2px var(--space-1);
+  font-size: var(--text-sm);
+}
+
+button.keep-line[hidden] {
+  display: none;
+}
+
+button.keep-line > span {
+  flex: none;
+  white-space: pre;
+}
+
+button.keep-line > .keep-line-quote {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+button.keep-line .ico {
+  flex: none;
+  margin-right: var(--space-1);
+}
+
+.keep-line-said {
+  max-height: 8lh;
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  overflow-y: auto;
+  border-left: 3px solid var(--line);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.keep-line-dialog .hint {
+  margin: 0;
+}
+
 .say-box[hidden] {
   display: none;
 }
@@ -5167,7 +5214,7 @@ video.link-media {
   min-width: 0;
 }
 
-.link-dialog .note.choice {
+dialog .note.choice {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -5175,11 +5222,11 @@ video.link-media {
   font-size: var(--text-sm);
 }
 
-.link-dialog .note.choice:empty {
+dialog .note.choice:empty {
   display: none;
 }
 
-.link-dialog .note.choice span {
+dialog .note.choice span {
   flex: 1 1 200px;
 }
 
@@ -5911,6 +5958,12 @@ button.health-slow-row:hover {
   margin: 0;
   padding-left: 18px;
   font-size: var(--text-sm);
+}
+
+.try-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-2);
 }
 
 .try-line button.quiet {

@@ -42,6 +42,8 @@ Adding a sound under a name that's taken asks first, for 5 minutes: **Replace it
 
 The web UI's **Manage** can also trim a sound. The bot keeps the original, so a trim can be undone until the sound is replaced.
 
+A line of text to speech can become a sound too: after saying one in the web UI, [add it to the soundboard](speech.md#keeping-a-line-as-a-sound) in the voice and effect it was said in.
+
 ### Adding a sound from a link
 
 In the web UI's **Manage**, paste a link to a YouTube video or Short, a TikTok, an Instagram Reel or a SoundCloud track and press **Get**. Once it's downloaded (up to 20 minutes long), an editor opens with the video above its waveform:

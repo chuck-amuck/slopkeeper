@@ -1,6 +1,7 @@
 import { api, attempt, el, forget, icon, needsVoice, pageSignal, recall, remember, request, state, toast, undoToast } from './lib.js';
 import { foldHead, searchKeys, soundGrid } from './soundgrid.js';
 import { previewButton, sayField, speechPickers } from './speech.js';
+import { keepLineButton } from './speechsound.js';
 import { voiceBar } from './voice.js';
 
 // Whether Speech is folded away, on this device
@@ -145,7 +146,8 @@ function sayBox(voice) {
     el('div', { className: 'say-voices' }, picker, effect, preview),
     send,
   );
-  const body = el('div', { className: 'say-body' }, form, row);
+  // The last line said, to keep as a sound
+  const body = el('div', { className: 'say-body' }, form, keepLineButton().node, row);
   const head = foldHead('Speech', recall(SPEECH_FOLDED) !== '1', body, (open) => (open ? forget(SPEECH_FOLDED) : remember(SPEECH_FOLDED, '1')));
   const node = el('div', { className: 'say-box', hidden: true }, head, body);
   void attempt(async () => {

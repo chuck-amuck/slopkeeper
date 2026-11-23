@@ -16,7 +16,7 @@ import { activity } from '../src/features/gamestats.ts';
 import { BIN_DAYS, clearBin, levelLibrary, soundGain } from '../src/features/soundLibrary.ts';
 import { setJoinSound } from '../src/features/joinSounds.ts';
 import { soundboard } from '../src/features/soundboard.ts';
-import { lengthFor } from '../src/features/say.ts';
+import { forgetSpoken, lengthFor } from '../src/features/say.ts';
 import { setting, setSetting } from '../src/settings.ts';
 import { GUILD, HOUR, TOKEN, activityText, base, call, client, deleteFailures, discordCdn, discordSounds, guild, listed, me, member, ok, onlyOnDiscord, panelDeletes, panelEdits, permitted, planned, play, plays, postNight, quietWav, refused, restore, save, sent, setFake, soundFolder, sounds, upload, wav } from './apiFixture.ts';
 
@@ -1232,7 +1232,9 @@ test('previews a voice for the browser only, a few at a time', async (t) => {
   assert.equal(new TextDecoder().decode((await res.arrayBuffer()).slice(0, 4)), 'RIFF');
   assert.equal(asked[0].text, 'hello there');
   assert.equal(asked[0].length_scale, Math.round(lengthFor(85) * 1.1 * 100) / 100, 'the voice Demon was, at its pace');
-  assert.equal(await refused(429, preview), 'Wait a moment before the next preview.');
+  assert.equal((await call(preview)).status, 200, 'the same line again, which the bot still has');
+  assert.equal(asked.length, 1);
+  assert.equal(await refused(429, preview.replace('hello', 'bye')), 'Wait a moment before the next preview.');
   assert.deepEqual(recentActivity(GUILD, 50).filter((r) => /preview/i.test(r.action)), [], 'it isn’t said in voice, so it isn’t logged');
   setSetting(GUILD, 'tts', false);
   assert.equal(await refused(409, preview), 'Text to speech is off for this server.');
@@ -1286,6 +1288,72 @@ test('the page saves lines and removes them', async () => {
   assert.equal(await refused(404, `/guilds/${GUILD}/phrases/${phrases[0].id}`, { method: 'DELETE' }), 'That saved line is gone.');
   const log = recentActivity(GUILD, 5).map((r) => r.action);
   assert.ok(log.includes('Saved the line “good game”') && log.includes('Removed the saved line “good game”'));
+});
+
+test('a line said or heard is kept as a sound, in its voice and effect, without making it again', async (t) => {
+  const url = config.voiceUrl;
+  config.voiceUrl = 'http://voice.test';
+  t.after(() => {
+    config.voiceUrl = url;
+    forgetSpoken();
+  });
+  forgetSpoken();
+  const real = fetch;
+  const asked: { text: string; length_scale: number }[] = [];
+  t.mock.method(globalThis, 'fetch', async (target: URL | string, init?: RequestInit) => {
+    if (String(target).startsWith(base)) return real(target, init);
+    asked.push(JSON.parse(init!.body as string));
+    return new Response(wav(0.3));
+  });
+  const keep = (json: Record<string, unknown>) => ok(`/guilds/${GUILD}/say/sound`, { method: 'POST', json: { text: 'good game', voice: 'american-man', effect: 'giant', ...json } });
+  // Heard first, as a line said or a Chat answer is
+  const heard = await call(`/guilds/${GUILD}/say/preview?voice=american-man&effect=giant&text=${encodeURIComponent('good game')}`);
+  assert.equal(heard.status, 200);
+  assert.equal(asked.length, 1);
+
+  assert.deepEqual(await keep({ name: 'good-game' }), { name: 'good-game', replaced: false, discordProblem: null });
+  assert.equal(asked.length, 1, 'the line just heard, not made again');
+  assert.ok(readdirSync(soundFolder).includes('good-game.mp3'));
+  const sound = await listed('good-game');
+  assert.ok(sound.seconds > 0.2, `${sound.seconds} s`);
+  assert.equal(sound.onDiscord, true);
+  assert.notEqual(sound.gainDb, null, 'levelled like any other sound');
+  assert.match(activityText().at(-1)!, /^Added sound \*\*good-game\*\* from the line “good game” in .+, Giant$/);
+
+  assert.equal(await refused(409, `/guilds/${GUILD}/say/sound`, { method: 'POST', json: { text: 'good game', voice: 'american-man', effect: 'giant', name: 'good-game' } }), 'There’s already a sound called good-game.');
+  assert.equal((await keep({ name: 'good-game', keep: true })).name, 'good-game-2');
+  assert.deepEqual(await keep({ name: 'good-game', replace: true, discord: false }), { name: 'good-game', replaced: true, discordProblem: null });
+  assert.equal((await listed('good-game')).onDiscord, true, 'a sound already on Discord is updated there');
+  assert.equal((await keep({ name: 'quiet-one', discord: false })).name, 'quiet-one');
+  assert.equal((await listed('quiet-one')).onDiscord, false);
+  assert.equal(asked.length, 1);
+
+  // Two saved under one name at once: the second is asked, rather than replacing the first, and keeping both numbers it
+  const twice = () => call(`/guilds/${GUILD}/say/sound`, { method: 'POST', json: { text: 'good game', voice: 'american-man', effect: 'giant', name: 'twice' } });
+  assert.deepEqual((await Promise.all([twice(), twice()])).map((r) => r.status).sort(), [200, 409]);
+  const both = await Promise.all([keep({ name: 'pair', keep: true }), keep({ name: 'pair', keep: true })]);
+  assert.deepEqual(both.map((b) => b.name).sort(), ['pair', 'pair-2']);
+  assert.ok((await listed('pair')) && (await listed('pair-2')));
+
+  const no = (status: number, json: Record<string, unknown>) => refused(status, `/guilds/${GUILD}/say/sound`, { method: 'POST', json: { text: 'good game', name: 'x1', ...json } });
+  assert.equal(await no(400, { text: ' ' }), 'There’s no line to save.');
+  assert.equal(await no(400, { name: 'Has Spaces' }), 'Name can only use lowercase letters, numbers, - and _.');
+  assert.equal(await no(400, { voice: 'nope' }), 'Pick a voice from the list.');
+  assert.equal(await no(400, { effect: 'nope' }), 'Pick an effect from the list.');
+  assert.equal(await no(400, { text: '🎉' }), 'There’s nothing in that to read out.');
+  assert.equal(await no(400, { text: `${'xy'.repeat(2000)}x` }), 'That’s 4001 characters, and the limit here is 4000.');
+  setSetting(GUILD, 'tts', false);
+  assert.equal(await no(409, {}), 'Text to speech is off in this server.');
+  setSetting(GUILD, 'tts', undefined);
+
+  // A line that has to be made counts as a preview, so the voice container can't be asked faster than previews ask it
+  t.mock.timers.enable({ apis: ['Date'], now: Date.now() });
+  forgetSpoken();
+  assert.equal((await keep({ name: 'made-now' })).name, 'made-now');
+  assert.equal(asked.length, 2);
+  assert.equal(await no(429, { text: 'another one' }), 'That line has to be made again, and the voice has been busy. Try again in a moment.');
+  assert.equal(asked.length, 2);
+  assert.equal((await keep({ name: 'made-again', text: 'good game' })).name, 'made-again', 'one kept is fine meanwhile');
 });
 
 test('posted soundboard panels are listed with links, and taken down one or all at once', async () => {

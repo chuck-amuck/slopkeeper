@@ -48,6 +48,51 @@ export function freeName(base, isSound) {
   return name;
 }
 
+/** Whether a new sound goes on Discord's soundboard too, as last chosen on this device */
+export const discordAtFirst = () => recall('uploadToDiscord') !== 'no';
+
+/** The box for putting a new sound on Discord's soundboard too, which this device remembers. `changed` hears it ticked or not */
+export function discordBox(checked, changed) {
+  return el(
+    'label',
+    { className: 'check' },
+    el('input', {
+      type: 'checkbox',
+      checked,
+      onchange: (e) => {
+        remember('uploadToDiscord', e.target.checked ? 'yes' : 'no');
+        changed(e.target.checked);
+      },
+    }),
+    'Also add to Discord’s soundboard',
+  );
+}
+
+/**
+ * What to do about a name that's taken, asked under the name box: Replace it, or Keep both, which numbers the new one.
+ * `choice` is null until it's answered, and goes back to null when the name changes. `changed` runs when it's answered
+ */
+export function takenQuestion(changed) {
+  const node = el('div', { className: 'note choice' });
+  const button = (label, to, className = '') =>
+    el('button', { type: 'button', className, onclick: () => {
+      asked.choice = to;
+      changed();
+    } }, label);
+  const asked = {
+    node,
+    choice: null,
+    /** Asks about `name` if it's `taken`, and clears the question if it isn't */
+    show(name, taken) {
+      if (!taken) return node.replaceChildren();
+      if (asked.choice === 'replace') return node.replaceChildren(el('span', {}, `Replaces ${name}. The old one goes to Recently deleted.`), button('Keep both instead', 'keep'));
+      if (asked.choice === 'keep') return node.replaceChildren(el('span', {}, 'Keeps both. The new one gets a number on the end of its name.'), button('Replace instead', 'replace'));
+      node.replaceChildren(el('span', {}, `There’s already a sound called ${name}.`), button('Replace it', 'replace', 'danger'), button('Keep both', 'keep'));
+    },
+  };
+  return asked;
+}
+
 /**
  * Picks part of a download and saves it as a sound. `sound` is a sound from a link being picked again: it starts at the part
  * picked before and replaces that sound. `from` is a sound to cut another sound from, saved beside it: from its link, at the
@@ -61,9 +106,10 @@ export function pickPart(main, got, { longest, clipSeconds, isSound, sound = nul
     const part = got.source !== 'sound' ? (sound ?? from)?.link : null;
     let start = part ? Math.min(part.start, seconds - SHORTEST) : 0;
     let end = part ? Math.min(part.end, seconds) : Math.min(seconds, from ? longest : clipSeconds);
-    let toDiscord = sound ? sound.onDiscord : recall('uploadToDiscord') !== 'no';
-    // What to do about a name that's taken: replace or keep
-    let choice = sound ? 'replace' : null;
+    let toDiscord = sound ? sound.onDiscord : discordAtFirst();
+    // What to do about a name that's taken: a sound picked again replaces itself
+    const taken = takenQuestion(() => show(true));
+    if (sound) taken.choice = 'replace';
     let peaks = null;
     let dragging = null;
     let stopAt = null;
@@ -93,28 +139,17 @@ export function pickPart(main, got, { longest, clipSeconds, isSound, sound = nul
       ariaLabel: 'Sound name',
       required: true,
       oninput: () => {
-        choice = null;
+        taken.choice = null;
         show(false);
       },
     });
-    const choiceBox = el('div', { className: 'note choice' });
     // Why it can't be saved yet, other than a taken name, which has its own question
     const why = el('p', { className: 'bad-text', hidden: true });
     const discordNote = el('p', { className: 'hint' });
-    const discord = el(
-      'label',
-      { className: 'check' },
-      el('input', {
-        type: 'checkbox',
-        checked: toDiscord,
-        onchange: (e) => {
-          toDiscord = e.target.checked;
-          remember('uploadToDiscord', toDiscord ? 'yes' : 'no');
-          show(false);
-        },
-      }),
-      'Also add to Discord’s soundboard',
-    );
+    const discord = discordBox(toDiscord, (on) => {
+      toDiscord = on;
+      show(false);
+    });
 
     function stop() {
       stopAt = null;
@@ -135,26 +170,12 @@ export function pickPart(main, got, { longest, clipSeconds, isSound, sound = nul
       requestAnimationFrame(watch);
     }
 
-    /** Whether the name is taken, and if so, what's been chosen */
-    function showChoice(typed) {
-      const text = name.value.trim().toLowerCase();
-      if (sound || !NAME_PATTERN.test(text) || !isSound(text)) return choiceBox.replaceChildren();
-      const button = (label, to, className = '') =>
-        el('button', { type: 'button', className, onclick: () => {
-          choice = to;
-          show(typed);
-        } }, label);
-      if (choice === 'replace') return choiceBox.replaceChildren(el('span', {}, `Replaces ${text}. The old one goes to Recently deleted.`), button('Keep both instead', 'keep'));
-      if (choice === 'keep') return choiceBox.replaceChildren(el('span', {}, 'Keeps both. The new one gets a number on the end of its name.'), button('Replace instead', 'replace'));
-      choiceBox.replaceChildren(el('span', {}, `There’s already a sound called ${text}.`), button('Replace it', 'replace', 'danger'), button('Keep both', 'keep'));
-    }
-
     function partProblem() {
       const text = name.value.trim().toLowerCase();
       if (end - start > longest + STEP) return `Keep at most ${longest / 60} minutes.`;
       if (!text) return 'Give it a name.';
       if (!NAME_PATTERN.test(text)) return 'Names use lowercase letters, numbers, - and _.';
-      if (!sound && isSound(text) && !choice) return 'Choose what to do about the name that’s taken.';
+      if (!sound && isSound(text) && !taken.choice) return 'Choose what to do about the name that’s taken.';
       return null;
     }
 
@@ -169,7 +190,8 @@ export function pickPart(main, got, { longest, clipSeconds, isSound, sound = nul
       if (another) another.disabled = save.disabled;
       why.hidden = !problemNow || problemNow.startsWith('Choose');
       why.textContent = problemNow ?? '';
-      showChoice(typed);
+      const text = name.value.trim().toLowerCase();
+      taken.show(text, !sound && NAME_PATTERN.test(text) && isSound(text));
       discordNote.hidden = !toDiscord || end - start <= clipSeconds;
       discordNote.textContent = `Discord’s soundboard takes ${clipSeconds} s at most, so a longer part stays on the bot’s soundboard. You can add a ${clipSeconds} s piece of it to Discord afterwards.`;
       if (stopAt !== null) stop();
@@ -226,7 +248,7 @@ export function pickPart(main, got, { longest, clipSeconds, isSound, sound = nul
         ),
         why,
         !sound && el('label', { className: 'start link-name' }, 'Name', name),
-        choiceBox,
+        taken.node,
         !sound && discord,
         discordNote,
       ],
@@ -247,7 +269,7 @@ export function pickPart(main, got, { longest, clipSeconds, isSound, sound = nul
         try {
           const answer = await request(api(`/sound-links/${encodeURIComponent(got.id)}`), {
             method: 'PUT',
-            json: { name: name.value.trim().toLowerCase(), start, end, discord: toDiscord, replace: choice === 'replace', keep: choice === 'keep', ...(beside && { beside }) },
+            json: { name: name.value.trim().toLowerCase(), start, end, discord: toDiscord, replace: taken.choice === 'replace', keep: taken.choice === 'keep', ...(beside && { beside }) },
           });
           if (!next) {
             outcome = answer;
@@ -261,7 +283,7 @@ export function pickPart(main, got, { longest, clipSeconds, isSound, sound = nul
           start = Math.max(0, Math.min(end, seconds - SHORTEST));
           end = Math.min(seconds, start + last);
           name.value = '';
-          choice = null;
+          taken.choice = null;
           show(false);
           name.focus();
         } catch (err) {

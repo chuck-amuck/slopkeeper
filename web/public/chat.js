@@ -1,4 +1,5 @@
-import { api, el, fetchAudio, icon, notice, pageSignal, player, recall, remember, request, RequestError, settingLink, soundPath, state, toast } from './lib.js';
+import { api, attempt, el, fetchAudio, icon, notice, pageSignal, player, recall, remember, request, RequestError, settingLink, soundPath, state, toast } from './lib.js';
+import { keepLineDialog } from './speechsound.js';
 import { matching, withPicked } from './mentions.js';
 
 // Chat tried here: the bot's real answer, as if asked in a channel, with nothing done in Discord. What it would have
@@ -324,6 +325,11 @@ function draw(body, setup, guildId) {
     const again = sounds.length
       ? el('button', { type: 'button', className: 'quiet', onclick: () => void hear(sounds) }, icon('headphones'), r.aloud ? 'Hear it' : 'Hear what it played')
       : '';
+    // What it said, or the last of the lines it said, kept as a sound in its voice and effect
+    const spoken = sounds.findLast((s) => s.kind === 'speech');
+    const keep = spoken
+      ? el('button', { type: 'button', className: 'quiet', title: 'Keep what it said as a sound, in its voice and effect', onclick: (e) => void keepSpoken(e.currentTarget, spoken) }, icon('plus'), 'Add to soundboard')
+      : '';
     return el(
       'div',
       { className: 'try-line bot' },
@@ -331,8 +337,18 @@ function draw(body, setup, guildId) {
       el('div', { className: 'try-who' }, r.botName ?? setup.botName),
       el('div', { className: 'try-text' }, r.answer ? rich(r.answer, setup) : el('span', { className: 'muted' }, 'It didn’t answer.')),
       el('ul', { className: 'try-details' }, details),
-      again,
+      again || keep ? el('div', { className: 'try-actions' }, again, keep) : '',
     );
+  }
+
+  async function keepSpoken(button, spoken) {
+    if (button.ariaBusy) return;
+    button.ariaBusy = 'true';
+    try {
+      await attempt(() => keepLineDialog(button.ownerDocument.body, spoken));
+    } finally {
+      button.ariaBusy = null;
+    }
   }
 
   /** Plays what it would have played or said, in order, until something newer starts */

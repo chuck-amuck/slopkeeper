@@ -17,6 +17,36 @@ const byHand = new Set();
 // A watcher whose node never made it onto the page is let go after this long, as updates.js does
 const UNSEEN_MS = 5000;
 
+/** The last line said from this tab, { guildId, text, voice, effect, at }, which can be added to the soundboard */
+let lastLine = null;
+/** What's told when a line is said or kept: { node, fn }, let go once node leaves the page */
+const lineWatchers = new Set();
+
+/** The last line said from this tab on the server shown, or null */
+export const lastSaid = () => (lastLine?.guildId === state.guildId ? lastLine : null);
+
+/** Runs `fn` whenever a line is said from this tab or one is added to the soundboard, until `node` leaves the page */
+export function onSaid(node, fn) {
+  // Those of pages left since go first, as nothing else lets them go until a line is said
+  sweepLineWatchers(() => {});
+  lineWatchers.add({ node, fn, since: performance.now(), seen: node.isConnected });
+}
+
+/** Tells those watching that the last line said has changed, or been added to the soundboard */
+export function saidChanged() {
+  sweepLineWatchers((watcher) => watcher.fn());
+}
+
+/** Runs `tell` for each watcher still on the page, and lets go of those that have left it */
+function sweepLineWatchers(tell) {
+  const now = performance.now();
+  for (const watcher of lineWatchers) {
+    watcher.seen ||= watcher.node.isConnected;
+    if (watcher.node.isConnected) tell(watcher);
+    else if (watcher.seen || now - watcher.since > UNSEEN_MS) lineWatchers.delete(watcher);
+  }
+}
+
 const channelsNow = () => (heard?.guildId === state.guildId ? heard.channels : null);
 
 /** The channel picked, while there's someone in it */
@@ -114,7 +144,12 @@ export function voiceBar(onChange, { sliders = true } = {}) {
     /** Makes `id` the channel, here and in Play in, unless someone's picked one by hand on this server since load */
     prefer: (id) => byHand.has(state.guildId) || choose(id, false),
     play: (name) => request(soundPath(name, '/play'), { method: 'POST', json: { channelId: chosen() } }),
-    say: (text, voice, effect) => request(api('/say'), { method: 'POST', wait: 'speech', json: { channelId: chosen(), text, voice, effect } }),
+    say: async (text, voice, effect) => {
+      const guildId = state.guildId;
+      await request(api('/say'), { method: 'POST', wait: 'speech', json: { channelId: chosen(), text, voice, effect } });
+      lastLine = { guildId, text, voice, effect, at: Date.now() };
+      saidChanged();
+    },
     playDiscord: (id) => request(api(`/discord-sounds/${id}/play`), { method: 'POST', json: { channelId: chosen() } }),
   };
 }

@@ -8,12 +8,12 @@ import { config } from '../config.ts';
 import { db } from '../db.ts';
 import * as discordBoard from '../discordSounds.ts';
 import { musicState } from '../features/music.ts';
-import { effects, NO_EFFECT, oldEffectVoice, phrases, previewSpeech, removePhrase, savePhrase, say, serverEffect, serverVoice, TooSoon, voiceGroup, voices } from '../features/say.ts';
+import { effects, NO_EFFECT, oldEffectVoice, phrases, previewSpeech, removePhrase, savePhrase, say, serverEffect, serverVoice, SpeechProblem, speechSound, TooSoon, voiceGroup, voices } from '../features/say.ts';
 import { addGroup, addSound, addToDiscord, BIN_DAYS, changeEmoji, deleteGroup, fillGroup, moveGroup, placeSound, renameGroup, soundGroups, deletedSounds, eraseDeleted, expiresAt, favourites, findSound, listSounds, parseEmoji, playCounts, removeSound, renameSound, restoreDeleted, restoreSound, saveFromDiscord, setFavourite, setSoundVolume, type Sound, soundLevels, soundVolumes, swapOnDiscord, syncToDiscord, takeOffDiscord, trimmedSounds, trimProblem, trimSound, untaken, untrimmedFile, placeBeside, uploadProblem, volumeProblem } from '../features/soundLibrary.ts';
 import { joinSounds, setJoinSound } from '../features/joinSounds.ts';
 import { playDiscordSound, playFromWeb, playingNow, stopPlayback, stopPlayingOne } from '../features/voiceAudio.ts';
 import { postPanel, refreshPanels } from '../features/soundPanel.ts';
-import { downloaded, downloadLink, LONGEST_PART, linksReady, partProblem, savePart, soundLinks, soundSource } from '../features/soundLinks.ts';
+import { downloaded, downloadLink, LONGEST_PART, linksReady, partProblem, saveMade, savePart, soundLinks, soundSource } from '../features/soundLinks.ts';
 import { setting } from '../settings.ts';
 import { postedPanels } from '../postedPanels.ts';
 import { type Ask, Refused, by, cantDo, cantPost, takeDown, memberList, nameOf, plain, postingChannel, readBody, readJson, refuse, untilGone, voiceChannelFor } from './common.ts';
@@ -449,6 +449,47 @@ async function handleLinks(client: Client<true>, guild: Guild, req: IncomingMess
   return { name: saveAs, replaced: added.replaced, discordProblem: added.problem && plain(guild, added.problem) };
 }
 
+/** As much of a line as the Activity tab shows of one kept as a sound */
+const LOGGED_LINE = 100;
+/** Server id → names lines are being saved under, so two saved at once can't take the same one */
+const keeping = new Map<string, Set<string>>();
+
+/**
+ * POST /say/sound: a line said, or heard in the Chat tab, kept as a sound in its voice and effect. `text`, `voice` and
+ * `effect` are as for POST /say, with `name`, `discord`, and `replace` or `keep` for a name that's taken
+ */
+async function keepLine(client: Client<true>, guild: Guild, req: IncomingMessage) {
+  const { text, voice, effect, name, discord, replace, keep } = await readJson(req);
+  if (typeof text !== 'string' || !text.trim()) throw new Refused(400, 'There’s no line to save.');
+  if (typeof name !== 'string') throw new Refused(400, 'Give the sound a name.');
+  refuse(guild, uploadProblem(name, '.mp3', 0));
+  // Asked again once the line's made, in case someone took the name meanwhile. One being saved right now counts as taken
+  let busy = keeping.get(guild.id);
+  if (!busy) keeping.set(guild.id, (busy = new Set()));
+  const saveAs = () => {
+    if ((!findSound(guild.id, name) && !busy.has(name)) || replace === true) return name;
+    if (keep === true) return untaken(guild.id, name, busy);
+    throw new Refused(409, `There’s already a sound called ${name}.`);
+  };
+  saveAs();
+  // Blank is the server's default, as the Chat tab sends it
+  const picked = (v: unknown) => (typeof v === 'string' && v ? v : undefined);
+  const line = await speechSound(guild, text.slice(0, 20_000), picked(voice), picked(effect)).catch((err: unknown) => {
+    if (err instanceof SpeechProblem) throw new Refused(err.message.startsWith('Text to speech') ? 409 : 400, err.message);
+    if (err instanceof TooSoon) throw new Refused(429, 'That line has to be made again, and the voice has been busy. Try again in a moment.');
+    console.error(`Web UI: making a line to keep as a sound in ${guild.name} failed:`, err);
+    throw new Refused(502, 'The voice container isn’t answering. Try again in a moment.');
+  });
+  const as = saveAs();
+  busy.add(as);
+  const added = await saveMade(guild, as, line.audio, discord !== false).finally(() => busy.delete(as));
+  if (typeof added === 'string') throw new Refused(400, added);
+  const quoted = line.text.length > LOGGED_LINE ? `${line.text.slice(0, LOGGED_LINE).trimEnd()}…` : line.text;
+  logActivity(guild.id, by(), `${added.replaced ? 'Replaced' : 'Added'} sound **${as}** from the line “${quoted}” in ${line.voice.name}${line.effect ? `, ${line.effect.name}` : ''}`);
+  await refreshPanels(client, guild.id);
+  return { name: as, replaced: added.replaced, discordProblem: added.problem && plain(guild, added.problem) };
+}
+
 export async function soundRoutes({ client, guild, req, res, url, section, rest }: Ask) {
   if (section === 'sound-links' && rest.length <= 2) return handleLinks(client, guild, req, res, rest[0], rest[1]);
   if (section === 'sound-groups' && rest.length <= 1) return handleGroups(client, guild, req, rest[0]);
@@ -486,9 +527,15 @@ export async function soundRoutes({ client, guild, req, res, url, section, rest 
       phrases: phrases(guild.id),
     };
   }
-  if (section === 'say' && rest.length === 1 && rest[0] === 'preview' && req.method === 'GET') {
+  if (section === 'say' && rest.length === 1 && rest[0] === 'preview' && (req.method === 'GET' || req.method === 'POST')) {
     if (!config.voiceUrl || !setting(guild.id, 'tts')) throw new Refused(409, 'Text to speech is off for this server.');
-    const audio = await previewSpeech(guild, (url.searchParams.get('text') ?? '').slice(0, 2000), url.searchParams.get('voice') ?? '', url.searchParams.get('effect') ?? undefined).catch((err: unknown) => {
+    // POSTed is a whole line, heard as it was said, before it's kept as a sound. Got is the start of one, to try a voice
+    const whole = req.method === 'POST';
+    const asked = whole ? await readJson(req) : Object.fromEntries(url.searchParams);
+    const text = typeof asked.text === 'string' ? asked.text.slice(0, whole ? 20_000 : 2000) : '';
+    const voice = typeof asked.voice === 'string' ? asked.voice : '';
+    const effect = typeof asked.effect === 'string' && asked.effect ? asked.effect : undefined;
+    const audio = await previewSpeech(guild, text, voice, effect, whole).catch((err: unknown) => {
       if (err instanceof TooSoon) throw new Refused(429, err.message);
       if (err instanceof Error && err.message.startsWith('There’s nothing')) throw new Refused(400, err.message);
       console.error(`Web UI: a voice preview in ${guild.name} failed:`, err);
@@ -499,6 +546,7 @@ export async function soundRoutes({ client, guild, req, res, url, section, rest 
     res.end(audio);
     return null;
   }
+  if (section === 'say' && rest.length === 1 && rest[0] === 'sound' && req.method === 'POST') return keepLine(client, guild, req);
   if (section === 'say' && !rest.length && req.method === 'POST') {
     const { channelId, text, voice, effect } = await readJson(req);
     if (typeof text !== 'string') throw new Refused(400, 'Type something to say.');

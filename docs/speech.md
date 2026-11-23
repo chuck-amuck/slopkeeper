@@ -15,6 +15,14 @@ The bot reads out what people type, in a voice they pick. It needs the host's [v
 - Every line goes in the Activity tab with who said it, cut to its first 200 characters.
 - A line said again within half an hour, in the same voice, effect, speed and pause, plays straight away.
 
+## Keeping a line as a sound
+
+After a line is said from the web UI's Soundboard or Sounds panel, a small **Add "…" to the soundboard** appears under the box. It opens a dialog with the line, its voice and effect, **Hear it** (just for you), a name made from its first words, and **Also add to Discord's soundboard**: a line over 5 seconds stays on the bot's soundboard only, as that's the most Discord's takes. A name that's taken asks **Replace it** or **Keep both**, as other sounds do.
+
+- It's the audio that was heard, as the bot keeps a line it's said for up to half an hour (fewer when lots of long lines have been said since), saved as an mp3 and levelled like any other sound. A line it no longer has is made again, which can sound a little different. The button stays for half an hour, and goes once the line is added.
+- The [Chat tab](chat.md#trying-it-in-the-web-ui) has **Add to soundboard** under an answer it would say aloud.
+- A line can be 3 minutes long at most, as a sound cut from a link can. Activity notes who added it, from which line and in which voice.
+
 ## Voices
 
 - **Accents:** **American** (a man, a woman and a deep man), **Scottish**, **Northern English**, **Southern English** (a woman, and a man, who's the default), **Irish (Jenny)** and **Australian** (a man and a woman) are English voices. **Russian**, **Spanish** and **German** read English with that accent, and **State broadcast** is a Korean announcer over an old loudspeaker. Russian in Cyrillic and Korean in Hangul are read in their own language.

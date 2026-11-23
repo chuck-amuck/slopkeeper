@@ -68,6 +68,9 @@ const BESIDE = (rows: string, control: string) =>
 const GAMES_VIEW = (id: string, label: string) =>
   `(() => { const views = document.querySelector('.view-tabs[aria-label="Games view"]'); const tabs = [...views.querySelectorAll('button')].map((t) => t.textContent); return tabs.join('|') === 'Library|Game nights|Pick a game' && views.querySelector('[aria-current=page]')?.textContent === '${label}' && location.hash === '#games/${id}' && (innerWidth > 640 || [...document.querySelectorAll('.bottom-nav button')].map((b) => b.textContent).join('|') === 'Sounds|Music|Games|Stats|More'); })()`;
 // A page's address, its name, what it remembers, what must be true of it once it's shown, and what to do on it first
+// Lines said and kept answered in the page, as there's no voice channel here: each is noted in window.sent as [path, json]
+const SAY_STUB = String.raw`const real = window.fetch; window.sent = []; window.fetch = (url, init) => { const u = String(url); if (init?.method === 'POST' && /\/say(\/sound)?$/.test(u)) { const json = JSON.parse(init.body); window.sent.push([u.replace(/.*\/api\/guilds\/[^/]+/, ''), json]); return Promise.resolve(Response.json(u.endsWith('/sound') ? { name: json.name, replaced: false, discordProblem: null } : {})); } return real(url, init); };`;
+
 const PAGES: [string, string, Record<string, string>?, string?, string?][] = [
   ['board', 'Soundboard', {}, `${CLEAR_OF_PAGE} && ${NAMES_FIT} && !!document.querySelector('.view-slot > .play-in select') && !!document.querySelector('.view-slot input[type=search]') === innerWidth >= 1100`],
   // Play | Manage stays where it is as the view changes, and Manage has its search and buttons beside it on a wide screen
@@ -253,6 +256,15 @@ const PAGES: [string, string, Record<string, string>?, string?, string?][] = [
     `(() => { const note = document.querySelector('#try-profile-note'); const bot = [...document.querySelectorAll('.try-line.bot')].at(-1); return document.querySelector('select[aria-label="Profile"]')?.value === 'butler' && !note.hidden && /Trying as Robot butler, answering as Slopkeeper\. This server uses A grumpy pirate/.test(note.textContent) && bot?.querySelector('.try-who')?.textContent === 'Slopkeeper' && /Right away/.test(bot.textContent); })()`,
     `(() => { const pick = document.querySelector('select[aria-label="Profile"]'); pick.value = 'butler'; pick.dispatchEvent(new Event('change')); const box = document.querySelector('.try-ask textarea'); box.value = 'hello'; box.dispatchEvent(new Event('input')); document.querySelector('.try-ask').requestSubmit(); })()`,
   ],
+  // A spoken answer can be added to the soundboard, named from its words, in the profile's voice and effect
+  [
+    'chat',
+    'Chat: a spoken answer added to the soundboard',
+    { 'try-chat:speak': 'off' },
+    `(() => { const bot = [...document.querySelectorAll('.try-line.bot')].at(-1); const buttons = [...bot.querySelectorAll('.try-actions button')].map((b) => b.textContent); const dialog = document.querySelector('dialog.keep-line-dialog[open]'); return buttons.join('|') === 'Hear it|Add to soundboard' && !!dialog && dialog.querySelector('input[aria-label="Sound name"]').value === 'right-away-ben' && /^In .+/.test(dialog.querySelector('.keep-line-said + .hint').textContent); })()`,
+    // Answer in voice on while it answers, so it's said, and off again after, as the other pages expect
+    `(async () => { const setting = (method, json) => fetch('/api/guilds/${GUILD}/settings/chatVoice', { method, headers: { 'x-slopkeeper': '1', 'content-type': 'application/json' }, body: json && JSON.stringify(json) }); await setting('PUT', { value: 'also' }); const box = document.querySelector('.try-ask textarea'); box.value = 'hello'; box.dispatchEvent(new Event('input')); document.querySelector('.try-ask').requestSubmit(); for (let i = 0; i < 80 && ![...document.querySelectorAll('.try-line.bot')].at(-1)?.querySelector('.try-actions'); i++) await new Promise((r) => setTimeout(r, 100)); await setting('DELETE'); [...[...document.querySelectorAll('.try-line.bot')].at(-1).querySelectorAll('.try-actions button')].at(-1).click(); })()`,
+  ],
   // The @ list, open on what's typed, with the one picked marked
   [
     'chat',
@@ -260,6 +272,22 @@ const PAGES: [string, string, Record<string, string>?, string?, string?][] = [
     { 'try-chat:speak': 'off' },
     `(() => { const list = document.querySelector('.mention-picker'); const shown = [...list.querySelectorAll('.mention-choice')]; return !list.hidden && shown.length === 3 && shown[1].getAttribute('aria-selected') === 'true' && document.querySelector('.try-ask textarea').getAttribute('aria-activedescendant') === shown[1].id; })()`,
     `(() => { const box = document.querySelector('.try-ask textarea'); box.focus(); box.value = 'roast @'; box.setSelectionRange(7, 7); box.dispatchEvent(new Event('input')); box.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true })); })()`,
+  ],
+  // Said from the Soundboard (the bot's answer stubbed, as there's no voice here): the line can be added to the soundboard
+  [
+    'board',
+    'Soundboard: add the last line said',
+    {},
+    `(() => { const keep = document.querySelector('.say-body .keep-line'); const dialog = document.querySelector('dialog.keep-line-dialog[open]'); const box = keep.getBoundingClientRect(); return window.sent?.[0]?.[0] === '/say' && !keep.hidden && keep.querySelector('.keep-line-quote').textContent === 'I’m Chuck Schumer and I approve this message' && box.height < 34 && box.right <= keep.parentElement.getBoundingClientRect().right + 1 && !!dialog && dialog.querySelector('h2').textContent === 'Add to the soundboard' && dialog.querySelector('input[aria-label="Sound name"]').value === 'im-chuck-schumer-and-i-approve' && dialog.querySelector('.keep-line-said').textContent === 'I’m Chuck Schumer and I approve this message' && /^In .+/.test(dialog.querySelector('.keep-line-said + .hint').textContent) && !dialog.querySelector('button[type=submit]').disabled; })()`,
+    `(async () => { ${SAY_STUB} const box = document.querySelector('.say-form .say-field'); box.value = 'I’m Chuck Schumer and I approve this message'; box.form.requestSubmit(); const keep = document.querySelector('.say-body .keep-line'); for (let i = 0; i < 50 && keep.hidden; i++) await new Promise((r) => setTimeout(r, 100)); keep.click(); })()`,
+  ],
+  // And from the Sounds panel, saved: what's sent, the toast, and the button gone
+  [
+    'activity',
+    'Sounds panel: add the last line said',
+    {},
+    `(() => { const [, json] = window.sent?.[1] ?? []; return window.sent?.[1]?.[0] === '/say/sound' && json.text === 'good game everyone' && json.name === 'good-game-everyone' && json.voice === document.querySelector('.sounds-say .say-voice').value && json.replace === false && json.keep === false && typeof json.discord === 'boolean' && !document.querySelector('dialog[open]') && document.querySelector('.sounds-float .keep-line').hidden && /Added good-game-everyone to the soundboard\./.test(document.body.innerText); })()`,
+    `(async () => { ${SAY_STUB} const wait = async (ok) => { for (let i = 0; i < 50 && !ok(); i++) await new Promise((r) => setTimeout(r, 100)); }; document.querySelector('.sounds-fab').click(); await wait(() => !document.querySelector('.sounds-say').hidden); const box = document.querySelector('.sounds-say .say-field'); box.value = 'good game everyone'; box.form.requestSubmit(); const keep = document.querySelector('.sounds-float .keep-line'); await wait(() => !keep.hidden); keep.click(); await wait(() => !!document.querySelector('dialog.keep-line-dialog[open] button[type=submit]:not([disabled])')); document.querySelector('dialog.keep-line-dialog[open] form').requestSubmit(); })()`,
   ],
   ['activity', 'Activity'],
   ['chat', 'Chat: Ask as, In and Profile lined up on a phone', {}, `innerWidth > 640 || (() => { const lefts = [...document.querySelectorAll('.try-options select')].map((n) => Math.round(n.getBoundingClientRect().left)); return lefts.length >= 2 && new Set(lefts).size === 1; })()`],

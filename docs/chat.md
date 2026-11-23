@@ -39,7 +39,7 @@ The web UI's **Chat** tab asks the bot as you would in Discord and shows the ans
 
 - **It's the real answer:** the same instructions, personality, model and lookups as in Discord. It costs the same, counts toward the day's answers and has the same 10-second wait.
 - **Nothing it does happens:** under each answer is what it would have done, like queueing music, planning a game night or remembering something, and who it would have pinged. The model is told each was done, so it answers as it would have. Nothing is posted, logged in Activity or remembered.
-- **What it would say aloud plays in your browser:** the answer, in its profile's voice and effect, when the server's **Answer in voice** setting has answers said and **Say answers aloud** is on, plus any line it would say in another voice and any sound it would play. **Hear it** plays them again. Above the conversation it says how the answer goes out in Discord.
+- **What it would say aloud plays in your browser:** the answer, in its profile's voice and effect, when the server's **Answer in voice** setting has answers said and **Say answers aloud** is on, plus any line it would say in another voice and any sound it would play. **Hear it** plays them again, and **Add to soundboard** keeps what it said as a [sound](speech.md#keeping-a-line-as-a-sound), in that voice and effect. Above the conversation it says how the answer goes out in Discord.
 
 ## Settings
 

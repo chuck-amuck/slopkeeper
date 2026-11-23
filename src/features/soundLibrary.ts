@@ -313,9 +313,9 @@ export function clearBin(now = Date.now()) {
   for (const { guild_id, id } of old) eraseDeleted(guild_id, id);
 }
 
-/** A name no sound is using: this one, or this one numbered */
-export function untaken(guildId: string, base: string) {
-  const taken = new Set(listSounds(guildId).map((s) => s.name));
+/** A name no sound is using, nor any in `busy`: this one, or this one numbered */
+export function untaken(guildId: string, base: string, busy: ReadonlySet<string> = new Set()) {
+  const taken = new Set([...listSounds(guildId).map((s) => s.name), ...busy]);
   let name = base;
   for (let n = 2; taken.has(name); n++) name = `${base.slice(0, 32 - String(n).length - 1)}-${n}`;
   return name;

@@ -787,10 +787,7 @@ async function makeLine(text: string, voice: Voice, effect: Effect | null, gain:
  * hears how it was made, if this is the ask that makes it
  */
 async function lineAudio(text: string, voice: Voice, effect: Effect | null, paced: Pacing, signal: AbortSignal, trace?: perf.Trace): Promise<Buffer> {
-  // The effect's correction too, which changes once the pair is measured
-  const gain = effect ? effectGain(voice, effect) : 0;
-  // An added voice's settings too, as they can change, and a preview can try ones not saved yet
-  const key = JSON.stringify([voice.key ?? voice.id, effect?.id ?? null, gain, paced.speed, paced.pauseMs, text]);
+  const { key, gain } = lineKey(text, voice, effect, paced);
   const kept = spoken.get(key);
   if (kept && Date.now() - kept.at < KEEP_SPOKEN_MS) {
     // To the newest end, so lines said often are the last to go
@@ -821,11 +818,26 @@ async function lineAudio(text: string, voice: Voice, effect: Effect | null, pace
   return Promise.race([made, new Promise<never>((_, reject) => signal.addEventListener('abort', () => reject(signal.reason), { once: true }))]);
 }
 
-/** For tests: forgets every line lately made */
+function lineKey(text: string, voice: Voice, effect: Effect | null, paced: Pacing) {
+  // The effect's correction too, which changes once the pair is measured
+  const gain = effect ? effectGain(voice, effect) : 0;
+  // An added voice's settings too, as they can change, and a preview can try ones not saved yet
+  return { key: JSON.stringify([voice.key ?? voice.id, effect?.id ?? null, gain, paced.speed, paced.pauseMs, text]), gain };
+}
+
+/** Whether a line is one of those lately made, or being made, so asking for it costs the voice container nothing */
+function isKept(text: string, voice: Voice, effect: Effect | null, paced: Pacing) {
+  const { key } = lineKey(text, voice, effect, paced);
+  const kept = spoken.get(key);
+  return making.has(key) || (kept !== undefined && Date.now() - kept.at < KEEP_SPOKEN_MS);
+}
+
+/** For tests: forgets every line lately made, and the previews asked for */
 export function forgetSpoken() {
   spoken.clear();
   making.clear();
   spokenBytes = 0;
+  previewsAt.clear();
 }
 
 const PREVIEW_EVERY_MS = 2_000;
@@ -836,21 +848,28 @@ const previewsAt = new Map<string, number[]>();
 /**
  * A line in a voice, as a WAV file, for the web UI to play in the browser so someone can hear a voice before the
  * whole call does. A blank line gets the voice saying its name. `effectId` is as for serverEffect. Throws a TooSoon when
- * a server asks too often
+ * a server asks for ones it doesn't have too often
  */
 export async function previewSpeech(guild: Guild, typed: string, chosen: string | Voice, effectId?: string, whole = false): Promise<Buffer> {
   if (!config.voiceUrl) throw new Error('Text to speech isn’t set up on this bot.');
   const voice = typeof chosen === 'string' ? serverVoice(guild.id, chosen) : chosen;
   const effect = serverEffect(guild.id, effectId, typeof chosen === 'string' ? chosen : undefined);
-  const now = Date.now();
-  const recent = (previewsAt.get(guild.id) ?? []).filter((at) => now - at < 60_000);
-  if (recent.length >= PREVIEWS_PER_MINUTE || now - (recent.at(-1) ?? 0) < PREVIEW_EVERY_MS) throw new TooSoon();
-  previewsAt.set(guild.id, [...recent, now]);
-  // A whole line is an answer tried in the web UI, heard as it would be in voice
+  // A whole line is an answer tried in the web UI, or a line said, heard as it would be in voice
   const longest = speechFor(guild, typed).slice(0, setting(guild.id, 'ttsMaxChars'));
   const text = typed.trim() ? (whole ? longest : previewPart(longest)) : `Hi, this is ${voice.name}.`;
+  const paced = pacing(guild.id);
+  // One the bot still has costs the voice container nothing
+  if (!isKept(text, voice, effect, paced)) notePreview(guild.id);
   if (!hasWords(text)) throw new Error('There’s nothing in that to say.');
-  return lineAudio(text, voice, effect, pacing(guild.id), new AbortController().signal);
+  return lineAudio(text, voice, effect, paced, new AbortController().signal);
+}
+
+/** Counts a preview, or throws a TooSoon if a server's asked for them too often */
+function notePreview(guildId: string) {
+  const now = Date.now();
+  const recent = (previewsAt.get(guildId) ?? []).filter((at) => now - at < 60_000);
+  if (recent.length >= PREVIEWS_PER_MINUTE || now - (recent.at(-1) ?? 0) < PREVIEW_EVERY_MS) throw new TooSoon();
+  previewsAt.set(guildId, [...recent, now]);
 }
 
 /** The start of a long line, up to the end of a sentence or else a word */
@@ -930,13 +949,19 @@ function stopLines(guildId: string) {
 
 const hasWords = (text: string) => /[\p{L}\p{N}]/u.test(text);
 
-/** Why this can't be said right now, or null if it can */
-function sayProblem(guild: Guild, text: string, who: string): string | null {
+/** Why this can't be made into speech, or null if it can. `length` is what counts toward the longest line */
+function speechProblem(guild: Guild, text: string, length = text.length): string | null {
   if (!config.voiceUrl) return 'Text to speech isn’t set up on this bot. It needs VOICE_URL.';
   if (!setting(guild.id, 'tts')) return 'Text to speech is off in this server.';
   if (!hasWords(text)) return 'There’s nothing in that to read out.';
   const longest = setting(guild.id, 'ttsMaxChars');
-  if (text.length > longest) return `That’s ${text.length} characters, and the limit here is ${longest}.`;
+  return length > longest ? `That’s ${length} characters, and the limit here is ${longest}.` : null;
+}
+
+/** Why this can't be said right now, or null if it can */
+function sayProblem(guild: Guild, text: string, who: string): string | null {
+  const problem = speechProblem(guild, text);
+  if (problem) return problem;
   const left = (lastLine.get(`${guild.id}:${who}`) ?? -Infinity) + setting(guild.id, 'ttsCooldownSec') * 1000 - Date.now();
   if (left > 0) return `Wait ${plural(Math.ceil(left / 1000), 'more second')} first.`;
   return queueFor(guild.id).lines.length >= MOST_WAITING ? `There are already ${MOST_WAITING} lines waiting. Try again in a moment.` : null;
@@ -962,13 +987,43 @@ export async function say(channel: VoiceBasedChannel, typed: string, voiceId: st
  * What say would say, in which voice and effect, without saying it, for an answer tried in the web UI. Why it couldn't,
  * as say would put it, otherwise
  */
-export function wouldSay(guild: Guild, typed: string, voiceId: string | undefined, who: string, effectId?: string): { text: string; voice: Voice; effect: Effect | null } | string {
+export function wouldSay(guild: Guild, typed: string, voiceId: string | undefined, who: string, effectId?: string): SpeechLine | string {
+  const line = lineFor(guild, typed, voiceId, effectId);
+  return typeof line === 'string' ? line : (sayProblem(guild, line.text, who) ?? line);
+}
+
+interface SpeechLine {
+  text: string;
+  voice: Voice;
+  effect: Effect | null;
+}
+
+/** The words to read out and the voice and effect picked, as say takes them, or why they can't be picked */
+function lineFor(guild: Guild, typed: string, voiceId: string | undefined, effectId: string | undefined): SpeechLine | string {
   const voice = voiceId === undefined ? serverVoice(guild.id) : voiceCalled(voiceId);
   if (!voice) return 'Pick a voice from the list.';
   const named = effectId === undefined || effectId === NO_EFFECT ? effectId : effectCalled(effectId)?.id;
   if (effectId !== undefined && !named) return 'Pick an effect from the list.';
-  const text = speechFor(guild, typed);
-  return sayProblem(guild, text, who) ?? { text, voice, effect: serverEffect(guild.id, named, voiceId) };
+  return { text: speechFor(guild, typed), voice, effect: serverEffect(guild.id, named, voiceId) };
+}
+
+/** Why a line can't be kept as a sound, for the page to show */
+export class SpeechProblem extends Error {}
+
+/**
+ * A line as audio to keep on the soundboard, in the voice and effect picked as say takes them, with the line it read and
+ * the voice and effect it was in. One said or heard in the last half hour is the same audio, kept. One that has to be
+ * made counts as a preview, so this can't make speech faster than previews can. Throws a SpeechProblem, a TooSoon, or
+ * the voice container being down
+ */
+export async function speechSound(guild: Guild, typed: string, voiceId: string | undefined, effectId: string | undefined): Promise<SpeechLine & { audio: Buffer }> {
+  const line = lineFor(guild, typed, voiceId, effectId);
+  // As typed or as read, whichever is shorter: a Chat answer was measured as typed, and a line said as read
+  const problem = typeof line === 'string' ? line : speechProblem(guild, line.text, Math.min(typed.trim().length, line.text.length));
+  if (problem || typeof line === 'string') throw new SpeechProblem(problem ?? '');
+  const paced = pacing(guild.id);
+  if (!isKept(line.text, line.voice, line.effect, paced)) notePreview(guild.id);
+  return { ...line, audio: await lineAudio(line.text, line.voice, line.effect, paced, new AbortController().signal) };
 }
 
 /**

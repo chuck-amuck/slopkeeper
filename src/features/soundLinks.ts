@@ -1,7 +1,7 @@
 import { type Guild } from 'discord.js';
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { config } from '../config.ts';
@@ -221,6 +221,29 @@ export async function savePart(guild: Guild, id: string, name: string, start: nu
   } catch (err) {
     console.error(`Couldn’t cut ${name} from ${d.url ?? `the sound ${d.title}`} in server ${guild.id}:`, err instanceof Error ? err.message : err);
     return 'That part couldn’t be cut, so nothing was saved.';
+  } finally {
+    rmSync(folder, { recursive: true, force: true });
+  }
+}
+
+/**
+ * Saves audio the bot made, like a line of speech, into the library as an mp3 named `name`. Returns addSound's answer, or
+ * why it couldn't, as a string. The name and replacing have been checked already
+ */
+export async function saveMade(guild: Guild, name: string, wav: Buffer, toDiscord: boolean) {
+  const folder = mkdtempSync(path.join(tmpdir(), 'slopkeeper-made-'));
+  try {
+    const made = path.join(folder, 'made.wav');
+    writeFileSync(made, wav);
+    const seconds = await durationOf(made);
+    if (!(seconds > 0)) return 'That line has no sound the bot can read.';
+    if (seconds > LONGEST_PART + TOLERANCE) return `That line is ${Math.round(seconds)} s long, and a sound can be ${LONGEST_PART / 60} minutes at most.`;
+    const mp3 = path.join(folder, `${name}.mp3`);
+    await cutAudio(made, mp3, 0, seconds);
+    return (await addSound(guild, name, '.mp3', readFileSync(mp3), undefined, toDiscord)) ?? 'That line has no sound the bot can read.';
+  } catch (err) {
+    console.error(`Couldn’t save ${name} in server ${guild.id}:`, err instanceof Error ? err.message : err);
+    return 'That line couldn’t be saved as a sound, so nothing was saved.';
   } finally {
     rmSync(folder, { recursive: true, force: true });
   }

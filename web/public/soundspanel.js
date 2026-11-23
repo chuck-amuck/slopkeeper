@@ -1,6 +1,7 @@
 import { api, attempt, el, forget, needsVoice, recall, remember, request, state } from './lib.js';
 import { foldHead, soundGrid } from './soundgrid.js';
 import { previewButton, sayField, speechPickers } from './speech.js';
+import { keepLineButton } from './speechsound.js';
 import { voiceBar } from './voice.js';
 import { volumeSliders } from './volumes.js';
 
@@ -33,6 +34,8 @@ export function soundsBody(openBoard, { slash = false, volumes = [] } = {}) {
   const pickers = speechPickers(guildId);
   const { voice: picker, effect } = pickers;
   const send = el('button', { className: 'primary say-send' }, 'Say');
+  // The last line said, to keep as a sound, while the line box shows
+  const keep = keepLineButton(() => !say.hidden);
   const say = el(
     'form',
     {
@@ -82,6 +85,7 @@ export function soundsBody(openBoard, { slash = false, volumes = [] } = {}) {
     pickers.fill(offered);
     text.maxLength = longest;
     say.hidden = !on;
+    keep.paint();
     paint();
   });
 
@@ -89,5 +93,5 @@ export function soundsBody(openBoard, { slash = false, volumes = [] } = {}) {
   const levelsHead = levels && foldHead('Volume', recall(VOLUMES_KEY) === 'open', levels, (open) => (open ? remember(VOLUMES_KEY, 'open') : forget(VOLUMES_KEY)));
   const volume = levels && el('section', { className: 'sounds-volume', title: 'For everyone in the server, not just you' }, levelsHead, levels);
 
-  return { parts: [voice.node, ...(volume ? [volume] : []), say, search, el('div', { className: 'sounds-scroll' }, grid.node)], search, paint };
+  return { parts: [voice.node, ...(volume ? [volume] : []), say, keep.node, search, el('div', { className: 'sounds-scroll' }, grid.node)], search, paint };
 }
