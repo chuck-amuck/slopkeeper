@@ -487,6 +487,15 @@ const PAGES: [string, string, Record<string, string>?, string?, string?, string?
   ],
   // A save the bot turns down says why in the dialog, and Save can be pressed again. The dialog's closed after, as a
   // problem showing would fail the page
+  // A dialog taller than the screen opens on its first field, not on the part that scrolls
+  [
+    'settings/speech',
+    'Settings: a long dialog starts on its first field',
+    {},
+    `(({ activeElement: a } = document) => a?.tagName === 'INPUT' && a.closest('dialog[open] .dialog-body') && a.value === 'Narrator')()`,
+    `[...document.querySelectorAll('#settings-voices .voice-row')].find((r) => r.textContent.startsWith('Narrator')).querySelector('button:nth-child(2)').click()`,
+    `document.querySelector('dialog[open]')?.close()`,
+  ],
   [
     'settings/speech',
     'Settings: a voice the bot won’t save says why',

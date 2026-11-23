@@ -732,6 +732,8 @@ export function openDialog(parent, { title, body = [], start = [], actions = [],
   node.setAttribute('aria-labelledby', heading.id);
   parent.append(node);
   node.showModal();
+  // A body taller than the screen scrolls, which puts it first in line for focus: its first field is what's wanted
+  if (document.activeElement === main) [...main.querySelectorAll('input, select, textarea, button, a[href]')].find((n) => !n.disabled && n.checkVisibility())?.focus();
   node.append(toasts);
   return node;
 }
