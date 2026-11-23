@@ -81,7 +81,8 @@ const SLOW_ANSWER_S = 2;
 function answered(req: IncomingMessage, status: number, seconds: number) {
   const [root, guildId, section] = new URL(req.url ?? '/', 'http://api').pathname.split('/').filter(Boolean);
   // Only names the API has, so a stray path doesn't start a series of its own
-  const area = root === 'guilds' ? (section === undefined ? 'guilds' : AREAS.has(section) ? section : 'other') : root === 'metrics' || root === 'perf' ? root : 'other';
+  // The web UI's report of itself apart from browsers' timings, which it would outnumber
+  const area = root === 'guilds' ? (section === undefined ? 'guilds' : AREAS.has(section) ? section : 'other') : root === 'perf' ? (guildId === 'web' ? 'perf-web' : 'perf') : root === 'metrics' ? root : 'other';
   perf.count('api_requests_total', { area, status: `${Math.floor(status / 100)}xx` });
   if (section === 'updates' || (section === 'playing' && /[?&]after=/.test(req.url ?? ''))) return;
   perf.time('api_request_seconds', seconds, { area });

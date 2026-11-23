@@ -1,12 +1,13 @@
 /**
  * How fast the web UI is as people see it: taps answered, the page opening and the page reacting, timed in this
- * browser and sent to the bot about once a minute while the tab is seen. Nothing in it says who sent it; the web UI
+ * browser and sent to the bot every two minutes while the tab is seen, and as it's hidden. Nothing in it says who sent it; the web UI
  * adds whether it came through Pangolin
  */
 
 const FIRST_REPORT_MS = 20_000;
-const REPORT_MS = 60_000;
-/** The most of each kind a report holds; a busy minute is far under it */
+/** Not every minute, which would wake a phone's radio that often for numbers that can wait */
+const REPORT_MS = 120_000;
+/** The most of each kind a report holds; two busy minutes are far under it */
 const MOST = 500;
 /** Taps the browser leaves untimed were quicker than this, which is as fine as its Event Timing goes */
 const TIMED_FROM_MS = 16;

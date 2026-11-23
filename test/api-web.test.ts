@@ -442,6 +442,8 @@ test('the web UI reports how it’s doing to POST /perf/web', async () => {
   const text = await (await fetch(`${base}/metrics`, { headers: { authorization: `Bearer ${TOKEN}` } })).text();
   assert.match(text, /^slopkeeper_container_memory_bytes\{container="web"\} 50000000$/m);
   assert.match(text, /^slopkeeper_web_requests_total\{status="2xx"\} 3$/m);
+  // Counted apart from browsers' timings, which it would otherwise outnumber
+  assert.match(text, /^slopkeeper_api_requests_total\{area="perf-web",status="2xx"\} 1$/m);
 });
 
 test('what chat remembers is listed with the settings, and can be forgotten one person at a time', async () => {

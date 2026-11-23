@@ -24,7 +24,6 @@ export function steamTitle(key: string): string | undefined {
   }
   return steamTitles.byKey.get(key);
 }
-export const forgetSteamTitles = () => void (steamTitles = null);
 
 /** The name a spelling starts with: a program's goes by Steam's title for it, when Steam has one */
 const firstName = (raw: string, key: string) => (isProgramName(raw) && steamTitle(key)) || raw;

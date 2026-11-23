@@ -101,10 +101,12 @@ export function wordOrIcon(word, iconName, about) {
   return narrow.matches ? { props: { className: 'icon', ariaLabel: `${word} ${about}`, title: word }, content: icon(iconName) } : { props: {}, content: word };
 }
 
-/** Runs `paint` again as the window crosses a phone's width, for as long as `node` is on the page */
+/**
+ * Runs `paint` again as the window crosses a phone's width, while `node` is on the page. It's let go with the page, as
+ * a phone never crosses that width to notice the node has gone
+ */
 export function repaintOnWidth(node, paint) {
-  const changed = () => (node.isConnected ? paint() : narrow.removeEventListener('change', changed));
-  narrow.addEventListener('change', changed);
+  narrow.addEventListener('change', () => node.isConnected && paint(), { signal: pageSignal() });
 }
 
 /** One of the icons above, hidden from screen readers: the button or text around it says what it is */

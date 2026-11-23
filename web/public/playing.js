@@ -176,7 +176,7 @@ export function stopDock(volume, sounds = null) {
   addEventListener('resize', () => slides() || node.classList.remove('away'), { passive: true, signal: pageSignal() });
   node.addEventListener('focusin', () => node.classList.remove('away'));
   const onNarrow = () => (node.isConnected ? paintList(shownPlaying) : narrow.removeEventListener('change', onNarrow));
-  narrow.addEventListener('change', onNarrow);
+  narrow.addEventListener('change', onNarrow, { signal: pageSignal() });
   // Toasts sit above the corner, wherever its top is now: above what's playing, a panel when one's open, and Stop when
   // it's over the buttons. Measured once it's on the page and whenever any of them changes size. The page's end keeps
   // clear of all but the Sounds panel, which is tall, and on a wide screen made to be used beside the page

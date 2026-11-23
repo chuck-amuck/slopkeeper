@@ -187,7 +187,7 @@ export function webReport(body: unknown): boolean {
   return true;
 }
 
-/** The most of each kind of timing one browser report may hold: a minute of a busy tab is well under it */
+/** The most of each kind of timing one browser report may hold: a busy tab's two minutes are well under it */
 const BROWSER_MOST = 500;
 /** Anything longer is a tab that was asleep, not a slow answer */
 const BROWSER_LONGEST_S = 120;
