@@ -29,7 +29,7 @@ same static ffmpeg as the image and CI. Without ffmpeg the audio tests skip sile
 - Front end: `for f in web/public/*.js; do node --check "$f"; done`.
 - Charts and the calendar are ECharts and Cally, built into `web/public/vendor-*.js` by `scripts/build-vendor.sh` (the
   command is at its top). Don't edit those files; change a version there and build again.
-- Every web UI page in headless Chromium, at computer and phone widths (about 20 s), on the host, since sk-test has no
+- Every web UI page in headless Chromium, at computer and phone widths (about 2½ minutes), on the host, since sk-test has no
   browser and skips it: `node --disable-warning=ExperimentalWarning --test test/webui.test.ts` (`CHROME` names another
   browser). CI requires it.
 - Chat's behaviour test runs its answer loop against the real model and Spotify, and checks each answer's tools,
