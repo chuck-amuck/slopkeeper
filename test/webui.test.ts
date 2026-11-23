@@ -59,6 +59,9 @@ const COUNTS_ONE_LINE = `[...document.querySelectorAll('.rank-value')].every((v)
 const TABS_IN_SIGHT = `(() => { const t = document.querySelector('.view-tabs'); return t.scrollWidth <= t.clientWidth + 1; })()`;
 const STATS_FIT = `${COUNTS_ONE_LINE} && ${TABS_IN_SIGHT}`;
 // A row's control, a switch or a button, beside its name and hint rather than under them
+// Each row's buttons on one line
+const ONE_LINE = (controls: string) =>
+  `(() => { const all = [...document.querySelectorAll('${controls}')]; return all.length > 0 && all.every((c) => new Set([...c.children].map((b) => Math.round(b.getBoundingClientRect().top))).size === 1); })()`;
 const BESIDE = (rows: string, control: string) =>
   `(() => { const all = [...document.querySelectorAll('${rows}')]; return all.length > 0 && all.every((f) => f.querySelector('${control}').getBoundingClientRect().top < f.querySelector('.hint').getBoundingClientRect().bottom); })()`;
 // Games' three views, with the one named open at its own address and, on a phone, Games and Stats on the bottom bar
@@ -73,6 +76,24 @@ const PAGES: [string, string, Record<string, string>?, string?, string?][] = [
     'Soundboard: Play | Manage stays put',
     {},
     `(async () => { const views = document.querySelector('.views[aria-label="Soundboard view"]'); const at = () => views.getBoundingClientRect().left; const play = at(); views.querySelector('button:last-child').click(); await new Promise((r) => setTimeout(r, 800)); return play === at() && !!document.querySelector('.manage-view') && !!document.querySelector('.view-slot .manage-tools') === innerWidth >= 1100 && !!document.querySelector('.view-slot > .play-in select') && ${CLEAR_OF_PAGE}; })()`,
+  ],
+  // The address names the view, so a link opens it, and Back goes back to it from the other
+  [
+    'board/manage',
+    'Soundboard: Manage from its address',
+    { soundboardView: 'play' },
+    `(async () => {
+      const views = document.querySelector('.views[aria-label="Soundboard view"]');
+      const current = () => views.querySelector('[aria-current=page]')?.textContent;
+      const wait = () => new Promise((r) => setTimeout(r, 600));
+      const manage = current() === 'Manage' && !!document.querySelector('.manage-view');
+      views.querySelector('button').click();
+      await wait();
+      const play = current() === 'Play' && location.hash === '#board/play';
+      history.back();
+      await wait();
+      return manage && play && current() === 'Manage' && location.hash === '#board/manage' && !!document.querySelector('.manage-view');
+    })()`,
   ],
   // An effect picked beside the voice. A pick remembered from when the effects were voices becomes the voice and effect
   [
@@ -342,8 +363,13 @@ const PAGES: [string, string, Record<string, string>?, string?, string?][] = [
     'Settings: Edit a profile',
     {},
     `(() => { const d = document.querySelector('dialog[open]'); return !!d && /Edit A grumpy pirate/.test(d.textContent) && d.querySelectorAll('select').length === 6 && d.querySelector('#profile-swearing').value === 'freely' && d.querySelector('#profile-voice').value === 'scottish' && d.querySelector('#profile-effect').value === 'robot' && d.querySelector('#profile-nickname').value === 'Captain Grump' && /\\d+ of 1000 characters/.test(d.textContent); })()`,
-    `[...[...document.querySelectorAll('#settings-profiles .profile-row')].find((r) => r.textContent.startsWith('A grumpy pirate')).querySelectorAll('button')].find((b) => b.textContent === 'Edit').click()`,
+    // A phone shows the button's icon, named in its title
+    `[...[...document.querySelectorAll('#settings-profiles .profile-row')].find((r) => r.textContent.startsWith('A grumpy pirate')).querySelectorAll('button')].find((b) => (b.title || b.textContent) === 'Edit').click()`,
   ],
+  // Each profile's buttons on one line, on a phone as icons beside Use and Try
+  ['settings/chat', 'Settings: a profile’s buttons on one line', {}, ONE_LINE('#settings-profiles .profile-row .control')],
+  // And each voice's beside it, rather than a row of their own under every voice
+  ['settings/speech', 'Settings: a voice’s buttons beside it', {}, `${BESIDE('#settings-voices .voice-row', '.control')} && ${ONE_LINE('#settings-voices .voice-row .control')}`],
   // Added voices: one ready with speakers, one downloading and one that failed, and the ready one's settings
   [
     'settings/speech',

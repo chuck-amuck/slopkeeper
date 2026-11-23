@@ -59,7 +59,7 @@ function tickFormat(span, timeZone, gap) {
  * `series`: [{ id, label, color (a CSS colour or token), values: [number | null] }], one value per point from
  * `start`, `step` ms apart, or at each of `times` for steps of different lengths, like months, with `until` where the
  * last one ends. `previous`: the same lines over the stretch before, by id, drawn faint and dashed to compare.
- * `format(value)` writes a value. `limit` ({ value, label }) draws a dashed line where it stops being fine.
+ * `format(value)` writes a value, and `tick(value)`, if given, a value on the scale, where a rounded one would repeat. `limit` ({ value, label }) draws a dashed line where it stops being fine.
  * `bands`: a share 0–1 per point to shade, like time away from Discord, named by `bandLabel`. `onPick(from, to)`
  * is called with the stretch someone drags across. `stacked`: columns stacked on each other, with the total first in
  * the tooltip, for parts of a whole like each game's share of the time. `whole`: counts, so the axis has no fractions
@@ -75,6 +75,7 @@ export function timeChart({
   timeZone,
   series,
   format,
+  tick = null,
   limit = null,
   bands = null,
   bandLabel = '',
@@ -170,7 +171,7 @@ export function timeChart({
         splitNumber: 3,
         minInterval: whole ? 1 : undefined,
         // The top is only room for the dashed line where there's one, so it isn't labelled with an odd number
-        axisLabel: { color: ink, showMaxLabel: !limit, formatter: (v) => (v === 0 ? '0' : format(v)) },
+        axisLabel: { color: ink, showMaxLabel: !limit, formatter: (v) => (v === 0 ? '0' : (tick ?? format)(v)) },
         splitLine: { lineStyle: { color: line, type: 'dashed' } },
       },
       tooltip: {

@@ -1,5 +1,5 @@
 import { tryProfile } from './chat.js';
-import { api, attempt, confirmButton, el, fetchAudio, formProblem, icon, menuToggle, notice, openDialog, player, request, RequestError, state, toast } from './lib.js';
+import { api, attempt, confirmButton, el, fetchAudio, formProblem, icon, menuToggle, notice, openDialog, player, repaintOnWidth, request, RequestError, state, toast, wordOrIcon } from './lib.js';
 import { effectOptions } from './speech.js';
 import { follow, followWhenIdle } from './updates.js';
 
@@ -154,6 +154,11 @@ export function profilesCard(main, data, onChange) {
 
   function profileRow(p) {
     const name = el('div', { className: 'series-name' }, p.name, p.active && el('span', { className: 'profile-tag' }, 'Using'));
+    // On a phone Edit, Copy and Reset or Delete are their icons, so a row's buttons fit on one line
+    const edit = wordOrIcon('Edit', 'pencil', p.name);
+    const copy = wordOrIcon('Copy', 'copy', p.name);
+    const reset = wordOrIcon('Reset', 'refresh', p.name);
+    const remove = wordOrIcon('Delete', 'trash', p.name);
     const buttons = [
       !p.active &&
         el(
@@ -181,11 +186,12 @@ export function profilesCard(main, data, onChange) {
           },
           'Try',
         ),
-      el('button', { type: 'button', onclick: () => editDialog(p) }, 'Edit'),
+      el('button', { type: 'button', ...edit.props, onclick: () => editDialog(p) }, edit.content),
       el(
         'button',
         {
           type: 'button',
+          ...copy.props,
           disabled: list.profiles.length >= list.most,
           onclick: () =>
             void attempt(async () => {
@@ -196,15 +202,15 @@ export function profilesCard(main, data, onChange) {
               editDialog(copy);
             }),
         },
-        'Copy',
+        copy.content,
       ),
       p.builtIn
         ? p.changed &&
-          confirmButton({ ariaLabel: `Reset ${p.name}` }, 'Reset', 'Reset it?', async () => {
+          confirmButton({ ariaLabel: `Reset ${p.name}`, ...reset.props }, reset.content, 'Reset it?', async () => {
             await after(await request(api(`/chat-profiles/${encodeURIComponent(p.id)}`), { method: 'DELETE' }));
             toast(`${p.name} is back to how it started.`);
           })
-        : confirmButton({ ariaLabel: `Delete ${p.name}` }, 'Delete', 'Delete it?', async () => {
+        : confirmButton({ ariaLabel: `Delete ${p.name}`, ...remove.props }, remove.content, 'Delete it?', async () => {
             const fresh = await request(api(`/chat-profiles/${encodeURIComponent(p.id)}`), { method: 'DELETE' });
             await after(fresh);
             toast(fresh.servers ? `Deleted ${p.name}. ${fresh.servers === 1 ? 'The server that used it is' : `${fresh.servers} servers that used it are`} on ${fresh.profiles.find((b) => b.builtIn)?.name ?? 'the built-in one'} now.` : `Deleted ${p.name}.`);
@@ -434,5 +440,6 @@ export function profilesCard(main, data, onChange) {
     setTimeout(end, 3000);
     keep();
   }
+  repaintOnWidth(card, () => list && paint());
   return card;
 }

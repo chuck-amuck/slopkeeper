@@ -1,4 +1,4 @@
-import { api, attempt, confirmButton, el, fetchAudio, formProblem, notice, openDialog, player, request, RequestError, toast } from './lib.js';
+import { api, attempt, confirmButton, el, fetchAudio, formProblem, isNarrow, notice, openDialog, player, repaintOnWidth, request, RequestError, toast, wordOrIcon } from './lib.js';
 import { effectOptions, NO_EFFECT } from './speech.js';
 
 // Settings' Voices card: the voices added here for every server on the bot, with export and import
@@ -89,17 +89,23 @@ export function voicesCard(main, onChange) {
   }
 
   function voiceRow(v) {
-    const hear = el('button', { type: 'button', disabled: v.state !== 'ready', onclick: () => void attempt(() => preview(v, {}, '', hear)) }, 'Preview');
+    // On a phone each button is its icon, beside the voice rather than in a row under it
+    const button = (word, iconName, props) => {
+      const { props: shown, content } = wordOrIcon(word, iconName, v.name);
+      return el('button', { type: 'button', ...shown, ...props }, content);
+    };
+    const hear = button('Preview', 'headphones', { disabled: v.state !== 'ready', onclick: () => void attempt(() => preview(v, {}, '', hear)) });
+    const remove = wordOrIcon('Remove', 'trash', v.name);
     return el(
       'div',
-      { className: 'field voice-row' },
+      { className: `field voice-row${isNarrow() ? ' beside-field' : ''}` },
       el('div', {}, el('div', { className: 'series-name' }, v.name), el('p', { className: `hint${v.state === 'failed' ? ' bad-text' : ''}` }, `${v.group} · ${stateText(v)}${v.tuning ? ', measuring its speed and loudness' : ''}`)),
       el(
         'div',
         { className: 'control' },
         hear,
-        el('button', { type: 'button', onclick: () => editDialog(v) }, 'Edit'),
-        confirmButton({ ariaLabel: `Remove ${v.name}` }, 'Remove', 'Remove it?', async () => {
+        button('Edit', 'pencil', { onclick: () => editDialog(v) }),
+        confirmButton({ ariaLabel: `Remove ${v.name}`, ...remove.props }, remove.content, 'Remove it?', async () => {
           const { picks, profiles } = await request(api(`/voices/${encodeURIComponent(v.id)}`), { method: 'DELETE' });
           const after = [
             picks && `${picks === 1 ? 'A server that picked it is' : `${picks} servers that picked it are`} back on their default voice.`,
@@ -432,5 +438,6 @@ export function voicesCard(main, onChange) {
       if (!(err instanceof RequestError)) throw err;
     }
   });
+  repaintOnWidth(card, paint);
   return card;
 }

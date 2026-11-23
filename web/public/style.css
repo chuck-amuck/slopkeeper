@@ -6021,6 +6021,18 @@ a,
   justify-content: flex-end;
 }
 
+/* Its buttons on one line beside it, as wide as they need, wider than a setting's control */
+.field.profile-row {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+/* Under it on a phone, where they're icons but Use and Try */
+@media (max-width: 640px) {
+  .field.profile-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 /* A profile's photo, round, or a face for one without */
 .profile-photo {
   display: inline-grid;

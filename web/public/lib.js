@@ -89,6 +89,24 @@ const ICONS = {
 
 const drawn = new Map();
 
+/** A phone's width, where a list's buttons are their icons, so a row's fit on one line */
+const narrow = matchMedia('(max-width: 640px)');
+export const isNarrow = () => narrow.matches;
+
+/**
+ * A list row's button: its word, or on a phone its icon, named for a screen reader and on a long press. `about` is what
+ * the row is, for the name: Edit Bender. Returns the props and the content to make the button with
+ */
+export function wordOrIcon(word, iconName, about) {
+  return narrow.matches ? { props: { className: 'icon', ariaLabel: `${word} ${about}`, title: word }, content: icon(iconName) } : { props: {}, content: word };
+}
+
+/** Runs `paint` again as the window crosses a phone's width, for as long as `node` is on the page */
+export function repaintOnWidth(node, paint) {
+  const changed = () => (node.isConnected ? paint() : narrow.removeEventListener('change', changed));
+  narrow.addEventListener('change', changed);
+}
+
 /** One of the icons above, hidden from screen readers: the button or text around it says what it is */
 export function icon(name) {
   if (!(name in ICONS)) throw new Error(`There’s no icon called ${name}`);

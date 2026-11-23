@@ -48,6 +48,8 @@ export function percent(share) {
   if (p > 0 && p < 0.1) return 'under 0.1%';
   return p > 0 && p < 1 ? `${p.toFixed(1)}%` : `${Math.round(p)}%`;
 }
+/** A share on a chart's scale, as exact as its steps: 0.05%, where percent says under 0.1% for each */
+const percentTick = (share) => `${Number((share * 100).toPrecision(2))}%`;
 const plural = (n, word) => `${n.toLocaleString()} ${word}${n === 1 ? '' : 's'}`;
 const listed = (items) => (items.length < 2 ? items.join('') : `${items.slice(0, -1).join(', ')} and ${items.at(-1)}`);
 const minutes = (m) => (m < 1 ? `${Math.round(m * 60)} s` : m < 120 ? `${Math.round(m)} min` : `${(m / 60).toFixed(1)} h`);
@@ -218,12 +220,13 @@ function beforeOf(r, pick) {
 function charts(r, common) {
   const before = (pick) => beforeOf(r, pick);
   const small = (key, title, part, limit) => smallChart({ ...common, previous: before((x) => ({ [key]: x[part].series })) }, key, title, [{ id: key, label: title, color: 'var(--series-1)', values: r[part].series }], limit);
-  const containers = (key, title, field, format) =>
+  const containers = (key, title, field, format, tick = null) =>
     timeChart({
       ...common,
       key,
       title,
       format,
+      tick,
       series: r.containers.map((c) => ({ id: c.name, label: CONTAINERS[c.name] ?? c.name, color: seriesColor(c.name), values: c[field] })),
       previous: before((x) => Object.fromEntries(x.containers.map((c) => [c.name, c[field]]))),
     });
@@ -241,11 +244,11 @@ function charts(r, common) {
     ),
     r.browser && browserCard(r, common),
     card('Memory', containers('memory', 'Memory by container', 'memory', bytes)),
-    card('CPU', containers('cpu', 'CPU by container, 100% being one core', 'cpu', cpu)),
+    card('CPU', containers('cpu', 'CPU by container, 100% being one core', 'cpu', cpu, percentTick)),
     r.containers.some((c) => c.stall?.some((v) => v !== null)) &&
       card(
         'Waiting for resources',
-        containers('stall', 'Share of the time each container waited for CPU, memory or the disk', 'stall', percent),
+        containers('stall', 'Share of the time each container waited for CPU, memory or the disk', 'stall', percent, percentTick),
         el('p', { className: 'hint' }, 'Time something in the container wanted CPU, memory or the disk and had to wait for it, at whichever was worst. Near nothing is normal.'),
       ),
     card(
@@ -506,6 +509,7 @@ function machineCard(r, common) {
           key: 'vm-cpu',
           title: 'The machine’s CPU',
           format: percent,
+          tick: percentTick,
           height: 130,
           series: [
             { id: 'busy', label: 'Busy', color: 'var(--series-1)', values: m.cpu.busy },
@@ -540,6 +544,7 @@ function machineCard(r, common) {
           key: 'vm-stall',
           title: 'Share of the time things on the machine waited',
           format: percent,
+          tick: percentTick,
           height: 130,
           series: [
             { id: 'io', label: 'Disk', color: 'var(--series-2)', values: m.stall.io },

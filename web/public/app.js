@@ -15,7 +15,7 @@ import { volumeDock } from './volumes.js';
 import { stopWatchingUpdates, watchUpdates } from './updates.js';
 import { profilePicker } from './profiles.js';
 import { renderSettings } from './settings.js';
-import { renderSoundboard, VIEW_KEY } from './soundboard.js';
+import { inAddress as boardViewInAddress, renderSoundboard, VIEW_KEY } from './soundboard.js';
 import { SHOWN_PREFIX } from './soundgrid.js';
 import { renderStats } from './stats.js';
 import { startSpeed, stopSpeed } from './speed.js';
@@ -163,7 +163,7 @@ async function start(fromKept = true) {
   // Likewise what the Soundboard shows first, as it's the page people open most
   if (saved && tab === 'board') {
     askEarly(`/api/guilds/${saved}/sounds`);
-    if (recall(VIEW_KEY) !== 'manage') askEarly(`/api/guilds/${saved}/say`);
+    if ((boardViewInAddress() ?? recall(VIEW_KEY)) !== 'manage') askEarly(`/api/guilds/${saved}/say`);
     // And what it keeps up with: who's in voice for Play in, what's playing, the volumes and the sounds
     watchUpdates(saved, ['playing', 'music', 'voice', 'sounds', 'volumes']);
   }

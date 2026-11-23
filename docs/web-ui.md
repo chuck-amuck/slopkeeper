@@ -14,7 +14,7 @@ A web page for everything the bot does, running as a second container next to it
 - **Pop out:** in Chrome or Edge 116+, or Firefox 151+, over HTTPS, the Sounds panel and the music player can pop out into a small window that stays on top of everything, a game included.
 - **Undo:** removing a song, deleting a sound or saved line, taking a sound off Discord, **Never suggest this** and **Reset** on a setting each offer **Undo** for a few seconds.
 
-Everything updates live, whoever changed it and wherever, and a change waits while you're typing in something it would redraw. If the bot can't be reached, the page says so and retries by itself. After an update, a page left open offers **Reload**. Each tab has its own address, like `#music`, and so does each view in a tab, like `#games/nights`. A phone can add the page to its home screen. Settings → Basics → **This browser** hides the music player or the Sounds button in that browser.
+Everything updates live, whoever changed it and wherever, and a change waits while you're typing in something it would redraw. If the bot can't be reached, the page says so and retries by itself. After an update, a page left open offers **Reload**. Each tab has its own address, like `#music`, and so does each view in a tab, like `#games/nights` or `#board/manage`. A phone can add the page to its home screen. Settings → Basics → **This browser** hides the music player or the Sounds button in that browser.
 
 ## Tabs
 
