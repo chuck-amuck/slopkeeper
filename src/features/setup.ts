@@ -25,6 +25,7 @@ import { commandMention } from '../commandIds.ts';
 import { config } from '../config.ts';
 import { SOURCES, type Source } from '../musicSearch.ts';
 import { POSTS, postFailures, type Post } from '../postFailures.ts';
+import type { HeardAs } from '../talkLevel.ts';
 import { voiceProblem } from '../voiceJoin.ts';
 
 const ANNOUNCE_PERMISSIONS = [
@@ -36,6 +37,8 @@ const ANNOUNCE_PERMISSIONS = [
 // Discord enforces these on the /setup options; checkSetting does for anything else
 const PATCH_MODES = { off: 'off', each: 'each one posted', digest: 'weekly digest' };
 const READ_WHO = { everyone: 'everyone', voice: 'only people in voice' };
+/** What counts as people talking, which music drops under (src/talkLevel.ts) */
+const DUCKS_FOR: Record<HeardAs, string> = { any: 'any sound', talking: 'talking, not background noise', loud: 'only clear, loud talking' };
 const LONGEST_GREETING = 100;
 /** The models chat can answer with, by setting value */
 /** Whether chat answers are said in voice too, or instead of posted */
@@ -149,6 +152,7 @@ export const LABELS: Record<SettingKey, string> = {
   musicVolume: 'Music volume',
   evenMusic: 'Even music volume',
   musicDucksForPeople: 'Music drops while people talk',
+  musicDucksFor: 'What counts as talking',
   musicAutoplay: 'Autoplay',
   musicDjRole: 'Who can control music',
   musicSearch: 'Music search',
@@ -179,6 +183,8 @@ export function show(key: SettingKey, value: unknown): string {
       return value ? `<#${value}>` : 'off';
     case 'ttsChannelWho':
       return READ_WHO[value as keyof typeof READ_WHO] ?? String(value);
+    case 'musicDucksFor':
+      return DUCKS_FOR[value as keyof typeof DUCKS_FOR] ?? String(value);
     case 'weeklyPostDay':
       return DAYS[value as number];
     case 'weeklyPostHour':
@@ -325,7 +331,7 @@ export const GROUPS: [string, SettingKey[]][] = [
   ['Free games', ['freeGames', 'freeGamesChannel', 'freeGamesMinRating', 'freeGamesTaste', 'freeGamesMultiplayer', 'freeGamesUnlisted']],
   ['Sounds', ['soundVolume', 'evenVolume']],
   ['Join sounds', ['joinSounds', 'ttsGreet', 'ttsGreeting', 'joinSoundDelayMs', 'joinSoundCooldownMin']],
-  ['Music', ['musicVolume', 'musicDucksForPeople', 'musicAutoplay', 'evenMusic']],
+  ['Music', ['musicVolume', 'musicDucksForPeople', 'musicDucksFor', 'musicAutoplay', 'evenMusic']],
   ['Music search', ['musicSearch', 'musicSearchFallback']],
   ['Text to speech', ['tts', 'ttsVoice', 'ttsEffect', 'ttsVolume', 'ttsSpeed', 'ttsPauseMs', 'ttsMaxChars', 'ttsCooldownSec']],
   ['Read chat aloud', ['ttsChannel', 'ttsChannelWho']],
@@ -573,6 +579,8 @@ export function checkSetting(guild: Guild, key: SettingKey, value: unknown): Che
     }
     case 'ttsChannelWho':
       return Object.hasOwn(READ_WHO, String(value)) ? { value: String(value) } : { error: 'Read everyone, or only people in voice.' };
+    case 'musicDucksFor':
+      return Object.hasOwn(DUCKS_FOR, String(value)) ? { value: String(value) } : { error: 'Pick any sound, talking, or only loud talking.' };
     case 'ttsGreeting':
       return greetingProblem(String(value)) ? { error: greetingProblem(String(value))! } : { value: String(value).trim() };
     case 'chatProfile':

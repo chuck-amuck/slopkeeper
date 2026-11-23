@@ -51,7 +51,16 @@ const FIELDS = {
   ttsChannelWho: { kind: 'choice', options: [['everyone', 'Everyone'], ['voice', 'Only people in voice']], hint: 'Only people in voice leaves out anyone who’s only typing.' },
   soundVolume: { kind: 'volume', hint: 'How loud every sound plays, including join sounds and the looping sound. Speech has its own volume. The Sounds slider on the Soundboard tab and the Volume button change this too.' },
   musicVolume: { kind: 'volume', hint: 'How loud music plays. At 100% it sits well under the bot’s speech, as background music should. It drops to under a third while the bot is talking, and while people are, unless that’s turned off below. The slider on the Music tab and the Volume button change this too.' },
-  musicDucksForPeople: { kind: 'boolean', hint: 'Music drops to under a third while anyone in the call is talking, as it does under the bot, and comes back up gently a moment after they stop. For this the bot isn’t deafened in the call: it notices when people start and stop talking, and never decodes, records or keeps what anyone says. Off, it’s deafened again.' },
+  musicDucksForPeople: { kind: 'boolean', hint: 'Music drops to under a third while anyone in the call is talking, as it does under the bot, and comes back up gently a moment after they stop. For this the bot isn’t deafened in the call. It only measures how loud people are, while music plays, and never records or keeps what anyone says. Off, it’s deafened again.' },
+  musicDucksFor: {
+    kind: 'choice',
+    options: [
+      ['talking', 'Talking, not background noise'],
+      ['loud', 'Only clear, loud talking'],
+      ['any', 'Any sound from a microphone'],
+    ],
+    hint: 'Talking leaves music alone for a keyboard, a cough or a TV in the room. If it still drops for noise, try Only clear, loud talking. Any sound drops it whenever someone’s microphone sends anything, without measuring how loud.',
+  },
   evenMusic: { kind: 'boolean', more: true, hint: 'Plays each song about as loud as the others, so a quiet old recording and a loud new one don’t need the volume changed between them. The files aren’t changed, and it takes effect from the next song.' },
   musicAutoplay: { kind: 'boolean', hint: 'Keeps three songs waiting at the end of the queue, from YouTube, like the last song in it that someone added, so the music carries on in that style. Songs people add play first, and Autoplay’s change to follow the last of them. Turning it off takes out the ones it added. The switch on the Music tab and the /music card change this too.' },
   musicSearch: {
@@ -117,6 +126,7 @@ const RULES = [
   { from: 'ttsGreet', on: (v) => v.ttsGreet, keys: ['ttsGreeting'] },
   { from: 'patchNotes', on: (v) => v.patchNotes !== 'off', keys: ['patchNotesChannel'] },
   { from: 'ttsChannel', on: (v) => Boolean(v.ttsChannel), keys: ['ttsChannelWho'] },
+  { from: 'musicDucksForPeople', on: (v) => v.musicDucksForPeople, keys: ['musicDucksFor'] },
   { from: 'loopText', on: (v) => Boolean(v.loopText), keys: ['loopVoice', 'loopEffect', 'loopTextVolume', 'loopTextEvery', 'loopTextDelayMs'] },
   // The patch notes digest goes out on the leaderboard's day too. The hour stays, as the monthly recap uses it
   { from: 'weeklyLeaderboard', on: (v) => v.weeklyLeaderboard || v.patchNotes === 'digest', keys: ['weeklyPostDay'] },

@@ -5,12 +5,14 @@ import {
   StreamType,
   createAudioPlayer,
   createAudioResource,
+  EndBehaviorType,
   getVoiceConnection,
   VoiceConnectionStatus,
   type VoiceConnection,
 } from '@discordjs/voice';
 import type { Guild, VoiceBasedChannel } from 'discord.js';
 import { existsSync, writeFileSync } from 'node:fs';
+import OpusScript from 'opusscript';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { feeds } from '../changes.ts';
@@ -20,6 +22,7 @@ import * as perf from '../perf.ts';
 import { setting } from '../settings.ts';
 import type { DiscordSound } from '../discordSounds.ts';
 import { humansIn } from '../util.ts';
+import { Burst, type Heard, LevelGate, frameDb, heardAs } from '../talkLevel.ts';
 import { Talking } from '../talking.ts';
 import { destroy, join, setListening, voiceProblem } from '../voiceJoin.ts';
 import { type Sound, VOLUME, findSound, recordPlay, soundGain } from './soundLibrary.ts';
@@ -52,6 +55,8 @@ interface GuildAudio {
   idleTimer?: NodeJS.Timeout;
   /** Who's talking in the call, which music drops under */
   talking?: Talking;
+  /** The people whose audio is being measured, each with a way to stop, and to say Discord has stopped hearing them */
+  measuring?: Map<string, { stop: () => void; quiet: () => void }>;
 }
 
 /** Server id → its audio; the bot can be in a voice channel in every server at once */
@@ -102,32 +107,136 @@ export async function connect(channel: VoiceBasedChannel): Promise<string | null
 
 const listening = new WeakSet<VoiceConnection>();
 
+/** Someone in a voice channel here, and not a bot, like the loop bot or a music bot, which never stop */
+function inVoice(guild: Guild, userId: string) {
+  const state = guild.voiceStates.cache.get(userId);
+  return !!state?.channelId && !state.member?.user.bot;
+}
+
+const counts = (guild: Guild, userId: string) => setting(guild.id, 'musicDucksForPeople') && inVoice(guild, userId);
+
 /**
- * Notices who's talking on the bot's connection, once each, so music can drop under them. Only when each person starts
- * and stops sending: nothing is subscribed to, so none of it is decoded
+ * Notices who's talking on the bot's connection, once each, so music can drop under them. With "What counts as talking"
+ * on any sound, it goes by when each person starts and stops sending, and nothing is decoded; otherwise each person's
+ * audio is measured while music plays (measure)
  */
 function hearTalking(guild: Guild, a: GuildAudio) {
   const connection = getVoiceConnection(guild.id);
   if (!connection || listening.has(connection)) return;
   listening.add(connection);
   const talking = (a.talking ??= new Talking(
-    // Someone in a voice channel here, and not a bot, like the loop bot or a music bot, which never stop
-    (userId) => {
-      const state = guild.voiceStates.cache.get(userId);
-      return setting(guild.id, 'musicDucksForPeople') && !!state?.channelId && !state.member?.user.bot;
-    },
+    (userId) => counts(guild, userId),
     (on) => a.mixer?.setPeopleTalking(on),
   ));
-  connection.receiver.speaking.on('start', (userId) => talking.start(userId));
-  connection.receiver.speaking.on('end', (userId) => talking.end(userId));
-  connection.once(VoiceConnectionStatus.Destroyed, () => talking.stop());
+  connection.receiver.speaking.on('start', (userId) => {
+    const heard = heardAs(setting(guild.id, 'musicDucksFor'));
+    if (!heard) talking.start(userId);
+    else measure(a, connection, guild, userId, heard);
+  });
+  // Discord stops sending when someone stops talking, so that's when they stop counting, measured or not
+  connection.receiver.speaking.on('end', (userId) => {
+    const measured = a.measuring?.get(userId);
+    if (measured) measured.quiet();
+    else talking.end(userId);
+  });
+  connection.once(VoiceConnectionStatus.Destroyed, () => {
+    stopMeasuring(a);
+    talking.stop();
+  });
+}
+
+// Measuring stops this long after someone stops sending, or after starting if nothing comes
+const MEASURE_END_MS = 500;
+
+/**
+ * Decodes someone's audio as it comes, only to measure how loud it is, while music plays: they count as talking once it's
+ * loud enough for long enough (talkLevel.ts). Stops when they stop sending or the music does, and keeps none of it
+ */
+function measure(a: GuildAudio, connection: VoiceConnection, guild: Guild, userId: string, heard: Heard) {
+  const measuring = (a.measuring ??= new Map());
+  if (measuring.has(userId) || !a.talking || !a.mixer?.hasMusic || !counts(guild, userId)) return;
+  // A measuring just stopped closes a moment later, and until then subscribing would hand it back
+  const closing = connection.receiver.subscriptions.get(userId);
+  if (closing?.destroyed) {
+    closing.once('close', () => {
+      const now = heardAs(setting(guild.id, 'musicDucksFor'));
+      if (now) measure(a, connection, guild, userId, now);
+    });
+    return;
+  }
+  const talking = a.talking;
+  const stream = connection.receiver.subscribe(userId, { end: { behavior: EndBehaviorType.AfterSilence, duration: MEASURE_END_MS } });
+  const decoder = new OpusScript(48_000, 2);
+  const gate = new LevelGate(heard, (on) => (on ? talking.start(userId) : talking.end(userId)));
+  const burst = new Burst();
+  let counted = false;
+  let done = false;
+  // Discord's silence only starts counting from the first packet
+  const nothingCame = setTimeout(() => stop(), MEASURE_END_MS);
+  nothingCame.unref();
+  const stop = () => {
+    if (done) return;
+    done = true;
+    clearTimeout(nothingCame);
+    if (measuring.get(userId)?.stop === stop) measuring.delete(userId);
+    stream.destroy();
+    decoder.delete();
+    gate.quiet();
+    // While the levels are tuned, then it comes out
+    if (!burst.empty) console.log(burst.line(counted, heard));
+  };
+  measuring.set(userId, { stop, quiet: () => gate.quiet() });
+  stream.on('data', (packet: Buffer) => {
+    clearTimeout(nothingCame);
+    // The setting itself stops the measuring when it changes (talkingChanged)
+    if (!a.mixer?.hasMusic || !inVoice(guild, userId)) return stop();
+    let pcm: Buffer;
+    try {
+      pcm = decoder.decode(packet);
+    } catch {
+      return;
+    }
+    const db = frameDb(pcm);
+    burst.add(db);
+    gate.frame(db);
+    counted ||= gate.talking;
+  });
+  stream.once('end', stop);
+  stream.once('close', stop);
+  stream.once('error', stop);
+}
+
+function stopMeasuring(a: GuildAudio) {
+  for (const { stop } of [...(a.measuring?.values() ?? [])]) stop();
+}
+
+/** When music starts, or what counts changes, measures anyone already talking, as Discord only says when someone starts */
+function measureTalkers(guildId: string) {
+  const a = audio.get(guildId);
+  const connection = getVoiceConnection(guildId);
+  const guild = botClient?.guilds.cache.get(guildId);
+  const heard = heardAs(setting(guildId, 'musicDucksFor'));
+  if (!a?.talking || !connection || !guild) return;
+  for (const userId of connection.receiver.speaking.users.keys()) {
+    if (heard) measure(a, connection, guild, userId, heard);
+    else a.talking.start(userId);
+  }
 }
 
 /** Deafens or undeafens the bot where it is, as music dropping under people talking was turned off or on */
 export function listeningChanged(guildId: string) {
   const listen = setting(guildId, 'musicDucksForPeople');
   setListening(guildId, listen);
-  if (!listen) audio.get(guildId)?.talking?.stop();
+  if (!listen) talkingChanged(guildId);
+}
+
+/** Starts over on who's talking, as what counts changed: the music comes back up until someone talks again */
+export function talkingChanged(guildId: string) {
+  const a = audio.get(guildId);
+  if (!a) return;
+  stopMeasuring(a);
+  a.talking?.stop();
+  measureTalkers(guildId);
 }
 
 // Speech is levelled to match a sound at the same volume, but heard in a call over people talking it needs more, so its
@@ -174,6 +283,7 @@ export async function playLong(channel: VoiceBasedChannel, file: string, onEnd: 
   heard.step('joining voice');
   let stop!: () => void;
   mixInto(channel.guild.id, (mixer) => (stop = mixer.add(file, gain, onEnd, { group: 'music', lasting: true, ...(startMs > 0 && { startMs }), onHeard: () => (heard.end(), onHeard?.()) })));
+  measureTalkers(channel.guild.id);
   return stop;
 }
 

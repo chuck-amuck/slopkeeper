@@ -145,6 +145,7 @@ Each setting goes by the name `/setup show` and `/setup reset` use. They're list
 | --- | --- | --- | --- |
 | Music volume | `music` | `MUSIC_VOLUME` | 100%, well under the bot's speech |
 | Music drops while people talk | `music` | `MUSIC_DUCKS_FOR_PEOPLE` (`false` to turn off) | on |
+| What counts as talking | web UI only | `MUSIC_DUCKS_FOR` (`talking`, `loud` or `any`) | talking, not background noise |
 | Autoplay | `music`, or `/music autoplay` | `MUSIC_AUTOPLAY` | off |
 | Even music volume | web UI only | `EVEN_MUSIC` (`false` to turn off) | on |
 | Music search | web UI only | `MUSIC_SEARCH` (`spotify` or `youtube-music`) | Spotify |

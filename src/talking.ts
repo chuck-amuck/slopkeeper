@@ -1,12 +1,13 @@
 /**
- * Who's talking in a voice call, from Discord saying when each person starts and stops sending audio, without decoding
- * any of it. Music drops while anyone is, as it does under the bot's own speech
+ * Who's talking in a voice call. Music drops while anyone is, as it does under the bot's own speech. Someone starts and
+ * stops as Discord says they start and stop sending audio, or, unless "What counts as talking" is any sound, as their
+ * measured loudness says (talkLevel.ts)
  */
 
 // The music stays down this long after the last person stops, as a conversation has gaps between sentences
 export const HOLD_MS = 1_500;
-// Discord sends nonstop from a microphone left open with no voice activity threshold. Someone "talking" this long without
-// a pause is one of those, and stops counting until they do pause
+// Discord sends nonstop from a microphone left open with no voice activity threshold. Someone counted as talking this long
+// without a pause is one of those, or a microphone picking up a TV, and stops counting until they do pause
 export const OPEN_MIC_MS = 30_000;
 
 export class Talking {

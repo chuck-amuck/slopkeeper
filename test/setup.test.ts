@@ -205,6 +205,13 @@ test('the channel read aloud has to be one the bot can see', () => {
   assert.equal(setting('speech', 'ttsChannelWho'), 'everyone');
 });
 
+test('what counts as talking is one of three, talking unless changed', () => {
+  const guild = { members: { me: {} } } as never;
+  assert.equal(setting('talk-check', 'musicDucksFor'), 'talking');
+  for (const value of ['any', 'talking', 'loud']) assert.deepEqual(checkSetting(guild, 'musicDucksFor', value), { value });
+  assert.match((checkSetting(guild, 'musicDucksFor', 'loudest') as { error: string }).error, /only loud talking/);
+});
+
 test('the greeting has to have words, and stay short', async () => {
   const guild = {} as never;
   assert.deepEqual(checkSetting(guild, 'ttsGreeting', '  Hi {name} '), { value: 'Hi {name}' });

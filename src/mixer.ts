@@ -383,6 +383,11 @@ export class Mixer extends Readable {
     return this.done || this.destroyed;
   }
 
+  /** Whether music is in the mix, which people talking drop */
+  get hasMusic(): boolean {
+    return !this.finished && this.voices.some((v) => v.group === 'music' && !v.ended);
+  }
+
   /**
    * `onEnd` runs once the sound is over, however that came about. Returns a way to stop it. The mixer emits 'playing'
    * whenever a sound starts or ends, so what's playing can be shown as it changes

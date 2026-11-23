@@ -9,7 +9,7 @@ import type { Feature } from '../types.ts';
 import { servedGuilds } from '../util.ts';
 import { commandMention } from '../commandIds.ts';
 import { BIN_DAYS, DAY, type Sound, VOLUME_PERCENT, addToDiscord, libraryChanged, applyLevels, changeEmoji, clearBin, deletedSounds, dropMissingEmoji, findSound, levelLibrary, listSounds, parseEmoji, recordDiscordPlay, recordPlay, removeSound, renameSound, restoreDeleted, setSoundVolume, soundGain, syncToDiscord, uploadProblem } from './soundLibrary.ts';
-import { applyMusicVolume, applySoundVolume, applySpeechVolume, leaveIfAlone, listeningChanged, leaveVoice, musicOn, play, stopPlayback } from './voiceAudio.ts';
+import { applyMusicVolume, applySoundVolume, applySpeechVolume, leaveIfAlone, listeningChanged, leaveVoice, musicOn, play, stopPlayback, talkingChanged } from './voiceAudio.ts';
 import { autoplayChanged, musicCardsChanged } from './music.ts';
 import { affectsLoopRoom, checkLoopRoom, noteLoopRoom, refreshLoopRoom, startLoopRoom, stopLoopRoom } from './loopRoom.ts';
 import { playJoinSound, setJoinSound } from './joinSounds.ts';
@@ -33,6 +33,7 @@ export async function afterSettingsChanged(guild: Guild, keys: string[]): Promis
     musicCardsChanged(guild.id);
   }
   if (keys.includes('musicDucksForPeople')) listeningChanged(guild.id);
+  if (keys.includes('musicDucksFor')) talkingChanged(guild.id);
   if (keys.includes('musicAutoplay')) autoplayChanged(guild.id);
   if (keys.some(affectsLoopRoom)) await refreshLoopRoom(guild);
   // The bot's nickname and photo follow its profile. Why they couldn't, if they couldn't, for whoever changed it

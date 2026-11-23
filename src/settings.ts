@@ -1,6 +1,7 @@
 import { type FeedName, feeds } from './changes.ts';
 import { config } from './config.ts';
 import { db } from './db.ts';
+import { HEARD } from './talkLevel.ts';
 
 const num = (name: string, fallback: number) => (process.env[name] ? Number(process.env[name]) : fallback);
 
@@ -111,6 +112,8 @@ export const DEFAULTS = {
   evenMusic: process.env.EVEN_MUSIC !== 'false',
   // Music drops while people talk in the call, as it does under the bot's speech. The bot then isn't deafened, to notice
   musicDucksForPeople: process.env.MUSIC_DUCKS_FOR_PEOPLE !== 'false',
+  // What counts as people talking: any sound, talking (not background noise) or only loud talking. src/talkLevel.ts
+  musicDucksFor: Object.hasOwn(HEARD, process.env.MUSIC_DUCKS_FOR ?? '') ? process.env.MUSIC_DUCKS_FOR! : 'talking',
   // Off until someone turns it on, so the music stops when the queue runs out, as people expect
   musicAutoplay: process.env.MUSIC_AUTOPLAY === 'true',
   // Unset lets everyone control music
@@ -197,6 +200,7 @@ export const DEFAULT_ENV: Partial<Record<SettingKey, string>> = {
   musicVolume: 'MUSIC_VOLUME',
   evenMusic: 'EVEN_MUSIC',
   musicDucksForPeople: 'MUSIC_DUCKS_FOR_PEOPLE',
+  musicDucksFor: 'MUSIC_DUCKS_FOR',
   musicAutoplay: 'MUSIC_AUTOPLAY',
   musicSearch: 'MUSIC_SEARCH',
   musicSearchFallback: 'MUSIC_SEARCH_FALLBACK',
