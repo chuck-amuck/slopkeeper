@@ -33,7 +33,31 @@ jobs:
       - run: ffmpeg -hide_banner -version | head -1
       - run: npm ci
       - run: npm run typecheck
+      # The browser test runs in test-browser, alongside, rather than waiting for a free slot here
       - run: npm test
+        env:
+          SKIP_WEB_UI: '1'
+
+  # Every web UI page in Chrome, which the runner has, at computer and phone widths
+  test-browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+      # The same static ffmpeg as the image, from its Dockerfile, rather than whichever apt has
+      - run: |
+          docker create --name ffmpeg "$(sed -n 's/^FROM \([^ ]*\) AS ffmpeg$/\1/p' Dockerfile)"
+          mkdir -p "$RUNNER_TEMP/ffmpeg"
+          docker cp ffmpeg:/ffmpeg "$RUNNER_TEMP/ffmpeg/"
+          docker cp ffmpeg:/ffprobe "$RUNNER_TEMP/ffmpeg/"
+          echo "$RUNNER_TEMP/ffmpeg" >> "$GITHUB_PATH"
+        timeout-minutes: 5
+      - run: npm ci
+      - run: node --disable-warning=ExperimentalWarning --test --test-timeout=120000 test/webui.test.ts
 
   test-web:
     runs-on: ubuntu-latest
@@ -76,7 +100,7 @@ jobs:
       - run: python3 -m unittest discover -s music -p '*_test.py'
 
   build:
-    needs: test
+    needs: [test, test-browser]
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:

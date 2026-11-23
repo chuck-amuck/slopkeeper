@@ -29,9 +29,11 @@ same static ffmpeg as the image and CI. Without ffmpeg the audio tests skip sile
 - Front end: `for f in web/public/*.js; do node --check "$f"; done`.
 - Charts and the calendar are ECharts and Cally, built into `web/public/vendor-*.js` by `scripts/build-vendor.sh` (the
   command is at its top). Don't edit those files; change a version there and build again.
-- Every web UI page in headless Chromium, at computer and phone widths (about 2½ minutes), on the host, since sk-test has no
+- Every web UI page in headless Chromium, at computer and phone widths (about a minute), on the host, since sk-test has no
   browser and skips it: `node --disable-warning=ExperimentalWarning --test test/webui.test.ts` (`CHROME` names another
-  browser). CI requires it.
+  browser). CI requires it, and runs it as a job of its own (`test-browser`); `SKIP_WEB_UI=1` leaves it out of `npm test`.
+  A case's check is retried until it's true after its action, so it mustn't change anything: put things back in the
+  case's last part.
 - Chat's behaviour test runs its answer loop against the real model and Spotify, and checks each answer's tools,
   pings and length (1 or 2 cents on Haiku, so not in CI). Run it after changing chat's prompt or tools, in sk-test
   with `ANTHROPIC_API_KEY`, `SPOTIFY_CLIENT_ID` and `SPOTIFY_CLIENT_SECRET` set:

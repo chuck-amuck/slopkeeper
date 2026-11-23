@@ -1,6 +1,7 @@
 // Every page of the web UI in a real browser, against the real management API with the API tests' fake server: no
 // script errors, no failed requests, nothing blank or showing an error, and nothing that scrolls sideways on a phone.
-// It needs Chrome or Chromium (CHROME names one). In CI one is required; elsewhere, without one, it's skipped
+// It needs Chrome or Chromium (CHROME names one). In CI one is required; elsewhere, without one, it's skipped. CI runs it
+// in a job of its own, so its other tests leave it out with SKIP_WEB_UI=1
 import { base, GUILD, soundFolder, TOKEN, wav } from './apiFixture.ts';
 import assert from 'node:assert/strict';
 import { spawn, execFileSync, type ChildProcess } from 'node:child_process';
@@ -13,6 +14,7 @@ import { after, before, mock, test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { config } from '../src/config.ts';
 import { resetChat } from '../src/features/chat.ts';
+import { lookups } from '../src/features/gamefacts.ts';
 import { db, setKv } from '../src/db.ts';
 import * as perf from '../src/perf.ts';
 import { createWeb } from '../web/src/server.ts';
@@ -71,7 +73,11 @@ const GAMES_VIEW = (id: string, label: string) =>
 // Lines said and kept answered in the page, as there's no voice channel here: each is noted in window.sent as [path, json]
 const SAY_STUB = String.raw`const real = window.fetch; window.sent = []; window.fetch = (url, init) => { const u = String(url); if (init?.method === 'POST' && /\/say(\/sound)?$/.test(u)) { const json = JSON.parse(init.body); window.sent.push([u.replace(/.*\/api\/guilds\/[^/]+/, ''), json]); return Promise.resolve(Response.json(u.endsWith('/sound') ? { name: json.name, replaced: false, discordProblem: null } : {})); } return real(url, init); };`;
 
-const PAGES: [string, string, Record<string, string>?, string?, string?][] = [
+/**
+ * Each page: its address, a name, what the browser remembers first, a check that has to be true, something to do first
+ * (then the check is tried until it's true, so it mustn't change anything), and something to put back after
+ */
+const PAGES: [string, string, Record<string, string>?, string?, string?, string?][] = [
   ['board', 'Soundboard', {}, `${CLEAR_OF_PAGE} && ${NAMES_FIT} && !!document.querySelector('.view-slot > .play-in select') && !!document.querySelector('.view-slot input[type=search]') === innerWidth >= 1100`],
   // Play | Manage stays where it is as the view changes, and Manage has its search and buttons beside it on a wide screen
   [
@@ -499,15 +505,17 @@ const PAGES: [string, string, Record<string, string>?, string?, string?][] = [
     {},
     `(async () => {
       const face = document.querySelector('.profile-face');
-      const ok = face.getAttribute('aria-label') === 'Profile: Robot butler' && face.querySelector('.mono')?.textContent === 'RB' && document.querySelector('.profile-menu').hidden
+      return face.getAttribute('aria-label') === 'Profile: Robot butler' && face.querySelector('.mono')?.textContent === 'RB' && document.querySelector('.profile-menu').hidden
         && (await (await fetch('/api/guilds/${GUILD}/settings').catch(() => null))?.json().catch(() => null))?.settings?.find?.((x) => x.key === 'chatProfile')?.value === 'butler';
+    })()`,
+    `(() => { document.querySelector('.profile-face').click(); [...document.querySelectorAll('.profile-menu-name')].find((n) => n.textContent === 'Robot butler').closest('button').click(); })()`,
+    // The pirate back, as the pages after expect
+    `(async () => {
+      const face = document.querySelector('.profile-face');
       face.click();
       [...document.querySelectorAll('.profile-menu-name')].find((n) => n.textContent.startsWith('A grumpy pirate')).closest('button').click();
       for (let i = 0; i < 50 && face.getAttribute('aria-label') !== 'Profile: A grumpy pirate with a long name to wrap'; i++) await new Promise((r) => setTimeout(r, 100));
-      await new Promise((r) => setTimeout(r, 500));
-      return ok;
     })()`,
-    `(() => { document.querySelector('.profile-face').click(); [...document.querySelectorAll('.profile-menu-name')].find((n) => n.textContent === 'Robot butler').closest('button').click(); })()`,
   ],
 ];
 const SCREENS = [
@@ -523,8 +531,18 @@ function findBrowser(): string | null {
   }
   return null;
 }
-const browserPath = findBrowser();
-if (!browserPath && process.env.CI) throw new Error('The web UI test needs Chrome in CI, and none was found');
+const elsewhere = process.env.SKIP_WEB_UI === '1';
+const browserPath = elsewhere ? null : findBrowser();
+if (!browserPath && process.env.CI && !elsewhere) throw new Error('The web UI test needs Chrome in CI, and none was found');
+// Steam's answers are made up here, so there's no need to wait a second between them as the bot does. Deals and Settings
+// ask about a few games, which took seconds and sometimes ran past the wait for a page
+lookups.gapMs = 0;
+
+/** How long the network has to be quiet before a page counts as settled, and how long to wait for that at most */
+const QUIET_MS = 200;
+const SETTLE_MS = 3000;
+/** How long a case's check has to come true, after its action or once its page shows */
+const CHECK_MS = 5000;
 
 /** Just enough of Chrome's DevTools protocol: commands, and events as they come */
 class Page {
@@ -717,7 +735,7 @@ before(async () => {
   chrome.stderr!.on('data', (chunk: Buffer) => (chromeSaid = (chromeSaid + chunk).slice(-4000)));
 });
 
-test('every page of the web UI opens cleanly, on a computer and a phone', { skip: !browserPath && 'no Chrome or Chromium here', timeout: 240_000 }, async () => {
+test('every page of the web UI opens cleanly, on a computer and a phone', { skip: elsewhere ? 'run on its own (SKIP_WEB_UI=1)' : !browserPath && 'no Chrome or Chromium here', timeout: 240_000 }, async () => {
   seed();
   // Started here, as the API's address is only known once the fixture's own set-up has run
   web = createWeb({ password: PASSWORD, apiToken: TOKEN, botUrl: base });
@@ -746,6 +764,27 @@ test('every page of the web UI opens cleanly, on a computer and a phone', { skip
     // Leaving a page cancels what it was still waiting for, like live updates
     if (method === 'Network.loadingFailed' && !p.canceled && p.errorText !== 'net::ERR_ABORTED') problems.push(`request failed: ${p.errorText}`);
   });
+  // What the page is still waiting for, but for live updates, which wait for news on purpose, and when that last changed
+  const open = new Set<string>();
+  let lastNetwork = performance.now();
+  page.on((method, p) => {
+    if (method === 'Network.requestWillBeSent' && !p.request.url.includes('/updates?')) open.add(p.requestId);
+    else if (method !== 'Network.loadingFinished' && method !== 'Network.loadingFailed') return;
+    else open.delete(p.requestId);
+    lastNetwork = performance.now();
+  });
+  /** Until nothing's been asked for or answered for a moment, as what came back is drawn straight after */
+  const settle = async () => {
+    for (const end = performance.now() + SETTLE_MS; performance.now() < end; await sleep(25)) {
+      if (!open.size && performance.now() - lastNetwork >= QUIET_MS) return;
+    }
+  };
+  /** Until a case's check is true, or the time's up. One that throws, as the thing it looks at isn't there yet, isn't */
+  const until = async (check: string) => {
+    for (const end = performance.now() + CHECK_MS; performance.now() < end; await sleep(50)) {
+      if (await page.evaluate<boolean>(check).catch(() => false)) return;
+    }
+  };
   await Promise.all(['Runtime.enable', 'Network.enable', 'Page.enable'].map((m) => page.send(m)));
   // Focus events fire as in a window that has the focus, which a headless one never does
   await page.send('Emulation.setFocusEmulationEnabled', { enabled: true });
@@ -761,18 +800,21 @@ test('every page of the web UI opens cleanly, on a computer and a phone', { skip
     await page.send('Emulation.setDeviceMetricsOverride', { width: screen.width, height: screen.height, deviceScaleFactor: 1, mobile: screen.mobile });
     // A phone's touch, so its bigger tap areas are what's tested
     await page.send('Emulation.setTouchEmulationEnabled', { enabled: screen.mobile });
-    for (const [hash, label, stored = {}, expect, act] of PAGES) {
+    for (const [hash, label, stored = {}, expect, act, putBack] of PAGES) {
       // A fresh page each time, with what it remembers set first, and chat's wait between questions over, as two pages ask
       // within seconds
       resetChat();
       await page.send('Page.navigate', { url: `${site}/#${hash}` });
       await page.evaluate(`localStorage.clear(); ${Object.entries(stored).map(([k, v]) => `localStorage.setItem(${JSON.stringify(k)}, ${JSON.stringify(v)});`).join('')} true`);
       problems = [];
+      // What the last page left waiting is cancelled as it goes
+      open.clear();
+      lastNetwork = performance.now();
       await page.send('Page.reload', { ignoreCache: true });
-      // Until it's shown something other than "Loading…", and a moment more for what follows
+      // Until it's shown something other than "Loading…", then until what follows has come and been drawn
       const shown = await (async () => {
-        for (let i = 0; i < 100; i++) {
-          await sleep(100);
+        for (let i = 0; i < 200; i++) {
+          await sleep(50);
           const ready = await page.evaluate<boolean>(`(() => {
             const main = document.querySelector('main');
             return !!main && main.innerText.trim().length > 0 && !main.querySelector('.notice.loading') && !/Loading…/.test(main.innerText);
@@ -781,11 +823,15 @@ test('every page of the web UI opens cleanly, on a computer and a phone', { skip
         }
         return false;
       })();
-      await sleep(500);
       if (act && shown) {
+        await settle();
         await page.evaluate(act);
-        await sleep(1500);
+        // Without a check, there's nothing to say when it's done
+        if (expect) await until(expect);
+        else await sleep(1500);
       }
+      // Some checks without an action do things themselves, so they're run once, once the page has settled
+      await settle();
       const look = await page.evaluate<{ text: number; errors: string[]; wide: number; width: number; past: string[]; playInHeader: boolean }>(`(() => {
         const main = document.querySelector('main');
         return {
@@ -831,6 +877,10 @@ test('every page of the web UI opens cleanly, on a computer and a phone', { skip
       for (const error of look.errors) failures.push(`${where}: shows "${error}"`);
       if (Math.max(look.wide, look.width) > screen.width + 1) failures.push(`${where}: scrolls sideways (${look.wide} px wide on a ${screen.width} px screen): ${look.past.join('; ')}`);
       for (const problem of problems) failures.push(`${where}: ${problem}`);
+      if (putBack && shown) {
+        await page.evaluate(putBack);
+        await settle();
+      }
     }
   }
   page.close();
