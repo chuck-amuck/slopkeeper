@@ -1,6 +1,6 @@
 import { db } from '../db.ts';
 import * as perf from '../perf.ts';
-import { MINUTES_KEPT_MS, POLL_MS, ROLLUP_MS, ROLLUPS_KEPT_MS, SAMPLE_MS } from './health.ts';
+import { BROWSER_WAITS, MINUTES_KEPT_MS, POLL_MS, ROLLUP_MS, ROLLUPS_KEPT_MS, SAMPLE_MS, type BrowserWait } from './health.ts';
 import { voiceName } from './say.ts';
 
 /**
@@ -58,7 +58,7 @@ export const LIMITS = {
   soundStart: [1, 3],
   /** Lines of 300 characters or fewer: a paragraph takes seconds more */
   speechMake: [2.5, 5],
-  /** A song not downloaded ahead takes most of 10 seconds from YouTube */
+  /** A song not downloaded ahead takes a few seconds from YouTube, and more when YouTube is slow or turns the quick way down */
   musicStart: [8, 15],
   /** Share of audio frames mixed late */
   stutter: [0.005, 0.02],
@@ -92,6 +92,12 @@ export const LIMITS = {
   /** Share of the time the bot was paused collecting garbage, at its worst point */
   gcShare: [0.03, 0.1],
 } as const satisfies Record<string, readonly [number, number]>;
+
+/**
+ * 95th percentiles of actions in the web UI that wait on work by design, each on its own: Claude's answer, speech being made
+ * (its own limit and the trip), a song starting (as music starts), and a sound downloading from a link
+ */
+export const WAIT_LIMITS = { chat: [10, 20], speech: [3, 6], music: [8, 15], links: [10, 20] } as const satisfies Record<BrowserWait, readonly [number, number]>;
 
 /** Quiet is nothing measured, and few is something, but too little to say whether it's fine */
 export type Status = 'fine' | 'slow' | 'bad' | 'quiet' | 'few';
@@ -353,7 +359,7 @@ export function healthNumbers(window: Window, now = Date.now()) {
     status: requestsAll ? judge(requests.errors / requestsAll, LIMITS.webErrors) : ('quiet' as Status),
   };
 
-  // The web UI as people see it, in their browsers. Taps are actions: loads include whole pages of data
+  // The web UI as people see it, in their browsers. Taps are actions: loads include whole pages of data, and waits are judged on their own
   const tapCells = of('browser_request_seconds', (l) => l.kind === 'action');
   const taps = timing(tapCells);
   const shown = timing(of('browser_page_seconds', (l) => l.step === 'shown'));
@@ -389,6 +395,19 @@ export function healthNumbers(window: Window, now = Date.now()) {
     /** Below it, a line isn't judged */
     fewest: FEWEST_TO_JUDGE,
     status: browserJudged.length ? worse(...browserJudged) : taps.count || shown.count || responses.count ? ('few' as Status) : ('quiet' as Status),
+  };
+
+  // Waits people expect, each judged on its own once there are enough of it
+  const waitKinds = BROWSER_WAITS.map((what) => {
+    const times = timing(of('browser_request_seconds', (l) => l.kind === 'wait' && l.what === what));
+    return { what, count: times.count, p50: times.p50, p95: times.p95, status: times.count >= FEWEST_TO_JUDGE ? judge(times.p95, WAIT_LIMITS[what]) : ('few' as Status) };
+  }).filter((w) => w.count > 0);
+  const waitsJudged = waitKinds.filter((w) => w.status !== 'few').map((w) => w.status);
+  const waits = {
+    count: waitKinds.reduce((sum, w) => sum + w.count, 0),
+    kinds: waitKinds,
+    fewest: FEWEST_TO_JUDGE,
+    status: waitsJudged.length ? worse(...waitsJudged) : waitKinds.length ? ('few' as Status) : ('quiet' as Status),
   };
 
   const seen = new Set(CONTAINERS.filter((c) => perf.gaugeValue('container_up', { container: c }) !== undefined));
@@ -444,7 +463,7 @@ export function healthNumbers(window: Window, now = Date.now()) {
   const gc = gcNumbers(of('gc_pause_seconds'), step);
   const verdict = verdictOf({ machine, containers, gc, slowed: { commands, sounds, speech, music, stutter, bot, web, browser } });
 
-  return { range, start, step, points, limits: LIMITS, verdict, discord, commands, sounds, speech, music, stutter, bot: { ...bot, gc }, web, browser, machine, containers };
+  return { range, start, step, points, limits: LIMITS, verdict, discord, commands, sounds, speech, music, stutter, bot: { ...bot, gc }, web, browser, waits, machine, containers };
 }
 
 type Of = (name: perf.Metric, match?: (labels: perf.Labels) => boolean) => (Cell | null)[];

@@ -39,7 +39,7 @@ export function musicPlayer(openMusic, { inWindow = false, extra = null } = {}) 
   const text = el('span', { className: 'mini-text' }, title, sub);
   const song = inWindow ? el('div', { className: 'mini-song' }, art, text) : el('button', { type: 'button', className: 'mini-song', title: 'Open Music', onclick: openMusic }, art, text);
   const playButton = el('button', { type: 'button', className: 'icon mini-play', onclick: pressPlay });
-  const skipButton = el('button', { type: 'button', className: 'icon mini-skip', ariaLabel: 'Skip', title: 'Skip to the next song', onclick: () => void act(() => request(api('/music/skip'), { method: 'POST' })) }, icon('next'));
+  const skipButton = el('button', { type: 'button', className: 'icon mini-skip', ariaLabel: 'Skip', title: 'Skip to the next song', onclick: () => void act(() => request(api('/music/skip'), { method: 'POST', wait: 'music' })) }, icon('next'));
   const close = el('button', { type: 'button', className: 'icon quiet mini-close', ariaLabel: 'Hide the music player', title: 'Hide until the music stops', onclick: hide }, icon('x'));
   // Play in's channel, which Play plays on in, and who's in voice, which says whether it can
   const voice = voiceBar(() => paint(), { sliders: false });

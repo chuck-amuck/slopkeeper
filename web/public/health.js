@@ -81,8 +81,17 @@ function tile(title, status, value, ...notes) {
   );
 }
 
+/** What each of the web UI's waits was for, from the bot's BROWSER_WAITS */
+const WAIT_NAMES = { chat: 'Chat answers', speech: 'Speech made', music: 'Songs starting', links: 'Sounds from links' };
+
+/** One kind of wait: how long, how many, and whether it's slow or too few to judge */
+function waitLine(w, fewest) {
+  const judged = w.count < fewest ? ', too few to judge' : w.status === 'slow' || w.status === 'bad' ? `, ${STATUS[w.status][0].toLowerCase()}` : '';
+  return `${WAIT_NAMES[w.what] ?? w.what}: ${w.count}, 95% within ${seconds(w.p95)}, typically ${seconds(w.p50)}${judged}`;
+}
+
 function tiles(r) {
-  const { discord, commands, sounds, speech, music, stutter, bot, web, browser } = r;
+  const { discord, commands, sounds, speech, music, stutter, bot, web, browser, waits } = r;
   // From a bot older than this page, until both are redeployed
   // Taps at home: 0.2 s, away from home: 1.6 s
   const both = (label, a, b, aLabel, bLabel) => {
@@ -156,6 +165,15 @@ function tiles(r) {
       browser.shown.count > 0 && `Opens within ${seconds(browser.shown.p95)} for 95%${tooFew(browser.shown.count)}`,
       browser.responses.count > 0 && `Reacts to taps within ${seconds(browser.responses.p95)} for 95%${tooFew(browser.responses.count)}`,
     ),
+    // Taps that wait on work by design, so they don't count against the taps above
+    waits &&
+      tile(
+        'Waits people expect',
+        waits.status,
+        waits.count ? plural(waits.count, 'wait') : 'None',
+        ...waits.kinds.map((w) => waitLine(w, waits.fewest)),
+        waits.count > 0 && 'Each is judged on its own, as it waits on Claude, speech, YouTube or a download',
+      ),
   );
 }
 
@@ -319,6 +337,10 @@ function detailText(what, detail) {
   if (detail.kept === true) parts.push(what === 'Speech' ? 'made a moment before' : 'already saved');
   if (detail.kept === false && what === 'Music') parts.push('downloaded');
   if (detail.sharedWithAnother) parts.push('made for another line too');
+  // A slow opening of the web UI: the tab it opened on, and where and on what
+  if (detail.tab) parts.push(`opened on ${detail.tab === 'board' ? 'Soundboard' : detail.tab[0].toUpperCase() + detail.tab.slice(1)}`);
+  if (detail.via) parts.push(detail.via === 'away' ? 'away from home' : 'at home');
+  if (detail.device) parts.push(`on a ${detail.device}`);
   return parts.join(' · ');
 }
 

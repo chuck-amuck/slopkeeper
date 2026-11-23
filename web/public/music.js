@@ -40,7 +40,7 @@ export function paintCover(holder, src, size) {
 /** Pauses, or plays on where it paused, in the channel picked in Play in */
 export function playOrPause(data, channel) {
   if (data.phase === 'playing') return request(api('/music/pause'), { method: 'POST' });
-  return request(api('/music/play'), { method: 'POST', json: { channelId: channel.id } });
+  return request(api('/music/play'), { method: 'POST', wait: 'music', json: { channelId: channel.id } });
 }
 
 /** Why Play can't be pressed now, or '' if it can. `channel` is Play in's. Pause always can */
@@ -77,7 +77,8 @@ export const removeAutoplaySong = (row) => request(api(`/music/queue/${row.id}`)
 
 /** Adds to the queue, saying so. Play next with nothing queued plays it at once in `channel`, Play in's. Returns the bot's answer */
 export async function addToQueue(body, next, channel) {
-  const fresh = await attempt(() => request(api('/music/queue'), { method: 'POST', json: { ...body, next, ...(next && channel && { channelId: channel.id }) } }));
+  // Played at once, it waits for the song to start
+  const fresh = await attempt(() => request(api('/music/queue'), { method: 'POST', json: { ...body, next, ...(next && channel && { channelId: channel.id }) }, wait: next && channel ? 'music' : null }));
   if (fresh) toast(fresh.message ?? `Added ${body.track?.title ?? 'it'}${next ? ' to play next' : ''}.`);
   return fresh;
 }
@@ -199,7 +200,7 @@ export function renderMusic(main) {
     paintControls();
   }, { sliders: false });
   const playButton = el('button', { className: 'primary', onclick: () => void act(() => (cantPlay(data, voice.channel()) ? null : playOrPause(data, voice.channel()))) }, 'Play');
-  const skipButton = el('button', { onclick: () => void act(() => request(api('/music/skip'), { method: 'POST' })) }, 'Skip');
+  const skipButton = el('button', { onclick: () => void act(() => request(api('/music/skip'), { method: 'POST', wait: 'music' })) }, 'Skip');
   const stopButton = confirmButton({ title: 'Stops the music and empties the queue' }, 'Stop and clear', 'Clear the queue?', async () => show(await request(api('/music/stop'), { method: 'POST' })));
   // The music follows the slider as it's dragged, and letting go saves it
   const preview = volumePreview('music');
@@ -392,7 +393,7 @@ export function renderMusic(main) {
     try {
       const fresh = await attempt(async () => {
         try {
-          return await request(api('/music/queue'), { method: 'POST', json: { file: id, next, ...playingIn(next) } });
+          return await request(api('/music/queue'), { method: 'POST', json: { file: id, next, ...playingIn(next) }, wait: playingIn(next).channelId ? 'music' : null });
         } catch (err) {
           // Gone after an hour waiting: the box comes back for another go
           if (err.status === 404 && uploaded?.id === id) {

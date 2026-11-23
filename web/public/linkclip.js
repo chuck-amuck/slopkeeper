@@ -39,7 +39,7 @@ export const nameFromTitle = (title) =>
     .replace(/-+$/, '') || 'sound';
 
 /** Has the bot download a link. Resolves with what it is: its id, title, length and whether there's a picture */
-export const downloadLink = (url) => request(api('/sound-links'), { method: 'POST', json: { url } });
+export const downloadLink = (url) => request(api('/sound-links'), { method: 'POST', json: { url }, wait: 'links' });
 
 /** `base`, or base-2, base-3… if that's taken, as the bot names a sound kept beside one of the same name */
 export function freeName(base, isSound) {

@@ -114,7 +114,7 @@ export function voiceBar(onChange, { sliders = true } = {}) {
     /** Makes `id` the channel, here and in Play in, unless someone's picked one by hand on this server since load */
     prefer: (id) => byHand.has(state.guildId) || choose(id, false),
     play: (name) => request(soundPath(name, '/play'), { method: 'POST', json: { channelId: chosen() } }),
-    say: (text, voice, effect) => request(api('/say'), { method: 'POST', json: { channelId: chosen(), text, voice, effect } }),
+    say: (text, voice, effect) => request(api('/say'), { method: 'POST', wait: 'speech', json: { channelId: chosen(), text, voice, effect } }),
     playDiscord: (id) => request(api(`/discord-sounds/${id}/play`), { method: 'POST', json: { channelId: chosen() } }),
   };
 }

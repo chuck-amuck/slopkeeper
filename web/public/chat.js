@@ -372,7 +372,7 @@ function draw(body, setup, guildId) {
     send.disabled = true;
     paint();
     try {
-      const result = await request(api('/chat-try'), { method: 'POST', json: { text: asked, as: asWho.value, channelId: inChannel.value, history, ...(asProfile.value && { profile: asProfile.value }) } });
+      const result = await request(api('/chat-try'), { method: 'POST', wait: 'chat', json: { text: asked, as: asWho.value, channelId: inChannel.value, history, ...(asProfile.value && { profile: asProfile.value }) } });
       // Cleared while it was coming: the answer goes with what it answered
       if (!lines.includes(waiting)) return;
       if (result.inDiscord) inDiscordNote.textContent = result.inDiscord;

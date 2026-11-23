@@ -436,7 +436,12 @@ export function askEarly(url) {
   early.set(url, entry);
 }
 
-export async function request(url, { json, body, method = 'GET', signal } = {}) {
+/**
+ * Asks the bot through the web UI. `wait` says what an action waits on by design, so it's timed apart from taps: 'chat' for
+ * Claude's answer, 'speech' for speech being made, 'music' for a song that may download before it starts, and 'links' for a
+ * sound downloading from a link
+ */
+export async function request(url, { json, body, method = 'GET', signal, wait = null } = {}) {
   const ahead = method === 'GET' && body === undefined && early.get(url);
   if (ahead) {
     early.delete(url);
@@ -468,7 +473,7 @@ export async function request(url, { json, body, method = 'GET', signal } = {}) 
   if (timed) {
     // The network's part ends as the answer starts arriving: the rest of a long answer is still on its way from the bot
     const bot = botTime(res);
-    noteRequest(method === 'GET' ? 'load' : 'action', (performance.now() - asked) / 1000, bot === null ? null : (answered - asked) / 1000 - bot);
+    noteRequest(method === 'GET' ? 'load' : wait ? 'wait' : 'action', (performance.now() - asked) / 1000, bot === null ? null : (answered - asked) / 1000 - bot, wait);
   }
   return data;
 }
@@ -479,18 +484,24 @@ export async function request(url, { json, body, method = 'GET', signal } = {}) 
  */
 export async function fetchAudio(url, json) {
   let res;
+  const asked = performance.now();
   try {
     res = await fetch(url, json === undefined ? undefined : { method: 'POST', headers: { 'x-slopkeeper': '1', 'content-type': 'application/json' }, body: JSON.stringify(json) });
   } catch {
     throw new RequestError('Couldn’t reach the web UI. Check your connection.');
   }
+  const answered = performance.now();
   checkVersion(res);
   if (res.status === 401) {
     session.onExpired();
     throw new RequestError('Log in again.', 401);
   }
   if (!res.ok) throw new RequestError((await res.json().catch(() => ({}))).error ?? `Couldn’t get that (${res.status}).`, res.status);
-  return URL.createObjectURL(await res.blob());
+  const audio = await res.blob();
+  // Every one is speech, made as it's asked for: a preview of a voice, or a line of Chat's answer
+  const bot = botTime(res);
+  noteRequest('wait', (performance.now() - asked) / 1000, bot === null ? null : (answered - asked) / 1000 - bot, 'speech');
+  return URL.createObjectURL(audio);
 }
 
 /** Runs an action from a button or field, showing any failure */

@@ -25,6 +25,9 @@ export const ROLLUP_MS = 15 * 60_000;
 export const MINUTES_KEPT_MS = 2 * 86_400_000;
 export const ROLLUPS_KEPT_MS = 30 * 86_400_000;
 const SLOW_KEPT = 500;
+/** Slow openings of the web UI are kept apart and fewer, so a browser sending them can't push the bot's own out */
+const SLOW_OPENS_KEPT = 50;
+const SLOW_OPENING = 'Web UI: opening';
 /** A command, button or menu that took this long to answer is kept for a look, as Discord gives up at 3 */
 const SLOW_ANSWER_S = 2;
 /** Discord's "Unknown interaction": it stopped waiting for the first answer */
@@ -81,7 +84,11 @@ export function rollUp(now = Date.now()) {
     for (const b of blocks.values()) insertMinute.run(b.at, 15, b.name, b.labels, b.count, b.sum, b.max, b.counts && JSON.stringify(b.counts));
     db.prepare('DELETE FROM perf_minutes WHERE span = 1 AND at < ?').run(now - MINUTES_KEPT_MS);
     db.prepare('DELETE FROM perf_minutes WHERE span = 15 AND at < ?').run(now - ROLLUPS_KEPT_MS);
-    db.prepare('DELETE FROM perf_slow WHERE at < ? OR id NOT IN (SELECT id FROM perf_slow ORDER BY id DESC LIMIT ?)').run(now - ROLLUPS_KEPT_MS, SLOW_KEPT);
+    db.prepare(
+      `DELETE FROM perf_slow WHERE at < :old
+        OR (what != :opening AND id NOT IN (SELECT id FROM perf_slow WHERE what != :opening ORDER BY id DESC LIMIT :kept))
+        OR (what = :opening AND id NOT IN (SELECT id FROM perf_slow WHERE what = :opening ORDER BY id DESC LIMIT :openings))`,
+    ).run({ old: now - ROLLUPS_KEPT_MS, opening: SLOW_OPENING, kept: SLOW_KEPT, openings: SLOW_OPENS_KEPT });
   });
 }
 
@@ -190,6 +197,17 @@ let browserMinute = 0;
 let browserReports = 0;
 /** Taps the browser didn't time, as it times only those over 16 ms, are noted as this */
 const QUICK_RESPONSE_S = 0.016;
+/**
+ * What the web UI's waits were for: actions that wait on work by design, timed apart from taps. Claude's answer, speech
+ * being made (Say, previews and Chat's spoken lines), a song that may download before it starts, and a sound from a link
+ */
+export const BROWSER_WAITS = ['chat', 'speech', 'music', 'links'] as const;
+export type BrowserWait = (typeof BROWSER_WAITS)[number];
+/** An opening of the web UI that took this long is kept for a look, with its steps */
+const SLOW_OPEN_S = 3;
+/** The most slow openings taken a minute, so a browser stuck in a loop can't fill the list with them */
+const SLOW_OPENS_PER_MINUTE = 5;
+let slowOpens = 0;
 
 const isTime = (n: unknown): n is number => typeof n === 'number' && Number.isFinite(n) && n >= 0 && n <= BROWSER_LONGEST_S;
 const oneOf = <T extends string>(value: unknown, allowed: readonly T[]): T | null => (allowed.includes(value as T) ? (value as T) : null);
@@ -204,30 +222,51 @@ export function browserReport(body: unknown): boolean {
   const device = oneOf(b?.device, ['phone', 'computer'] as const);
   if (!b || !via || !device) return false;
   const minute = Math.floor(Date.now() / 60_000);
-  if (minute !== browserMinute) [browserMinute, browserReports] = [minute, 0];
+  if (minute !== browserMinute) [browserMinute, browserReports, slowOpens] = [minute, 0, 0];
   // Taken as a report, just not kept
   if (++browserReports > BROWSER_REPORTS_PER_MINUTE) return true;
   const where = { via, device };
   const requests = Array.isArray(b.requests) ? b.requests.slice(0, BROWSER_MOST) : [];
   for (const r of requests) {
     if (!Array.isArray(r)) continue;
-    const [kind, seconds, network] = r as unknown[];
-    const k = oneOf(kind, ['action', 'load'] as const);
+    const [kind, seconds, network, what] = r as unknown[];
+    const k = oneOf(kind, ['action', 'load', 'wait'] as const);
+    const waited = k === 'wait' ? oneOf(what, BROWSER_WAITS) : null;
     // Every answer through the web UI says the bot's part, so the network's is known; without it, something's off
-    if (!k || !isTime(seconds) || !isTime(network) || network > seconds) continue;
-    perf.time('browser_request_seconds', seconds, { ...where, kind: k });
-    perf.time('browser_network_seconds', network, { ...where, kind: k });
+    if (!k || (k === 'wait' && !waited) || !isTime(seconds) || !isTime(network) || network > seconds) continue;
+    const labels = waited ? { ...where, kind: k, what: waited } : { ...where, kind: k };
+    perf.time('browser_request_seconds', seconds, labels);
+    perf.time('browser_network_seconds', network, labels);
   }
   const page = b.page as Record<string, unknown> | null | undefined;
   if (page && typeof page === 'object') {
     if (isTime(page.firstByte)) perf.time('browser_page_seconds', page.firstByte, { ...where, step: 'first_byte' });
-    if (isTime(page.shown)) perf.time('browser_page_seconds', page.shown, { ...where, step: 'shown' });
+    if (isTime(page.shown)) {
+      perf.time('browser_page_seconds', page.shown, { ...where, step: 'shown' });
+      if (page.shown >= SLOW_OPEN_S && ++slowOpens <= SLOW_OPENS_PER_MINUTE) slowOpen(page.shown, page, where);
+    }
   }
   const responses = Array.isArray(b.responses) ? b.responses.slice(0, BROWSER_MOST) : [];
   for (const seconds of responses) if (isTime(seconds)) perf.time('browser_response_seconds', seconds, where);
   const quick = typeof b.quickResponses === 'number' && Number.isInteger(b.quickResponses) ? Math.min(BROWSER_MOST, Math.max(0, b.quickResponses)) : 0;
   for (let n = 0; n < quick; n++) perf.time('browser_response_seconds', QUICK_RESPONSE_S, where);
   return true;
+}
+
+/**
+ * A slow opening of the web UI, kept with where its time went: reaching the web UI, its scripts loading and the page being
+ * drawn, each up to the time it was shown. Not which server, as the browser doesn't say, so every server's list has it
+ */
+function slowOpen(shown: number, page: Record<string, unknown>, where: { via: string; device: string }) {
+  const upTo = (n: unknown, from: number) => (isTime(n) && n >= from && n <= shown ? n : null);
+  const firstByte = upTo(page.firstByte, 0);
+  const scripts = upTo(page.scripts, firstByte ?? 0);
+  const steps: perf.Step[] = [];
+  if (firstByte !== null) steps.push(['reaching the web UI', firstByte]);
+  if (scripts !== null) steps.push(['loading its scripts', scripts - (firstByte ?? 0)]);
+  steps.push(['drawing the page', shown - (scripts ?? firstByte ?? 0)]);
+  const tab = typeof page.tab === 'string' && /^[a-z]{1,20}$/.test(page.tab) ? page.tab : null;
+  perf.slow({ guildId: null, what: SLOW_OPENING, seconds: shown, steps, detail: { ...where, ...(tab && { tab }) } });
 }
 
 /** The containers the bot asks, where they're set up */

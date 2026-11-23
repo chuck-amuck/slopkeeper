@@ -219,6 +219,13 @@ const PAGES: [string, string, Record<string, string>?, string?, string?][] = [
     {},
     `location.hash.startsWith('#health?range=') && !!document.querySelector('.health-tiles') && (() => { const rows = [...document.querySelectorAll('.health-container')]; return rows.length > 0 && rows.every((c) => { const parts = [...c.children].filter((x) => x.getClientRects().length); const boxes = parts.map((x) => x.getBoundingClientRect()); return parts.every((x) => x.scrollWidth <= x.clientWidth + 1) && boxes.every((a, i) => boxes.every((b, j) => j <= i || a.bottom <= b.top + 1 || b.bottom <= a.top + 1 || a.right <= b.left + 1 || b.right <= a.left + 1)); }); })()`,
   ],
+  // Waits people expect on a tile of their own, each judged once there are enough, and a slow opening with where it was
+  [
+    'health',
+    'Health: waits and a slow opening',
+    {},
+    `(() => { const text = document.querySelector('main').innerText; return /Waits people expect/.test(text) && /Chat answers: 24, 95% within [^,]+, typically [^,\\n]+\\n/.test(text) && /Songs starting: 3, .*, too few to judge/.test(text) && /Web UI: opening/.test(text) && /opened on Soundboard · away from home · on a phone/.test(text); })()`,
+  ],
   // Health was a view in Stats
   ['stats/health?range=7d', 'Health: the old address', {}, `location.hash === '#health?range=7d' && document.title.startsWith('Health')`],
   // Chat tried here: asked something, answered with who it would ping, and nothing said aloud, as that's turned off
@@ -599,6 +606,17 @@ function seed() {
   mkdirSync(path.join(config.dataDir, 'profile-photos'), { recursive: true });
   writeFileSync(path.join(config.dataDir, 'profile-photos', 'pirate.png'), ringPng(64));
   db.prepare("INSERT INTO profile_photos (profile_id, hash) VALUES ('pirate', '0123456789abcdef')").run();
+  // Waits people expected, enough of chat's to judge, and a slow opening of the web UI, for Health's tile and slow list
+  const minuteAgo = Math.floor(now / 60_000) * 60_000 - 5 * 60_000;
+  const timed = db.prepare('INSERT INTO perf_minutes (at, span, name, labels, count, sum, max, buckets) VALUES (?, 1, ?, ?, ?, ?, ?, ?)');
+  const bucketed = (upTo: number, n: number) => JSON.stringify(perf.BUCKETS.map((b) => (b === upTo ? n : 0)).concat(0));
+  timed.run(minuteAgo, 'browser_request_seconds', JSON.stringify({ via: 'away', device: 'computer', kind: 'wait', what: 'chat' }), 24, 48, 4, bucketed(5, 24));
+  timed.run(minuteAgo, 'browser_request_seconds', JSON.stringify({ via: 'away', device: 'phone', kind: 'wait', what: 'music' }), 3, 9, 4, bucketed(5, 3));
+  db.prepare("INSERT INTO perf_slow (at, guild_id, what, seconds, steps, detail) VALUES (?, NULL, 'Web UI: opening', 4.5, ?, ?)").run(
+    now - 10 * 60_000,
+    JSON.stringify([['reaching the web UI', 0.4], ['loading its scripts', 0.7], ['drawing the page', 3.4]]),
+    JSON.stringify({ via: 'away', device: 'phone', tab: 'board' }),
+  );
   const bundle = {
     id: 1,
     title: 'Humble Choice: An Unusually Long Bundle Name For A Phone',

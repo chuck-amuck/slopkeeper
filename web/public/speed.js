@@ -14,6 +14,8 @@ const TIMED_FROM_MS = 16;
 const SETTLE_MS = 1000;
 
 const device = matchMedia('(pointer: coarse)').matches ? 'phone' : 'computer';
+/** A browser run by a test or a script, whose timings aren't people's */
+const headless = /HeadlessChrome/.test(navigator.userAgent);
 const round = (seconds) => Math.round(seconds * 1e4) / 1e4;
 
 /** Whether the web UI is open past the login, which is all that's timed */
@@ -25,9 +27,9 @@ let requests = [];
  * A request to the bot through the web UI that's been answered: all it took, and the part before its answer started
  * arriving that wasn't the bot (from the web UI's Server-Timing header), which is the network's
  */
-export function noteRequest(kind, seconds, network) {
+export function noteRequest(kind, seconds, network, waited = null) {
   if (!started || requests.length >= MOST) return;
-  requests.push([kind, round(seconds), network === null ? null : round(Math.max(0, network))]);
+  requests.push([kind, round(seconds), network === null ? null : round(Math.max(0, network)), ...(waited ? [waited] : [])]);
 }
 
 /** The bot's part of an answer, from the web UI's Server-Timing header, in seconds */
@@ -41,13 +43,19 @@ export function botTime(res) {
 let pageCounts = document.visibilityState === 'visible';
 let pageSent = false;
 let shownAt = null;
+/** The tab it opened on, which a slow opening is noted with: in the address once the web UI has picked it */
+let openedOn = null;
 addEventListener('visibilitychange', () => document.visibilityState === 'hidden' && document.readyState !== 'complete' && (pageCounts = false));
+// Going to another page of the web UI, even with the browser's Back button, is past opening it
+let moved = false;
+for (const event of ['hashchange', 'popstate']) addEventListener(event, () => (moved = true), { once: true });
 
-// The largest content shown, which Chrome, Edge and Firefox report. It stops changing once someone taps or scrolls
+// The largest content shown, which Chrome, Edge and Firefox report. It stops changing once someone taps or scrolls, and
+// what's drawn after going to another page doesn't count
 try {
   new PerformanceObserver((list) => {
     const last = list.getEntries().at(-1);
-    if (last) shownAt = last.startTime;
+    if (last && !moved) shownAt = last.startTime;
   }).observe({ type: 'largest-contentful-paint', buffered: true });
 } catch {
   // Safari: the load event stands in
@@ -60,7 +68,9 @@ function pageTimes() {
   const shown = shownAt ?? (nav.loadEventEnd > 0 ? nav.loadEventEnd : null);
   if (shown === null) return null;
   pageSent = true;
-  return { firstByte: round(nav.responseStart / 1000), shown: round(shown / 1000) };
+  // Its steps, for a slow one: when its scripts had loaded, and the tab it opened on
+  const scripts = nav.domContentLoadedEventEnd > 0 ? round(nav.domContentLoadedEventEnd / 1000) : null;
+  return { firstByte: round(nav.responseStart / 1000), shown: round(shown / 1000), scripts, tab: openedOn };
 }
 
 /** When each tap or key press happened, and how long the slow ones took to show, by interaction: { at, ms } */
@@ -108,6 +118,8 @@ function report(closing = false) {
 
 /** Starts timing and reporting, once the web UI has opened past the login */
 export function startSpeed() {
+  if (headless) return;
+  if (!started && !pageSent) openedOn ??= /^#([a-z]+)/.exec(location.hash)?.[1] ?? null;
   started = true;
   if (timers) return;
   timers = true;

@@ -59,7 +59,7 @@ const METRICS = {
   voice_models_loaded: ['gauge', 'Voice models the voice container holds in memory'],
   web_requests_total: ['counter', 'Requests the web UI answered, by status class'],
   web_bot_unreachable_total: ['counter', 'Web UI requests the bot didn’t answer'],
-  browser_request_seconds: ['histogram', 'In people’s browsers: from asking the web UI to its answer arriving, by kind (action or load), where they were (home or away, through the proxy) and device (phone or computer)'],
+  browser_request_seconds: ['histogram', 'In people’s browsers: from asking the web UI to its answer arriving, by kind (action, load, or wait: an action that waits on work by design, with what it was for), where they were (home or away, through the proxy) and device (phone or computer)'],
   browser_network_seconds: ['histogram', 'The part of browser_request_seconds before the answer started arriving that wasn’t the bot: the network, the proxy and the web UI'],
   browser_page_seconds: ['histogram', 'In people’s browsers: opening the web UI, by step: first_byte from the server, or shown (its largest content, or loaded where the browser can’t tell)'],
   browser_response_seconds: ['histogram', 'In people’s browsers: from a tap or key press to the page visibly answering it'],

@@ -201,7 +201,7 @@ export function renderPick(main) {
           {
             onclick: () =>
               attempt(async () => {
-                await request(api('/say'), { method: 'POST', json: { channelId: room.id, text: `We're playing ${game.name}.` } });
+                await request(api('/say'), { method: 'POST', wait: 'speech', json: { channelId: room.id, text: `We're playing ${game.name}.` } });
                 toast(`Said it in ${room.name}.`);
               }),
           },

@@ -4,7 +4,7 @@ import { beforeEach, test } from 'node:test';
 import { healthOf } from '../src/api/health.ts';
 import { feeds } from '../src/changes.ts';
 import { db, setKv } from '../src/db.ts';
-import { browserReport, containerSeen, correctLoopDelays, sampleMachine, store } from '../src/features/health.ts';
+import { browserReport, containerSeen, correctLoopDelays, rollUp, sampleMachine, store } from '../src/features/health.ts';
 import { customWindow, FEWEST_TO_JUDGE, healthReport, quantile, verdictOf } from '../src/features/healthReport.ts';
 import type { MachineReading } from '../src/machine.ts';
 import * as perf from '../src/perf.ts';
@@ -235,6 +235,74 @@ test('a browser’s report is kept by where it came from, with anything odd left
   assert.equal(line('slopkeeper_browser_response_seconds_count{via="home",device="computer"}')?.split(' ')[1], '500', 'no more than a report may hold');
   for (let n = 0; n < 200; n++) browserReport({ via: 'home', device: 'phone', quickResponses: 1 });
   assert.equal(line('slopkeeper_browser_response_seconds_count{via="home",device="phone"}')?.split(' ')[1], String(120 - 2), 'no more than 120 reports a minute are kept, two of them sent above');
+});
+
+test('waits people expect are kept by what they were for, apart from taps', (t) => {
+  // A minute of its own, as the test before used up this one's reports
+  t.mock.timers.enable({ apis: ['Date'], now: NOW + MINUTE });
+  perf.keep(true);
+  browserReport({
+    via: 'away',
+    device: 'computer',
+    requests: [['wait', 4.2, 0.1, 'chat'], ['wait', 9, 0.1, 'music'], ['wait', 1, 0.1], ['wait', 1, 0.1, 'nap'], ['action', 0.2, 0.1, 'chat']],
+  });
+  const line = (start: string) => perf.prometheus().split('\n').find((l) => l.startsWith(start));
+  assert.equal(line('slopkeeper_browser_request_seconds_count{via="away",device="computer",kind="wait",what="chat"}')?.split(' ')[1], '1');
+  assert.equal(line('slopkeeper_browser_request_seconds_count{via="away",device="computer",kind="wait",what="music"}')?.split(' ')[1], '1');
+  assert.equal(line('slopkeeper_browser_request_seconds_count{via="away",device="computer",kind="action"}')?.split(' ')[1], '1', 'a tap, with what it says left out');
+  assert.equal(perf.prometheus().split('\n').filter((l) => l.startsWith('slopkeeper_browser_request_seconds_count')).length, 3, 'a wait without a known reason is left out');
+});
+
+test('a slow opening of the web UI is kept with its steps, a few a minute', (t) => {
+  t.mock.timers.enable({ apis: ['Date'], now: NOW + 2 * MINUTE });
+  perf.keep(true);
+  browserReport({ via: 'away', device: 'phone', page: { firstByte: 0.4, scripts: 1.1, shown: 4.5, tab: 'board' } });
+  browserReport({ via: 'home', device: 'computer', page: { firstByte: 0.01, shown: 1.2 } });
+  // Steps out of order are left out, and a tab that isn't a word isn't kept
+  browserReport({ via: 'home', device: 'computer', page: { firstByte: 9, scripts: 2, shown: 6, tab: '<b>' } });
+  for (let n = 0; n < 10; n++) browserReport({ via: 'home', device: 'phone', page: { shown: 5 } });
+  store(true);
+  const rows = db.prepare('SELECT guild_id, what, seconds, steps, detail FROM perf_slow ORDER BY id').all() as { guild_id: string | null; what: string; seconds: number; steps: string; detail: string }[];
+  assert.equal(rows.length, 5, 'no more than 5 a minute');
+  assert.deepEqual(
+    rows.slice(0, 2).map((r) => [r.guild_id, r.what, r.seconds, JSON.parse(r.steps), JSON.parse(r.detail)]),
+    [
+      [null, 'Web UI: opening', 4.5, [['reaching the web UI', 0.4], ['loading its scripts', 0.7], ['drawing the page', 3.4]], { via: 'away', device: 'phone', tab: 'board' }],
+      [null, 'Web UI: opening', 6, [['loading its scripts', 2], ['drawing the page', 4]], { via: 'home', device: 'computer' }],
+    ],
+  );
+});
+
+test('slow openings of the web UI are kept apart, so they can’t push the bot’s own out', () => {
+  const slow = db.prepare('INSERT INTO perf_slow (at, guild_id, what, seconds, steps, detail) VALUES (?, ?, ?, ?, ?, ?)');
+  slow.run(at(30), GUILD, 'Music', 12, '[]', '{}');
+  for (let n = 0; n < 60; n++) slow.run(at(20), null, 'Web UI: opening', 5, '[]', '{}');
+  rollUp(NOW);
+  const count = (what: string) => (db.prepare('SELECT COUNT(*) AS n FROM perf_slow WHERE what = ?').get(what) as { n: number }).n;
+  assert.deepEqual([count('Music'), count('Web UI: opening')], [1, 50]);
+});
+
+test('waits people expect are judged each on its own, once there are enough', () => {
+  const where = { via: 'away', device: 'computer' };
+  minute(at(2), 'browser_request_seconds', { ...where, kind: 'wait', what: 'chat' }, FEWEST_TO_JUDGE, 200, 12, bucketed(30, FEWEST_TO_JUDGE));
+  minute(at(2), 'browser_request_seconds', { ...where, kind: 'wait', what: 'speech' }, 5, 40, 30, bucketed(30, 5));
+  minute(at(2), 'browser_request_seconds', { ...where, kind: 'action' }, 30, 3, 0.2, bucketed(0.25, 30));
+  const { waits, browser } = healthReport(GUILD, '1h', NOW);
+  assert.equal(browser.taps.count, 30, 'taps leave the waits out');
+  assert.equal(waits.count, FEWEST_TO_JUDGE + 5);
+  assert.deepEqual(
+    waits.kinds.map((w) => [w.what, w.count, w.status]),
+    [
+      ['chat', FEWEST_TO_JUDGE, 'slow'],
+      ['speech', 5, 'few'],
+    ],
+  );
+  assert.equal(waits.status, 'slow', 'chat’s answers took 12 s, and the few slow speech waits aren’t judged');
+  db.exec('DELETE FROM perf_minutes');
+  minute(at(2), 'browser_request_seconds', { ...where, kind: 'wait', what: 'links' }, 2, 4, 2, bucketed(2.5, 2));
+  assert.equal(healthReport(GUILD, '1h', NOW).waits.status, 'few');
+  db.exec('DELETE FROM perf_minutes');
+  assert.deepEqual(healthReport(GUILD, '1h', NOW).waits, { count: 0, kinds: [], fewest: FEWEST_TO_JUDGE, status: 'quiet' });
 });
 
 test('the web UI as people see it is judged by taps, opening and reacting', () => {
