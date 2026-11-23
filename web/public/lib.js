@@ -272,6 +272,44 @@ export function newPage() {
  * is the item a click opens it at, and `onToggle(open)` hears it open, before an item takes the focus, and close.
  * Returns toggle(open, at), where `at` is 'first' or 'last' to open it at either end
  */
+/**
+ * While a menu or panel is open: a press outside `inside()` closes it, and so does Escape from anywhere unless a dialog
+ * is open, with focus back on `button` if it was on it or in `panel`. `pressCloses(e)` and `escapeCloses(e)` can say no
+ * to one, and null leaves that way out. Called as it opens; it returns what to abort as it closes, and stops by itself
+ * once `button` has left the page
+ */
+export function dismissOn({ button, panel, inside = () => panel, close, pressCloses = () => true, escapeCloses = () => true }) {
+  const listening = new AbortController();
+  const { signal } = listening;
+  const gone = () => {
+    if (button.isConnected) return false;
+    listening.abort();
+    return true;
+  };
+  if (pressCloses) {
+    document.addEventListener(
+      'pointerdown',
+      (e) => {
+        if (!gone() && !inside().contains(e.target) && pressCloses(e)) close();
+      },
+      { signal, capture: true },
+    );
+  }
+  if (escapeCloses) {
+    document.addEventListener(
+      'keydown',
+      (e) => {
+        if (gone() || e.key !== 'Escape' || document.querySelector('dialog[open]') || !escapeCloses(e)) return;
+        const within = panel.contains(document.activeElement) || document.activeElement === button;
+        close();
+        if (within) button.focus();
+      },
+      { signal },
+    );
+  }
+  return listening;
+}
+
 export function menuToggle({ node, button, menu, first = (items) => items[0], onToggle = () => {} }) {
   const items = () => [...menu.querySelectorAll('[role^="menuitem"]')];
   let listening = null;
@@ -285,28 +323,8 @@ export function menuToggle({ node, button, menu, first = (items) => items[0], on
     if (!open) return;
     const all = items();
     (at === 'first' ? all[0] : at === 'last' ? all.at(-1) : first(all))?.focus();
-    listening = new AbortController();
-    const { signal } = listening;
     // While it's open: a press outside it, or Escape from anywhere, closes it
-    document.addEventListener(
-      'pointerdown',
-      (e) => {
-        if (!node.isConnected) return listening?.abort();
-        if (!node.contains(e.target)) toggle(false);
-      },
-      { signal, capture: true },
-    );
-    document.addEventListener(
-      'keydown',
-      (e) => {
-        if (!node.isConnected) return listening?.abort();
-        if (e.key !== 'Escape' || document.querySelector('dialog[open]')) return;
-        const within = node.contains(document.activeElement);
-        toggle(false);
-        if (within) button.focus();
-      },
-      { signal },
-    );
+    listening = dismissOn({ button, panel: menu, inside: () => node, close: () => toggle(false) });
   }
 
   button.addEventListener('keydown', (e) => {

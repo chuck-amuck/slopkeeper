@@ -679,35 +679,58 @@ export function renderSettings(main) {
       toast(`Button posted in ${channel}.`);
     });
 
+  /**
+   * Rows of things, each with its name, a line about it and a button that removes it once confirmed, or a notice when
+   * there are none. `row(item)` gives { name, hint, label, word, ask, remove }. `beside` keeps the button beside the name
+   * even on a phone. Returns { node, paint(items) }
+   */
+  function removableList({ empty, row, beside = false }) {
+    const node = el('div');
+    const paint = (items) =>
+      node.replaceChildren(
+        ...(items.length
+          ? items.map((item) => {
+              const { name, hint, label, word, ask, remove } = row(item);
+              return el(
+                'div',
+                { className: beside ? 'field beside-field' : 'field' },
+                el('div', {}, el('div', { className: 'series-name' }, name), el('p', { className: 'hint' }, hint)),
+                el('div', { className: 'control' }, confirmButton({ ariaLabel: label }, word, ask, remove)),
+              );
+            })
+          : [notice('empty', empty, { compact: true })]),
+      );
+    return { node, paint };
+  }
+
   function gamePingCard(first) {
-    const body = el('div');
     const games = el('datalist', { id: 'ping-games' });
     const game = el('input', { required: true, maxLength: 100, list: 'ping-games', autocomplete: 'off', placeholder: 'Game', ariaLabel: 'Game' });
     const role = el('select', { ariaLabel: 'Role' });
 
     const load = async () => paint(await request(api('/game-pings')));
 
-    function pingRow(ping) {
-      const who = `${ping.people} ${ping.people === 1 ? 'person' : 'people'}`;
-      const label = ping.role === null ? 'Its role was deleted' : `@${ping.role} · ${who}${ping.made ? ' · Made by the bot' : ''}`;
-      return el(
-        'div',
-        { className: 'field' },
-        el('div', {}, el('div', { className: 'series-name' }, ping.game), el('p', { className: 'hint' }, label)),
-        el(
-          'div',
-          { className: 'control' },
-          confirmButton({ ariaLabel: `Remove pings for ${ping.game}` }, 'Remove', ping.made && ping.role !== null ? 'Delete the role?' : 'Remove it?', async () => {
+    const list = removableList({
+      empty: 'No games have pings yet.',
+      row: (ping) => {
+        const who = `${ping.people} ${ping.people === 1 ? 'person' : 'people'}`;
+        return {
+          name: ping.game,
+          hint: ping.role === null ? 'Its role was deleted' : `@${ping.role} · ${who}${ping.made ? ' · Made by the bot' : ''}`,
+          label: `Remove pings for ${ping.game}`,
+          word: 'Remove',
+          ask: ping.made && ping.role !== null ? 'Delete the role?' : 'Remove it?',
+          remove: async () => {
             await request(api(`/game-pings/${ping.id}`), { method: 'DELETE' });
             toast(`Removed pings for ${ping.game}.`);
             await Promise.all([load(), refreshFields()]);
-          }),
-        ),
-      );
-    }
+          },
+        };
+      },
+    });
 
     function paint(data) {
-      body.replaceChildren(...(data.pings.length ? data.pings.map(pingRow) : [notice('empty', 'No games have pings yet.', { compact: true })]));
+      list.paint(data.pings);
       games.replaceChildren(...data.games.map((name) => el('option', { value: name })));
       role.replaceChildren(el('option', { value: '' }, 'Make a new role'), ...data.roles.map((r) => el('option', { value: r.id }, `@${r.name}`)));
     }
@@ -728,7 +751,7 @@ export function renderSettings(main) {
       el('h2', {}, 'Game pings'),
       el('p', { className: 'card-note' }, 'People pick theirs with /pings. Anyone with this page’s password can add and remove these, which makes and deletes Discord roles.'),
       games,
-      body,
+      list.node,
       add,
       el('div', { className: 'card-actions' }, el('button', { onclick: pingsDialog }, 'Who gets pinged'), el('button', { onclick: postPingMenu }, 'Post Choose games button')),
     );
@@ -736,102 +759,77 @@ export function renderSettings(main) {
 
   /** What chat remembers about people, at their asking, each forgotten with a press */
   function chatNotesCard(first) {
-    const body = el('div');
-    const paint = (notes) =>
-      body.replaceChildren(
-        ...(notes.length
-          ? notes.map((row) =>
-              el(
-                'div',
-                { className: 'field' },
-                el('div', {}, el('div', { className: 'series-name' }, row.name), el('p', { className: 'hint' }, row.note)),
-                el(
-                  'div',
-                  { className: 'control' },
-                  confirmButton({ ariaLabel: `Forget what it remembers about ${row.name}` }, 'Forget', 'Forget it?', async () => {
-                    paint((await request(api(`/chat-notes/${row.userId}`), { method: 'DELETE' })).notes);
-                    toast(`It no longer remembers anything about ${row.name}.`);
-                  }),
-                ),
-              ),
-            )
-          : [notice('empty', 'Nothing yet. People can ask it to remember things about them, like what to call them.', { compact: true })]),
-      );
-    paint(first);
+    const list = removableList({
+      empty: 'Nothing yet. People can ask it to remember things about them, like what to call them.',
+      row: (row) => ({
+        name: row.name,
+        hint: row.note,
+        label: `Forget what it remembers about ${row.name}`,
+        word: 'Forget',
+        ask: 'Forget it?',
+        remove: async () => {
+          list.paint((await request(api(`/chat-notes/${row.userId}`), { method: 'DELETE' })).notes);
+          toast(`It no longer remembers anything about ${row.name}.`);
+        },
+      }),
+    });
+    list.paint(first);
     return el(
       'section',
       { className: 'card', id: 'settings-chat-notes' },
       el('h2', {}, 'What chat remembers'),
       el('p', { className: 'card-note' }, 'What people asked it to remember about them. It goes to Anthropic with that person’s questions.'),
-      body,
+      list.node,
     );
   }
 
   /** Reminders people set in chat, soonest first, each cancelled with a press */
   function chatRemindersCard(first) {
-    const body = el('div');
-    const paint = (reminders) =>
-      body.replaceChildren(
-        ...(reminders.length
-          ? reminders.map((row) =>
-              el(
-                'div',
-                { className: 'field' },
-                el(
-                  'div',
-                  {},
-                  el('div', { className: 'series-name' }, `${row.when}, for ${row.people.join(', ')}`),
-                  el('p', { className: 'hint' }, `${row.text} (set by ${row.by}${row.channel ? ` in #${row.channel}` : ''})`),
-                ),
-                el(
-                  'div',
-                  { className: 'control' },
-                  confirmButton({ ariaLabel: `Cancel the reminder for ${row.people.join(', ')} on ${row.when}` }, 'Cancel', 'Cancel it?', async () => {
-                    paint((await request(api(`/chat-reminders/${row.id}`), { method: 'DELETE' })).reminders);
-                    toast('Reminder cancelled.');
-                  }),
-                ),
-              ),
-            )
-          : [notice('empty', 'None waiting. People can ask it to remind them, or others, of something later.', { compact: true })]),
-      );
-    paint(first);
+    const list = removableList({
+      empty: 'None waiting. People can ask it to remind them, or others, of something later.',
+      row: (row) => ({
+        name: `${row.when}, for ${row.people.join(', ')}`,
+        hint: `${row.text} (set by ${row.by}${row.channel ? ` in #${row.channel}` : ''})`,
+        label: `Cancel the reminder for ${row.people.join(', ')} on ${row.when}`,
+        word: 'Cancel',
+        ask: 'Cancel it?',
+        remove: async () => {
+          list.paint((await request(api(`/chat-reminders/${row.id}`), { method: 'DELETE' })).reminders);
+          toast('Reminder cancelled.');
+        },
+      }),
+    });
+    list.paint(first);
     return el(
       'section',
       { className: 'card', id: 'settings-chat-reminders' },
       el('h2', {}, 'Reminders'),
       el('p', { className: 'card-note' }, 'Set in chat, and posted in the channel they were asked in, pinging the people they’re for.'),
-      body,
+      list.node,
     );
   }
 
   function joinSoundCard(first) {
-    const body = el('div');
     const who = el('select', { required: true, ariaLabel: 'Person' }, el('option', { value: '' }, 'Pick a person'), first.members.map((m) => el('option', { value: m.id, selected: m.id === state.me?.userId }, m.name)));
     const sound = el('select', { required: true, ariaLabel: 'Sound' }, el('option', { value: '' }, 'Pick a sound'), first.sounds.map((name) => el('option', { value: name }, name)));
-    const load = async () => paint((await request(api('/join-sounds'))).joinSounds);
-    const paint = (current) =>
-      body.replaceChildren(
-        ...(current.length
-          ? current.map((row) =>
-              el(
-                'div',
-                // Remove beside the person, even on a phone
-                { className: 'field beside-field' },
-                el('div', {}, el('div', { className: 'series-name' }, row.who), el('p', { className: 'hint' }, row.name)),
-                el(
-                  'div',
-                  { className: 'control' },
-                  confirmButton({ ariaLabel: `Remove ${row.who}’s join sound` }, 'Remove', 'Remove it?', async () => {
-                    await request(api(`/join-sounds/${row.id}`), { method: 'DELETE' });
-                    toast(`Removed ${row.who}’s join sound.`);
-                    await load();
-                  }),
-                ),
-              ),
-            )
-          : [notice('empty', 'Nobody has one yet. People can pick their own with /sound join, or you can set one here.', { compact: true })]),
-      );
+    const list = removableList({
+      empty: 'Nobody has one yet. People can pick their own with /sound join, or you can set one here.',
+      // Remove beside the person, even on a phone
+      beside: true,
+      row: (row) => ({
+        name: row.who,
+        hint: row.name,
+        label: `Remove ${row.who}’s join sound`,
+        word: 'Remove',
+        ask: 'Remove it?',
+        remove: async () => {
+          await request(api(`/join-sounds/${row.id}`), { method: 'DELETE' });
+          toast(`Removed ${row.who}’s join sound.`);
+          await load();
+        },
+      }),
+    });
+    const load = async () => list.paint((await request(api('/join-sounds'))).joinSounds);
     const set = adder('Set a join sound', 'This replaces any they have.', [who, sound, el('button', { type: 'submit' }, 'Set')], async () => {
       const person = who.selectedOptions[0].textContent;
       const result = await request(api(`/join-sounds/${who.value}`), { method: 'PUT', json: { name: sound.value } });
@@ -841,8 +839,8 @@ export function renderSettings(main) {
       await load();
       return result;
     });
-    paint(first.joinSounds);
-    return el('section', { className: 'card', id: 'settings-join-sound-list' }, el('h2', {}, 'People’s join sounds'), body, set);
+    list.paint(first.joinSounds);
+    return el('section', { className: 'card', id: 'settings-join-sound-list' }, el('h2', {}, 'People’s join sounds'), list.node, set);
   }
 
   /** What the address asks for: #settings/deals, #settings?key=bundleAlerts or #settings/chat?card=profiles */

@@ -86,6 +86,15 @@ const STUB = (...rules: [string, string, number, unknown?][]) =>
  */
 const PAGES: [string, string, Record<string, string>?, string?, string?, string?][] = [
   ['board', 'Soundboard', {}, `${CLEAR_OF_PAGE} && ${NAMES_FIT} && !!document.querySelector('.view-slot > .play-in select') && !!document.querySelector('.view-slot input[type=search]') === innerWidth >= 1100`],
+  // The corner's Volume and Sounds panels close with Escape, focus going back to the button, and with a press outside,
+  // except the Sounds panel on a wide screen, where it's made to be used beside the page
+  [
+    'activity',
+    'Corner panels close with Escape and a press outside',
+    {},
+    `window.dismissed === (innerWidth <= 640 ? 'false,true,false,false,false' : 'false,true,false,true,false')`,
+    `(() => { const volume = document.querySelector('.volume-fab:not(.sounds-fab)'); const sounds = document.querySelector('.sounds-fab'); const escape = () => document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })); const press = () => document.querySelector('main').dispatchEvent(new PointerEvent('pointerdown', { bubbles: true })); const seen = []; volume.click(); volume.focus(); escape(); seen.push(volume.ariaExpanded, document.activeElement === volume); volume.click(); press(); seen.push(volume.ariaExpanded); sounds.click(); press(); seen.push(sounds.ariaExpanded); escape(); seen.push(sounds.ariaExpanded); window.dismissed = seen.join(); })()`,
+  ],
   // A voice preview pressed again while it's still being made is asked for once
   [
     'board',
@@ -428,6 +437,14 @@ const PAGES: [string, string, Record<string, string>?, string?, string?, string?
     'Settings: Chat',
     {},
     `/A grumpy pirate with a long name to wrapUsing/.test(document.querySelector('#settings-profiles')?.textContent ?? '') && document.querySelector('#setting-chatProfile')?.value === 'pirate' && document.querySelector('#settings-chat-notes')?.textContent.includes('Captain') && /for .+, .+check the oven \\(set by .+\\)Cancel/.test(document.querySelector('#settings-chat-reminders')?.textContent ?? '')`,
+  ],
+  // A note chat keeps, forgotten with a press and a second to be sure, and the list says there are none
+  [
+    'settings/chat',
+    'Settings: a note forgotten',
+    {},
+    `/Nothing yet. People can ask it/.test(document.querySelector('#settings-chat-notes').textContent) && window.asked.length === 1`,
+    `(() => { ${STUB(['/chat-notes/[^/]+$', 'DELETE', 200, { notes: [] }])} const b = document.querySelector('#settings-chat-notes .control button'); b.click(); b.click(); })()`,
   ],
   // Profiles: the one in use, and its settings
   [

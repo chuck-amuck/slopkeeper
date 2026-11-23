@@ -1,4 +1,4 @@
-import { api, attempt, el, icon, request, toast, volumeControl } from './lib.js';
+import { api, attempt, dismissOn, el, icon, request, toast, volumeControl } from './lib.js';
 import { followWhenIdle } from './updates.js';
 
 /** The volumes the bot plays at, as /volumes names them: the setting each saves to, what it's called and its range */
@@ -126,30 +126,8 @@ export function volumeDock() {
     listening = null;
     if (!open) return;
     dock.onOpen();
-    listening = new AbortController();
-    const { signal } = listening;
     const corner = button.parentElement?.closest('.stop-dock') ?? button;
-    document.addEventListener(
-      'pointerdown',
-      (e) => {
-        if (!button.isConnected) return listening?.abort();
-        if (!corner.contains(e.target)) toggle(false);
-      },
-      { signal, capture: true },
-    );
-    document.addEventListener(
-      'keydown',
-      (e) => {
-        if (!button.isConnected) return listening?.abort();
-        // An open dialog or sheet has it first
-        if (e.key !== 'Escape' || document.querySelector('dialog[open]')) return;
-        // Back to the button, unless focus was somewhere else on the page
-        const within = panel.contains(document.activeElement) || document.activeElement === button;
-        toggle(false);
-        if (within) button.focus();
-      },
-      { signal },
-    );
+    listening = dismissOn({ button, panel, inside: () => corner, close: () => toggle(false) });
   }
 
   return dock;

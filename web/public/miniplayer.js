@@ -1,4 +1,4 @@
-import { api, attempt, devicePref, el, forget, icon, keepFocus, needsVoice, NOBODY_IN_VOICE, pageSignal, recall, remember, request, secondWindow, state, toast } from './lib.js';
+import { api, attempt, devicePref, dismissOn, el, forget, icon, keepFocus, needsVoice, NOBODY_IN_VOICE, pageSignal, recall, remember, request, secondWindow, state, toast } from './lib.js';
 import { autoplayHead, cantPlay, cover, paintCover, playOrPause, positionOf, removeAutoplaySong, removeSong, stale } from './music.js';
 import { addSongBox } from './musicadd.js';
 import { foldHead } from './soundgrid.js';
@@ -72,15 +72,8 @@ export function musicPlayer(openMusic, { inWindow = false, extra = null } = {}) 
     listening?.abort();
     listening = null;
     if (!on || inWindow) return;
-    listening = new AbortController();
-    document.addEventListener(
-      'pointerdown',
-      (e) => {
-        if (!node.isConnected) return listening?.abort();
-        if (!node.contains(e.target) && !e.target.closest?.('#toasts')) openAdding(false);
-      },
-      { signal: listening.signal, capture: true },
-    );
+    // Its own Escape is on the box, above
+    listening = dismissOn({ button: addButton, panel: adding.node, inside: () => node, close: () => openAdding(false), pressCloses: (e) => !e.target.closest?.('#toasts'), escapeCloses: null });
   }
 
   // ---------- the pop-out's extras ----------

@@ -1,4 +1,4 @@
-import { devicePref, el, icon, pageSignal, secondWindow, state } from './lib.js';
+import { devicePref, dismissOn, el, icon, pageSignal, secondWindow, state } from './lib.js';
 import { soundsBody } from './soundspanel.js';
 import { playInPicker } from './voice.js';
 
@@ -92,29 +92,16 @@ export function soundsDock(openBoard, extra = null, { playIn = false } = {}) {
     scrollTo = null;
     // With a mouse, straight to the search; on a touch screen the keyboard would cover the panel
     if (byHand && matchMedia('(pointer: fine)').matches) kept.search.focus();
-    listening = new AbortController();
-    const { signal } = listening;
-    document.addEventListener(
-      'pointerdown',
-      (e) => {
-        if (!button.isConnected) return listening?.abort();
-        const corner = button.closest('.stop-dock') ?? button;
-        if (narrow.matches && !corner.contains(e.target)) toggle(false);
-      },
-      { signal, capture: true },
-    );
-    document.addEventListener(
-      'keydown',
-      (e) => {
-        if (!button.isConnected) return listening?.abort();
-        // An open dialog or sheet has it first, and the search clears itself first
-        if (e.key !== 'Escape' || e.defaultPrevented || document.querySelector('dialog[open]')) return;
-        const within = panel.contains(document.activeElement) || document.activeElement === button;
-        toggle(false);
-        if (within) button.focus();
-      },
-      { signal },
-    );
+    listening = dismissOn({
+      button,
+      panel,
+      inside: () => button.closest('.stop-dock') ?? button,
+      close: () => toggle(false),
+      // On a wide screen it's made to be used beside the page
+      pressCloses: () => narrow.matches,
+      // The search clears itself first
+      escapeCloses: (e) => !e.defaultPrevented,
+    });
   }
 
   // Settings turns the button on and off for this device, and it makes way for the pop-out window while that's open
