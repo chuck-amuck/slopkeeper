@@ -223,15 +223,17 @@ function recap(main) {
   void show();
 }
 
-function overview(main, address) {
+/**
+ * A Stats view over a range picked in its toolbar, remembered as the period and kept in the address. `ask(dates)` gets
+ * the numbers for the range, as the bot takes it, and `render(data)` shows them, only the newest answer if the range or
+ * a filter changed quickly. `extra` goes in the toolbar beside the range. Returns { content, bar, show, range }:
+ * `show()` asks again, and `range()` is the one picked
+ */
+function rangedView(main, address, { ask, render, extra = null }) {
   const guildId = state.guildId;
   let range = rangeFromQuery(address.params, PERIODS) ?? { preset: PERIODS.some(([id]) => id === recall('period')) ? recall('period') : 'month' };
-  let user = null;
-  let game = null;
   let latest = 0;
   let timeZone;
-
-  const chips = el('div', { className: 'chips' });
   const content = el('div', { className: 'stack' }, notice('loading', 'Loading stats…'));
   const bar = rangeBar({
     presets: PERIODS,
@@ -244,8 +246,38 @@ function overview(main, address) {
       void show();
     },
   });
-  main.append(el('div', { className: 'toolbar range-toolbar' }, bar.node, chips), content);
+  main.append(el('div', { className: 'toolbar range-toolbar' }, bar.node, extra), content);
   address.write(new URLSearchParams(rangeQuery(range)));
+
+  async function show() {
+    const ticket = ++latest;
+    await attempt(async () => {
+      // The bot calls a preset a period
+      const { range: period, ...dates } = rangeQuery(range);
+      try {
+        const data = await ask(period ? { period } : dates);
+        if (data.timeZone !== timeZone) bar.timeZone((timeZone = data.timeZone));
+        if (ticket === latest && guildId === state.guildId && main.isConnected) render(data);
+      } catch (err) {
+        if (ticket === latest) content.replaceChildren(notice('error', err.message));
+        throw err;
+      }
+    });
+  }
+
+  return { content, bar, show, range: () => range };
+}
+
+function overview(main, address) {
+  const guildId = state.guildId;
+  let user = null;
+  let game = null;
+  const chips = el('div', { className: 'chips' });
+  const { content, bar, show, range } = rangedView(main, address, {
+    ask: (dates) => request(api(`/stats?${new URLSearchParams({ ...dates, ...(user && { user: user.id }), ...(game && { game }) })}`)),
+    render,
+    extra: chips,
+  });
 
   const pickUser = (r) => {
     user = { id: r.id, name: r.label };
@@ -415,7 +447,8 @@ function overview(main, address) {
   /** What the stretch before is called: "yesterday by now", "the 7 days before" */
   function beforeText(data) {
     const names = { today: 'yesterday by now', week: 'the 7 days before', month: 'the 30 days before', quarter: 'the 90 days before', thisYear: 'last year by this date' };
-    if (range.preset && names[range.preset]) return names[range.preset];
+    const { preset } = range();
+    if (preset && names[preset]) return names[preset];
     const days = Math.round((data.until - data.since) / 86_400_000);
     return days >= 2 ? `the ${days} days before` : 'the same length of time before';
   }
@@ -602,24 +635,6 @@ function overview(main, address) {
     );
   }
 
-  async function show() {
-    const ticket = ++latest;
-    await attempt(async () => {
-      // The bot calls a preset a period
-      const { range: period, ...dates } = rangeQuery(range);
-      const query = new URLSearchParams({ ...(period ? { period } : dates), ...(user && { user: user.id }), ...(game && { game }) });
-      try {
-        const data = await request(api(`/stats?${query}`));
-        if (data.timeZone !== timeZone) bar.timeZone((timeZone = data.timeZone));
-        // Only the newest answer counts, if filters were clicked quickly
-        if (ticket === latest && guildId === state.guildId && main.isConnected) render(data);
-      } catch (err) {
-        content.replaceChildren(notice('error', err.message));
-        throw err;
-      }
-    });
-  }
-
   void show();
 }
 
@@ -632,24 +647,7 @@ const KINDS = [
 
 /** Stats → Sounds & music: the soundboard, the music and speech over a range, with who and what most */
 function soundsAndMusic(main, address) {
-  const guildId = state.guildId;
-  let range = rangeFromQuery(address.params, PERIODS) ?? { preset: PERIODS.some(([id]) => id === recall('period')) ? recall('period') : 'month' };
-  let latest = 0;
-  let timeZone;
-  const content = el('div', { className: 'stack' }, notice('loading', 'Loading stats…'));
-  const bar = rangeBar({
-    presets: PERIODS,
-    value: range,
-    timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-    onChange: (picked) => {
-      range = picked;
-      if (picked.preset) remember('period', picked.preset);
-      address.write(new URLSearchParams(rangeQuery(range)));
-      void show();
-    },
-  });
-  main.append(el('div', { className: 'toolbar range-toolbar' }, bar.node), content);
-  address.write(new URLSearchParams(rangeQuery(range)));
+  const { content, bar, show } = rangedView(main, address, { ask: (dates) => request(api(`/stats/sounds?${new URLSearchParams(dates)}`)), render });
 
   const day = (ms, tz) => new Date(ms).toLocaleDateString(undefined, { timeZone: tz, month: 'long', day: 'numeric', year: 'numeric' });
 
@@ -740,22 +738,6 @@ function soundsAndMusic(main, address) {
         el('p', { className: 'hint' }, 'Only people still in the server are listed.'),
       ].filter(Boolean),
     );
-  }
-
-  async function show() {
-    const ticket = ++latest;
-    await attempt(async () => {
-      const { range: period, ...dates } = rangeQuery(range);
-      const query = new URLSearchParams(period ? { period } : dates);
-      try {
-        const data = await request(api(`/stats/sounds?${query}`));
-        if (data.timeZone !== timeZone) bar.timeZone((timeZone = data.timeZone));
-        if (ticket === latest && guildId === state.guildId && main.isConnected) render(data);
-      } catch (err) {
-        if (ticket === latest) content.replaceChildren(notice('error', err.message));
-        throw err;
-      }
-    });
   }
 
   void show();

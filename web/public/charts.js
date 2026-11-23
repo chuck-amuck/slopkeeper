@@ -32,6 +32,67 @@ matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
   for (const entry of live) entry.draw();
 });
 
+/**
+ * Draws `option()` in `plot` once `box` is on the page and `plot` has a width, loading ECharts the first time, and
+ * keeps it the plot's size. Returns its entry in `live`, whose `chart` is null until it's drawn
+ */
+function mountChart(box, plot, option) {
+  const entry = {
+    node: box,
+    chart: null,
+    observer: null,
+    shown: false,
+    draw() {
+      entry.chart?.setOption(option(), { notMerge: true });
+    },
+  };
+  entry.observer = new ResizeObserver(() => {
+    if (!box.isConnected || !plot.clientWidth) return;
+    entry.shown = true;
+    if (entry.chart) return entry.chart.resize();
+    void load().then(({ init }) => {
+      if (entry.chart || !box.isConnected) return;
+      entry.chart = init(plot, null, { renderer: 'svg' });
+      entry.draw();
+    });
+  });
+  entry.observer.observe(plot);
+  live.add(entry);
+  return entry;
+}
+
+/**
+ * Reads a chart with the keys, as pointing would: `to(key, at)` is the point to show after `key` from the one shown
+ * (null before any), or undefined for a key it doesn't take. Escape, or focus leaving, hides it. Returns () => the point
+ * shown
+ */
+function tipKeys(box, entry, to) {
+  let at = null;
+  const hide = () => {
+    at = null;
+    entry.chart?.dispatchAction({ type: 'hideTip' });
+  };
+  box.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') return hide();
+    const next = to(e.key, at);
+    if (next === undefined) return;
+    e.preventDefault();
+    at = next;
+    entry.chart?.dispatchAction({ type: 'showTip', seriesIndex: 0, dataIndex: at });
+  });
+  box.addEventListener('blur', hide);
+  return () => at;
+}
+
+/** Show as a table: `build()` makes it the first time it's opened, as a chart's table can be a lot of rows nobody looks at */
+function tableFold(build) {
+  const fold = el('details', {}, el('summary', {}, 'Show as a table'));
+  fold.addEventListener('toggle', () => {
+    if (fold.open && fold.childElementCount < 2) fold.append(build());
+  });
+  return fold;
+}
+
 /** A colour as the page has it now: a token like var(--series-1) read off the page, as ECharts can't read CSS */
 function colour(value) {
   const token = /^var\((--[\w-]+)\)$/.exec(value)?.[1];
@@ -110,8 +171,6 @@ export function timeChart({
     pick,
     empty && el('div', { className: 'chart-empty' }, 'Nothing in this range'),
   );
-  let chart = null;
-  let focusAt = null;
 
   /** What the tooltip shows for point `i`: built as elements, as the page's security policy doesn't allow inline styles */
   function tipFor(i) {
@@ -243,48 +302,13 @@ export function timeChart({
     };
   }
 
-  const entry = {
-    node: box,
-    chart: null,
-    observer: null,
-    shown: false,
-    draw() {
-      if (!chart) return;
-      chart.setOption(option(), { notMerge: true });
-    },
-  };
-  entry.observer = new ResizeObserver(() => {
-    if (!box.isConnected || !plot.clientWidth) return;
-    entry.shown = true;
-    if (chart) return chart.resize();
-    void load().then(({ init }) => {
-      if (chart || !box.isConnected) return;
-      chart = entry.chart = init(plot, null, { renderer: 'svg' });
-      entry.draw();
-    });
-  });
-  entry.observer.observe(plot);
-  live.add(entry);
+  const entry = mountChart(box, plot, option);
 
-  // The arrow keys move along the points, as pointing would
-  box.addEventListener('keydown', (e) => {
+  // The arrow keys move along the points
+  tipKeys(box, entry, (key, at) => {
     const moves = { ArrowLeft: -1, ArrowRight: 1, PageUp: -10, PageDown: 10 };
-    let i;
-    if (e.key in moves) i = (focusAt ?? points - 1) + moves[e.key];
-    else if (e.key === 'Home') i = 0;
-    else if (e.key === 'End') i = points - 1;
-    else if (e.key === 'Escape') {
-      focusAt = null;
-      chart?.dispatchAction({ type: 'hideTip' });
-      return;
-    } else return;
-    e.preventDefault();
-    focusAt = Math.max(0, Math.min(points - 1, i));
-    chart?.dispatchAction({ type: 'showTip', seriesIndex: 0, dataIndex: focusAt });
-  });
-  box.addEventListener('blur', () => {
-    focusAt = null;
-    chart?.dispatchAction({ type: 'hideTip' });
+    const i = key in moves ? (at ?? points - 1) + moves[key] : key === 'Home' ? 0 : key === 'End' ? points - 1 : undefined;
+    return i === undefined ? undefined : Math.max(0, Math.min(points - 1, i));
   });
 
   // Dragging across with a mouse or pen picks a stretch; a finger scrolls the page as ever, and has the range buttons
@@ -292,6 +316,7 @@ export function timeChart({
     let from = null;
     const xIn = (e) => e.clientX - plot.getBoundingClientRect().left;
     box.addEventListener('pointerdown', (e) => {
+      const { chart } = entry;
       if (!chart || e.pointerType === 'touch' || e.button !== 0) return;
       const x = xIn(e);
       if (!chart.containPixel('grid', [x, e.clientY - plot.getBoundingClientRect().top])) return;
@@ -304,13 +329,13 @@ export function timeChart({
       pick.hidden = Math.abs(x - from) < LEAST_DRAG_PX;
       pick.style.left = `${Math.min(from, x)}px`;
       pick.style.width = `${Math.abs(x - from)}px`;
-      if (!pick.hidden) chart.dispatchAction({ type: 'hideTip' });
+      if (!pick.hidden) entry.chart.dispatchAction({ type: 'hideTip' });
     });
     const finish = (e) => {
       if (from === null) return;
       const x = Math.max(0, Math.min(plot.clientWidth, xIn(e)));
       const wide = Math.abs(x - from) >= LEAST_DRAG_PX;
-      const [a, b] = [from, x].sort((p, q) => p - q).map((px) => chart.convertFromPixel({ xAxisIndex: 0 }, px));
+      const [a, b] = [from, x].sort((p, q) => p - q).map((px) => entry.chart.convertFromPixel({ xAxisIndex: 0 }, px));
       from = null;
       pick.hidden = true;
       if (!wide || e.type !== 'pointerup' || !Number.isFinite(a) || !Number.isFinite(b)) return;
@@ -350,20 +375,15 @@ export function timeChart({
       ),
     );
 
-  // Built when it's opened, as a month of points is a lot of rows nobody may look at
-  const table = el('details', {}, el('summary', {}, 'Show as a table'));
-  table.addEventListener('toggle', () => {
-    if (!table.open || table.querySelector('table, p')) return;
+  const table = tableFold(() => {
     const rows = [];
     for (let i = points - 1; i >= 0; i--) {
       if (series.every((s) => s.values[i] === null)) continue;
       rows.push(el('tr', {}, el('td', {}, timeLabel(at(i))), series.map((s) => el('td', {}, s.values[i] === null ? '–' : format(s.values[i])))));
     }
-    table.append(
-      rows.length
-        ? el('table', {}, el('thead', {}, el('tr', {}, el('th', {}, 'Time'), series.map((s) => el('th', {}, s.label)))), el('tbody', {}, rows))
-        : el('p', {}, 'Nothing measured yet.'),
-    );
+    return rows.length
+      ? el('table', {}, el('thead', {}, el('tr', {}, el('th', {}, 'Time'), series.map((s) => el('th', {}, s.label)))), el('tbody', {}, rows))
+      : el('p', {}, 'Nothing measured yet.');
   });
 
   const notes = [limit && `Dashed: ${limit.label}`, previous && 'Faint: the stretch before'].filter(Boolean).join(' · ');
@@ -386,8 +406,6 @@ export function weekChart({ title, grid, describe, format, height = 220 }) {
   const most = Math.max(0, ...values);
   const plot = el('div', { className: 'echart', style: `height: ${height}px` });
   const box = el('div', { className: 'echart-box', tabIndex: 0, role: 'img', ariaLabel: `${title}. Use the arrow keys to read each hour` }, plot, !most && el('div', { className: 'chart-empty' }, 'Nobody on in this range'));
-  let chart = null;
-  let focus = null;
 
   function option() {
     const ink = colour('var(--muted)');
@@ -422,45 +440,15 @@ export function weekChart({ title, grid, describe, format, height = 220 }) {
     };
   }
 
-  const entry = {
-    node: box,
-    chart: null,
-    observer: null,
-    shown: false,
-    draw() {
-      chart?.setOption(option(), { notMerge: true });
-    },
-  };
-  entry.observer = new ResizeObserver(() => {
-    if (!box.isConnected || !plot.clientWidth) return;
-    entry.shown = true;
-    if (chart) return chart.resize();
-    void load().then(({ init }) => {
-      if (chart || !box.isConnected) return;
-      chart = entry.chart = init(plot, null, { renderer: 'svg' });
-      entry.draw();
-    });
-  });
-  entry.observer.observe(plot);
-  live.add(entry);
+  const entry = mountChart(box, plot, option);
 
-  // The arrow keys move across the hours and up and down the days
-  box.addEventListener('keydown', (e) => {
+  // The arrow keys move across the hours and up and down the days. A point is day * 24 + hour
+  tipKeys(box, entry, (key, at) => {
     const moves = { ArrowLeft: [0, -1], ArrowRight: [0, 1], ArrowUp: [-1, 0], ArrowDown: [1, 0] };
-    if (e.key === 'Escape') {
-      focus = null;
-      return chart?.dispatchAction({ type: 'hideTip' });
-    }
-    if (!(e.key in moves)) return;
-    e.preventDefault();
-    const [day, hour] = focus ?? [0, -1];
-    const [dd, dh] = moves[e.key];
-    focus = [Math.max(0, Math.min(6, day + dd)), Math.max(0, Math.min(23, hour + dh))];
-    chart?.dispatchAction({ type: 'showTip', seriesIndex: 0, dataIndex: focus[0] * 24 + focus[1] });
-  });
-  box.addEventListener('blur', () => {
-    focus = null;
-    chart?.dispatchAction({ type: 'hideTip' });
+    if (!(key in moves)) return undefined;
+    const [day, hour] = at === null ? [0, -1] : [Math.floor(at / 24), at % 24];
+    const [dd, dh] = moves[key];
+    return Math.max(0, Math.min(6, day + dd)) * 24 + Math.max(0, Math.min(23, hour + dh));
   });
 
   // Pale to strong, with what each end means
@@ -473,22 +461,18 @@ export function weekChart({ title, grid, describe, format, height = 220 }) {
   );
 
   // Hours down the side and days across, which fits a phone better than the chart's way round
-  const table = el('details', {}, el('summary', {}, 'Show as a table'));
-  table.addEventListener('toggle', () => {
-    if (!table.open || table.querySelector('table')) return;
-    table.append(
+  const table = tableFold(() =>
+    el(
+      'div',
+      { className: 'table-scroll' },
       el(
-        'div',
-        { className: 'table-scroll' },
-        el(
-          'table',
-          {},
-          el('thead', {}, el('tr', {}, el('th', {}, 'Hour'), WEEKDAYS.map((d) => el('th', {}, d)))),
-          el('tbody', {}, HOURS.map((h, hour) => el('tr', {}, el('td', {}, h), grid.map((row) => el('td', {}, row[hour] === null ? '–' : format(row[hour])))))),
-        ),
+        'table',
+        {},
+        el('thead', {}, el('tr', {}, el('th', {}, 'Hour'), WEEKDAYS.map((d) => el('th', {}, d)))),
+        el('tbody', {}, HOURS.map((h, hour) => el('tr', {}, el('td', {}, h), grid.map((row) => el('td', {}, row[hour] === null ? '–' : format(row[hour])))))),
       ),
-    );
-  });
+    ),
+  );
   return el('div', { className: 'chart week-chart' }, box, scale, table);
 }
 
@@ -509,7 +493,6 @@ export function calendarChart({ title, days, describe, format, onPick }) {
     !most && el('div', { className: 'chart-empty' }, 'Nobody on in this range'),
   );
   let chart = null;
-  let focus = null;
   // Square cells as wide as the box allows, from small enough for a year on a phone to big enough to tap
   const cellFor = (width) => Math.max(3, Math.min(36, Math.floor((width - 44) / weeks)));
   const sizeTo = (width) => (plot.style.height = `${cellFor(width) * 7 + 26}px`);
@@ -590,30 +573,15 @@ export function calendarChart({ title, days, describe, format, onPick }) {
   entry.observer.observe(box);
   live.add(entry);
 
-  // Left and right a day, up and down a week
-  box.addEventListener('keydown', (e) => {
+  // Left and right a day, up and down a week, and Enter looks at the day shown
+  const shownDay = tipKeys(box, entry, (key, at) => {
     const moves = { ArrowLeft: -1, ArrowRight: 1, ArrowUp: -7, ArrowDown: 7 };
-    if (e.key === 'Escape') {
-      focus = null;
-      return chart?.dispatchAction({ type: 'hideTip' });
-    }
-    if (e.key === 'Enter' && focus !== null && onPick) return onPick(days[focus]);
-    if (!(e.key in moves)) return;
-    e.preventDefault();
-    focus = Math.max(0, Math.min(days.length - 1, (focus ?? days.length) + moves[e.key]));
-    chart?.dispatchAction({ type: 'showTip', seriesIndex: 0, dataIndex: focus });
+    return key in moves ? Math.max(0, Math.min(days.length - 1, (at ?? days.length) + moves[key])) : undefined;
   });
-  box.addEventListener('blur', () => {
-    focus = null;
-    chart?.dispatchAction({ type: 'hideTip' });
-  });
+  if (onPick) box.addEventListener('keydown', (e) => e.key === 'Enter' && shownDay() !== null && onPick(days[shownDay()]));
 
   const scale = el('div', { className: 'week-scale', ariaHidden: 'true' }, el('span', {}, format(0)), el('span', { className: 'week-ramp' }), el('span', {}, format(most)));
-  const table = el('details', {}, el('summary', {}, 'Show as a table'));
-  table.addEventListener('toggle', () => {
-    if (!table.open || table.querySelector('table')) return;
-    table.append(el('div', { className: 'table-scroll' }, el('table', {}, el('tbody', {}, days.map((d) => el('tr', {}, el('td', {}, describe(d))))))));
-  });
+  const table = tableFold(() => el('div', { className: 'table-scroll' }, el('table', {}, el('tbody', {}, days.map((d) => el('tr', {}, el('td', {}, describe(d))))))));
   return el('div', { className: 'chart calendar-chart' }, box, scale, table);
 }
 

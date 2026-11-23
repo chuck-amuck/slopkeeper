@@ -246,6 +246,24 @@ const PAGES: [string, string, Record<string, string>?, string?, string?, string?
   ],
   ['stats/compare', 'Stats: Compare', {}, STATS_FIT],
   ['stats/sounds', 'Stats: Sounds & music', {}, STATS_FIT],
+  // Another range picked: kept in the address and asked of the bot
+  [
+    'stats/sounds',
+    'Stats: another range, in the address',
+    {},
+    `/[?&]range=week/.test(location.hash) && window.asked.some((u) => u.endsWith('/stats/sounds?period=week')) && !document.querySelector('main .notice.error')`,
+    `(() => { window.asked = []; const real = window.fetch; window.fetch = (u, i) => (window.asked.push(String(u)), real(u, i)); const select = document.querySelector('select.range-select'); if (select) { select.value = 'week'; select.dispatchEvent(new Event('change')); } else [...document.querySelectorAll('.range-presets button')].find((b) => b.textContent === '7 days').click(); })()`,
+    // Back to 30 days, which the next page would otherwise open on
+    `(() => { const select = document.querySelector('select.range-select'); if (select) { select.value = 'month'; select.dispatchEvent(new Event('change')); } else [...document.querySelectorAll('.range-presets button')].find((b) => b.textContent === '30 days').click(); })()`,
+  ],
+  // Every chart on the Overview is drawn, takes the arrow keys, and opens as a table
+  [
+    'stats/overview',
+    'Stats: charts drawn, read with the keys and as tables',
+    {},
+    `(({ boxes, drawn, keys, folds, tables } = window.charts ?? {}) => boxes === 3 && drawn === boxes && keys === boxes && folds === boxes && tables === folds)()`,
+    `(async () => { const wait = async (ok) => { for (let i = 0; i < 80 && !ok(); i++) await new Promise((r) => setTimeout(r, 100)); }; const boxes = [...document.querySelectorAll('.echart-box')]; await wait(() => boxes.every((b) => b.querySelector('svg'))); let keys = 0; for (const b of boxes) { b.focus(); const e = new KeyboardEvent('keydown', { key: 'ArrowRight', cancelable: true }); b.dispatchEvent(e); keys += e.defaultPrevented; b.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })); b.blur(); } const folds = [...document.querySelectorAll('.chart > details')]; folds.forEach((f) => (f.open = true)); await wait(() => folds.every((f) => f.querySelector('table, p'))); window.charts = { boxes: boxes.length, drawn: boxes.filter((b) => b.querySelector('svg')).length, keys, folds: folds.length, tables: folds.filter((f) => f.querySelector('table, p')).length }; folds.forEach((f) => (f.open = false)); })()`,
+  ],
   ['stats/recap', 'Stats: Monthly recap', {}, STATS_FIT],
   // Top games' buttons plain in its head, with no line of their own
   // (once it's drawn, which can be after the rest of the page on a slow machine)
