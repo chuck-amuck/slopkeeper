@@ -74,11 +74,26 @@ const GAMES_VIEW = (id: string, label: string) =>
 const SAY_STUB = String.raw`const real = window.fetch; window.sent = []; window.fetch = (url, init) => { const u = String(url); if (init?.method === 'POST' && /\/say(\/sound)?$/.test(u)) { const json = JSON.parse(init.body); window.sent.push([u.replace(/.*\/api\/guilds\/[^/]+/, ''), json]); return Promise.resolve(Response.json(u.endsWith('/sound') ? { name: json.name, replaced: false, discordProblem: null } : {})); } return real(url, init); };`;
 
 /**
+ * Answers the requests that match a rule in the page itself, and passes the rest to the bot: each rule is [address
+ * pattern, method, status, body], and a status of 0 never answers. What it answered is in window.asked
+ */
+const STUB = (...rules: [string, string, number, unknown?][]) =>
+  `const real = window.fetch; window.asked = []; window.fetch = (url, init) => { for (const [p, m, s, b] of ${JSON.stringify(rules)}) if (new RegExp(p).test(String(url)) && (init?.method ?? 'GET') === m) { window.asked.push(m + ' ' + String(url)); return s ? Promise.resolve(new Response(JSON.stringify(b ?? {}), { status: s, headers: { 'content-type': 'application/json' } })) : new Promise(() => {}); } return real(url, init); };`;
+
+/**
  * Each page: its address, a name, what the browser remembers first, a check that has to be true, something to do first
  * (then the check is tried until it's true, so it mustn't change anything), and something to put back after
  */
 const PAGES: [string, string, Record<string, string>?, string?, string?, string?][] = [
   ['board', 'Soundboard', {}, `${CLEAR_OF_PAGE} && ${NAMES_FIT} && !!document.querySelector('.view-slot > .play-in select') && !!document.querySelector('.view-slot input[type=search]') === innerWidth >= 1100`],
+  // A voice preview pressed again while it's still being made is asked for once
+  [
+    'board',
+    'Soundboard: a voice preview asked for once',
+    {},
+    `window.asked.length === 1 && document.querySelector('.say-preview').ariaBusy === 'true'`,
+    `(() => { ${STUB(['/say/preview', 'GET', 0])} const b = document.querySelector('.say-preview'); b.click(); b.click(); })()`,
+  ],
   // Play | Manage stays where it is as the view changes, and Manage has its search and buttons beside it on a wide screen
   [
     'board',
@@ -150,6 +165,14 @@ const PAGES: [string, string, Record<string, string>?, string?, string?, string?
     'Games: Library',
     {},
     `${GAMES_VIEW('library', 'Library')} && /Steam accounts/.test(document.querySelector('main').innerText) && (innerWidth > 640 || (() => { const rows = new Map(); for (const n of document.querySelector('.games-tools').children) rows.set(n.offsetTop, (rows.get(n.offsetTop) ?? 0) + 1); return [...rows.values()].join() === '1,2,2'; })())`,
+  ],
+  // A game added from members' Steam libraries: the dialog stays open for the next, and says so
+  [
+    'games/library',
+    'Games: a game added from the list',
+    {},
+    `(() => { const d = document.querySelector('dialog[open]'); return /Stub game is in the library/.test(d?.textContent) && !d.querySelector('[aria-label="Add Stub game"]') && window.asked.includes('POST /api/guilds/${GUILD}/games'); })()`,
+    `(async () => { ${STUB(['/games/owned$', 'GET', 200, { games: [{ appid: 1, name: 'Stub game', owners: ['Ana'] }] }], ['/games$', 'POST', 200, { name: 'Stub game' }])} [...document.querySelectorAll('button')].find((b) => b.textContent === 'Add a game').click(); for (let i = 0; i < 50 && !document.querySelector('[aria-label="Add Stub game"]'); i++) await new Promise((r) => setTimeout(r, 100)); document.querySelector('[aria-label="Add Stub game"]').click(); })()`,
   ],
   ['games/nights', 'Games: Game nights', {}, `${GAMES_VIEW('nights', 'Game nights')} && /Plan a game night/.test(document.querySelector('main').innerText)`],
   [
@@ -426,6 +449,15 @@ const PAGES: [string, string, Record<string, string>?, string?, string?, string?
     {},
     `(() => { const d = document.querySelector('dialog[open]'); return !!d && /Edit Narrator/.test(d.textContent) && d.querySelectorAll('select').length === 5 && d.querySelector('#voice-effect').options.length === 16 && /Measured: Middle, -2.5 dB/.test(d.textContent) && [...d.querySelectorAll('button')].some((b) => b.textContent === 'Use measured') && /Downloading, 40%/.test(document.body.innerText) && /Couldn’t download/.test(document.body.innerText); })()`,
     `[...document.querySelectorAll('#settings-voices .voice-row')].find((r) => r.textContent.startsWith('Narrator')).querySelector('button:nth-child(2)').click()`,
+  ],
+  // A save the bot turns down says why in the dialog, and Save can be pressed again. The dialog's closed after, as a
+  // problem showing would fail the page
+  [
+    'settings/speech',
+    'Settings: a voice the bot won’t save says why',
+    {},
+    `window.refused === 'That name is taken.|false'`,
+    `(async () => { ${STUB(['/voices/[^/?]+$', 'PUT', 409, { error: 'That name is taken.' }])} [...document.querySelectorAll('#settings-voices .voice-row')].find((r) => r.textContent.startsWith('Narrator')).querySelector('button:nth-child(2)').click(); const d = document.querySelector('dialog[open]'); d.querySelector('form').requestSubmit(); const p = d.querySelector('[role=alert]'); for (let i = 0; i < 50 && p.hidden; i++) await new Promise((r) => setTimeout(r, 100)); window.refused = p.textContent + '|' + d.querySelector('button[type=submit]').disabled; d.close(); })()`,
   ],
   // An import, from a file picked, says what it would do first
   [

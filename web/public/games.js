@@ -1,4 +1,4 @@
-import { ago, api, attempt, confirmButton, duration, el, formProblem, notice, openDialog, recall, remember, request, RequestError, state, toast } from './lib.js';
+import { ago, api, attempt, confirmButton, duration, el, formProblem, notice, openDialog, recall, remember, request, state, toast, tryShowing } from './lib.js';
 
 const FILTERS = [
   ['all', 'All games'],
@@ -40,22 +40,15 @@ function addDialog(main, onAdded) {
     node.hidden = !text;
   };
 
+  // Its row goes once it's added, so its button stays pressed
   const pick = (game, button) =>
-    attempt(async () => {
-      button.disabled = true;
-      say(problem, null);
-      try {
-        const { name: title } = await request(api('/games'), { method: 'POST', json: { appid: game.appid } });
-        // Stays open, as a few games are often added in one go
-        owned = owned.filter((g) => g !== game);
-        say(added, `${title} is in the library.`);
-        paint();
-        await onAdded();
-      } catch (err) {
-        if (!(err instanceof RequestError)) throw err;
-        say(problem, err.message);
-        button.disabled = false;
-      }
+    tryShowing({ problem, button, keepDisabled: true }, async () => {
+      const { name: title } = await request(api('/games'), { method: 'POST', json: { appid: game.appid } });
+      // Stays open, as a few games are often added in one go
+      owned = owned.filter((g) => g !== game);
+      say(added, `${title} is in the library.`);
+      paint();
+      await onAdded();
     });
 
   const gameRow = (game) => {
@@ -86,20 +79,11 @@ function addDialog(main, onAdded) {
     close: 'Close',
     onsubmit: (e) => {
       e.preventDefault();
-      void attempt(async () => {
-        submit.disabled = true;
-        say(problem, null);
-        try {
-          const { name: title, added: isNew } = await request(api('/games'), { method: 'POST', json: { name: name.value } });
-          toast(isNew ? `${title} is in the library.` : `${title} was already in the library.`);
-          node.close();
-          await onAdded();
-        } catch (err) {
-          if (!(err instanceof RequestError)) throw err;
-          say(problem, err.message);
-        } finally {
-          submit.disabled = false;
-        }
+      void tryShowing({ problem, button: submit }, async () => {
+        const { name: title, added: isNew } = await request(api('/games'), { method: 'POST', json: { name: name.value } });
+        toast(isNew ? `${title} is in the library.` : `${title} was already in the library.`);
+        node.close();
+        await onAdded();
       });
     },
   });
@@ -118,19 +102,6 @@ function manageDialog(main, gameId, data, reload) {
   const find = () => data().games.find((g) => g.id === gameId);
   const start = find();
   const problem = formProblem();
-  const say = (text) => {
-    problem.textContent = text ?? '';
-    problem.hidden = !text;
-  };
-  const guarded = async (action) => {
-    say(null);
-    try {
-      await action();
-    } catch (err) {
-      if (!(err instanceof RequestError)) throw err;
-      say(err.message);
-    }
-  };
 
   const limit = el('input', { type: 'number', min: 1, max: 100, step: 1, placeholder: 'No limit', value: start.maxPlayers ?? '' });
   const steam = el('input', { maxLength: 200, autocomplete: 'off', placeholder: 'Store link or app ID', value: start.url ?? '' });
@@ -140,22 +111,19 @@ function manageDialog(main, gameId, data, reload) {
   const hide = el('input', { type: 'checkbox', onchange: (e) => setHidden(e.target.checked) });
   const hideNote = el('p', { className: 'hint' });
 
+  // Drawn again either way, so a tick the bot turned down goes back
   function setHidden(on) {
-    return attempt(() =>
-      guarded(async () => {
-        await request(api(`/hidden-games/${find().appid}`), { method: on ? 'PUT' : 'DELETE' });
-        await reload();
-      }).finally(paint),
-    );
+    return tryShowing({ problem }, async () => {
+      await request(api(`/hidden-games/${find().appid}`), { method: on ? 'PUT' : 'DELETE' });
+      await reload();
+    }).then(paint);
   }
 
   function mark(member, field, on) {
-    return attempt(() =>
-      guarded(async () => {
-        await request(api(`/games/${gameId}/members/${member.id}`), { method: 'PATCH', json: { [field]: on } });
-        await reload();
-      }).finally(paint),
-    );
+    return tryShowing({ problem }, async () => {
+      await request(api(`/games/${gameId}/members/${member.id}`), { method: 'PATCH', json: { [field]: on } });
+      await reload();
+    }).then(paint);
   }
 
   function memberRow(game, member) {
@@ -211,14 +179,12 @@ function manageDialog(main, gameId, data, reload) {
             className: 'plan',
             onsubmit: (e) => {
               e.preventDefault();
-              void attempt(() =>
-                guarded(async () => {
-                  await request(api(`/games/${gameId}`), { method: 'PATCH', json: { maxPlayers: limit.value ? Number(limit.value) : null, steam: steam.value } });
-                  toast(`${start.name} saved.`);
-                  await reload();
-                  paint();
-                }),
-              );
+              void tryShowing({ problem }, async () => {
+                await request(api(`/games/${gameId}`), { method: 'PATCH', json: { maxPlayers: limit.value ? Number(limit.value) : null, steam: steam.value } });
+                toast(`${start.name} saved.`);
+                await reload();
+                paint();
+              });
             },
           },
           row('Player limit', limit),
@@ -265,18 +231,11 @@ function accountsDialog(main, onChanged) {
     await onChanged();
   }
 
-  const guarded = (action, message) =>
-    attempt(async () => {
-      say(problem, null);
-      say(done, null);
-      try {
-        await action();
-        say(done, message());
-      } catch (err) {
-        if (!(err instanceof RequestError)) throw err;
-        say(problem, err.message);
-      }
-    });
+  /** Runs `action`, then says `message()` under the list, or why the bot turned it down. `button` waits for it */
+  const guarded = async (action, message, button = null) => {
+    say(done, null);
+    if (await tryShowing({ problem, button }, action)) say(done, message());
+  };
 
   function linkForm(member) {
     const profile = el('input', { required: true, maxLength: 200, autocomplete: 'off', placeholder: 'Profile link, custom URL name or SteamID64', ariaLabel: `Steam profile for ${member.name}` });
@@ -288,7 +247,6 @@ function accountsDialog(main, onChanged) {
         onsubmit: (e) => {
           e.preventDefault();
           let games;
-          save.disabled = true;
           void guarded(
             async () => {
               ({ games } = await request(api(`/steam-links/${member.id}`), { method: 'PUT', json: { profile: profile.value } }));
@@ -296,9 +254,8 @@ function accountsDialog(main, onChanged) {
               await refresh();
             },
             () => (games === null ? `Linked ${member.name}, but their game details are private.` : `Linked ${member.name}, with ${games} games.`),
-          ).finally(() => {
-            save.disabled = false;
-          });
+            save,
+          );
         },
       },
       profile,
@@ -408,19 +365,17 @@ function accountsDialog(main, onChanged) {
     {
       type: 'button',
       disabled: true,
-      onclick: () => {
-        refreshAll.disabled = true;
-        say(done, 'Refreshing libraries…');
+      onclick: () =>
         void guarded(
           async () => {
+            // Said once guarded has cleared the last message, so it shows while Steam is asked
+            say(done, 'Refreshing libraries…');
             await request(api('/steam-refresh'), { method: 'POST' });
             await refresh();
           },
           () => 'Libraries refreshed.',
-        ).finally(() => {
-          refreshAll.disabled = false;
-        });
-      },
+          refreshAll,
+        ),
     },
     'Refresh libraries',
   );

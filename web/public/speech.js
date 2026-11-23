@@ -92,23 +92,15 @@ export function previewButton(picker, text, effect) {
       className: 'icon say-preview',
       ariaLabel: 'Preview this voice, just for you',
       title: 'Hear it here first, just for you',
-      onclick: () =>
-        void attempt(async () => {
-          // Still fetching the last one
-          if (preview.ariaBusy) return;
-          const line = text.value.trim() || PREVIEW_TEXT;
-          const name = `preview:${picker.value}:${effect?.value ?? ''}:${line}`;
-          // Pressed again while it plays: stop it
-          if (player.name === name) return player.stop();
-          preview.ariaBusy = 'true';
-          try {
-            const through = effect ? `&effect=${encodeURIComponent(effect.value)}` : '';
-            const url = await fetchAudio(api(`/say/preview?voice=${encodeURIComponent(picker.value)}${through}&text=${encodeURIComponent(line)}`));
-            await player.toggle(url, name);
-          } finally {
-            preview.ariaBusy = null;
-          }
-        }),
+      onclick: () => {
+        const line = text.value.trim() || PREVIEW_TEXT;
+        const through = effect ? `&effect=${encodeURIComponent(effect.value)}` : '';
+        void attempt(() =>
+          player.preview(preview, `preview:${picker.value}:${effect?.value ?? ''}:${line}`, () =>
+            fetchAudio(api(`/say/preview?voice=${encodeURIComponent(picker.value)}${through}&text=${encodeURIComponent(line)}`)),
+          ),
+        );
+      },
     },
     icon('headphones'),
   );

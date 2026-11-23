@@ -1,4 +1,4 @@
-import { ago, api, attempt, confirmButton, devicePref, el, formProblem, icon, notice, openDialog, postDialog, recall, remember, request, RequestError, state, toast, undoToast, volumeControl } from './lib.js';
+import { ago, api, attempt, confirmButton, devicePref, el, formProblem, icon, notice, openDialog, postDialog, recall, remember, request, RequestError, state, toast, tryShowing, undoToast, volumeControl } from './lib.js';
 import { voicesCard } from './voicesettings.js';
 import { profilesCard } from './profiles.js';
 
@@ -640,24 +640,11 @@ export function renderSettings(main) {
     const who = el('select', { ariaLabel: 'Person', onchange: () => show() });
     const list = el('div', { className: 'merge-list' });
     const problem = formProblem();
-    const say = (text) => {
-      problem.textContent = text ?? '';
-      problem.hidden = !text;
-    };
 
+    // A tick the bot turned down goes back
     const toggle = (ping, box) =>
-      attempt(async () => {
-        say(null);
-        box.disabled = true;
-        try {
-          await request(api(`/members/${who.value}/pings`), { method: 'PUT', json: { roleId: ping.id, on: box.checked } });
-        } catch (err) {
-          if (!(err instanceof RequestError)) throw err;
-          box.checked = !box.checked;
-          say(err.message);
-        } finally {
-          box.disabled = false;
-        }
+      tryShowing({ problem, button: box }, () => request(api(`/members/${who.value}/pings`), { method: 'PUT', json: { roleId: ping.id, on: box.checked } })).then((went) => {
+        if (went === false) box.checked = !box.checked;
       });
 
     const pingRow = (ping) => {
@@ -666,7 +653,7 @@ export function renderSettings(main) {
     };
 
     function show() {
-      say(null);
+      problem.hidden = true;
       const person = who.value;
       return attempt(async () => {
         const { pings } = await request(api(`/members/${person}/pings`));

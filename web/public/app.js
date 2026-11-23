@@ -3,7 +3,7 @@ import { renderChat } from './chat.js';
 import { renderDeals } from './deals.js';
 import { renderGames } from './games.js';
 import { renderHealth } from './health.js';
-import { api, askEarly, attempt, el, formProblem, icon, newPage, notice, openDialog, player, recall, remember, request, RequestError, session, SESSION_KEY, sessionLasts, state, toast } from './lib.js';
+import { api, askEarly, attempt, el, formProblem, icon, newPage, notice, openDialog, player, recall, remember, request, RequestError, session, SESSION_KEY, sessionLasts, state, toast, tryShowing } from './lib.js';
 import { musicPlayer, noMusicPlayer } from './miniplayer.js';
 import { renderMusic } from './music.js';
 import { renderNights } from './nights.js';
@@ -217,22 +217,12 @@ function meDialog(main) {
     close: 'Cancel',
     onsubmit: (e) => {
       e.preventDefault();
-      submit.disabled = true;
-      problem.hidden = true;
-      void attempt(async () => {
-        try {
-          const { me } = await request(api('/me'), who.value ? { method: 'PUT', json: { userId: who.value } } : { method: 'DELETE' });
-          state.me = me;
-          node.close();
-          toast(me.userId ? `You’re ${who.selectedOptions[0].textContent} here now.` : 'Not linked to anyone now.');
-          renderFrame();
-        } catch (err) {
-          if (!(err instanceof RequestError)) throw err;
-          problem.textContent = err.message;
-          problem.hidden = false;
-        } finally {
-          submit.disabled = false;
-        }
+      void tryShowing({ problem, button: submit }, async () => {
+        const { me } = await request(api('/me'), who.value ? { method: 'PUT', json: { userId: who.value } } : { method: 'DELETE' });
+        state.me = me;
+        node.close();
+        toast(me.userId ? `You’re ${who.selectedOptions[0].textContent} here now.` : 'Not linked to anyone now.');
+        renderFrame();
       });
     },
   });

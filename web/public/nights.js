@@ -1,4 +1,4 @@
-import { announce, api, attempt, confirmButton, el, formProblem, keepFocus, notice, openDialog, recall, remember, request, RequestError, state, toast } from './lib.js';
+import { announce, api, attempt, confirmButton, el, formProblem, keepFocus, notice, openDialog, recall, remember, request, state, toast, tryShowing } from './lib.js';
 import { followWhenIdle, older } from './updates.js';
 
 const READ_DELAY_MS = 250;
@@ -171,44 +171,34 @@ function planDialog(main, data, onPlanned, night = null, presetGame = '') {
     close: 'Cancel',
     onsubmit: (e) => {
       e.preventDefault();
-      void attempt(async () => {
-        submit.disabled = true;
-        problem.hidden = true;
-        try {
-          if (night) {
-            const { changed, eventNote } = await request(api(`/game-nights/${night.id}`), {
-              method: 'PATCH',
-              json: { game: game.value, when: when_.value, voiceChannelId: voiceChannel.value || null, details: details.value.trim() || null },
-            });
-            toast(changed.length ? `Changed the ${changed.join(', ')}.` : 'Nothing changed.');
-            if (eventNote) toast(eventNote, true);
-            node.close();
-            return await onPlanned();
-          }
-          const { eventNote } = await request(api('/game-nights'), {
-            method: 'POST',
-            json: {
-              game: game.value,
-              when: when_.value,
-              channelId: channel.value,
-              voiceChannelId: voiceChannel.value || null,
-              hostId: host.value,
-              details: details.value.trim() || null,
-              repeat: repeat.value ? Number(repeat.value) : null,
-            },
+      void tryShowing({ problem, button: submit }, async () => {
+        if (night) {
+          const { changed, eventNote } = await request(api(`/game-nights/${night.id}`), {
+            method: 'PATCH',
+            json: { game: game.value, when: when_.value, voiceChannelId: voiceChannel.value || null, details: details.value.trim() || null },
           });
-          remember('nightHost', host.value);
-          toast(`${game.value.trim()} night is on.`);
+          toast(changed.length ? `Changed the ${changed.join(', ')}.` : 'Nothing changed.');
           if (eventNote) toast(eventNote, true);
           node.close();
-          await onPlanned();
-        } catch (err) {
-          if (!(err instanceof RequestError)) throw err;
-          problem.textContent = err.message;
-          problem.hidden = false;
-        } finally {
-          submit.disabled = false;
+          return await onPlanned();
         }
+        const { eventNote } = await request(api('/game-nights'), {
+          method: 'POST',
+          json: {
+            game: game.value,
+            when: when_.value,
+            channelId: channel.value,
+            voiceChannelId: voiceChannel.value || null,
+            hostId: host.value,
+            details: details.value.trim() || null,
+            repeat: repeat.value ? Number(repeat.value) : null,
+          },
+        });
+        remember('nightHost', host.value);
+        toast(`${game.value.trim()} night is on.`);
+        if (eventNote) toast(eventNote, true);
+        node.close();
+        await onPlanned();
       });
     },
   });

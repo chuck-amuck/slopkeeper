@@ -1,4 +1,4 @@
-import { ago, announce, api, attempt, duration, el, formProblem, notice, openDialog, request, RequestError, state, toast, undoToast } from './lib.js';
+import { ago, announce, api, attempt, duration, el, formProblem, notice, openDialog, request, state, toast, tryShowing, undoToast } from './lib.js';
 import { planNightFor } from './nights.js';
 import { achievementsView } from './achievements.js';
 
@@ -54,20 +54,10 @@ function voteDialog(main, options, voice, games) {
     close: 'Cancel',
     onsubmit: (e) => {
       e.preventDefault();
-      submit.disabled = true;
-      problem.hidden = true;
-      void attempt(async () => {
-        try {
-          await request(api('/votes'), { method: 'POST', json: { voiceChannelId: voice.id, channelId: channel.value, minutes: Number(minutes.value), games: games ?? undefined } });
-          toast(`Vote posted in ${channel.selectedOptions[0].textContent}.`);
-          node.close();
-        } catch (err) {
-          if (!(err instanceof RequestError)) throw err;
-          problem.textContent = err.message;
-          problem.hidden = false;
-        } finally {
-          submit.disabled = false;
-        }
+      void tryShowing({ problem, button: submit }, async () => {
+        await request(api('/votes'), { method: 'POST', json: { voiceChannelId: voice.id, channelId: channel.value, minutes: Number(minutes.value), games: games ?? undefined } });
+        toast(`Vote posted in ${channel.selectedOptions[0].textContent}.`);
+        node.close();
       });
     },
   });

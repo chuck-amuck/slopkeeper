@@ -516,6 +516,32 @@ export async function attempt(action) {
   }
 }
 
+/**
+ * Runs `action` from a form or a button as attempt() does, except that what the bot turns down is said in `problem` (a
+ * formProblem()), hidden as it starts, rather than in a toast. `button`, or a checkbox, can't be pressed while it runs,
+ * and can again after, or with `keepDisabled` only if it didn't go through, for one whose job is then done. Resolves
+ * with true when it went through, false when the bot turned it down, and undefined when something else went wrong
+ */
+export async function tryShowing({ problem, button = null, keepDisabled = false }, action) {
+  let went;
+  if (button) button.disabled = true;
+  problem.hidden = true;
+  await attempt(async () => {
+    try {
+      await action();
+      went = true;
+    } catch (err) {
+      if (!(err instanceof RequestError)) throw err;
+      went = false;
+      problem.textContent = err.message;
+      problem.hidden = false;
+    } finally {
+      if (button && !(keepDisabled && went)) button.disabled = false;
+    }
+  });
+  return went;
+}
+
 /** A length of time, as 45m, 2h 5m or 120h */
 export function duration(ms) {
   const minutes = Math.round(ms / 60_000);
@@ -704,19 +730,9 @@ export function postDialog(parent, title, text, post) {
     close: 'Cancel',
     onsubmit: (e) => {
       e.preventDefault();
-      submit.disabled = true;
-      problem.hidden = true;
-      void attempt(async () => {
-        try {
-          await post(channel.value, channel.selectedOptions[0].textContent);
-          node.close();
-        } catch (err) {
-          if (!(err instanceof RequestError)) throw err;
-          problem.textContent = err.message;
-          problem.hidden = false;
-        } finally {
-          submit.disabled = false;
-        }
+      void tryShowing({ problem, button: submit }, async () => {
+        await post(channel.value, channel.selectedOptions[0].textContent);
+        node.close();
       });
     },
   });
@@ -844,6 +860,20 @@ export const player = {
     this.gain = null;
     this.name = null;
     this.onChange();
+  },
+  /**
+   * Plays what `fetch()` gets, as `name`, while `button` shows it's fetching: pressed again while it plays, it stops, and
+   * while it's fetching, nothing happens
+   */
+  async preview(button, name, fetch) {
+    if (button.ariaBusy) return;
+    if (this.name === name) return this.stop();
+    button.ariaBusy = 'true';
+    try {
+      await this.toggle(await fetch(), name);
+    } finally {
+      button.ariaBusy = null;
+    }
   },
   /** Changes how loud a sound is if it's the one playing */
   setLoudness(name, loudness) {

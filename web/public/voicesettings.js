@@ -1,4 +1,4 @@
-import { api, attempt, confirmButton, el, fetchAudio, formProblem, isNarrow, notice, openDialog, player, repaintOnWidth, request, RequestError, toast, wordOrIcon } from './lib.js';
+import { api, attempt, confirmButton, el, fetchAudio, formProblem, isNarrow, notice, openDialog, player, repaintOnWidth, request, RequestError, toast, tryShowing, wordOrIcon } from './lib.js';
 import { effectOptions, NO_EFFECT } from './speech.js';
 
 // Settings' Voices card: the voices added here for every server on the bot, with export and import
@@ -48,17 +48,9 @@ const dB = (volume) => `${volume > 0 ? '+' : ''}${volume} dB`;
 const LOOSE_FIT = 0.05;
 
 /** Plays a voice saying a line with the settings given, just for whoever pressed it. Pressing again stops it */
-async function preview(voice, settings, line, button) {
-  if (button.ariaBusy) return;
+function preview(voice, settings, line, button) {
   const text = line.trim() || PREVIEW_TEXT;
-  const name = `voice-preview:${voice.id}:${JSON.stringify(settings)}:${text}`;
-  if (player.name === name) return player.stop();
-  button.ariaBusy = 'true';
-  try {
-    await player.toggle(await fetchAudio(api(`/voices/${encodeURIComponent(voice.id)}/preview`), { text, ...settings }), name);
-  } finally {
-    button.ariaBusy = null;
-  }
+  return player.preview(button, `voice-preview:${voice.id}:${JSON.stringify(settings)}:${text}`, () => fetchAudio(api(`/voices/${encodeURIComponent(voice.id)}/preview`), { text, ...settings }));
 }
 
 export function voicesCard(main, onChange) {
@@ -255,17 +247,7 @@ export function voicesCard(main, onChange) {
     };
     const effect = el('select', { id: 'voice-effect' }, effectOptions(effects, NO_EFFECT));
     const hear = el('button', { type: 'button', disabled: v.state !== 'ready', title: v.state === 'ready' ? 'Hear it with these settings, just for you' : 'Once it’s downloaded' }, 'Preview');
-    hear.onclick = () =>
-      void attempt(async () => {
-        problem.hidden = true;
-        try {
-          await preview(v, { ...settings(), effect: effect.value }, line.value, hear);
-        } catch (err) {
-          if (!(err instanceof RequestError)) throw err;
-          problem.textContent = err.message;
-          problem.hidden = false;
-        }
-      });
+    hear.onclick = () => void tryShowing({ problem }, () => preview(v, { ...settings(), effect: effect.value }, line.value, hear));
     const save = el('button', { type: 'submit', className: 'primary' }, 'Save');
     const node = openDialog(main, {
       title: `Edit ${v.name}`,
@@ -288,25 +270,15 @@ export function voicesCard(main, onChange) {
       close: 'Cancel',
       onsubmit: (e) => {
         e.preventDefault();
-        save.disabled = true;
-        void attempt(async () => {
-          problem.hidden = true;
-          try {
-            await request(api(`/voices/${encodeURIComponent(v.id)}`), {
-              method: 'PUT',
-              json: { name: fields.name.value, group: fields.group.value, model: fields.model.value.trim(), ...tuning() },
-            });
-            toast(`Saved ${fields.name.value.trim()}.`);
-            node.close();
-            await load();
-            onChange?.();
-          } catch (err) {
-            if (!(err instanceof RequestError)) throw err;
-            problem.textContent = err.message;
-            problem.hidden = false;
-          } finally {
-            save.disabled = false;
-          }
+        void tryShowing({ problem, button: save }, async () => {
+          await request(api(`/voices/${encodeURIComponent(v.id)}`), {
+            method: 'PUT',
+            json: { name: fields.name.value, group: fields.group.value, model: fields.model.value.trim(), ...tuning() },
+          });
+          toast(`Saved ${fields.name.value.trim()}.`);
+          node.close();
+          await load();
+          onChange?.();
         });
       },
     });
@@ -361,20 +333,13 @@ export function voicesCard(main, onChange) {
       close: 'Cancel',
       onsubmit: (e) => {
         e.preventDefault();
-        go.disabled = true;
-        void attempt(async () => {
-          try {
-            const done = await request(api('/voices/import'), { method: 'POST', json: { voices: list, replace: replace.checked, dryRun: false } });
-            toast(`Imported: ${[`${done.added.length} added`, `${done.changed.length} changed`, replace.checked && `${done.removed.length} removed`].filter(Boolean).join(', ')}.`);
-            node.close();
-            await load();
-            onChange?.();
-          } catch (err) {
-            if (!(err instanceof RequestError)) throw err;
-            problem.textContent = err.message;
-            problem.hidden = false;
-            go.disabled = false;
-          }
+        // Once it's in, there's nothing more to import from this file
+        void tryShowing({ problem, button: go, keepDisabled: true }, async () => {
+          const done = await request(api('/voices/import'), { method: 'POST', json: { voices: list, replace: replace.checked, dryRun: false } });
+          toast(`Imported: ${[`${done.added.length} added`, `${done.changed.length} changed`, replace.checked && `${done.removed.length} removed`].filter(Boolean).join(', ')}.`);
+          node.close();
+          await load();
+          onChange?.();
         });
       },
     });

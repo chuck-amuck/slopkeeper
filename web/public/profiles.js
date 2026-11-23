@@ -1,5 +1,5 @@
 import { tryProfile } from './chat.js';
-import { api, attempt, confirmButton, el, fetchAudio, formProblem, icon, menuToggle, notice, openDialog, player, repaintOnWidth, request, RequestError, state, toast, wordOrIcon } from './lib.js';
+import { api, attempt, confirmButton, el, fetchAudio, formProblem, icon, menuToggle, notice, openDialog, player, repaintOnWidth, request, RequestError, state, toast, tryShowing, wordOrIcon } from './lib.js';
 import { effectOptions } from './speech.js';
 import { follow, followWhenIdle } from './updates.js';
 
@@ -232,18 +232,12 @@ export function profilesCard(main, data, onChange) {
   }
 
   /** Hears the voice and effect picked, as the bot's own lines would sound */
-  async function hear(voice, effect, name, button) {
-    if (button.ariaBusy) return;
+  function hear(voice, effect, name, button) {
     const text = `Hi, I’m ${name.trim() || 'the bot'}, and this is how I sound.`;
-    const key = `profile-preview:${voice}:${effect}:${text}`;
-    if (player.name === key) return player.stop();
-    button.ariaBusy = 'true';
-    try {
-      const through = effect === SERVER_DEFAULT ? '' : `&effect=${encodeURIComponent(effect)}`;
-      await player.toggle(await fetchAudio(api(`/say/preview?voice=${encodeURIComponent(voice)}${through}&text=${encodeURIComponent(text)}`)), key);
-    } finally {
-      button.ariaBusy = null;
-    }
+    const through = effect === SERVER_DEFAULT ? '' : `&effect=${encodeURIComponent(effect)}`;
+    return player.preview(button, `profile-preview:${voice}:${effect}:${text}`, () =>
+      fetchAudio(api(`/say/preview?voice=${encodeURIComponent(voice)}${through}&text=${encodeURIComponent(text)}`)),
+    );
   }
 
   /** Changes a profile, or makes one when `p` is null */
@@ -308,17 +302,7 @@ export function profilesCard(main, data, onChange) {
     counted();
     const problem = formProblem();
     const listen = el('button', { type: 'button', hidden: !data.speech }, 'Hear it');
-    listen.onclick = () =>
-      void attempt(async () => {
-        problem.hidden = true;
-        try {
-          await hear(fields.voice.value, fields.effect.value, fields.name.value, listen);
-        } catch (err) {
-          if (!(err instanceof RequestError)) throw err;
-          problem.textContent = err.message;
-          problem.hidden = false;
-        }
-      });
+    listen.onclick = () => void tryShowing({ problem }, () => hear(fields.voice.value, fields.effect.value, fields.name.value, listen));
     const save = el('button', { type: 'submit', className: 'primary' }, p ? 'Save' : 'Add');
     const speech = data.speech
       ? [
@@ -350,9 +334,7 @@ export function profilesCard(main, data, onChange) {
       close: 'Cancel',
       onsubmit: (e) => {
         e.preventDefault();
-        save.disabled = true;
-        void attempt(async () => {
-          problem.hidden = true;
+        void tryShowing({ problem, button: save }, async () => {
           const json = {
             name: fields.name.value,
             nickname: fields.nickname.value,
@@ -361,32 +343,24 @@ export function profilesCard(main, data, onChange) {
             despises: fields.despises.value,
             ...(data.speech && { voice: fields.voice.value || null, effect: fields.effect.value || null }),
           };
+          let fresh = await request(api(p ? `/chat-profiles/${encodeURIComponent(p.id)}` : '/chat-profiles'), { method: p ? 'PUT' : 'POST', json });
+          toast(p ? `Saved ${json.name.trim()}.` : `Added ${json.name.trim()}. Pick it with Use, or in Profile above.`);
+          node.close();
+          // The rest is saved, so a photo that can't be is said apart. A nickname the bot couldn't take is still said
+          const photoPath = api(`/chat-profiles/${encodeURIComponent(p ? p.id : fresh.id)}/photo`);
           try {
-            let fresh = await request(api(p ? `/chat-profiles/${encodeURIComponent(p.id)}` : '/chat-profiles'), { method: p ? 'PUT' : 'POST', json });
-            toast(p ? `Saved ${json.name.trim()}.` : `Added ${json.name.trim()}. Pick it with Use, or in Profile above.`);
-            node.close();
-            // The rest is saved, so a photo that can't be is said apart. A nickname the bot couldn't take is still said
-            const photoPath = api(`/chat-profiles/${encodeURIComponent(p ? p.id : fresh.id)}/photo`);
-            try {
-              const photoAnswer =
-                photoChoice instanceof File
-                  ? await request(photoPath, { method: 'PUT', body: photoChoice })
-                  : photoChoice === 'remove'
-                    ? await request(photoPath, { method: 'DELETE' })
-                    : null;
-              if (photoAnswer) fresh = { ...photoAnswer, warning: [fresh.warning, photoAnswer.warning].filter(Boolean).join(' ') || undefined };
-            } catch (err) {
-              if (!(err instanceof RequestError)) throw err;
-              toast(`The photo wasn’t saved: ${err.message}`, true);
-            }
-            await after(fresh);
+            const photoAnswer =
+              photoChoice instanceof File
+                ? await request(photoPath, { method: 'PUT', body: photoChoice })
+                : photoChoice === 'remove'
+                  ? await request(photoPath, { method: 'DELETE' })
+                  : null;
+            if (photoAnswer) fresh = { ...photoAnswer, warning: [fresh.warning, photoAnswer.warning].filter(Boolean).join(' ') || undefined };
           } catch (err) {
             if (!(err instanceof RequestError)) throw err;
-            problem.textContent = err.message;
-            problem.hidden = false;
-          } finally {
-            save.disabled = false;
+            toast(`The photo wasn’t saved: ${err.message}`, true);
           }
+          await after(fresh);
         });
       },
     });
