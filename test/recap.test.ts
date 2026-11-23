@@ -75,7 +75,7 @@ test('counts only that month, only this server and only current members', () => 
   assert.match(field(embed, 'Most time in voice')!, /🥇 <@a> · 6h/);
   assert.match(field(embed, 'Most time in voice')!, /🥈 <@b> · 3h/);
   assert.doesNotMatch(field(embed, 'Most time in voice')!, /gone/);
-  assert.match(field(embed, 'Longest session')!, /\*\*5h\*\*.*<@a> <@b>$/);
+  assert.match(field(embed, 'Longest session')!, /\*\*5h\*\*.*<@a> and <@b>$/);
   assert.match(field(embed, 'Top sounds')!, /🥇 \*\*airhorn\*\* · 5 plays/);
   assert.match(field(embed, 'Top sounds')!, /trigger-happy: <@b> · 3 plays/);
   assert.equal(field(embed, 'Game nights'), '2 nights, best turnout Jackbox with 4 in');

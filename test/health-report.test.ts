@@ -5,7 +5,7 @@ import { healthOf } from '../src/api/health.ts';
 import { feeds } from '../src/changes.ts';
 import { db, setKv } from '../src/db.ts';
 import { browserReport, containerSeen, correctLoopDelays, sampleMachine, store } from '../src/features/health.ts';
-import { customWindow, healthReport, quantile, verdictOf } from '../src/features/healthReport.ts';
+import { customWindow, FEWEST_TO_JUDGE, healthReport, quantile, verdictOf } from '../src/features/healthReport.ts';
 import type { MachineReading } from '../src/machine.ts';
 import * as perf from '../src/perf.ts';
 import { GUILD, ok, refused } from './apiFixture.ts';
@@ -249,10 +249,14 @@ test('the web UI as people see it is judged by taps, opening and reacting', () =
   assert.equal(browser.phone, browser.away.taps);
   assert.equal(browser.networkShare, 0.667, 'the network’s 6 of the 9 seconds');
   assert.equal(browser.shown.p95, 2);
-  assert.equal(browser.status, 'slow', 'away taps took over half a second');
+  assert.equal(browser.status, 'slow', 'away taps took over half a second, and the one slow opening is too few to count');
   assert.equal(browser.away.tapSeries.at(-2), browser.away.taps);
   db.exec('DELETE FROM perf_minutes');
   assert.equal(healthReport(GUILD, '1h', NOW).browser.status, 'quiet');
+  // A few very slow taps: measured, but too few to judge
+  minute(at(2), 'browser_request_seconds', where('away', 'phone', { kind: 'action' }), FEWEST_TO_JUDGE - 1, 60, 5, bucketed(5, FEWEST_TO_JUDGE - 1));
+  const few = healthReport(GUILD, '1h', NOW).browser;
+  assert.deepEqual([few.taps.count, few.status], [FEWEST_TO_JUDGE - 1, 'few']);
 });
 
 /** A reading of the machine `seconds` in, with running totals as given */

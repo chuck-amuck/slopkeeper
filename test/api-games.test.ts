@@ -1264,7 +1264,7 @@ test('shows a month’s recap as plain text', async () => {
   assert.match(recap.title, /recap$/);
   const text = JSON.stringify(recap);
   assert.match(text, /Numeric Ned/);
-  assert.match(recap.fields.find((f: any) => f.name === 'Longest session').value, /on \w+ \d+, \d{4} with Numeric/);
+  assert.match(recap.fields.find((f: any) => f.name === 'Longest session').value, /on \w+ \d+, \d{4} with Numeric N\w+ and Numeric N\w+$/, 'the names apart');
   assert.doesNotMatch(text, /<@|<t:|\*\*/);
 });
 

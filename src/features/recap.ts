@@ -3,7 +3,7 @@ import { db, getKv, setKv } from '../db.ts';
 import { setting } from '../settings.ts';
 import { due, every, once } from '../schedule.ts';
 import type { Feature } from '../types.ts';
-import { announceChannel, eachGuild, formatDuration, zonedParts, zonedTimeToUtc } from '../util.ts';
+import { announceChannel, eachGuild, formatDuration, listNames, zonedParts, zonedTimeToUtc } from '../util.ts';
 import { checkpoint, plural, rank, short, stats } from './gamestats.ts';
 import { sendPost } from '../postFailures.ts';
 
@@ -78,9 +78,10 @@ export function buildRecap(guild: Guild, start: number, end: number): EmbedBuild
   if (longest) {
     const members = db.prepare('SELECT user_id AS userId FROM session_members WHERE session_id = ? ORDER BY seconds DESC').all(longest.id) as { userId: string }[];
     const people = members.filter((m) => isMember(m.userId));
-    const shown = people.slice(0, 10).map((p) => `<@${p.userId}>`).join(' ');
-    const more = people.length > 10 ? ` and ${people.length - 10} more` : '';
-    embed.addFields({ name: 'Longest session', value: `**${formatDuration(longest.ended_at - longest.started_at)}** on <t:${Math.floor(longest.started_at / 1000)}:D> with ${shown}${more}` });
+    // With commas between them, as the web UI shows them as plain names
+    const named = people.slice(0, 10).map((p) => `<@${p.userId}>`);
+    const shown = people.length > 10 ? `${named.join(', ')} and ${people.length - 10} more` : listNames(named);
+    embed.addFields({ name: 'Longest session', value: `**${formatDuration(longest.ended_at - longest.started_at)}** on <t:${Math.floor(longest.started_at / 1000)}:D> with ${shown}` });
   }
   if (sounds.length) {
     const lines = sounds.map((s, idx) => `${rank(idx)} **${s.name}** · ${plural(s.n, 'play')}`);

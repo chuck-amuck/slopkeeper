@@ -395,6 +395,12 @@ async function readFacts(appids: number[]) {
         data_request: { include_basic_info: false, include_platforms: true },
       }),
     });
+    // An answer without its response, as Steam gives when it's struggling, saves nothing, so they're read again next time
+    // rather than kept as unlisted
+    if (!body.response) {
+      console.warn('Steam’s store answered without its response. Game facts are read again next time.');
+      return;
+    }
     const found = new Map((body.response.store_items ?? []).map((item) => [item.appid ?? item.id, item]));
     transaction(() => {
       for (const appid of chunk) {

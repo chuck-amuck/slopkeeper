@@ -93,7 +93,14 @@ export const LIMITS = {
   gcShare: [0.03, 0.1],
 } as const satisfies Record<string, readonly [number, number]>;
 
-export type Status = 'fine' | 'slow' | 'bad' | 'quiet';
+/** Quiet is nothing measured, and few is something, but too little to say whether it's fine */
+export type Status = 'fine' | 'slow' | 'bad' | 'quiet' | 'few';
+
+/**
+ * The fewest taps, page openings or reactions the web UI as people see it is judged by, each on its own. With less of all
+ * three it's 'few', as a few slow taps on a phone's data say more about the phone than the web UI
+ */
+export const FEWEST_TO_JUDGE = 20;
 
 /** Fine below the first limit, slow from it, bad from the second */
 const judge = (value: number | null, [slow, bad]: readonly [number, number]): Status => (value === null ? 'quiet' : value >= bad ? 'bad' : value >= slow ? 'slow' : 'fine');
@@ -360,6 +367,15 @@ export function healthNumbers(window: Window, now = Date.now()) {
   const home = where('home');
   const away = where('away');
   const onDevice = (device: string) => timing(of('browser_request_seconds', (l) => l.kind === 'action' && l.device === device));
+  const browserJudged = (
+    [
+      [taps, LIMITS.browserTap],
+      [shown, LIMITS.pageShown],
+      [responses, LIMITS.browserResponse],
+    ] as const
+  )
+    .filter(([times]) => times.count >= FEWEST_TO_JUDGE)
+    .map(([times, limits]) => judge(times.p95, limits));
   const browser = {
     taps: { count: taps.count, p50: taps.p50, p95: taps.p95 },
     shown: { count: shown.count, p50: shown.p50, p95: shown.p95 },
@@ -370,10 +386,9 @@ export function healthNumbers(window: Window, now = Date.now()) {
     away: { taps: away.taps.p95, shown: away.shown.p95, tapSeries: away.taps.series, shownSeries: away.shown.series },
     phone: onDevice('phone').p95,
     computer: onDevice('computer').p95,
-    status:
-      taps.count || shown.count || responses.count
-        ? worse(judge(taps.p95, LIMITS.browserTap), judge(shown.p95, LIMITS.pageShown), judge(responses.p95, LIMITS.browserResponse), 'fine')
-        : ('quiet' as Status),
+    /** Below it, a line isn't judged */
+    fewest: FEWEST_TO_JUDGE,
+    status: browserJudged.length ? worse(...browserJudged) : taps.count || shown.count || responses.count ? ('few' as Status) : ('quiet' as Status),
   };
 
   const seen = new Set(CONTAINERS.filter((c) => perf.gaugeValue('container_up', { container: c }) !== undefined));
