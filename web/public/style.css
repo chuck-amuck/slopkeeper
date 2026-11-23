@@ -4518,10 +4518,22 @@ span.steam-family {
   font-weight: 400;
 }
 
-/* Who's playing: a voice channel's long list of names cut short rather than past the page's edge */
+/* Who's playing: its label, then a voice channel's long list of names cut short rather than past the page's edge, on a line
+   of its own when it doesn't fit beside it */
+.pick-who-label {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+  min-width: 0;
+  max-width: 100%;
+  font-weight: 600;
+}
+
 .pick-who {
   min-width: 0;
   max-width: 100%;
+  font-weight: 400;
 }
 
 .pick-actions,

@@ -90,10 +90,11 @@ export function renderPick(main) {
   const opened = new Set();
   const playing = new Map();
 
-  const who = el('select', { className: 'pick-who', ariaLabel: 'Who’s playing', onchange: () => changed() });
+  // A voice channel's people, or people ticked by hand: with nobody in a voice channel, only the ticking, under the label
+  const who = el('select', { className: 'pick-who', hidden: true, onchange: () => changed() });
   const pickButton = el('button', { className: 'primary', disabled: true, onclick: () => pickOne() }, 'Pick for us');
   const voteButton = el('button', { disabled: true, onclick: () => voteDialog(main, options, voice(), filtered() ? shownReady().map((g) => g.name) : null) }, 'Start a vote');
-  const people = el('div', { className: 'pick-people', hidden: true });
+  const people = el('div', { className: 'pick-people', role: 'group', ariaLabel: 'Who’s playing', hidden: true });
   const voteNote = el('p', { className: 'hint', hidden: true }, 'A vote needs a voice channel, as only the people in it can vote.');
   const content = el('div', { className: 'stack' }, notice('loading', 'Loading…'));
   const search = el('input', {
@@ -145,7 +146,7 @@ export function renderPick(main) {
   const lists = el('div', { className: 'stack' });
   const result = el('div');
   const joinable = el('div');
-  main.append(joinable, el('div', { className: 'toolbar' }, who), people, voteNote, content);
+  main.append(joinable, el('div', { className: 'toolbar' }, el('label', { className: 'pick-who-label' }, el('span', {}, 'Who’s playing'), who)), people, voteNote, content);
 
   /** Off the main list, as it asks Steam about everyone linked and a pick shouldn't wait for that */
   function showLobbies() {
@@ -355,6 +356,7 @@ export function renderPick(main) {
     }
     if (guildId !== state.guildId || !main.isConnected) return;
     who.replaceChildren(...options.voice.map((c) => el('option', { value: c.id }, `${c.name} · ${c.people.join(', ')}`)), el('option', { value: BY_HAND }, 'Choose people'));
+    who.hidden = !options.voice.length;
     // Only people whose games the bot knows, as anyone else would block every game
     const pickable = new Set(options.pickable);
     const left = options.members.length > pickable.size;

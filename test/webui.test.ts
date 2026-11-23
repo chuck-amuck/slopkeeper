@@ -147,7 +147,15 @@ const PAGES: [string, string, Record<string, string>?, string?, string?][] = [
     'games/pick',
     'Games: Pick a game',
     {},
-    `${GAMES_VIEW('pick', 'Pick a game')} && !!document.querySelector('main select') && (innerWidth > 640 || (() => { const rows = new Map(); for (const n of document.querySelector('.pick-tools').children) rows.set(n.offsetTop, (rows.get(n.offsetTop) ?? 0) + 1); return [...rows.values()].join() === '1,2,1'; })())`,
+    `${GAMES_VIEW('pick', 'Pick a game')} && !!document.querySelector('main select') && (innerWidth > 640 || (() => { const rows = new Map(); for (const n of document.querySelector('.pick-tools').children) rows.set(n.offsetTop, (rows.get(n.offsetTop) ?? 0) + 1); return [...rows.values()].join() === '1,2,1'; })()) && (() => { const label = document.querySelector('.pick-who-label'); const who = label?.querySelector('select'); return !!who && who.getClientRects().length > 0 && /^Who’s playing/.test(label.textContent) && [...who.options].at(-1).textContent === 'Choose people' && who.options.length > 1; })()`,
+  ],
+  // With nobody in a voice channel there's nothing to pick from, so it's only the ticking, under its label
+  [
+    'games/pick',
+    'Games: Pick a game with nobody in voice',
+    {},
+    `(() => { const label = document.querySelector('.pick-who-label'); return window.noVoice === true && label?.getClientRects().length > 0 && label.querySelector('select').getClientRects().length === 0 && /^Who’s playing/.test(label.textContent) && document.querySelectorAll('.pick-people input[type=checkbox]').length > 0 && !document.querySelector('.pick-people').hidden; })()`,
+    `(async () => { const real = window.fetch; window.fetch = async (url, options) => { const res = await real(url, options); if (!String(url).includes('/pick/options')) return res; const data = await res.json(); window.noVoice = true; return new Response(JSON.stringify({ ...data, voice: [] }), { status: res.status, headers: { 'content-type': 'application/json' } }); }; const views = () => [...document.querySelectorAll('.view-tabs button')]; views()[0].click(); await new Promise((r) => setTimeout(r, 300)); views().at(-1).click(); })()`,
   ],
   // Picking a view is a step Back undoes, without drawing the page again
   [
