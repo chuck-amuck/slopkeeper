@@ -242,8 +242,8 @@ const SHOWN_ON: Partial<Record<SettingKey, FeedName[]>> = {
   ttsVolume: ['volumes'],
   loopVolume: ['volumes'],
   loopTextVolume: ['volumes'],
-  // Whether there's speech or a looping room to have a volume for
-  tts: ['volumes'],
+  // Whether there's speech or a looping room to have a volume for, and whether the Say boxes show
+  tts: ['volumes', 'speech'],
   loopRoom: ['volumes'],
   loopSound: ['volumes'],
   loopText: ['volumes'],
@@ -256,6 +256,10 @@ const SHOWN_ON: Partial<Record<SettingKey, FeedName[]>> = {
   announceChannel: ['nights'],
   // The header's profile picker
   chatProfile: ['profile'],
+  // What the Say boxes start on, and how long a line they take
+  ttsVoice: ['speech'],
+  ttsEffect: ['speech'],
+  ttsMaxChars: ['speech'],
 };
 
 /** Stores a /setup value; undefined goes back to the default. The web UI and /setup both come through here */

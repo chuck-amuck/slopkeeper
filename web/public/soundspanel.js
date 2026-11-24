@@ -1,7 +1,8 @@
-import { api, attempt, el, forget, needsVoice, recall, remember, request, state } from './lib.js';
+import { attempt, el, forget, needsVoice, recall, remember, state } from './lib.js';
 import { foldHead, soundGrid } from './soundgrid.js';
 import { previewButton, sayField, speechPickers } from './speech.js';
 import { keepLineButton } from './speechsound.js';
+import { follow } from './updates.js';
 import { voiceBar } from './voice.js';
 import { volumeSliders } from './volumes.js';
 
@@ -77,14 +78,13 @@ export function soundsBody(openBoard, { slash = false, volumes = [] } = {}) {
     grid.paint();
   }
 
-  void attempt(async () => {
-    const offered = await request(api('/say'));
-    const { on, longest } = offered;
-    if (guildId !== state.guildId || !search.isConnected) return;
+  // Kept up as voices are added, the server's voice or effect changes or speech is switched on or off
+  follow('speech', say, (offered) => {
+    if (guildId !== state.guildId) return;
     // The voice and effect last picked on this device, while the bot still offers them
     pickers.fill(offered);
-    text.maxLength = longest;
-    say.hidden = !on;
+    text.maxLength = offered.longest;
+    say.hidden = !offered.on;
     keep.paint();
     paint();
   });

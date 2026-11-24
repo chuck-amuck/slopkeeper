@@ -2,6 +2,7 @@ import { api, attempt, el, forget, icon, needsVoice, pageSignal, recall, remembe
 import { foldHead, searchKeys, soundGrid } from './soundgrid.js';
 import { previewButton, sayField, speechPickers } from './speech.js';
 import { keepLineButton } from './speechsound.js';
+import { follow } from './updates.js';
 import { voiceBar } from './voice.js';
 
 // Whether Speech is folded away, on this device
@@ -150,15 +151,14 @@ function sayBox(voice) {
   const body = el('div', { className: 'say-body' }, form, keepLineButton().node, row);
   const head = foldHead('Speech', recall(SPEECH_FOLDED) !== '1', body, (open) => (open ? forget(SPEECH_FOLDED) : remember(SPEECH_FOLDED, '1')));
   const node = el('div', { className: 'say-box', hidden: true }, head, body);
-  void attempt(async () => {
-    const offered = await request(api('/say'));
-    const { on, longest, phrases: saved } = offered;
+  // Kept up as voices are added, the server's voice or effect changes, speech is switched on or off or a line is kept
+  follow('speech', node, (offered) => {
     if (guildId !== state.guildId) return;
-    text.maxLength = longest;
+    text.maxLength = offered.longest;
     // The voice and effect last used on this device, while the bot still offers them
     pickers.fill(offered);
-    node.hidden = !on;
-    remembered(saved);
+    node.hidden = !offered.on;
+    remembered(offered.phrases);
   });
   return { node, paint };
 }

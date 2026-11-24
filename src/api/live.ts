@@ -11,7 +11,7 @@ import { type Ask, Refused, plain, readJson, untilGone } from './common.ts';
 import { musicList } from './music.ts';
 import { nightList } from './nights.ts';
 import { activityList } from './server.ts';
-import { deletedList, soundList } from './sounds.ts';
+import { deletedList, soundList, speechOffer } from './sounds.ts';
 
 // Who’s in voice, and the one request a page keeps open to hear what changes
 
@@ -40,6 +40,7 @@ export const updates: Record<FeedName, (guild: Guild) => object | Promise<object
   // Likewise: the Deals tab asks for the lot again
   deals: () => ({}),
   profile: (guild) => profilePicks(guild),
+  speech: (guild) => speechOffer(guild),
 };
 
 /** The profiles to pick from in the header, with their photos, and the server's */

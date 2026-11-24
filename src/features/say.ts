@@ -18,6 +18,7 @@ import {
   type VoiceBasedChannel,
 } from 'discord.js';
 import { logActivity } from '../activity.ts';
+import { feeds } from '../changes.ts';
 import { config } from '../config.ts';
 import { db, transaction } from '../db.ts';
 import { holdSounds, levelSpeech } from '../loudness.ts';
@@ -1090,10 +1091,15 @@ export function savePhrase(guild: Guild, typed: string): string | null {
   if (saved.length >= MOST_PHRASES) return `You can keep ${MOST_PHRASES} lines. Remove one first.`;
   // Lines used to keep the voice they were saved in. The column stays, as the table can't change shape, but nothing reads it
   db.prepare("INSERT INTO saved_phrases (guild_id, text, voice) VALUES (?, ?, '')").run(guild.id, text);
+  feeds.speech.changed(guild.id);
   return null;
 }
 
-export const removePhrase = (guildId: string, id: number) => db.prepare('DELETE FROM saved_phrases WHERE guild_id = ? AND id = ?').run(guildId, id).changes > 0;
+export function removePhrase(guildId: string, id: number) {
+  const removed = db.prepare('DELETE FROM saved_phrases WHERE guild_id = ? AND id = ?').run(guildId, id).changes > 0;
+  if (removed) feeds.speech.changed(guildId);
+  return removed;
+}
 
 function queueLine(channel: VoiceBasedChannel, text: string, voice: Voice, effect: Effect | null, who: string | null, kind: LineKind) {
   const queue = queueFor(channel.guild.id);

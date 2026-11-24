@@ -2,7 +2,7 @@
 
 The bot reads out what people type, in a voice they pick. It needs the host's [voice container](self-hosting.md#the-voice-container).
 
-`/say text [voice] [effect]` reads a line in your voice channel, joining it first if it has to. The web UI's Soundboard has a **Say something** box too, where **Save** keeps a line as a one-click button (up to 25 per server); `/say saved:` says one from Discord.
+`/say text [voice] [effect]` reads a line in your voice channel, joining it first if it has to. The web UI's Soundboard has a **Say something** box too, where **Save** keeps a line as a one-click button (up to 25 per server); `/say saved:` says one from Discord. The box keeps up without a reload: a voice that's just finished downloading, a new default voice or effect, a line kept in another tab, or speech switched off shows at once.
 
 **Say this aloud:** right-click a message, or press and hold it on a phone, then **Apps → Say this aloud** to have it read out, starting with whose message it is.
 

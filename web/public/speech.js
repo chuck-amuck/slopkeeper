@@ -60,11 +60,19 @@ export function speechPickers(guildId) {
   const effectKey = `effect:${guildId}`;
   const voice = el('select', { ariaLabel: 'Voice', className: 'say-voice', onchange: () => remember(voiceKey, voice.value) });
   const effect = el('select', { ariaLabel: 'Effect', className: 'say-effect', onchange: () => remember(effectKey, effect.value) });
+  // What they were last filled from, as filling them again closes a list someone has open
+  let filled = '';
   return {
     voice,
     effect,
-    /** Fills them from GET /say: this device's picks while the bot still offers them, or the server's defaults */
+    /**
+     * Fills them from what the bot offers (GET /say, or its live updates): this device's picks while the bot still offers
+     * them, or the server's defaults. Left as they are if none of that has changed
+     */
     fill({ voices, voice: serverVoice, effects = [], effect: serverEffect = NO_EFFECT, oldVoices = {} }) {
+      const offer = JSON.stringify([voices, serverVoice, effects, serverEffect]);
+      if (offer === filled) return;
+      filled = offer;
       const old = oldVoices[recall(voiceKey)];
       if (old) {
         remember(voiceKey, old.voice);

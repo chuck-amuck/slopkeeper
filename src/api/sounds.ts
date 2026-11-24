@@ -126,6 +126,21 @@ export async function soundList(guild: Guild) {
   };
 }
 
+/** What the Say boxes offer: whether speech is on, the voices and effects, the server's, the longest line and the lines kept */
+export function speechOffer(guild: Guild) {
+  return {
+    on: Boolean(config.voiceUrl) && setting(guild.id, 'tts'),
+    voices: voices().map((v) => ({ id: v.id, name: v.name, group: voiceGroup(v) })),
+    voice: serverVoice(guild.id).id,
+    effects: effects().map((e) => ({ id: e.id, name: e.name })),
+    effect: serverEffect(guild.id)?.id ?? NO_EFFECT,
+    // The effects were voices once, so a pick of one remembered on a device becomes the voice it was made on and the effect
+    oldVoices: Object.fromEntries(effects().flatMap((e) => (oldEffectVoice(e.id) ? [[e.id, oldEffectVoice(e.id)]] : []))),
+    longest: setting(guild.id, 'ttsMaxChars'),
+    phrases: phrases(guild.id),
+  };
+}
+
 export function joinSoundList(guild: Guild) {
   return {
     joinSounds: joinSounds(guild.id).map((r) => ({ id: r.user_id, who: nameOf(guild, r.user_id), name: r.name })),
@@ -514,19 +529,7 @@ export async function soundRoutes({ client, guild, req, res, url, section, rest 
     logActivity(guild.id, by(), `Removed ${nameOf(guild, who.user_id)}’s join sound`);
     return {};
   }
-  if (section === 'say' && !rest.length && req.method === 'GET') {
-    return {
-      on: Boolean(config.voiceUrl) && setting(guild.id, 'tts'),
-      voices: voices().map((v) => ({ id: v.id, name: v.name, group: voiceGroup(v) })),
-      voice: serverVoice(guild.id).id,
-      effects: effects().map((e) => ({ id: e.id, name: e.name })),
-      effect: serverEffect(guild.id)?.id ?? NO_EFFECT,
-      // The effects were voices once, so a pick of one remembered on a device becomes the voice it was made on and the effect
-      oldVoices: Object.fromEntries(effects().flatMap((e) => (oldEffectVoice(e.id) ? [[e.id, oldEffectVoice(e.id)]] : []))),
-      longest: setting(guild.id, 'ttsMaxChars'),
-      phrases: phrases(guild.id),
-    };
-  }
+  if (section === 'say' && !rest.length && req.method === 'GET') return speechOffer(guild);
   if (section === 'say' && rest.length === 1 && rest[0] === 'preview' && (req.method === 'GET' || req.method === 'POST')) {
     if (!config.voiceUrl || !setting(guild.id, 'tts')) throw new Refused(409, 'Text to speech is off for this server.');
     // POSTed is a whole line, heard as it was said, before it's kept as a sound. Got is the start of one, to try a voice

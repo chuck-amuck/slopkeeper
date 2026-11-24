@@ -2,6 +2,7 @@ import './helpers.ts';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { afterEach, beforeEach, test, type TestContext } from 'node:test';
+import { feeds } from '../src/changes.ts';
 import { config } from '../src/config.ts';
 import { db } from '../src/db.ts';
 import { forgetSpoken, serverVoice } from '../src/features/say.ts';
@@ -75,9 +76,11 @@ test('a voice added by its Hugging Face page is sent to the voice container, and
   const say = async () => (await ok(`/guilds/${GUILD}/say`)).voices.map((v: any) => v.id) as string[];
   assert.ok(!(await say()).includes('the-narrator'), 'not offered while it downloads');
 
+  const before = feeds.speech.version(GUILD);
   ready.add('the-narrator');
   const [listed] = await list();
   assert.equal(listed.state, 'ready');
+  assert.notEqual(feeds.speech.version(GUILD), before, 'the Say boxes hear it’s ready');
   assert.deepEqual(listed.speakers, [{ id: 0, name: 'calm' }, { id: 1, name: 'loud' }]);
   assert.ok((await say()).includes('the-narrator'));
   const { entries: activity } = await ok(`/guilds/${GUILD}/activity`);

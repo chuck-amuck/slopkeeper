@@ -11,6 +11,7 @@ import path from 'node:path';
 import { config } from '../src/config.ts';
 import { db } from '../src/db.ts';
 import { recentActivity } from '../src/activity.ts';
+import { feeds } from '../src/changes.ts';
 import { Mixer } from '../src/mixer.ts';
 import { activity } from '../src/features/gamestats.ts';
 import { BIN_DAYS, clearBin, levelLibrary, soundGain } from '../src/features/soundLibrary.ts';
@@ -1288,6 +1289,36 @@ test('the page saves lines and removes them', async () => {
   assert.equal(await refused(404, `/guilds/${GUILD}/phrases/${phrases[0].id}`, { method: 'DELETE' }), 'That saved line is gone.');
   const log = recentActivity(GUILD, 5).map((r) => r.action);
   assert.ok(log.includes('Saved the line “good game”') && log.includes('Removed the saved line “good game”'));
+});
+
+test('the Say boxes keep up: their live update wakes for the settings they show and the lines kept', async (t) => {
+  t.after(() => {
+    setSetting(GUILD, 'ttsVoice', undefined);
+    setSetting(GUILD, 'ttsMaxChars', undefined);
+    setSetting(GUILD, 'soundVolume', undefined);
+  });
+  const since = (version: string) => ok(`/guilds/${GUILD}/updates?speech=${encodeURIComponent(version)}`);
+  const first = await since('');
+  assert.deepEqual(Object.keys(first), ['speech']);
+  assert.deepEqual(Object.keys(first.speech).sort(), ['effect', 'effects', 'longest', 'oldVoices', 'on', 'phrases', 'version', 'voice', 'voices']);
+  let version: string = first.speech.version;
+  const next = async (change: () => unknown) => {
+    const waiting = since(version);
+    await change();
+    const { speech } = await waiting;
+    assert.notEqual(speech.version, version);
+    version = speech.version;
+    return speech;
+  };
+  assert.equal((await next(() => setSetting(GUILD, 'ttsVoice', 'scottish'))).voice, 'scottish');
+  assert.equal((await next(() => setSetting(GUILD, 'ttsMaxChars', 300))).longest, 300);
+  const kept = await next(() => ok(`/guilds/${GUILD}/phrases`, { method: 'POST', json: { text: 'well played' } }));
+  assert.deepEqual(kept.phrases.map((p: { text: string }) => p.text), ['well played']);
+  assert.deepEqual((await next(() => ok(`/guilds/${GUILD}/phrases/${kept.phrases[0].id}`, { method: 'DELETE' }))).phrases, []);
+  // A setting they don't show, or a line that's gone already, leaves them be
+  setSetting(GUILD, 'soundVolume', 50);
+  await refused(404, `/guilds/${GUILD}/phrases/${kept.phrases[0].id}`, { method: 'DELETE' });
+  assert.equal(feeds.speech.version(GUILD), version);
 });
 
 test('a line said or heard is kept as a sound, in its voice and effect, without making it again', async (t) => {

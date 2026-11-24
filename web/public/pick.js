@@ -1,6 +1,7 @@
 import { ago, announce, api, attempt, duration, el, formProblem, notice, openDialog, request, state, toast, tryShowing, undoToast } from './lib.js';
 import { planNightFor } from './nights.js';
 import { achievementsView } from './achievements.js';
+import { follow } from './updates.js';
 
 const SHOWN = 100;
 const BY_HAND = 'people';
@@ -332,12 +333,9 @@ export function renderPick(main) {
   }
 
   showLobbies();
+  // Without it, the button to say what's picked just isn't offered
+  follow('speech', main, (say) => guildId === state.guildId && (speechOn = say.on));
   void attempt(async () => {
-    // Not worth an error of its own: without it, the button just isn't offered
-    void request(api('/say')).then(
-      (say) => guildId === state.guildId && (speechOn = say.on),
-      () => {},
-    );
     try {
       options = await request(api('/pick/options'));
     } catch (err) {

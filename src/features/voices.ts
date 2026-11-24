@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { feeds } from '../changes.ts';
 import { config } from '../config.ts';
 import { db, getKv, setKv, transaction } from '../db.ts';
 import { slugId, STARTING_RETRY_MS, stillStarting } from '../util.ts';
@@ -178,6 +179,8 @@ const listeners: (() => void)[] = [];
 
 function changed() {
   generation++;
+  // The Say boxes list the voices that are ready
+  feeds.speech.changedEverywhere();
   for (const listener of listeners) listener();
 }
 

@@ -135,6 +135,15 @@ const PAGES: [string, string, Record<string, string>?, string?, string?, string?
     { [`voice:${GUILD}`]: 'demon' },
     `(() => { const v = document.querySelector('.say-voice'); const e = document.querySelector('.say-effect'); return !!v && !!e && v.value === 'american-deep' && e.value === 'demon' && e.options.length === 16 && localStorage.getItem('effect:${GUILD}') === 'demon'; })()`,
   ],
+  // Speech switched off elsewhere, as from another tab or /setup: the Say box goes without the page asking for it again
+  [
+    'board',
+    'Soundboard: speech switched off elsewhere',
+    {},
+    `window.shownFirst === true && document.querySelector('.say-box').hidden && window.asked.length === 0`,
+    `(async () => { window.shownFirst = !document.querySelector('.say-box').hidden; window.asked = []; const real = window.fetch; window.fetch = (u, i) => (/\\/say$/.test(String(u)) && window.asked.push(String(u)), real(u, i)); await real('/api/guilds/${GUILD}/settings/tts', { method: 'PUT', headers: { 'x-slopkeeper': '1', 'content-type': 'application/json' }, body: JSON.stringify({ value: false }) }); })()`,
+    `fetch('/api/guilds/${GUILD}/settings/tts', { method: 'DELETE', headers: { 'x-slopkeeper': '1' } })`,
+  ],
   // Drawn at once from what was seen last, and the server remembered, so its parts are asked for as the page starts. Then
   // what's since changed: a sound deleted and the server renamed
   [
