@@ -41,13 +41,13 @@ Any voice can be said through an effect, picked beside the voice: **Demon**, **H
 
 ## Settings
 
-`/setup speech` sets whether it's on, how fast and loud it talks, the pause between sentences, the longest line, and how long each person waits between lines. The default voice and effect are picked in the web UI's Settings. `/setup speech-role` limits speech to a role, plus people with **Manage Server**, and that covers reading a channel aloud too. The web UI isn't limited by the role, and counts as one person for the wait.
+The web UI's Settings, under **Speech**, sets whether it's on, the default voice and effect, how fast and loud it talks, the pause between sentences, the longest line, and how long each person waits between lines. `/setup speech-role` limits speech to a role, plus people with **Manage Server**, and that covers reading a channel aloud too. The web UI isn't limited by the role, and counts as one person for the wait.
 
 **Greetings:** with `greet` on, the bot says who joined voice, using the **Greeting** setting with `{name}` for the person. It follows the join sound rules: the same cooldown, nothing for moving channels, the bot won't leave another channel for one, and someone with a join sound hears that instead.
 
 **Announcements:** `night_reminders` says game night reminders in the night's voice channel, and `hop_on` says hop-on pings in the channel they're about, where people are and the bot isn't busy elsewhere.
 
-**Reading a channel aloud:** `/setup speech-channel` picks a text channel, and the bot reads out what people type there, starting with who said it. It plays in the writer's voice channel, or else the bot's, or else the busiest, and `who` limits it to people in voice. It skips bots, images, links on their own, anything over the longest line, and messages asking the bot something ([chat](chat.md): @mentioning it, or replying to one of its answers). If 5 lines are already waiting, new ones are skipped so it can't fall behind. These lines aren't logged in Activity.
+**Reading a channel aloud:** pick a text channel as Settings' **Read chat aloud**, and the bot reads out what people type there, starting with who said it. It plays in the writer's voice channel, or else the bot's, or else the busiest, and **Whose messages are read** can limit it to people in voice. It skips bots, images, links on their own, anything over the longest line, and messages asking the bot something ([chat](chat.md): @mentioning it, or replying to one of its answers). If 5 lines are already waiting, new ones are skipped so it can't fall behind. These lines aren't logged in Activity.
 
 ## Adding voices
 

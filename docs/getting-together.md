@@ -6,7 +6,7 @@ Pings when people hop in voice or start a game, and game nights people can say t
 
 When a voice channel reaches 2 people, the bot posts in the announce channel who's there and what they're playing. It pings the hop-on role, plus the [game ping](#game-pings) role of each game being played. **Join** opens the voice channel, and **On my way** adds your name to the post.
 
-It posts once as the channel fills, then waits 2 hours before pinging again, so a busy evening doesn't spam. The AFK channel and bots don't count. `/setup hopon` changes both numbers, and `/setup hopon-role` picks the role.
+It posts once as the channel fills, then waits 2 hours before pinging again, so a busy evening doesn't spam. The AFK channel and bots don't count. Settings, under **Voice and pings**, changes both numbers and picks the role.
 
 | Command | What it does |
 | --- | --- |
@@ -35,7 +35,7 @@ The web UI's Settings page can add and remove game roles too. It only asks for i
 `/gamenight plan` posts an RSVP card and adds the night to the server's **Events**. You can also [ask the bot in chat](chat.md#what-it-can-do): "plan Valheim friday at 9". The card shows the time in everyone's own time zone, the host, the voice channel and who's **In**, **Maybe** or **Can't**.
 
 - The game's ping role is pinged when the night is planned.
-- 15 minutes before the start, the bot pings everyone who's **In** or **Maybe** (`/setup gamenight-reminder` changes or turns this off).
+- 15 minutes before the start, the bot pings everyone who's **In** or **Maybe** (Settings' **Game night reminder** changes or turns this off).
 - The Discord event goes live at the start, and ends 3 hours later or once its voice channel empties, whichever is later.
 - **Edit** and **Cancel night** are for the host and anyone with Manage Events. If the time moves, everyone who's **In** or **Maybe** is told and reminded again. Cancelling tells them too.
 

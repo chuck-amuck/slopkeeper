@@ -19,7 +19,7 @@ On the panel, **blue** buttons are also on [Discord's soundboard](#discords-soun
 
 You have to be in a voice channel to play a sound.
 
-**Join sounds** play only for people who picked one, with `/sound join` or in the web UI's Settings. They don't play when you switch channels, or again within the cooldown (10 minutes unless `/setup sounds` says otherwise). If the bot is already busy in another channel, it stays there.
+**Join sounds** play only for people who picked one, with `/sound join` or in the web UI's Settings. They don't play when you switch channels, or again within the cooldown (10 minutes unless Settings' **Join sound cooldown** says otherwise). If the bot is already busy in another channel, it stays there.
 
 ## Adding and changing sounds
 
@@ -65,19 +65,19 @@ The web UI isn't limited by the role: anyone with its password can change everyt
 
 ## Volume
 
-**Even volume** makes a whisper and an air horn play about as loud as each other. Each sound is measured when it's added and turned up or down as it plays, so your file isn't changed. A sound is boosted by 12 dB at most, so a very quiet one can still need `/sound volume`. It's on by default; `/setup sounds` turns it off.
+**Even volume** makes a whisper and an air horn play about as loud as each other. Each sound is measured when it's added and turned up or down as it plays, so your file isn't changed. A sound is boosted by 12 dB at most, so a very quiet one can still need `/sound volume`. It's on by default, and Settings' **Even volume** turns it off.
 
-**Soundboard volume** turns every sound up or down at once, including join sounds and the looping room, even mid-sound. Speech has its own **Speech volume**. Both are on the **Volume** button on every page of the web UI, in Settings, and in `/setup sounds` and `/setup speech`.
+**Soundboard volume** turns every sound up or down at once, including join sounds and the looping room, even mid-sound. Speech has its own **Speech volume**. Both are on the **Volume** button on every page of the web UI, and in Settings.
 
 ## Looping sound room
 
-Pick a voice channel and a sound with `/setup loop-room` or in Settings, and the bot plays that sound on repeat while anyone's in the channel. It can also say some words on repeat, alone or over the sound. `/setup loop-room` on its own shows how it's set, and `off:True` turns it off.
+Pick a voice channel and a sound in the web UI's Settings, under **Looping room**, and the bot plays that sound on repeat while anyone's in the channel. It can also say some words on repeat, alone or over the sound. Setting the room to **Off** turns it off and keeps the rest.
 
 | Setting | What it does |
 | --- | --- |
 | Loop volume, Looping speech volume | How loud the sound and the speech are. Both start at half, as they never stop. |
 | Loop every | 0 loops without a gap. A number of seconds, like 0.5, starts a fresh copy that often on top of the last, up to 8 at once. |
-| Looping speech | Up to 500 characters, said over and over in its own voice (web UI only) at the speech speed. **Speech every** spaces it out. |
+| Looping speech | Up to 500 characters, said over and over in its own voice at the speech speed. **Speech every** spaces it out. |
 | Intro sound | Plays once before the loop, **Intro delay** after someone comes in (250 ms by default). **Sound delay after intro** and **Speech delay after intro** hold each back after it. |
 
 Other sounds and speech play on top. **Stop** silences the room until someone else joins, and join sounds and greetings don't play there. Removing the looping sound turns the room off, and renaming it keeps it.

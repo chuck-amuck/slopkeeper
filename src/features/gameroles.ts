@@ -19,6 +19,7 @@ import type { Feature } from '../types.ts';
 import { askAnAdmin, listNames, notAllowed, pingWarning } from '../util.ts';
 import { allGames } from './games.ts';
 import { commandMention } from '../commandIds.ts';
+import { settingPlace } from './setup.ts';
 
 interface GameRole {
   role_id: string;
@@ -114,7 +115,7 @@ function pingSummary(guild: Guild, held: Set<string>): string {
 
 function pickerReply(guild: Guild, held: Set<string>) {
   const components = pickers(guild, held);
-  if (!components.length) return { content: `This server has no pings yet. A server admin can add some with ${commandMention(guild.id, 'gamerole add')} or ${commandMention(guild.id, 'setup hopon-role')}.` };
+  if (!components.length) return { content: `This server has no pings yet. A server admin can add some with ${commandMention(guild.id, 'gamerole add')}, or pick a ${settingPlace(guild.id, 'hopOnRole')}.` };
   return { content: `${pingSummary(guild, held)}\nPick what you want to be pinged for:`, components };
 }
 

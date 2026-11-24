@@ -158,6 +158,12 @@ function lastStart(guildId) {
 
 /** Draws the page. `fromKept` draws it at once from what it was last time, while the session lasts, then catches up */
 async function start(fromKept = true) {
+  // A link from Discord says which server it's about, which goes before the one picked here last
+  const linked = new URLSearchParams(location.search).get('guild');
+  if (linked) {
+    remember('guild', linked);
+    history.replaceState(history.state, '', location.pathname + location.hash);
+  }
   const saved = recall('guild');
   // Asked for alongside the server list rather than after it, as it's almost always the server picked last time
   const savedMe = saved ? request(`/api/guilds/${saved}/me`).catch(() => null) : null;

@@ -19,8 +19,7 @@ import { BUILT_IN_ID, profileById } from './chatProfiles.ts';
 import { nicknameProblem } from './profileNames.ts';
 import { photoProblem } from './profilePhotos.ts';
 import { cantJoin } from './voiceAudio.ts';
-import { findSound, listSounds } from './soundLibrary.ts';
-import { loopSpeechProblem } from './loopRoom.ts';
+import { findSound } from './soundLibrary.ts';
 import { commandMention } from '../commandIds.ts';
 import { config } from '../config.ts';
 import { SOURCES, type Source } from '../musicSearch.ts';
@@ -34,15 +33,15 @@ const ANNOUNCE_PERMISSIONS = [
   [PermissionFlagsBits.EmbedLinks, 'Embed Links'],
 ] as const;
 
-// Discord enforces these on the /setup options; checkSetting does for anything else
+// The choices these settings take, which checkSetting enforces
 const PATCH_MODES = { off: 'off', each: 'each one posted', digest: 'weekly digest' };
 const READ_WHO = { everyone: 'everyone', voice: 'only people in voice' };
 /** What counts as people talking, which music drops under (src/talkLevel.ts) */
 const DUCKS_FOR: Record<HeardAs, string> = { any: 'any sound', talking: 'talking, not background noise', loud: 'only clear, loud talking' };
 const LONGEST_GREETING = 100;
-/** The models chat can answer with, by setting value */
 /** Whether chat answers are said in voice too, or instead of posted */
 export const CHAT_VOICE = { off: 'no, text only', also: 'text and voice', only: 'voice only' };
+/** The models chat can answer with, by setting value */
 export const CHAT_MODELS = { haiku: 'Claude Haiku 5.5', sonnet: 'Claude Sonnet 5.5', opus: 'Claude Opus 5.5' };
 
 export const LIMITS = {
@@ -483,6 +482,16 @@ export function settingProblems(guild: Guild): SettingProblem[] {
   return problems;
 }
 
+/**
+ * Where a setting /setup doesn't have is changed, for a message in `guildId`: linked, on that server, when the host
+ * gave the web UI's address
+ */
+export function settingPlace(guildId: string, key: SettingKey): string {
+  const link = `${config.webAddress}/?guild=${guildId}#settings?key=${key}`;
+  const settings = config.webAddress ? `[the web UI’s Settings](<${link}>)` : 'the web UI’s Settings';
+  return `**${LABELS[key]}** in ${settings}`;
+}
+
 /** /setup show: each group of settings, with where a changed one came from, after anything that needs fixing */
 export function settingsEmbed(guild: Guild) {
   const line = (key: SettingKey) => {
@@ -499,7 +508,7 @@ export function settingsEmbed(guild: Guild) {
     .setTitle('⚙️ Slopkeeper settings')
     .setColor(problems.length ? 0xfee75c : 0x5865f2)
     .addFields(groups.map(([name, keys]) => ({ name, value: keys.map(line).join('\n').slice(0, 1024) })))
-    .setFooter({ text: 'Change one with its /setup command, or put it back with /setup reset. The web UI has every setting too.' });
+    .setFooter({ text: 'The basics change here with /setup. Every setting is in the web UI’s Settings.' });
   // In Discord, the one that needs a command says which
   const text = (p: SettingProblem) => (p.key === 'announceChannel' && !idSetting(guild.id, 'announceChannel') ? p.text.replace(/\.$/, ` with ${commandMention(guild.id, 'setup announce-channel')}.`) : p.text);
   if (problems.length) embed.setDescription(problems.map((p) => `⚠️ ${text(p)}${p.at ? ` (<t:${Math.floor(p.at / 1000)}:R>)` : ''}`).join('\n').slice(0, 4096));
@@ -632,283 +641,52 @@ async function apply(i: ChatInputCommandInteraction<'cached'>, changes: [Setting
   if (renamed) await i.followUp({ content: `⚠️ ${renamed}`, flags: MessageFlags.Ephemeral });
 }
 
+/** Who can use what, as /setup sets it: the subcommand, the setting, what it's about, and what a role limits */
+const GATES = [
+  ['sound-managers', 'soundManagerRole', 'Limit changing sounds to a role, plus people with Manage Server', 'change sounds'],
+  ['music-role', 'musicDjRole', 'Limit controlling music to a role, plus people with Manage Server', 'control music'],
+  ['speech-role', 'ttsRole', 'Limit /say to a role, plus people with Manage Server', 'use /say'],
+] as const;
+
+/**
+ * /setup: the basics a server needs to get going, the web UI's Basics section, behind Discord's own Manage Server
+ * permission. Every other setting is set in the web UI
+ */
+const command = new SlashCommandBuilder()
+  .setName('setup')
+  .setDescription('Slopkeeper’s basic server settings. Every other setting is in the web UI')
+  // Hidden from everyone without Manage Server; admins can widen this under Server Settings → Integrations
+  .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+  .addSubcommand((s) => s.setName('show').setDescription('Show this server’s settings and where each comes from'))
+  .addSubcommand((s) =>
+    s
+      .setName('announce-channel')
+      .setDescription('Where hop-on pings, recaps, leaderboards and sale alerts are posted')
+      .addChannelOption((o) => o.setName('channel').setDescription('Text channel').setRequired(true).addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement)),
+  )
+  .addSubcommand((s) =>
+    s
+      .setName('timezone')
+      .setDescription('Time zone for the weekly post, leaderboards and game nights')
+      .addStringOption((o) => o.setName('zone').setDescription('e.g. America/Chicago or Europe/London').setAutocomplete(true)),
+  );
+for (const [name, , about, what] of GATES) {
+  command.addSubcommand((s) =>
+    s
+      .setName(name)
+      .setDescription(about)
+      .addRoleOption((o) => o.setName('role').setDescription(`Only this role, plus people with Manage Server, can ${what}`))
+      .addBooleanOption((o) => o.setName('everyone').setDescription(`Let everyone ${what} again`)),
+  );
+}
+
 export const setup: Feature = {
   title: 'Server settings',
   commands: [
     {
-      data: new SlashCommandBuilder()
-        .setName('setup')
-        .setDescription('Server settings for Slopkeeper')
-        // Hidden from everyone without Manage Server; admins can widen this under Server Settings → Integrations
-        .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
-        .addSubcommand((s) => s.setName('show').setDescription('Show this server’s settings and where each comes from'))
-        .addSubcommand((s) =>
-          s
-            .setName('announce-channel')
-            .setDescription('Where hop-on pings, recaps, leaderboards and sale alerts are posted')
-            .addChannelOption((o) =>
-              o.setName('channel').setDescription('Text channel').setRequired(true).addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement),
-            ),
-        )
-        .addSubcommand((s) =>
-          s
-            .setName('hopon-role')
-            .setDescription('Role pinged when people hop in voice; /notify toggles it. Give nothing to see it')
-            .addRoleOption((o) => o.setName('role').setDescription('The role to ping'))
-            .addBooleanOption((o) => o.setName('off').setDescription('Turn hop-on role pings off')),
-        )
-        .addSubcommand((s) =>
-          s
-            .setName('hopon')
-            .setDescription('When hop-on pings go out')
-            .addIntegerOption((o) => o.setName('min_people').setDescription('People in a voice channel before pinging').setMinValue(LIMITS.hopOnMinPeople[0]).setMaxValue(LIMITS.hopOnMinPeople[1]))
-            .addIntegerOption((o) => o.setName('cooldown_minutes').setDescription('Minutes between pings').setMinValue(LIMITS.hopOnCooldownMin[0]).setMaxValue(LIMITS.hopOnCooldownMin[1])),
-        )
-        .addSubcommand((s) =>
-          s
-            .setName('sessions')
-            .setDescription('Voice session recaps')
-            .addBooleanOption((o) => o.setName('recaps').setDescription('Post a recap when a session ends. Off still counts sessions in stats'))
-            .addIntegerOption((o) => o.setName('recap_min_minutes').setDescription('Shorter sessions get no recap and don’t count in stats').setMinValue(LIMITS.recapMinMinutes[0]).setMaxValue(LIMITS.recapMinMinutes[1]))
-            .addIntegerOption((o) =>
-              o.setName('grace_minutes').setDescription('Minutes a channel stays empty before its session ends').setMinValue(LIMITS.sessionGraceMin[0]).setMaxValue(LIMITS.sessionGraceMin[1]),
-            ),
-        )
-        .addSubcommand((s) =>
-          s
-            .setName('leaderboard')
-            .setDescription('Whether and when the weekly voice leaderboard is posted')
-            .addBooleanOption((o) => o.setName('enabled').setDescription('Post the leaderboard each week'))
-            .addIntegerOption((o) =>
-              o
-                .setName('day')
-                .setDescription('Day of the week')
-                .addChoices(...DAYS.map((name, value) => ({ name, value }))),
-            )
-            .addIntegerOption((o) => o.setName('hour').setDescription('Hour, 0–23, in the server’s time zone').setMinValue(LIMITS.weeklyPostHour[0]).setMaxValue(LIMITS.weeklyPostHour[1])),
-        )
-        .addSubcommand((s) =>
-          s
-            .setName('timezone')
-            .setDescription('Time zone for the weekly post, leaderboards and game nights')
-            .addStringOption((o) => o.setName('zone').setDescription('e.g. America/Chicago or Europe/London').setAutocomplete(true)),
-        )
-        .addSubcommand((s) =>
-          s
-            .setName('steam-region')
-            .setDescription('Steam store region for sale prices')
-            .addStringOption((o) => o.setName('country').setDescription('Two-letter country code, e.g. us, gb, de').setMinLength(2).setMaxLength(2)),
-        )
-        .addSubcommand((s) =>
-          s
-            .setName('free-games')
-            .setDescription('Post free-to-keep games on Steam, Epic and GOG (off by default)')
-            .addBooleanOption((o) => o.setName('enabled').setDescription('On or off'))
-            .addChannelOption((o) =>
-              o
-                .setName('channel')
-                .setDescription('Post them here instead of the announce channel')
-                .addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement),
-            ),
-        )
-        .addSubcommand((s) =>
-          s
-            .setName('free-game-filters')
-            .setDescription('Choose which free games are worth posting')
-            .addIntegerOption((o) =>
-              o.setName('min_rating').setDescription('Lowest share of positive Steam reviews, in percent. 0 turns it off').setMinValue(LIMITS.freeGamesMinRating[0]).setMaxValue(LIMITS.freeGamesMinRating[1]),
-            )
-            .addBooleanOption((o) => o.setName('like_what_we_play').setDescription('Only games like the ones this server plays most'))
-            .addBooleanOption((o) => o.setName('multiplayer_only').setDescription('Only games with multiplayer or co-op'))
-            .addBooleanOption((o) => o.setName('not_on_steam').setDescription('Show games with no Steam page, which can’t be rated')),
-        )
-        .addSubcommand((s) =>
-          s
-            .setName('sale-alerts')
-            .setDescription('Choose which sales are worth posting, and where')
-            .addIntegerOption((o) =>
-              o.setName('min_discount').setDescription('Smallest discount to post, in percent').setMinValue(LIMITS.saleMinDiscount[0]).setMaxValue(LIMITS.saleMinDiscount[1]),
-            )
-            .addIntegerOption((o) =>
-              o.setName('post_hour').setDescription('Hour to post the day’s sales and bundles, 0–23, in the server’s time zone').setMinValue(LIMITS.salePostHour[0]).setMaxValue(LIMITS.salePostHour[1]),
-            )
-            .addBooleanOption((o) => o.setName('steam_wishlists').setDescription('Include games on members’ public Steam wishlists'))
-            .addBooleanOption((o) => o.setName('other_stores').setDescription('Also post when another official store sells a Steam key for less than Steam'))
-            .addBooleanOption((o) => o.setName('multiplayer_only').setDescription('Only post games Steam lists as multiplayer, co-op or PvP, and games someone asked for'))
-            .addBooleanOption((o) => o.setName('bundles').setDescription('Post Humble, Fanatical and Green Man Gaming bundles with a game this server wants'))
-            .addBooleanOption((o) => o.setName('bundles_like_we_play').setDescription('Also post bundles with a game like the ones this server plays most'))
-            .addChannelOption((o) =>
-              o
-                .setName('channel')
-                .setDescription('Post them here instead of the announce channel')
-                .addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement),
-            ),
-        )
-        .addSubcommand((s) =>
-          s
-            .setName('gamenight-reminder')
-            .setDescription('How long before a game night to ping the people who are in')
-            .addIntegerOption((o) => o.setName('minutes').setDescription('0 turns reminders off').setMinValue(LIMITS.gameNightReminderMin[0]).setMaxValue(LIMITS.gameNightReminderMin[1])),
-        )
-        .addSubcommand((s) =>
-          s
-            .setName('monthly-recap')
-            .setDescription('Post a recap of the month on the 1st (on by default)')
-            .addBooleanOption((o) => o.setName('enabled').setDescription('On or off')),
-        )
-        .addSubcommand((s) =>
-          s
-            .setName('patch-notes')
-            .setDescription('Post patch notes for games played here lately (off by default)')
-            .addStringOption((o) =>
-              o
-                .setName('mode')
-                .setDescription('How to post them')
-                .addChoices(...Object.entries(PATCH_MODES).map(([value, name]) => ({ name, value }))),
-            )
-            .addChannelOption((o) =>
-              o
-                .setName('channel')
-                .setDescription('Post them here instead of the announce channel')
-                .addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement),
-            ),
-        )
-        .addSubcommand((s) =>
-          s
-            .setName('steam-status')
-            .setDescription('Use what linked members in voice are playing on Steam if Discord doesn’t show it (on by default)')
-            .addBooleanOption((o) => o.setName('enabled').setDescription('On or off')),
-        )
-        .addSubcommand((s) =>
-          s
-            .setName('sounds')
-            .setDescription('How the soundboard behaves')
-            .addBooleanOption((o) => o.setName('even_volume').setDescription('Level sounds so they play about as loud as each other (on by default)'))
-            .addBooleanOption((o) => o.setName('join_sounds').setDescription('Let people pick a sound for joining voice with /sound join (on by default)'))
-            .addIntegerOption((o) =>
-              o.setName('join_cooldown_minutes').setDescription('Shortest time between one person’s join sounds').setMinValue(LIMITS.joinSoundCooldownMin[0]).setMaxValue(LIMITS.joinSoundCooldownMin[1]),
-            )
-            .addIntegerOption((o) =>
-              o.setName('join_delay_ms').setDescription('How long the bot waits after connecting before a join sound, 500 is half a second').setMinValue(LIMITS.joinSoundDelayMs[0]).setMaxValue(LIMITS.joinSoundDelayMs[1]),
-            )
-            .addIntegerOption((o) => o.setName('volume').setDescription('How loud every sound plays, as a percentage (60 by default)').setMinValue(LIMITS.soundVolume[0]).setMaxValue(LIMITS.soundVolume[1])),
-        )
-        .addSubcommand((s) =>
-          s
-            .setName('loop-room')
-            .setDescription('Play a sound nonstop while anyone’s in a voice channel. Give nothing to see how it’s set')
-            .addChannelOption((o) => o.setName('channel').setDescription('The voice channel').addChannelTypes(ChannelType.GuildVoice))
-            .addBooleanOption((o) => o.setName('off').setDescription('Turn the looping room off, keeping its other settings'))
-            .addStringOption((o) => o.setName('sound').setDescription('The sound to loop').setAutocomplete(true))
-            .addIntegerOption((o) => o.setName('volume').setDescription('How loud the sound is, as a percentage (50 by default)').setMinValue(LIMITS.loopVolume[0]).setMaxValue(LIMITS.loopVolume[1]))
-            .addNumberOption((o) =>
-              o.setName('every').setDescription('Seconds between fresh copies, layered on top of each other, like 0.5. 0 loops it without a gap').setMinValue(LIMITS.loopEvery[0]).setMaxValue(LIMITS.loopEvery[1]),
-            )
-            .addStringOption((o) => o.setName('speech').setDescription('Words to say over and over as well as the sound').setMaxLength(LOOP_TEXT_MAX))
-            .addNumberOption((o) =>
-              o.setName('speech_every').setDescription('Seconds between fresh copies of the speech, layered. 0 says it again straight away').setMinValue(LIMITS.loopTextEvery[0]).setMaxValue(LIMITS.loopTextEvery[1]),
-            )
-            .addBooleanOption((o) => o.setName('no_speech').setDescription('Stop saying the looping speech'))
-            .addStringOption((o) => o.setName('intro').setDescription('A sound played before the loop starts, and again whenever someone comes in').setAutocomplete(true))
-            .addIntegerOption((o) =>
-              o.setName('intro_delay_ms').setDescription('How long after someone comes in the intro plays, 250 is a quarter of a second').setMinValue(LIMITS.loopIntroDelayMs[0]).setMaxValue(LIMITS.loopIntroDelayMs[1]),
-            )
-            .addBooleanOption((o) => o.setName('no_intro').setDescription('Go straight to the loop, with no intro'))
-            .addIntegerOption((o) => o.setName('speech_volume').setDescription('How loud the speech is, as a percentage (50 by default)').setMinValue(LIMITS.loopTextVolume[0]).setMaxValue(LIMITS.loopTextVolume[1]))
-            .addIntegerOption((o) =>
-              o.setName('sound_delay_ms').setDescription('How long the sound waits after the intro, 1000 is a second').setMinValue(LIMITS.loopSoundDelayMs[0]).setMaxValue(LIMITS.loopSoundDelayMs[1]),
-            )
-            .addIntegerOption((o) =>
-              o.setName('speech_delay_ms').setDescription('How long the speech waits after the intro, 1000 is a second').setMinValue(LIMITS.loopTextDelayMs[0]).setMaxValue(LIMITS.loopTextDelayMs[1]),
-            ),
-        )
-        .addSubcommand((s) =>
-          s
-            .setName('music')
-            .setDescription('Music in voice: how loud it plays, dropping while people talk, Autoplay, and who controls it')
-            .addIntegerOption((o) => o.setName('volume').setDescription('How loud music plays, as a percentage (100 by default)').setMinValue(LIMITS.musicVolume[0]).setMaxValue(LIMITS.musicVolume[1]))
-            .addBooleanOption((o) => o.setName('autoplay').setDescription('Keep playing similar songs from YouTube when the queue runs out'))
-            .addBooleanOption((o) => o.setName('drop_for_people').setDescription('Turn music down while people in the call talk, as it is while the bot talks'))
-            .addRoleOption((o) => o.setName('dj_role').setDescription('Only this role, plus people with Manage Server, can control music'))
-            .addBooleanOption((o) => o.setName('everyone').setDescription('Let everyone control music again')),
-        )
-        .addSubcommand((s) =>
-          s
-            .setName('sound-managers')
-            .setDescription('Limit changing sounds to a role, plus people with Manage Server')
-            .addRoleOption((o) => o.setName('role').setDescription('Only this role, plus people with Manage Server, can change sounds'))
-            .addBooleanOption((o) => o.setName('everyone').setDescription('Let everyone change sounds again')),
-        )
-        .addSubcommand((s) =>
-          s
-            .setName('speech')
-            .setDescription('Text to speech: on or off, and the limits on /say. Pick the default voice in the web UI')
-            .addBooleanOption((o) => o.setName('enabled').setDescription('Whether /say works here'))
-            .addIntegerOption((o) => o.setName('speed').setDescription('How fast it talks, as a percentage of the voice’s natural speed').setMinValue(LIMITS.ttsSpeed[0]).setMaxValue(LIMITS.ttsSpeed[1]))
-            .addIntegerOption((o) =>
-              o.setName('pause_ms').setDescription('Pause between sentences, 200 is a fifth of a second').setMinValue(LIMITS.ttsPauseMs[0]).setMaxValue(LIMITS.ttsPauseMs[1]),
-            )
-            .addIntegerOption((o) => o.setName('volume').setDescription('How loud it talks. At 100 it’s a little louder than a sound, to be heard over people').setMinValue(LIMITS.ttsVolume[0]).setMaxValue(LIMITS.ttsVolume[1]))
-            .addIntegerOption((o) => o.setName('max_characters').setDescription('Longest line').setMinValue(LIMITS.ttsMaxChars[0]).setMaxValue(LIMITS.ttsMaxChars[1]))
-            .addIntegerOption((o) => o.setName('wait_seconds').setDescription('Wait between one person’s lines').setMinValue(LIMITS.ttsCooldownSec[0]).setMaxValue(LIMITS.ttsCooldownSec[1]))
-            .addBooleanOption((o) => o.setName('greet').setDescription('Say who joined voice, for people with no join sound'))
-            .addStringOption((o) => o.setName('greeting').setDescription('What to say, with {name} for the person').setMaxLength(LONGEST_GREETING))
-            .addBooleanOption((o) => o.setName('night_reminders').setDescription('Say game night reminders in the night’s voice channel'))
-            .addBooleanOption((o) => o.setName('hop_on').setDescription('Say hop-on pings in voice')),
-        )
-        .addSubcommand((s) =>
-          s
-            .setName('speech-channel')
-            .setDescription('Have the bot read out what people type in a channel. Give nothing to see how it’s set')
-            .addChannelOption((o) => o.setName('channel').setDescription('The channel to read').addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement))
-            .addBooleanOption((o) => o.setName('off').setDescription('Stop reading the channel out'))
-            .addStringOption((o) =>
-              o
-                .setName('who')
-                .setDescription('Whose messages to read')
-                .addChoices(...Object.entries(READ_WHO).map(([value, name]) => ({ name, value }))),
-            ),
-        )
-        .addSubcommand((s) =>
-          s
-            .setName('speech-role')
-            .setDescription('Limit /say to a role, plus people with Manage Server')
-            .addRoleOption((o) => o.setName('role').setDescription('Only this role, plus people with Manage Server, can use /say'))
-            .addBooleanOption((o) => o.setName('everyone').setDescription('Let everyone use /say again')),
-        )
-        .addSubcommand((s) =>
-          s
-            .setName('reset')
-            .setDescription('Put a setting back to its default')
-            .addStringOption((o) =>
-              o
-                .setName('setting')
-                .setDescription('Setting')
-                .setRequired(true)
-                .setAutocomplete(true),
-            ),
-        ),
+      data: command,
+      // The time zone, the one option that searches: there are hundreds, and Discord allows 25 fixed choices
       async autocomplete(i) {
-        // Discord allows 25 fixed choices, and there are more settings than that
-        if (i.options.getSubcommand() === 'reset') {
-          const typed = i.options.getFocused().toLowerCase();
-          return i.respond(
-            (Object.keys(LABELS) as SettingKey[])
-              .filter((key) => LABELS[key].toLowerCase().includes(typed))
-              .slice(0, 25)
-              .map((key) => ({ name: LABELS[key], value: key })),
-          );
-        }
-        if (i.options.getSubcommand() === 'loop-room') {
-          const typed = i.options.getFocused().toLowerCase();
-          const sounds = i.guildId ? listSounds(i.guildId) : [];
-          return i.respond(
-            sounds
-              .filter((s) => s.name.includes(typed))
-              .slice(0, 25)
-              .map((s) => ({ name: s.name, value: s.name })),
-          );
-        }
         const query = i.options.getFocused().toLowerCase().replaceAll(' ', '_');
         return i.respond(
           TIME_ZONES.filter((zone) => zone.toLowerCase().includes(query))
@@ -927,208 +705,25 @@ export const setup: Feature = {
           return apply(i, [['announceChannel', channel.id]]);
         }
 
-        if (sub === 'hopon-role') {
-          const role = i.options.getRole('role');
-          if (role && i.options.getBoolean('off')) return i.reply({ content: 'Give a role, or `off:True` for no role, not both.', flags: MessageFlags.Ephemeral });
-          if (!role) return apply(i, [['hopOnRole', i.options.getBoolean('off') ? '' : null]]);
-          const problem = cantHandOut(i.guild, role as Role);
-          if (problem) return i.reply({ content: problem, flags: MessageFlags.Ephemeral });
-          setSetting(i.guildId, 'hopOnRole', role.id);
-          logActivity(i.guildId, i.user.id, `Set ${LABELS.hopOnRole} to ${role}`);
-          return i.reply({
-            content: `✅ Hop-on pings now ping ${role}; people opt in with ${commandMention(i.guildId, 'notify')}.${roleWarning(i.guild, role as Role)}`,
-            flags: MessageFlags.Ephemeral,
-            allowedMentions: { parse: [] },
-          });
-        }
-
-        if (sub === 'hopon') {
-          return apply(i, [
-            ['hopOnMinPeople', i.options.getInteger('min_people')],
-            ['hopOnCooldownMin', i.options.getInteger('cooldown_minutes')],
-          ]);
-        }
-        if (sub === 'sessions') {
-          return apply(i, [
-            ['sessionRecap', i.options.getBoolean('recaps')],
-            ['recapMinMinutes', i.options.getInteger('recap_min_minutes')],
-            ['sessionGraceMin', i.options.getInteger('grace_minutes')],
-          ]);
-        }
-        if (sub === 'leaderboard') {
-          return apply(i, [
-            ['weeklyLeaderboard', i.options.getBoolean('enabled')],
-            ['weeklyPostDay', i.options.getInteger('day')],
-            ['weeklyPostHour', i.options.getInteger('hour')],
-          ]);
-        }
         if (sub === 'timezone') {
           const typed = i.options.getString('zone');
           if (typed === null) return apply(i, [['timezone', null]]);
           const zone = checkSetting(i.guild, 'timezone', typed);
           return 'error' in zone ? i.reply({ content: zone.error, flags: MessageFlags.Ephemeral }) : apply(i, [['timezone', zone.value]]);
         }
-        if (sub === 'steam-region') {
-          const typed = i.options.getString('country');
-          if (typed === null) return apply(i, [['steamCountry', null]]);
-          const country = checkSetting(i.guild, 'steamCountry', typed);
-          return 'error' in country ? i.reply({ content: country.error, flags: MessageFlags.Ephemeral }) : apply(i, [['steamCountry', country.value]]);
-        }
-        if (sub === 'free-games') {
-          const channel = i.options.getChannel('channel', false, [ChannelType.GuildText, ChannelType.GuildAnnouncement]);
-          const problem = channel && cantPost(i.guild, channel);
-          if (problem) return i.reply({ content: problem, flags: MessageFlags.Ephemeral });
-          return apply(i, [
-            ['freeGames', i.options.getBoolean('enabled')],
-            ['freeGamesChannel', channel?.id ?? null],
-          ]);
-        }
-        if (sub === 'free-game-filters') {
-          return apply(i, [
-            ['freeGamesMinRating', i.options.getInteger('min_rating')],
-            ['freeGamesTaste', i.options.getBoolean('like_what_we_play')],
-            ['freeGamesMultiplayer', i.options.getBoolean('multiplayer_only')],
-            ['freeGamesUnlisted', i.options.getBoolean('not_on_steam')],
-          ]);
-        }
-        if (sub === 'sale-alerts') {
-          const channel = i.options.getChannel('channel', false, [ChannelType.GuildText, ChannelType.GuildAnnouncement]);
-          const problem = channel && cantPost(i.guild, channel);
-          if (problem) return i.reply({ content: problem, flags: MessageFlags.Ephemeral });
-          return apply(i, [
-            ['saleMinDiscount', i.options.getInteger('min_discount')],
-            ['salePostHour', i.options.getInteger('post_hour')],
-            ['saleSteamWishlists', i.options.getBoolean('steam_wishlists')],
-            ['saleOtherStores', i.options.getBoolean('other_stores')],
-            ['saleMultiplayer', i.options.getBoolean('multiplayer_only')],
-            ['bundleAlerts', i.options.getBoolean('bundles')],
-            ['bundlesLikeWePlay', i.options.getBoolean('bundles_like_we_play')],
-            ['saleChannel', channel?.id ?? null],
-          ]);
-        }
-        if (sub === 'gamenight-reminder') return apply(i, [['gameNightReminderMin', i.options.getInteger('minutes')]]);
-        if (sub === 'monthly-recap') return apply(i, [['monthlyRecap', i.options.getBoolean('enabled')]]);
-        if (sub === 'patch-notes') {
-          const channel = i.options.getChannel('channel', false, [ChannelType.GuildText, ChannelType.GuildAnnouncement]);
-          const problem = channel && cantPost(i.guild, channel);
-          if (problem) return i.reply({ content: problem, flags: MessageFlags.Ephemeral });
-          return apply(i, [
-            ['patchNotes', i.options.getString('mode')],
-            ['patchNotesChannel', channel?.id ?? null],
-          ]);
-        }
-        if (sub === 'steam-status') return apply(i, [['steamStatus', i.options.getBoolean('enabled')]]);
-        if (sub === 'sounds') {
-          return apply(i, [
-            ['evenVolume', i.options.getBoolean('even_volume')],
-            ['soundVolume', i.options.getInteger('volume')],
-            ['joinSounds', i.options.getBoolean('join_sounds')],
-            ['joinSoundCooldownMin', i.options.getInteger('join_cooldown_minutes')],
-            ['joinSoundDelayMs', i.options.getInteger('join_delay_ms')],
-          ]);
-        }
-
-        if (sub === 'loop-room') {
-          const channel = i.options.getChannel('channel', false, [ChannelType.GuildVoice]);
-          const sound = i.options.getString('sound');
-          const volume = i.options.getInteger('volume');
-          const every = i.options.getNumber('every');
-          const intro = i.options.getString('intro');
-          const introDelay = i.options.getInteger('intro_delay_ms');
-          const noIntro = i.options.getBoolean('no_intro');
-          const speechVolume = i.options.getInteger('speech_volume');
-          const soundDelay = i.options.getInteger('sound_delay_ms');
-          const speechDelay = i.options.getInteger('speech_delay_ms');
-          for (const [key, value] of [['loopRoom', channel?.id], ['loopSound', sound], ['loopIntro', intro]] as const) {
-            const checked = value ? checkSetting(i.guild, key, value) : null;
-            if (checked && 'error' in checked) return i.reply({ content: checked.error, flags: MessageFlags.Ephemeral });
-          }
-          const speech = i.options.getString('speech');
-          const speechEvery = i.options.getNumber('speech_every');
-          const noSpeech = i.options.getBoolean('no_speech');
-          const checked: Partial<Record<SettingKey, string | number>> = {};
-          for (const [key, value] of [['loopEvery', every], ['loopText', speech], ['loopTextEvery', speechEvery]] as const) {
-            if (value === null) continue;
-            const result = checkSetting(i.guild, key, value);
-            if ('error' in result) return i.reply({ content: result.error, flags: MessageFlags.Ephemeral });
-            checked[key] = result.value as string | number;
-          }
-          await apply(i, [
-            ['loopRoom', i.options.getBoolean('off') ? '' : (channel?.id ?? null)],
-            ['loopSound', sound],
-            ['loopVolume', volume],
-            ['loopEvery', checked.loopEvery ?? null],
-            ['loopText', noSpeech ? '' : (checked.loopText ?? null)],
-            ['loopTextEvery', checked.loopTextEvery ?? null],
-            ['loopIntro', noIntro ? '' : intro],
-            ['loopIntroDelayMs', introDelay],
-            ['loopTextVolume', speechVolume],
-            ['loopSoundDelayMs', soundDelay],
-            ['loopTextDelayMs', speechDelay],
-          ]);
-          const speechProblem = checked.loopText ? await loopSpeechProblem(i.guild) : null;
-          if (speechProblem) await i.followUp({ content: `⚠️ ${speechProblem}`, flags: MessageFlags.Ephemeral });
-          return;
-        }
 
         // A role, or everyone again; nothing given only shows it
-        const roleOrEveryone = (option: string) => i.options.getRole(option)?.id ?? (i.options.getBoolean('everyone') ? '' : null);
-        if ((sub === 'music' || sub === 'sound-managers' || sub === 'speech-role') && i.options.getRole(sub === 'music' ? 'dj_role' : 'role') && i.options.getBoolean('everyone')) {
-          return i.reply({ content: 'Give a role, or `everyone:True` for everyone, not both.', flags: MessageFlags.Ephemeral });
-        }
-        if (sub === 'music') {
-          return apply(i, [
-            ['musicVolume', i.options.getInteger('volume')],
-            ['musicAutoplay', i.options.getBoolean('autoplay')],
-            ['musicDucksForPeople', i.options.getBoolean('drop_for_people')],
-            ['musicDjRole', roleOrEveryone('dj_role')],
-          ]);
-        }
-        if (sub === 'sound-managers') return apply(i, [['soundManagerRole', roleOrEveryone('role')]]);
-        if (sub === 'speech-role') return apply(i, [['ttsRole', roleOrEveryone('role')]]);
-        if (sub === 'speech-channel') {
-          const channel = i.options.getChannel('channel', false, [ChannelType.GuildText, ChannelType.GuildAnnouncement]);
-          const problem = channel && cantSee(i.guild, channel);
-          if (problem) return i.reply({ content: problem.error, flags: MessageFlags.Ephemeral });
-          return apply(i, [
-            ['ttsChannel', i.options.getBoolean('off') ? '' : (channel?.id ?? null)],
-            ['ttsChannelWho', i.options.getString('who')],
-          ]);
-        }
-        if (sub === 'speech') {
-          const greeting = i.options.getString('greeting');
-          const problem = greeting && greetingProblem(greeting);
-          if (problem) return i.reply({ content: problem, flags: MessageFlags.Ephemeral });
-          return apply(i, [
-            ['ttsGreet', i.options.getBoolean('greet')],
-            ['ttsGreeting', greeting && greeting.trim()],
-            ['ttsNightReminders', i.options.getBoolean('night_reminders')],
-            ['ttsHopOn', i.options.getBoolean('hop_on')],
-            ['tts', i.options.getBoolean('enabled')],
-            ['ttsSpeed', i.options.getInteger('speed')],
-            ['ttsPauseMs', i.options.getInteger('pause_ms')],
-            ['ttsVolume', i.options.getInteger('volume')],
-            ['ttsMaxChars', i.options.getInteger('max_characters')],
-            ['ttsCooldownSec', i.options.getInteger('wait_seconds')],
-          ]);
+        const gate = GATES.find(([name]) => name === sub);
+        if (gate) {
+          const role = i.options.getRole('role');
+          const everyone = i.options.getBoolean('everyone');
+          if (role && everyone) return i.reply({ content: 'Give a role, or `everyone:True` for everyone, not both.', flags: MessageFlags.Ephemeral });
+          return apply(i, [[gate[1], role?.id ?? (everyone ? '' : null)]]);
         }
 
-        if (sub === 'reset') {
-          const key = i.options.getString('setting', true) as SettingKey;
-          if (!Object.hasOwn(LABELS, key)) return i.reply({ content: 'Pick a setting from the list.', flags: MessageFlags.Ephemeral });
-          setSetting(i.guildId, key, undefined);
-          logActivity(i.guildId, i.user.id, `Put ${LABELS[key]} back to the default`);
-          await i.reply({
-            content: `↩️ ${LABELS[key]} is back to the default: ${show(key, setting(i.guildId, key))}.`,
-            flags: MessageFlags.Ephemeral,
-            allowedMentions: { parse: [] },
-          });
-          const renamed = await afterSettingsChanged(i.guild, [key]);
-          if (renamed) await i.followUp({ content: `⚠️ ${renamed}`, flags: MessageFlags.Ephemeral });
-          return;
-        }
-
-        return i.reply({ embeds: [settingsEmbed(i.guild)], flags: MessageFlags.Ephemeral });
+        if (sub === 'show') return i.reply({ embeds: [settingsEmbed(i.guild)], flags: MessageFlags.Ephemeral });
+        // Discord can offer an option that's gone until it catches up with the commands
+        return i.reply({ content: 'That setting is in the web UI’s Settings now.', flags: MessageFlags.Ephemeral });
       },
     },
   ],

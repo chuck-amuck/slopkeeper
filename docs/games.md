@@ -38,7 +38,7 @@ The web UI's Games → **Library** does all of this for anyone, under **Steam ac
 
 **Steam families:** Steam doesn't say who's in a family, so you tell the bot (up to 6 people, in every server). Someone in a family counts as owning a game a family member owns, if Steam tags it for Family Sharing. Each person playing at once needs their own copy, so two people sharing one copy show as one short. The bot can't see whether an owner outside the group is using their copy, and games only marked by hand don't count for the family.
 
-**Steam status:** every minute, the bot checks what linked members in voice are playing on Steam. When Discord shows no game for someone, their Steam game counts for game time, recaps and hop-on pings. It needs public game details, and `/setup steam-status` turns it off.
+**Steam status:** every minute, the bot checks what linked members in voice are playing on Steam. When Discord shows no game for someone, their Steam game counts for game time, recaps and hop-on pings. It needs public game details, and Settings' **Games from Steam status** turns it off.
 
 ## Game library
 
@@ -68,4 +68,4 @@ Running `/game want` or `/game own` again, or pressing **Undo**, takes it back.
 
 ## Patch notes
 
-`/setup patch-notes` posts Steam patch notes for games with a Steam ID played here in the past 30 days, either as they come out or as a **weekly digest** on the leaderboard's day and hour (even with the leaderboard post off). They go to the announce channel or one you pick, never ping anyone, and it's off by default. Turning it on doesn't post a backlog, and games whose developers don't tag their patch notes on Steam are missed.
+Settings' **Patch notes** posts Steam patch notes for games with a Steam ID played here in the past 30 days, either as they come out or as a **weekly digest** on the leaderboard's day and hour (even with the leaderboard post off). They go to the announce channel or one you pick, never ping anyone, and it's off by default. Turning it on doesn't post a backlog, and games whose developers don't tag their patch notes on Steam are missed.

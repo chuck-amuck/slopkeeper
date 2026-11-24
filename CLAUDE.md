@@ -64,10 +64,10 @@ same static ffmpeg as the image and CI. Without ffmpeg the audio tests skip sile
 
 - Never bump `SCHEMA_VERSION` in src/db.ts: an older database with a `games` table makes the bot refuse to start.
   Add tables with `CREATE TABLE IF NOT EXISTS` and columns with the `pragma_table_info` + `ALTER TABLE` pattern.
-- Every setting is editable in the web UI. `/setup` (src/features/setup.ts) is optional: the owner is fine with a
-  setting living only in the web UI (the default and looping speech voices do), marked "web UI only" in the
-  "Settings and defaults" table in docs/server-setup.md. A new per-server setting touches src/settings.ts DEFAULTS
-  (an env var only sets the default), web/public/settings.js, `.env.example`, that table and the tests.
+- Every setting is editable in the web UI's Settings. `/setup` (src/features/setup.ts) sets only Settings' Basics
+  section, plus `show`, and test/setup.test.ts holds it to that: a new setting goes in the web UI, not `/setup`.
+  A new per-server setting touches src/settings.ts DEFAULTS (an env var only sets the default),
+  web/public/settings.js, `.env.example`, the "Settings and defaults" table in docs/server-setup.md and the tests.
 - Rules live in the bot (src/features, src/api.ts and its areas in src/api/). `web/` stores nothing and proxies to
   the management API.
 - Spotify stays search-only: no `SPOTIFY_REFRESH_TOKEN` in the deployment and no personal playlists. Soloist

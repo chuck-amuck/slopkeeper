@@ -423,6 +423,21 @@ const PAGES: [string, string, Record<string, string>?, string?, Step?, Step?][] 
     `(async () => { window.asked = []; const real = window.fetch; window.fetch = (u, i) => (/\\/settings$/.test(String(u)) && window.asked.push(String(u)), real(u, i)); await real('/api/guilds/${GUILD}/settings/hopOnMinPeople', { method: 'PUT', headers: { 'x-slopkeeper': '1', 'content-type': 'application/json' }, body: JSON.stringify({ value: 7 }) }); })()`,
     `fetch('/api/guilds/${GUILD}/settings/hopOnMinPeople', { method: 'DELETE', headers: { 'x-slopkeeper': '1' } })`,
   ],
+  // A link from Discord opens the server it's about, not the one picked here last, at the setting it names, and the
+  // address drops the server once it's picked
+  [
+    'board',
+    'A link from Discord picks its server',
+    {},
+    `location.search === '' && localStorage.getItem('guild') === '${GUILD}' && /^#settings\\/pings/.test(location.hash) && !document.querySelector('#settings-section-pings')?.hidden && document.getElementById('setting-hopOnRole') !== null`,
+    async (page) => {
+      // Another server the page is told about, which it was on last
+      const other = `const real = window.fetch; window.fetch = async (u, i) => { const answer = await real(u, i); if (String(u) !== '/api/guilds') return answer; const list = await answer.json(); return Response.json({ ...list, guilds: [{ id: 'g0', name: 'Other server', icon: null }, ...list.guilds] }); };`;
+      otherServer = (await page.send('Page.addScriptToEvaluateOnNewDocument', { source: other })).identifier;
+      await page.evaluate(`localStorage.setItem('guild', 'g0'); location.href = '/?guild=${GUILD}#settings?key=hopOnRole'; true`);
+    },
+    (page) => page.send('Page.removeScriptToEvaluateOnNewDocument', { identifier: otherServer }),
+  ],
   ['settings/games', 'Settings: Games'],
   ['settings/deals', 'Settings: Deals', {}, `!!document.querySelector('#settings-free-games') && [...document.querySelectorAll('#settings-section-deals details.preview')].length === 2`],
   // Join sounds with their list under them, and their delay and cooldown folded away
@@ -836,6 +851,8 @@ const VOICE_URL = 'http://voice.test';
 let containerVersion = '';
 /** How far the butler has got, which a case moves on */
 let butlerPercent = 40;
+// The script that tells pages about another server, for the Discord link's case
+let otherServer = '';
 /** The voice container's answer: the narrator downloaded, with speakers, the butler on its way, and the last one failed */
 const containerReport = () => ({
   version: containerVersion,

@@ -9,6 +9,7 @@ import { features, startOrder } from './features/all.ts';
 import { timeInteraction } from './features/health.ts';
 import { followProfile } from './features/profileNames.ts';
 import { followPhoto } from './features/profilePhotos.ts';
+import { settingPlace } from './features/setup.ts';
 import { markStarted, servedGuilds } from './util.ts';
 import { stopTimers } from './schedule.ts';
 
@@ -36,7 +37,7 @@ async function join(guild: Guild, isNew: boolean) {
   if (isNew) {
     await guild.systemChannel
       ?.send(
-        `👋 Slopkeeper is here. A server admin needs to run ${commandMention(guild.id, 'setup announce-channel')} to finish setting up, and ${commandMention(guild.id, 'setup hopon-role')} before anyone can use ${commandMention(guild.id, 'notify')}. ${commandMention(guild.id, 'setup show')} lists everything else, and ${commandMention(guild.id, 'help')} shows what the bot does.`,
+        `👋 Slopkeeper is here. A server admin needs to run ${commandMention(guild.id, 'setup announce-channel')} to finish setting up, and pick a ${settingPlace(guild.id, 'hopOnRole')} before anyone can use ${commandMention(guild.id, 'notify')}. ${commandMention(guild.id, 'setup show')} lists everything else, and ${commandMention(guild.id, 'help')} shows what the bot does.`,
       )
       .catch(() => {});
   }

@@ -20,6 +20,7 @@ import { checkSteamStatusOf } from './steam.ts';
 import { commandMention } from '../commandIds.ts';
 import { getKv, setKv } from '../db.ts';
 import { sendPost } from '../postFailures.ts';
+import { settingPlace } from './setup.ts';
 
 /** When a server was last pinged, kept in the database so a restart doesn't ping again */
 const lastPingAt = (guildId: string) => Number(getKv(`hopOnPingAt:${guildId}`) ?? 0);
@@ -93,7 +94,7 @@ export const hopOn: Feature = {
         if (!i.inCachedGuild()) return i.reply({ content: 'Use this in a server.', flags: MessageFlags.Ephemeral });
         const roleId = idSetting(i.guildId, 'hopOnRole');
         if (!roleId) {
-          return i.reply({ content: `This server has no hop-on role. A server admin can set one with ${commandMention(i.guildId, 'setup hopon-role')}.`, flags: MessageFlags.Ephemeral });
+          return i.reply({ content: `This server has no hop-on role. A server admin can pick one as ${settingPlace(i.guildId, 'hopOnRole')}.`, flags: MessageFlags.Ephemeral });
         }
         const has = i.member.roles.cache.has(roleId);
         // A server needn't let the bot manage roles: then an admin hands the role out

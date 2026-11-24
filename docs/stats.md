@@ -6,7 +6,7 @@ Recaps of voice sessions, leaderboards, game stats and the monthly recap. The we
 
 The bot tracks each voice channel as a session, with who was there, for how long and what they played. A session ends once the channel has been empty for 5 minutes, so a quick disconnect doesn't split the night. A bot restart doesn't either, if it's back within 10 minutes.
 
-Sessions of 15 minutes or more are recorded, even alone, so time on your own counts towards voice stats. With 2 or more people, the bot also posts a recap with each person's time and the games played. `/setup sessions` changes both times, and `recaps:False` stops the posts while still recording.
+Sessions of 15 minutes or more are recorded, even alone, so time on your own counts towards voice stats. With 2 or more people, the bot also posts a recap with each person's time and the games played. Settings, under **Voice and pings**, changes both times, and turning off **Session recaps** stops the posts while still recording.
 
 ## Voice leaderboards
 
@@ -14,7 +14,7 @@ Sessions of 15 minutes or more are recorded, even alone, so time on your own cou
 | --- | --- |
 | `/stats [period]` | The top 10 by time in voice for the past week (default), month or all time, how many nights each showed up, and the most played games. |
 
-Every Sunday at 8 PM in the server's time zone, the bot posts the week's leaderboard. If it was down then, it posts when it's back, up to a day late. `/setup leaderboard` changes the day and hour or turns the post off.
+Every Sunday at 8 PM in the server's time zone, the bot posts the week's leaderboard. If it was down then, it posts when it's back, up to a day late. Settings, under **Voice and pings**, changes the day and hour or turns the post off.
 
 ## Game stats
 
@@ -58,7 +58,7 @@ It shows, over all time, how long the two played the same game in the same chann
 
 ## Monthly recap
 
-On the 1st of each month, at the leaderboard's hour, the bot posts last month's highlights: total game and voice time, top games, biggest gamers, most time in voice, the longest session, top sounds and game nights. Months with nothing to report are skipped. `/setup monthly-recap` turns the post off.
+On the 1st of each month, at the leaderboard's hour, the bot posts last month's highlights: total game and voice time, top games, biggest gamers, most time in voice, the longest session, top sounds and game nights. Months with nothing to report are skipped. Settings' **Monthly recap** turns the post off.
 
 Top sounds counts the bot's sounds, and sounds played from Discord's own soundboard in the channel the bot is in, as Discord doesn't report plays anywhere else. Discord's built-in sounds don't count.
 
