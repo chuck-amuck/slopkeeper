@@ -1,6 +1,6 @@
 # Web UI
 
-A web page for everything the bot does, running as a second container next to it, for your home network or behind a sign-in proxy like [Pangolin](#signing-in-through-pangolin). It has tabs for the Soundboard, Music, Games, Deals, Stats, Chat, Activity, Settings and Health. On a phone the Soundboard, Music, Games and Stats are a bar along the bottom, with the rest under **More**.
+A web page for everything the bot does, running as a second container next to it, for your home network or behind a sign-in proxy like [Pangolin](#signing-in-through-pangolin). It has tabs for the Soundboard, Music, Games, Stats, Chat, Activity, Settings and Health. On a phone the Soundboard, Music, Games and Stats are a bar along the bottom, with the rest under **More**.
 
 ## On every page
 
@@ -22,13 +22,12 @@ Everything updates live, whoever changed it and wherever, and a change waits whi
 
 **Music:** what's playing, with Play in and the music's volume on its card, then Spotify search and the queue. The **Discord** menu posts a [music panel](music.md#commands), and lists them to take them down. See [Music](music.md).
 
-**Games** has three views, as tabs along the top:
+**Games** has four views, as tabs along the top:
 
 - **Library:** the game library with who owns, needs and wants each game, and any sale. Add games from what members own on Steam, by name or by store link. **Steam accounts** links, changes and unlinks anyone's account and sets Steam families. Each game's **Manage** has its player limit, Steam link, **Never suggest this** and who owns it.
 - **Game nights:** plan a night, answer **In**, **Maybe** or **Can't**, edit or cancel one, or stop a repeating one. Times show in your time zone, and in the server's when that's different.
 - **Pick a game:** tick who's playing, to plan before anyone's on, or pick a voice channel when people are in one, and see the games everyone owns or is one purchase away from, as `/whatdoweplay` does. Each game shows time played here and on Steam, and opening one shows who's playing it now, its latest patch and **Achievements**. Filter to co-op, PvP or Steam Deck, then **Pick for us** or **Start a vote** in a channel.
-
-**Deals:** what's on sale that this server plays or wants, compared with the lowest price ever, plus running [bundles](deals.md#bundles) and [free games](deals.md#free-games). **Just mine** keeps only what you want or wishlisted, once the page knows who you are.
+- **Deals:** what's on sale that this server plays or wants, compared with the lowest price ever, plus running [bundles](deals.md#bundles) and [free games](deals.md#free-games). **Just mine** keeps only what you want or wishlisted, once the page knows who you are.
 
 **Stats:** pick a range, from presets or dates on a calendar (on a phone, from a list). **Overview** has game time, games, people, voice time, sounds and game nights, each compared with the stretch before, then charts of game time, days in voice, when people are on, the top games and people, and what's trending. Pick a person or game to see just theirs. **Sounds & music** has the sounds, songs and speech, never what was said. **Compare** and **Monthly recap** match `/compare` and `/recap`. **Merge games** and **Not a game** fix how games are counted (see [Stats](stats.md#game-names)).
 

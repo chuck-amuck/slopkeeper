@@ -42,7 +42,7 @@ It applies the same rules as `/sound` and `/setup`, and every request needs an `
 | `POST /guilds/:id/discord-sounds/:soundId/save` | Saves it to the library and links the two |
 | `DELETE /guilds/:id/discord-sounds/:soundId` | Takes it off Discord's soundboard, saving it to the library first. Returns its library `name` |
 | `GET /guilds/:id/sales` | Lists what's watched and on sale, from the last check, with why |
-| `GET /guilds/:id/deals` | The Deals tab: what's on sale with how it compares with the lowest price ever (`lowest`: `yet` and `text`) and who wants or wishlisted each (`people`), and the bundles with games for the server as last worked out (`bundles` and `bundlesAt`; null before the first look, or with `bundlesOff` saying `no-key` or `off`) |
+| `GET /guilds/:id/deals` | Games › Deals: what's on sale with how it compares with the lowest price ever (`lowest`: `yet` and `text`) and who wants or wishlisted each (`people`), and the bundles with games for the server as last worked out (`bundles` and `bundlesAt`; null before the first look, or with `bundlesOff` saying `no-key` or `off`) |
 | `GET /guilds/:id/games` | Lists the game library with owners, who needs each game, who wants it, any sale and `played` (time in voice here and when it last was, or null), plus the server's members |
 | `GET /guilds/:id/steam-links` | Lists the server's members with their linked Steam account, if any, and whether Steam is set up |
 | `PUT /guilds/:id/steam-links/:user` | Links or changes someone's account: `{ "profile": "<link, custom URL name or SteamID64>" }` |

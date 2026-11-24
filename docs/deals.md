@@ -22,9 +22,9 @@ It watches four kinds of game:
 
 Games hidden with **Never suggest this** are only watched if someone asked for them.
 
-A server that only buys games to play together can post just those: `/setup sale-alerts multiplayer_only:True` keeps games Steam lists as multiplayer, co-op or PvP, and games someone asked for with `/game want`. Bundle posts follow it too. `/sales` and the Deals tab still show every sale.
+A server that only buys games to play together can post just those: `/setup sale-alerts multiplayer_only:True` keeps games Steam lists as multiplayer, co-op or PvP, and games someone asked for with `/game want`. Bundle posts follow it too. `/sales` and the web UI's Games › Deals still show every sale.
 
-A game is posted at 25% off or more, and again only if the same sale gets at least 10 points deeper. Up to 10 games are listed, most wanted first. The rest, and sales that start and end between two posts, are in `/sales` and the web UI's [Deals](web-ui.md) tab. The hour, the channel, the smallest sale and the rest are set with `/setup sale-alerts` (see [Settings and defaults](server-setup.md#settings-and-defaults)). Prices are in the server's Steam store region, set with `/setup steam-region`.
+A game is posted at 25% off or more, and again only if the same sale gets at least 10 points deeper. Up to 10 games are listed, most wanted first. The rest, and sales that start and end between two posts, are in `/sales` and the web UI's [Games › Deals](web-ui.md). The hour, the channel, the smallest sale and the rest are set with `/setup sale-alerts` (see [Settings and defaults](server-setup.md#settings-and-defaults)). Prices are in the server's Steam store region, set with `/setup steam-region`.
 
 **Who's pinged:** only the people a sale matters to. That's whoever wanted the game or has it on their wishlist, until they own it. For played and library games, it's also everyone in the group who doesn't own it, except a library game added by `/game want`, which pings only the people who wanted it. The group is the members who linked Steam or marked a game as owned. Nobody who has played it here is pinged, and nobody whose Steam library is private is pinged unless they asked for the game.
 

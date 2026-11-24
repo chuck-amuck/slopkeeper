@@ -1,4 +1,4 @@
-// The bundles for the web UI's Deals tab: the running ones with a game a server wants or plays something like, worked
+// The bundles for the web UI's Games › Deals: the running ones with a game a server wants or plays something like, worked
 // out at each price check and kept, so the page shows them without asking IsThereAnyDeal. Its sales come from the
 // stored prices, and its free games from the free game check's list
 
@@ -18,7 +18,7 @@ import { watched, type Watched } from './sales.ts';
 const REFRESH_MS = config.saleCheckHours * 3_600_000;
 const matchesKey = (guildId: string) => `deal_bundles:${guildId}`;
 
-/** A bundle with games for this server, as the Deals tab shows it */
+/** A bundle with games for this server, as Games › Deals shows it */
 export interface DealBundle {
   id: number;
   title: string;

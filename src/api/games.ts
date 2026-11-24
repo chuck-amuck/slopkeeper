@@ -277,7 +277,7 @@ export async function saleList(guild: Guild) {
 }
 
 /**
- * The Deals tab: what's on sale that the server plays or wants, and bundles with games for it, all as of the bot's
+ * Games › Deals: what's on sale that the server plays or wants, and bundles with games for it, all as of the bot's
  * last checks. `people` is who each is for, so the page can show just what's for whoever's looking
  */
 export async function dealList(guild: Guild) {

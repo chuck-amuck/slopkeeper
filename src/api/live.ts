@@ -39,7 +39,7 @@ export const updates: Record<FeedName, (guild: Guild) => object | Promise<object
   volumes: (guild) => volumesOf(guild),
   // Only that there's more: the Health tab asks for the range it shows
   health: () => ({}),
-  // Likewise: the Deals tab asks for the lot again
+  // Likewise: Games › Deals asks for the lot again
   deals: () => ({}),
   profile: (guild) => profilePicks(guild),
   speech: (guild) => speechOffer(guild),

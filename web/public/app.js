@@ -22,12 +22,14 @@ import { startSpeed, stopSpeed } from './speed.js';
 import { tabInAddress, viewTabs } from './viewtabs.js';
 
 const app = document.getElementById('app');
-// Games has the library, game nights and picking one as views, as Stats has its own
+// Games has the library, game nights, picking one and deals as views, as Stats has its own. A phone says Nights, so all
+// four fit
 const GAMES_VIEW = 'gamesView';
 const GAME_VIEWS = [
   ['library', 'Library', renderGames],
-  ['nights', 'Game nights', renderNights],
+  ['nights', 'Game nights', renderNights, 'Nights'],
   ['pick', 'Pick a game', renderPick],
+  ['deals', 'Deals', renderDeals],
 ];
 const renderGamesTab = (main) => viewTabs(main, { tab: 'games', label: 'Games view', views: GAME_VIEWS, key: GAMES_VIEW });
 // id, label, page, icon, and the shorter label a phone's bottom bar uses
@@ -35,7 +37,6 @@ const TABS = [
   ['board', 'Soundboard', renderSoundboard, 'speaker', 'Sounds'],
   ['music', 'Music', renderMusic, 'note'],
   ['games', 'Games', renderGamesTab, 'star'],
-  ['deals', 'Deals', renderDeals, 'tag'],
   ['stats', 'Stats', renderStats, 'chart'],
   ['chat', 'Chat', renderChat, 'bubble'],
   ['activity', 'Activity', renderActivity, 'clock'],
@@ -55,8 +56,8 @@ if (recall('tab') === 'library') {
   remember('tab', 'board');
   remember(VIEW_KEY, 'manage');
 }
-// Game nights and Pick a game were tabs of their own, and are now Games' views. Health was a view in Stats
-if (['nights', 'pick'].includes(recall('tab'))) {
+// Game nights, Pick a game and Deals were tabs of their own, and are now Games' views. Health was a view in Stats
+if (['nights', 'pick', 'deals'].includes(recall('tab'))) {
   remember(GAMES_VIEW, recall('tab'));
   remember('tab', 'games');
 }
@@ -67,7 +68,7 @@ if (recall('statsView') === 'health') {
 /** Where an address from before those moves is now, as a bookmark, a shared link or Back may still have one */
 function movedHash() {
   const hash = location.hash.slice(1);
-  const moved = /^(nights|pick)(?=$|[/?])/.test(hash) ? `games/${hash}` : /^stats\/health(?=$|[/?])/.test(hash) ? hash.slice('stats/'.length) : null;
+  const moved = /^(nights|pick|deals)(?=$|[/?])/.test(hash) ? `games/${hash}` : /^stats\/health(?=$|[/?])/.test(hash) ? hash.slice('stats/'.length) : null;
   if (moved) history.replaceState(history.state, '', `#${moved}`);
 }
 const isTab = (id) => TABS.some(([t]) => t === id);

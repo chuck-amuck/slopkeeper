@@ -8,7 +8,7 @@ import { dealBundles, refreshDealBundles } from '../src/features/deals.ts';
 import { lookups } from '../src/features/gamefacts.ts';
 import { setSetting } from '../src/settings.ts';
 
-// The Deals tab: what's on sale, with the lowest price ever and who it's for, and bundles with games for the server
+// Games › Deals: what's on sale, with the lowest price ever and who it's for, and bundles with games for the server
 
 config.itadKey = 'itad-key';
 lookups.gapMs = 0;

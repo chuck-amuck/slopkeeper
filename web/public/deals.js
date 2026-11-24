@@ -59,7 +59,7 @@ function bundleRow(b, games) {
   );
 }
 
-/** Deals: what the server plays or wants that's on sale, bundles with games for it, and what's free right now */
+/** Games › Deals: what the server plays or wants that's on sale, bundles with games for it, and what's free right now */
 export function renderDeals(main) {
   const guildId = state.guildId;
   const me = state.me?.userId ?? null;

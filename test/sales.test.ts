@@ -736,7 +736,7 @@ test('the lowest ever counts other stores’ Steam keys, but not other copies', 
   world.otherCopies.set(60, [{ shop: 'GOG', now: '1.00', drm: [{ id: 1000, name: 'Drm Free' }] }]);
   await checkSales(s.client, true);
   assert.match(s.text(), /Lowest ever \$5\.00\./);
-  // Kept for the Deals tab, and kept when IsThereAnyDeal can't be asked next time
+  // Kept for Games › Deals, and kept when IsThereAnyDeal can't be asked next time
   const lowest = () => (db.prepare('SELECT lowest FROM sale_prices WHERE appid = 60').get() as { lowest: number | null }).lowest;
   assert.equal(lowest(), 500);
   world.storesDown = true;

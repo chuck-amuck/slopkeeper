@@ -67,9 +67,10 @@ const ONE_LINE = (controls: string) =>
   `(() => { const all = [...document.querySelectorAll('${controls}')]; return all.length > 0 && all.every((c) => new Set([...c.children].map((b) => Math.round(b.getBoundingClientRect().top))).size === 1); })()`;
 const BESIDE = (rows: string, control: string) =>
   `(() => { const all = [...document.querySelectorAll('${rows}')]; return all.length > 0 && all.every((f) => f.querySelector('${control}').getBoundingClientRect().top < f.querySelector('.hint').getBoundingClientRect().bottom); })()`;
-// Games' three views, with the one named open at its own address and, on a phone, Games and Stats on the bottom bar
+// Games' four views, with the one named open at its own address and, on a phone, Games and Stats on the bottom bar. A phone
+// says Nights for Game nights, so all four fit without scrolling
 const GAMES_VIEW = (id: string, label: string) =>
-  `(() => { const views = document.querySelector('.view-tabs[aria-label="Games view"]'); const tabs = [...views.querySelectorAll('button')].map((t) => t.textContent); return tabs.join('|') === 'Library|Game nights|Pick a game' && views.querySelector('[aria-current=page]')?.textContent === '${label}' && location.hash === '#games/${id}' && (innerWidth > 640 || [...document.querySelectorAll('.bottom-nav button')].map((b) => b.textContent).join('|') === 'Sounds|Music|Games|Stats|More'); })()`;
+  `(() => { const views = document.querySelector('.view-tabs[aria-label="Games view"]'); const phone = innerWidth <= 640; const named = (n) => (phone && n === 'Game nights' ? 'Nights' : n); const tabs = [...views.querySelectorAll('button')].map((t) => t.innerText); return tabs.join('|') === ['Library', 'Game nights', 'Pick a game', 'Deals'].map(named).join('|') && views.scrollWidth <= views.clientWidth && views.querySelector('[aria-current=page]')?.innerText === named('${label}') && location.hash === '#games/${id}' && (innerWidth > 640 || [...document.querySelectorAll('.bottom-nav button')].map((b) => b.textContent).join('|') === 'Sounds|Music|Games|Stats|More'); })()`;
 // A page's address, its name, what it remembers, what must be true of it once it's shown, and what to do on it first
 // Lines said and kept answered in the page, as there's no voice channel here: each is noted in window.sent as [path, json]
 const SAY_STUB = String.raw`const real = window.fetch; window.sent = []; window.fetch = (url, init) => { const u = String(url); if (init?.method === 'POST' && /\/say(\/sound)?$/.test(u)) { const json = JSON.parse(init.body); window.sent.push([u.replace(/.*\/api\/guilds\/[^/]+/, ''), json]); return Promise.resolve(Response.json(u.endsWith('/sound') ? { name: json.name, replaced: false, discordProblem: null } : {})); } return real(url, init); };`;
@@ -209,7 +210,7 @@ const PAGES: [string, string, Record<string, string>?, string?, Step?, Step?][] 
     'Games: Pick a game with nobody in voice',
     {},
     `(() => { const label = document.querySelector('.pick-who-label'); return window.noVoice === true && label?.getClientRects().length > 0 && label.querySelector('select').getClientRects().length === 0 && /^Who’s playing/.test(label.textContent) && document.querySelectorAll('.pick-people input[type=checkbox]').length > 0 && !document.querySelector('.pick-people').hidden; })()`,
-    `(async () => { const real = window.fetch; window.fetch = async (url, options) => { const res = await real(url, options); if (!String(url).includes('/pick/options')) return res; const data = await res.json(); window.noVoice = true; return new Response(JSON.stringify({ ...data, voice: [] }), { status: res.status, headers: { 'content-type': 'application/json' } }); }; const views = () => [...document.querySelectorAll('.view-tabs button')]; views()[0].click(); await new Promise((r) => setTimeout(r, 300)); views().at(-1).click(); })()`,
+    `(async () => { const real = window.fetch; window.fetch = async (url, options) => { const res = await real(url, options); if (!String(url).includes('/pick/options')) return res; const data = await res.json(); window.noVoice = true; return new Response(JSON.stringify({ ...data, voice: [] }), { status: res.status, headers: { 'content-type': 'application/json' } }); }; const views = () => [...document.querySelectorAll('.view-tabs button')]; views()[0].click(); await new Promise((r) => setTimeout(r, 300)); views().find((b) => b.innerText === 'Pick a game').click(); })()`,
   ],
   // Picking a view is a step Back undoes, without drawing the page again
   [
@@ -217,14 +218,24 @@ const PAGES: [string, string, Record<string, string>?, string?, Step?, Step?][] 
     'Games: Back to the last view',
     {},
     `window.pickedPick === true && window.samePage === document.querySelector('main') && ${GAMES_VIEW('library', 'Library')}`,
-    `(async () => { window.samePage = document.querySelector('main'); [...document.querySelectorAll('.view-tabs button')].at(-1).click(); await new Promise((r) => setTimeout(r, 300)); window.pickedPick = location.hash === '#games/pick' && !!document.querySelector('main select'); history.back(); })()`,
+    `(async () => { window.samePage = document.querySelector('main'); [...document.querySelectorAll('.view-tabs button')].find((b) => b.innerText === 'Pick a game').click(); await new Promise((r) => setTimeout(r, 300)); window.pickedPick = location.hash === '#games/pick' && !!document.querySelector('main select'); history.back(); })()`,
   ],
-  // Game nights and Pick a game were tabs of their own: their addresses, and a device that had one open, go to their view
+  // Game nights, Pick a game and Deals were tabs of their own: their addresses, and a device that had one open, go to their
+  // view
   ['nights', 'Games: the old Game nights address', {}, GAMES_VIEW('nights', 'Game nights')],
   ['pick', 'Games: the old Pick a game address', {}, GAMES_VIEW('pick', 'Pick a game')],
   ['games', 'Games: remembered from the old Pick a game tab', { tab: 'pick' }, GAMES_VIEW('pick', 'Pick a game')],
+  ['deals', 'Games: the old Deals address', {}, GAMES_VIEW('deals', 'Deals')],
+  // Opened afresh on a bare #games, as the case before leaves a view in the address that a reload would follow
+  [
+    'games',
+    'Games: remembered from the old Deals tab',
+    {},
+    GAMES_VIEW('deals', 'Deals'),
+    `(() => { localStorage.clear(); localStorage.setItem('tab', 'deals'); history.replaceState(null, '', '#games'); location.reload(); })()`,
+  ],
   // A note under Bundles' title isn't boxed in by a line under it too
-  ['deals', 'Deals', {}, `(() => { const note = document.querySelector('.card-note'); const row = note?.nextElementSibling?.querySelector('.free-game'); return !note || note.hidden || !row || getComputedStyle(row).borderTopWidth === '0px'; })()`],
+  ['games/deals', 'Games: Deals', {}, `(() => { const note = document.querySelector('.card-note'); const row = note?.nextElementSibling?.querySelector('.free-game'); return !note || note.hidden || !row || getComputedStyle(row).borderTopWidth === '0px'; })()`],
   // The views as tabs on one row, the dates a list on a phone, and the corner's buttons out of the way while scrolling
   // down a phone, and back on the way up or when the keyboard reaches them
   [
@@ -371,7 +382,7 @@ const PAGES: [string, string, Record<string, string>?, string?, Step?, Step?][] 
   // With the music player showing, the corner's round buttons sit beside it on a computer and above it on a phone, as
   // round icons, and Stop goes above them rather than moving them
   [
-    'deals',
+    'games/deals',
     'Corner buttons beside the music player',
     {},
     `(() => {
