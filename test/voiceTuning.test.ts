@@ -2,12 +2,13 @@ import './helpers.ts';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { afterEach, beforeEach, test, type TestContext } from 'node:test';
+import { feeds } from '../src/changes.ts';
 import { config } from '../src/config.ts';
 import { db } from '../src/db.ts';
 import { CURVE_STRETCHES, type Effect, type Voice } from '../src/features/say.ts';
 import { effectGain, forgetEffectGains, gainMeasured, keepGainsFor, setEffectGain, soundKey } from '../src/features/effectGains.ts';
-import { forgetVoiceStates, voiceFields } from '../src/features/voices.ts';
-import { nearestCurve, SCALES, speechSeconds, startTuning, stopTuning, stretchAt, volumeFor } from '../src/features/voiceTuning.ts';
+import { addedVoices, forgetVoiceStates, voiceFields, voiceState } from '../src/features/voices.ts';
+import { nearestCurve, SCALES, speechSeconds, startTuning, stopTuning, stretchAt, voiceTuning, volumeFor } from '../src/features/voiceTuning.ts';
 import { CURVES } from '../src/features/voices.ts';
 import { base, call, GUILD, ok } from './apiFixture.ts';
 
@@ -228,6 +229,35 @@ test('Measure again during a measurement measures it again, rather than keeping 
   assert.equal(voice.measured.curve, 'middle');
   const timings = container.synthesized.filter((s) => s.voice && s.length_scale === 0.5).length;
   assert.equal(timings, 2, 'measured twice: the one under way, then again');
+});
+
+test('Settings hears when a voice starts and stops being measured, though its effects are measured after it', { skip: !hasFfmpeg && 'needs ffmpeg' }, async (t) => {
+  forgetEffectGains();
+  t.after(forgetEffectGains);
+  fakeContainer(t, new Set(['narrator']));
+  // Offered once it's downloaded, as say.ts does, so its effects are measured straight after it
+  const narrator: Voice = { id: 'narrator', name: 'Narrator', model: 'voice-narrator-0123456789ab', effects: '' };
+  const quieter: Effect = { id: 'quieter', name: 'Quieter', speaker: 0, effects: 'volume=-6dB', typical: 0 };
+  startTuning({ curves: CURVE_STRETCHES, busy: () => false, voices: () => (addedVoices().length && voiceState('narrator').state === 'ready' ? [narrator] : []), effects: [quieter] });
+  // What Settings shows each time it hears the voices changed
+  const seen: boolean[] = [];
+  const stop = new AbortController();
+  t.after(() => stop.abort());
+  void (async () => {
+    for (let version = feeds.voices.version(GUILD); !stop.signal.aborted; version = feeds.voices.version(GUILD)) {
+      await feeds.voices.next(GUILD, version, stop.signal);
+      seen.push(voiceTuning('narrator'));
+    }
+  })();
+  await ok(`/guilds/${GUILD}/voices`, { method: 'POST', json: { name: 'Narrator', model: FILE } });
+  const until = Date.now() + 30_000;
+  while (!gainMeasured(soundKey(narrator), quieter.id, quieter.effects)) {
+    assert.ok(Date.now() < until, 'measuring never finished');
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.ok(seen.includes(true), `heard it being measured: ${seen}`);
+  assert.equal(seen.at(-1), false, `and the last it heard is that it's done: ${seen}`);
 });
 
 test('a voice that says nothing isn’t measured over and over', { skip: !hasFfmpeg && 'needs ffmpeg' }, async (t) => {

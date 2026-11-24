@@ -14,6 +14,7 @@ import { after, before, mock, test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { config } from '../src/config.ts';
 import { resetChat } from '../src/features/chat.ts';
+import { refreshVoiceStates, stopFollowingDownloads, syncVoices } from '../src/features/voices.ts';
 import { lookups } from '../src/features/gamefacts.ts';
 import { db, setKv } from '../src/db.ts';
 import * as perf from '../src/perf.ts';
@@ -80,11 +81,14 @@ const SAY_STUB = String.raw`const real = window.fetch; window.sent = []; window.
 const STUB = (...rules: [string, string, number, unknown?][]) =>
   `const real = window.fetch; window.asked = []; window.fetch = (url, init) => { for (const [p, m, s, b] of ${JSON.stringify(rules)}) if (new RegExp(p).test(String(url)) && (init?.method ?? 'GET') === m) { window.asked.push(m + ' ' + String(url)); return s ? Promise.resolve(new Response(JSON.stringify(b ?? {}), { status: s, headers: { 'content-type': 'application/json' } })) : new Promise(() => {}); } return real(url, init); };`;
 
+/** Something a case does: a script run in the page, or a function run here, for what the page can't reach */
+type Step = string | ((page: Page) => unknown);
+
 /**
  * Each page: its address, a name, what the browser remembers first, a check that has to be true, something to do first
  * (then the check is tried until it's true, so it mustn't change anything), and something to put back after
  */
-const PAGES: [string, string, Record<string, string>?, string?, string?, string?][] = [
+const PAGES: [string, string, Record<string, string>?, string?, Step?, Step?][] = [
   ['board', 'Soundboard', {}, `${CLEAR_OF_PAGE} && ${NAMES_FIT} && !!document.querySelector('.view-slot > .play-in select') && !!document.querySelector('.view-slot input[type=search]') === innerWidth >= 1100`],
   // The corner's Volume and Sounds panels close with Escape, focus going back to the button, and with a press outside,
   // except the Sounds panel on a wide screen, where it's made to be used beside the page
@@ -512,6 +516,21 @@ const PAGES: [string, string, Record<string, string>?, string?, string?, string?
     `(() => { const d = document.querySelector('dialog[open]'); return !!d && /Edit Narrator/.test(d.textContent) && d.querySelectorAll('select').length === 5 && d.querySelector('#voice-effect').options.length === 16 && /Measured: Middle, -2.5 dB/.test(d.textContent) && [...d.querySelectorAll('button')].some((b) => b.textContent === 'Use measured') && /Downloading, 40%/.test(document.body.innerText) && /Couldn’t download/.test(document.body.innerText); })()`,
     `[...document.querySelectorAll('#settings-voices .voice-row')].find((r) => r.textContent.startsWith('Narrator')).querySelector('button:nth-child(2)').click()`,
   ],
+  // A download moving on shows without the page asking for the voices: the bot asks the container, and tells the page
+  [
+    'settings/speech',
+    'Settings: a download moves on',
+    {},
+    `/Downloading, 60%/.test(document.getElementById('settings-voices').innerText) && window.asked.length === 0`,
+    async (page) => {
+      await page.evaluate(`(() => { window.asked = []; const real = window.fetch; window.fetch = (u, i) => (/\\/voices$/.test(String(u)) && window.asked.push(String(u)), real(u, i)); })()`);
+      butlerPercent = 60;
+    },
+    async () => {
+      butlerPercent = 40;
+      await refreshVoiceStates();
+    },
+  ],
   // A save the bot turns down says why in the dialog, and Save can be pressed again. The dialog's closed after, as a
   // problem showing would fail the page
   // A dialog taller than the screen opens on its first field, not on the part that scrolls
@@ -697,6 +716,7 @@ let profile: string | undefined;
 let web: ReturnType<typeof createWeb> | undefined;
 
 after(async () => {
+  stopFollowingDownloads();
   web?.close();
   web?.closeAllConnections();
   if (chrome && chrome.exitCode === null) {
@@ -802,12 +822,14 @@ function seed() {
 
 const VOICE_URL = 'http://voice.test';
 let containerVersion = '';
+/** How far the butler has got, which a case moves on */
+let butlerPercent = 40;
 /** The voice container's answer: the narrator downloaded, with speakers, the butler on its way, and the last one failed */
 const containerReport = () => ({
   version: containerVersion,
   voices: {
     narrator: { state: 'ready', file: 'voice-narrator-0123456789ab', speakers: [{ id: 0, name: 'calm' }, { id: 1, name: 'an excitable speaker with a long name' }] },
-    'robot-butler': { state: 'downloading', percent: 40 },
+    'robot-butler': { state: 'downloading', percent: butlerPercent },
     broken: { state: 'failed', error: 'Its settings file isn’t a Piper voice’s. Check the link is to the model’s .onnx file.' },
   },
 });
@@ -840,6 +862,8 @@ before(async () => {
 
 test('every page of the web UI opens cleanly, on a computer and a phone', { skip: elsewhere ? 'run on its own (SKIP_WEB_UI=1)' : !browserPath && 'no Chrome or Chromium here', timeout: 240_000 }, async () => {
   seed();
+  // The added voices go to the fake voice container, as the bot sends them as it starts
+  await syncVoices();
   // Started here, as the API's address is only known once the fixture's own set-up has run
   web = createWeb({ password: PASSWORD, apiToken: TOKEN, botUrl: base });
   await new Promise<void>((resolve) => web!.listen(0, '127.0.0.1', resolve));
@@ -883,6 +907,7 @@ test('every page of the web UI opens cleanly, on a computer and a phone', { skip
     }
   };
   /** Until a case's check is true, or the time's up. One that throws, as the thing it looks at isn't there yet, isn't */
+  const run = (step: Step) => (typeof step === 'string' ? page.evaluate(step) : step(page));
   const until = async (check: string) => {
     for (const end = performance.now() + CHECK_MS; performance.now() < end; await sleep(50)) {
       if (await page.evaluate<boolean>(check).catch(() => false)) return;
@@ -928,7 +953,7 @@ test('every page of the web UI opens cleanly, on a computer and a phone', { skip
       })();
       if (act && shown) {
         await settle();
-        await page.evaluate(act);
+        await run(act);
         // Without a check, there's nothing to say when it's done
         if (expect) await until(expect);
         else await sleep(1500);
@@ -981,7 +1006,7 @@ test('every page of the web UI opens cleanly, on a computer and a phone', { skip
       if (Math.max(look.wide, look.width) > screen.width + 1) failures.push(`${where}: scrolls sideways (${look.wide} px wide on a ${screen.width} px screen): ${look.past.join('; ')}`);
       for (const problem of problems) failures.push(`${where}: ${problem}`);
       if (putBack && shown) {
-        await page.evaluate(putBack);
+        await run(putBack);
         await settle();
       }
     }

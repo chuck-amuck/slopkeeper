@@ -1,6 +1,7 @@
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { feeds } from '../changes.ts';
 import { config } from '../config.ts';
 import { levelledLoudness } from '../loudness.ts';
 import { gainMeasured, keepGainsFor, onGainWanted, setEffectGain, soundKey, wantedPairs } from './effectGains.ts';
@@ -298,9 +299,12 @@ async function tuneAll() {
       }
       const file = due(voice)!;
       current = voice.id;
+      // Settings says it's being measured, as when a retry starts after a failure
+      feeds.voices.changedEverywhere();
       const round = asked.get(voice.id) ?? 0;
       try {
-        const measured = await measureVoice(voice, file);
+        // Done with before the outcome's told, so Settings doesn't go on saying it's being measured while the effects are
+        const measured = await measureVoice(voice, file).finally(() => (current = null));
         // Changed, removed or asked to be measured again while it was being measured: the next turn measures it again
         const now = addedVoices().find((v) => v.id === voice.id);
         if (now && voiceState(now.id).file === file && measureKey(now, file) === measured.key && (asked.get(voice.id) ?? 0) === round) setMeasured(voice.id, measured);
@@ -311,6 +315,8 @@ async function tuneAll() {
         }
         console.error(`Couldn’t measure the voice ${voice.name}:`, err instanceof Error ? err.message : err);
         failed.set(voice.id, { key: measureKey(voice, file), at: Date.now() });
+        // Settings stops saying it's being measured
+        feeds.voices.changedEverywhere();
         retryLater();
       }
     }

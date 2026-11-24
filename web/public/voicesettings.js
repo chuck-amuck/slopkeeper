@@ -1,5 +1,6 @@
 import { api, attempt, confirmButton, el, fetchAudio, formProblem, isNarrow, notice, openDialog, player, repaintOnWidth, request, RequestError, toast, tryShowing, wordOrIcon } from './lib.js';
 import { effectOptions, NO_EFFECT } from './speech.js';
+import { followWhenIdle } from './updates.js';
 
 // Settings' Voices card: the voices added here for every server on the bot, with export and import
 
@@ -17,8 +18,6 @@ const STEADINESS = [
   ['steadiest', 'Steadiest', [0.333, 0.333]],
 ];
 const PREVIEW_TEXT = 'Hello, this is how I sound.';
-// How often the card asks again while a voice downloads
-const POLL_MS = 2000;
 
 const row = (label, control, note) => el('label', { className: 'form-row' }, el('span', {}, label), control, note && el('span', { className: 'form-note' }, note));
 const select = (options, chosen, props = {}) => el('select', props, options.map(([value, label]) => el('option', { value, selected: value === chosen }, label)));
@@ -39,9 +38,6 @@ function stateText(v) {
   }
 }
 
-// A voice the container hasn't said anything about isn't asked about again and again: the bot does that
-const settled = (v) => v.state !== 'waiting' && v.state !== 'downloading' && !v.tuning;
-
 const curveName = (curve) => CURVES.find(([id]) => id === curve)?.[1] ?? curve;
 const dB = (volume) => `${volume > 0 ? '+' : ''}${volume} dB`;
 /** Off by more than this, no curve fits it closely (the rule for the built-in voices is about 5%) */
@@ -57,7 +53,6 @@ export function voicesCard(main) {
   const body = el('div', {}, notice('loading', 'Loading voices…', { compact: true }));
   const message = el('div', { className: 'message', hidden: true });
   let voices = [];
-  let timer = null;
   let most = 50;
   let effects = [];
 
@@ -67,15 +62,15 @@ export function voicesCard(main) {
     message.className = bad ? 'message bad' : 'message';
   };
 
-  async function load() {
-    clearTimeout(timer);
-    const data = await request(api('/voices'));
+  /**
+   * Lists the voices as the bot has them: asked for as the card opens, then from the page's live updates as each
+   * downloads, is measured or is changed, here or in another tab. The page's other voice pickers hear from the bot too
+   */
+  function show(data) {
     voices = data.voices;
     most = data.most;
     effects = data.effects ?? [];
-    // The page's other voice pickers hear of a voice that's ready from the bot
     paint();
-    if (voices.some((v) => !settled(v))) timer = setTimeout(() => card.isConnected && void attempt(load), POLL_MS);
   }
 
   function voiceRow(v) {
@@ -102,7 +97,6 @@ export function voicesCard(main) {
             profiles && `${profiles === 1 ? 'A profile that spoke in it speaks' : `${profiles} profiles that spoke in it speak`} in the server’s default voice now.`,
           ].filter(Boolean);
           toast([`Removed ${v.name}.`, ...after].join(' '));
-          await load();
         }),
       ),
     );
@@ -151,7 +145,6 @@ export function voicesCard(main) {
               toast(`Added ${voice.name}. It shows in the voice lists once it’s downloaded.`);
               link.value = '';
               name.value = '';
-              await load();
             } catch (err) {
               if (!(err instanceof RequestError)) throw err;
               say(err.message, true);
@@ -203,7 +196,6 @@ export function voicesCard(main) {
           await request(api(`/voices/${encodeURIComponent(v.id)}/measure`), { method: 'POST' });
           toast(`Measuring ${v.name} again.`);
           node.close();
-          await load();
         });
       if (!v.measured) return el('div', { className: 'form-note measured' }, 'Not measured yet. ', again);
       const m = v.measured;
@@ -274,7 +266,6 @@ export function voicesCard(main) {
           });
           toast(`Saved ${fields.name.value.trim()}.`);
           node.close();
-          await load();
         });
       },
     });
@@ -334,7 +325,6 @@ export function voicesCard(main) {
           const done = await request(api('/voices/import'), { method: 'POST', json: { voices: list, replace: replace.checked, dryRun: false } });
           toast(`Imported: ${[`${done.added.length} added`, `${done.changed.length} changed`, replace.checked && `${done.removed.length} removed`].filter(Boolean).join(', ')}.`);
           node.close();
-          await load();
         });
       },
     });
@@ -390,14 +380,16 @@ export function voicesCard(main) {
       picker,
     ),
   );
+  // Asked for once, so a refusal can say why, then kept up. A change waits while a removal waits for its second press
   void attempt(async () => {
     try {
-      await load();
+      show(await request(api('/voices')));
     } catch (err) {
       body.replaceChildren(notice('error', err.message, { compact: true }));
       if (!(err instanceof RequestError)) throw err;
     }
   });
+  followWhenIdle('voices', card, () => [body], show);
   repaintOnWidth(card, paint);
   return card;
 }

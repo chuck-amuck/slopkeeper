@@ -179,9 +179,10 @@ const listeners: (() => void)[] = [];
 
 function changed() {
   generation++;
-  // The Say boxes and Settings' voice pickers list the voices that are ready
+  // The Say boxes and Settings' voice pickers list the voices that are ready, and Settings lists them all
   feeds.speech.changedEverywhere();
   feeds.settings.changedEverywhere();
+  feeds.voices.changedEverywhere();
   for (const listener of listeners) listener();
 }
 
@@ -219,10 +220,13 @@ function takeReport(report: unknown) {
     next[voice.id] = state;
   }
   const readyBefore = JSON.stringify(Object.entries(states).filter(([, s]) => s.state === 'ready').map(([id, s]) => [id, s.file]));
+  const before = JSON.stringify(states);
   states = next;
   setKv(STATES_KEY, JSON.stringify(states));
   const readyNow = JSON.stringify(Object.entries(states).filter(([, s]) => s.state === 'ready').map(([id, s]) => [id, s.file]));
   if (readyBefore !== readyNow) changed();
+  // A download's percent, or one that's failed, which Settings shows
+  else if (JSON.stringify(states) !== before) feeds.voices.changedEverywhere();
 }
 
 const SYNC_TIMEOUT_MS = 5_000;
@@ -270,6 +274,32 @@ export function syncVoices(): Promise<void> {
     syncing = null;
   });
   return syncing;
+}
+
+// How often a download is asked after while a page is showing the voices
+const FOLLOW_MS = 2000;
+let following: NodeJS.Timeout | null = null;
+
+/**
+ * While a voice downloads and a page is showing the voices, asks the container how it's going every couple of seconds,
+ * so its percent moves. Each time a page asks for the voices it starts again, should it have stopped between asks
+ */
+export function followDownloads() {
+  // Not one the container hasn't said anything about, which the health check sends the list again for
+  if (following || !config.voiceUrl || !addedVoices().some((v) => ['waiting', 'downloading'].includes(voiceState(v.id).state))) return;
+  following = setTimeout(() => {
+    void refreshVoiceStates().finally(() => {
+      following = null;
+      if (feeds.voices.watched()) followDownloads();
+    });
+  }, FOLLOW_MS);
+  following.unref();
+}
+
+/** Stops following downloads, for tests */
+export function stopFollowingDownloads() {
+  clearTimeout(following ?? undefined);
+  following = null;
 }
 
 /** Asks the container how the downloads are going, for the web UI. Never throws */

@@ -3,6 +3,7 @@ import { anyChange, type FeedName, feeds } from '../changes.ts';
 import { activeProfile, profiles } from '../features/chatProfiles.ts';
 import { photos } from '../features/profilePhotos.ts';
 import { PREVIEWED, playingNow, previewVolume } from '../features/voiceAudio.ts';
+import { followDownloads } from '../features/voices.ts';
 import { checkSetting } from '../features/setup.ts';
 import { config } from '../config.ts';
 import { idSetting, setting } from '../settings.ts';
@@ -12,6 +13,7 @@ import { musicList } from './music.ts';
 import { nightList } from './nights.ts';
 import { activityList, settingsNow } from './server.ts';
 import { deletedList, soundList, speechOffer } from './sounds.ts';
+import { addedVoiceList } from './voices.ts';
 
 // Who’s in voice, and the one request a page keeps open to hear what changes
 
@@ -42,6 +44,7 @@ export const updates: Record<FeedName, (guild: Guild) => object | Promise<object
   profile: (guild) => profilePicks(guild),
   speech: (guild) => speechOffer(guild),
   settings: (guild) => settingsNow(guild),
+  voices: (guild) => addedVoiceList(guild),
 };
 
 /** The profiles to pick from in the header, with their photos, and the server's */
@@ -128,6 +131,8 @@ export async function liveRoutes({ client, guild, req, res, url, section, rest }
     const names = Object.keys(asked) as FeedName[];
     if (!names.length) throw new Refused(400, `Ask for any of ${Object.keys(feeds).join(', ')}.`);
     const { gone, signal } = untilGone(req, res);
+    // A page showing the voices sees a download's percent move
+    if (asked.voices !== undefined) followDownloads();
     await anyChange(guild.id, asked, signal);
     if (gone.aborted) return;
     const answer: Partial<Record<FeedName, object>> = {};

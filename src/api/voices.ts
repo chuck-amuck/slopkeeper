@@ -1,3 +1,4 @@
+import { type Guild } from 'discord.js';
 import { logActivity } from '../activity.ts';
 import { config } from '../config.ts';
 import { asVoice, effects, FIXED_VOICES, NO_EFFECT, previewSpeech, TooSoon } from '../features/say.ts';
@@ -8,11 +9,11 @@ import {
   editVoice,
   EXPORT_FORMAT,
   exported,
+  followDownloads,
   importVoices,
   MOST_VOICES,
   newVoiceId,
   planImport,
-  refreshVoiceStates,
   removeVoice,
   takenNames,
   voiceFields,
@@ -26,7 +27,7 @@ import { type Ask, Refused, by, readJson, whoDid } from './common.ts';
 
 const LONGEST_PREVIEW = 300;
 
-function listed(ask: Ask, v: AddedVoice) {
+function listed(guild: Guild, v: AddedVoice) {
   const state = voiceState(v.id);
   const measured = v.measured && { curve: v.measured.curve, fit: v.measured.fit, volume: v.measured.volume, at: v.measured.at };
   return {
@@ -37,9 +38,14 @@ function listed(ask: Ask, v: AddedVoice) {
     speakers: state.speakers ?? [],
     tuning: voiceTuning(v.id),
     measured,
-    addedBy: whoDid(ask.guild, v.addedBy),
+    addedBy: whoDid(guild, v.addedBy),
     addedAt: v.addedAt,
   };
+}
+
+/** The voices added in the web UI, as Settings lists them, with the effects for hearing one through in its preview */
+export function addedVoiceList(guild: Guild) {
+  return { voices: addedVoices().map((v) => listed(guild, v)), most: MOST_VOICES, effects: effects().map(({ id, name }) => ({ id, name })) };
 }
 
 const find = (id: string | undefined) => {
@@ -66,10 +72,10 @@ export async function voiceRoutes(ask: Ask) {
   if (!config.voiceUrl) throw new Refused(409, 'Text to speech isn’t set up on this bot. It needs VOICE_URL.');
 
   if (!id && req.method === 'GET') {
-    // Only asked while one is on its way, so a list that's settled answers at once
-    if (addedVoices().some((v) => !['ready', 'failed'].includes(voiceState(v.id).state))) await refreshVoiceStates();
-    // The effects too, for hearing a voice through one in its preview
-    return { voices: addedVoices().map((v) => listed(ask, v)), most: MOST_VOICES, effects: effects().map(({ id, name }) => ({ id, name })) };
+    // Answered from what the bot last heard. A download on its way is asked after from now on, and its percent comes
+    // through the page's live updates
+    followDownloads();
+    return addedVoiceList(guild);
   }
 
   if (!id && req.method === 'POST') {
@@ -79,7 +85,7 @@ export async function voiceRoutes(ask: Ask) {
     const newId = newVoiceId(fields.name, [...FIXED_VOICES, ...addedVoices()].map((v) => v.id));
     addVoice(newId, fields, by());
     logActivity(guild.id, by(), `Added the voice ${fields.name}`);
-    return { voice: listed(ask, find(newId)) };
+    return { voice: listed(guild, find(newId)) };
   }
 
   if (id === 'export' && !action && req.method === 'GET') {
@@ -114,7 +120,7 @@ export async function voiceRoutes(ask: Ask) {
     const fields = merged(voice, await readJson(req));
     editVoice(id, fields);
     logActivity(guild.id, by(), fields.name === voice.name ? `Changed the voice ${voice.name}` : `Changed the voice ${voice.name}, now called ${fields.name}`);
-    return { voice: listed(ask, find(id)) };
+    return { voice: listed(guild, find(id)) };
   }
 
   if (id && !action && req.method === 'DELETE') {
@@ -129,7 +135,7 @@ export async function voiceRoutes(ask: Ask) {
     const voice = find(id);
     if (voiceState(id).state !== 'ready') throw new Refused(409, `${voice.name} isn’t downloaded yet.`);
     measureAgain(id);
-    return { voice: listed(ask, find(id)) };
+    return { voice: listed(guild, find(id)) };
   }
 
   if (id && action === 'preview' && !rest[2] && req.method === 'POST') {

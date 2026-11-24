@@ -10,6 +10,8 @@ export interface ChangeFeed {
   version(guildId: string): string;
   /** Waits until the version differs from `version`, or `signal` gives up */
   next(guildId: string, version: string, signal: AbortSignal): Promise<void>;
+  /** Whether a page is waiting on it now, in any server */
+  watched(): boolean;
 }
 
 export function changeFeed(): ChangeFeed {
@@ -48,13 +50,15 @@ export function changeFeed(): ChangeFeed {
         signal.addEventListener('abort', wake, { once: true });
       });
     },
+    // A server's waiters go once the last of them has
+    watched: () => waiters.size > 0,
   };
 }
 
 /**
  * What the web UI can keep up with: sounds and speech playing, the music, who's in which voice channel, game nights,
  * the activity log, the sound library with its groups, bin and Discord soundboard, the volumes, the health numbers, the deals,
- * the header's profiles, what the Say boxes offer and the settings
+ * the header's profiles, what the Say boxes offer, the settings and the voices added
  */
 export const feeds = {
   playing: changeFeed(),
@@ -74,6 +78,8 @@ export const feeds = {
   speech: changeFeed(),
   /** Any setting, or what Settings' pickers choose from: the voices, profiles, sounds and the roles game pings make */
   settings: changeFeed(),
+  /** The voices added in the web UI, as each downloads and is measured, for every server at once */
+  voices: changeFeed(),
 };
 
 export type FeedName = keyof typeof feeds;

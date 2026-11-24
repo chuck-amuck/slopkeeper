@@ -53,7 +53,7 @@ Any voice can be said through an effect, picked beside the voice: **Demon**, **H
 
 The web UI's Settings has a **Voices** card for adding any [Piper](https://github.com/OHF-Voice/piper1-gpl) model, such as ones on [Hugging Face](https://huggingface.co/models?other=piper). Added voices are for every server on the bot, and anyone who can open the web UI can change them.
 
-- **Add a voice:** paste the link to the model's `.onnx` file (a Hugging Face page's link works too), name it and pick Characters or Accents. The voice container downloads it, up to 500 MB, and it shows in the voice lists once it's ready.
+- **Add a voice:** paste the link to the model's `.onnx` file (a Hugging Face page's link works too), name it and pick Characters or Accents. The voice container downloads it, up to 500 MB, and it shows in the voice lists once it's ready. The card shows how far it's got, in every tab it's open in.
 - **Measuring:** once it's downloaded, the bot times how the voice stretches at five speeds to pick its speed curve, and finds the loudness that makes it as loud as the default voices. It takes a minute or two, one voice at a time, and waits while lines are being said. The card shows "measuring" meanwhile. A voice added without a loudness or curve uses what's measured, and it's measured again when its link, speaker or steadiness changes.
 - **Edit** changes the name, group and link, and once it's downloaded:
   - **Measured** shows the curve and loudness found. Changing the loudness or curve yourself keeps yours; **Use measured** goes back to the measured values, and **Measure again** starts over. A loose fit (over 5% off every curve) is worth checking by ear.

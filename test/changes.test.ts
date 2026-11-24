@@ -52,3 +52,17 @@ test('waiting on several feeds ends when any of them changes', async () => {
   feeds.voice.changed('g');
   assert.equal(await settled(waiting), true);
 });
+
+test('a feed is watched while a page waits on it, and not once it’s answered or has given up', async () => {
+  const feed = changeFeed();
+  assert.equal(feed.watched(), false);
+  const stop = new AbortController();
+  const [a, b] = [feed.next('a', feed.version('a'), new AbortController().signal), feed.next('b', feed.version('b'), stop.signal)];
+  assert.equal(feed.watched(), true);
+  feed.changed('a');
+  await settled(a);
+  assert.equal(feed.watched(), true, 'b still waits');
+  stop.abort();
+  await settled(b);
+  assert.equal(feed.watched(), false);
+});
