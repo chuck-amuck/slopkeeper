@@ -774,11 +774,12 @@ function seed() {
     db.prepare('INSERT INTO sound_plays (guild_id, user_id, name, played_at) VALUES (?, ?, ?, ?)').run(GUILD, user, name, now - hoursAgo * HOUR);
   db.prepare("INSERT INTO music_plays (guild_id, at, uri, title, artist, source, duration_ms, added_by, played_ms, skipped) VALUES (?, ?, 'u', 'A Song With Quite A Long Title (Extended Mix)', 'Some Artist', 'youtube', 200000, 'autoplay', 200000, 0)").run(GUILD, now - 3 * HOUR);
   db.prepare("INSERT INTO speech_lines (guild_id, at, user_id, voice, characters, kind) VALUES (?, ?, 'u2', 'scottish', 30, 'say')").run(GUILD, now - 4 * HOUR);
-  // A sale with every part a row can have, and a bundle, for Deals
-  const wanted = db.prepare("INSERT INTO games (guild_id, name, steam_appid, added_by) VALUES (?, 'The Elder Scrolls V: Skyrim Special Edition', 489830, 'u1')").run(GUILD).lastInsertRowid;
+  // A sale with every part a row can have, and a bundle, for Deals. The sale's of a game nobody here has, as a sale of one
+  // everyone has, like Skyrim in both Steam libraries above, is for nobody and isn't shown
+  const wanted = db.prepare("INSERT INTO games (guild_id, name, steam_appid, added_by) VALUES (?, 'Deep Rock Galactic', 548430, 'u1')").run(GUILD).lastInsertRowid;
   db.prepare("INSERT INTO game_wants (game_id, user_id) VALUES (?, 'u2')").run(wanted);
   db.prepare(
-    "INSERT INTO sale_prices (country, appid, discount, was, price, final, store, store_off, store_url, store_name, keyshop, keyshop_url, currency, lowest) VALUES ('us', 489830, 75, '$39.99', '$9.99', 999, 799, 80, 'https://example.com/store', 'Green Man Gaming', 650, 'https://example.com/keys', 'USD', 649)",
+    "INSERT INTO sale_prices (country, appid, discount, was, price, final, store, store_off, store_url, store_name, keyshop, keyshop_url, currency, lowest) VALUES ('us', 548430, 75, '$39.99', '$9.99', 999, 799, 80, 'https://example.com/store', 'Green Man Gaming', 650, 'https://example.com/keys', 'USD', 649)",
   ).run();
   config.itadKey = 'browser-test';
   // Chat on, with what it remembers about someone and a reminder waiting, for their cards in Settings
