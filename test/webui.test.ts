@@ -224,9 +224,15 @@ const PAGES: [string, string, Record<string, string>?, string?, Step?, Step?][] 
   // view
   ['nights', 'Games: the old Game nights address', {}, GAMES_VIEW('nights', 'Game nights')],
   ['pick', 'Games: the old Pick a game address', {}, GAMES_VIEW('pick', 'Pick a game')],
-  ['games', 'Games: remembered from the old Pick a game tab', { tab: 'pick' }, GAMES_VIEW('pick', 'Pick a game')],
+  // Each opened afresh on a bare #games, as the case before leaves a view in the address that a reload would follow
+  [
+    'games',
+    'Games: remembered from the old Pick a game tab',
+    {},
+    GAMES_VIEW('pick', 'Pick a game'),
+    `(() => { localStorage.clear(); localStorage.setItem('tab', 'pick'); history.replaceState(null, '', '#games'); location.reload(); })()`,
+  ],
   ['deals', 'Games: the old Deals address', {}, GAMES_VIEW('deals', 'Deals')],
-  // Opened afresh on a bare #games, as the case before leaves a view in the address that a reload would follow
   [
     'games',
     'Games: remembered from the old Deals tab',
