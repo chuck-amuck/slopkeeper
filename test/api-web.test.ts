@@ -12,7 +12,7 @@ import { db } from '../src/db.ts';
 import { logActivity } from '../src/activity.ts';
 import { feeds } from '../src/changes.ts';
 import * as discordBoard from '../src/discordSounds.ts';
-import { recordPlay, soundGain } from '../src/features/soundLibrary.ts';
+import { libraryChanged, recordPlay, soundGain } from '../src/features/soundLibrary.ts';
 import { setting, setSetting } from '../src/settings.ts';
 import { GUILD, TOKEN, as, base, client, guild, ok, onlyOnDiscord, panelEdits, planned, postNight, quietWav, refused, setFake, soundFolder, sounds, upload } from './apiFixture.ts';
 
@@ -44,6 +44,33 @@ test('changes and resets a setting', async () => {
   assert.equal(setting(GUILD, 'hopOnMinPeople'), 5);
   await ok(`/guilds/${GUILD}/settings/hopOnMinPeople`, { method: 'DELETE' });
   assert.equal(setting(GUILD, 'hopOnMinPeople'), 2);
+});
+
+test('Settings keeps up: its live update wakes for any setting, and for the sounds its pickers list', async () => {
+  const since = async (version: string) => (await ok(`/guilds/${GUILD}/updates?settings=${encodeURIComponent(version)}`)).settings;
+  const value = (fresh: { settings: { key: string; value: unknown }[] }) => fresh.settings.find((s) => s.key === 'hopOnMinPeople')!.value;
+  const first = await since('');
+  assert.equal(value(first), 2);
+  assert.deepEqual(Object.keys(first).filter((k) => ['channels', 'roles', 'problems', 'voices', 'profiles', 'sounds'].includes(k)).length, 6, 'all /settings has');
+  let version: string = first.version;
+  const next = async (change: () => unknown) => {
+    const waiting = since(version);
+    await change();
+    const fresh = await waiting;
+    assert.notEqual(fresh.version, version);
+    version = fresh.version;
+    return fresh;
+  };
+  assert.equal(value(await next(() => ok(`/guilds/${GUILD}/settings/hopOnMinPeople`, { method: 'PUT', json: { value: 6 } }))), 6);
+  assert.equal(value(await next(() => ok(`/guilds/${GUILD}/settings/hopOnMinPeople`, { method: 'DELETE' }))), 2);
+  // As from /setup
+  assert.equal(value(await next(() => setSetting(GUILD, 'hopOnMinPeople', 3))), 3);
+  setSetting(GUILD, 'hopOnMinPeople', undefined);
+  version = feeds.settings.version(GUILD);
+  // The sounds changing, which the join sound and looping room pickers list. A play isn't a change
+  await next(() => libraryChanged(GUILD));
+  recordPlay(GUILD, 'u1', 'horn');
+  assert.equal(feeds.settings.version(GUILD), version);
 });
 
 test('holds settings to the limits /setup has', async () => {

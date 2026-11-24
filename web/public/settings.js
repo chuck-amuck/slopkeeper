@@ -1,6 +1,7 @@
 import { ago, api, attempt, confirmButton, devicePref, el, formProblem, icon, notice, openDialog, postDialog, recall, remember, request, RequestError, state, toast, tryShowing, undoToast, volumeControl } from './lib.js';
 import { voicesCard } from './voicesettings.js';
 import { profilesCard } from './profiles.js';
+import { follow as followUpdates } from './updates.js';
 
 const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
@@ -246,8 +247,11 @@ export function renderSettings(main) {
   /** What the page was last drawn from, for which settings are on */
   let latest = null;
 
-  async function refreshFields() {
-    const fresh = await request(api('/settings'));
+  /**
+   * Draws the fields again from the bot's settings, as they change here, in another tab or with /setup. A field someone
+   * is in keeps its control
+   */
+  function showFresh(fresh) {
     if (guildId !== state.guildId || !main.isConnected) return;
     latest = fresh;
     for (const [key, update] of fields) update(fresh.settings.find((s) => s.key === key), fresh);
@@ -437,8 +441,8 @@ export function renderSettings(main) {
       else input.removeAttribute('aria-describedby');
     };
 
-    const refresh = async () => {
-      await refreshFields();
+    // The fields are drawn again from the live update the change brings
+    const refresh = () => {
       // Only a preview someone has opened is asked for again
       if (setting.key.startsWith('freeGames') && freeBody.childElementCount) void paintFreeGames();
       if (setting.key.startsWith('sale') && salesBody.childElementCount) void paintSales();
@@ -456,8 +460,10 @@ export function renderSettings(main) {
             value === '' ? await request(api(`/settings/${setting.key}`), { method: 'DELETE' }) : await request(api(`/settings/${setting.key}`), { method: 'PUT', json: { value } });
           say(warning);
           fromSave = warning ? { text: warning, bad: false } : null;
-          // Beside the field rather than in the corner, where it's easy to miss
+          // Beside the field rather than in the corner, where it's easy to miss. Shown now, as the live update can
+          // come before this answer
           savedAt = Date.now();
+          paintStatus(current);
           setTimeout(() => current && paintStatus(current), SAVED_MS + 50);
         } catch (err) {
           say(err.message, true);
@@ -465,7 +471,7 @@ export function renderSettings(main) {
           // The field may be scrolled out of sight by now
           toast(`${setting.label} wasn’t saved: ${err.message}`, true);
         }
-        await refresh();
+        refresh();
       });
 
     const reset = (previous) =>
@@ -474,7 +480,7 @@ export function renderSettings(main) {
         fromSave = null;
         await request(api(`/settings/${setting.key}`), { method: 'DELETE' });
         undoToast(`${setting.label} is back to the default.`, () => save(previous));
-        await refresh();
+        refresh();
       });
 
     // What the control was last drawn from, so a refresh only redraws fields that changed
@@ -723,7 +729,7 @@ export function renderSettings(main) {
           remove: async () => {
             await request(api(`/game-pings/${ping.id}`), { method: 'DELETE' });
             toast(`Removed pings for ${ping.game}.`);
-            await Promise.all([load(), refreshFields()]);
+            await load();
           },
         };
       },
@@ -740,7 +746,7 @@ export function renderSettings(main) {
       const result = await request(api('/game-pings'), { method: 'POST', json: { game: name, ...(role.value && { roleId: role.value }) } });
       toast(`Added pings for ${name}.`);
       game.value = '';
-      await Promise.all([load(), refreshFields()]);
+      await load();
       return result;
     });
 
@@ -913,13 +919,13 @@ export function renderSettings(main) {
       const after = {
         'Hop-on pings': () => [gamePingCard(gamePings)],
         'Join sounds': () => [joinSoundCard(joinSounds)],
-        Profile: () => [profilesCard(main, data, refreshFields)],
+        Profile: () => [profilesCard(main, data)],
       };
       const start = { basics: () => [problemsBox] };
       const end = {
         basics: () => [deviceCard()],
         deals: () => [salesCard(), freeGamesCard()],
-        speech: () => (data.speech ? [voicesCard(main, refreshFields)] : []),
+        speech: () => (data.speech ? [voicesCard(main)] : []),
         // Reminders waiting are still posted with chat off, so they can still be cancelled
         chat: () => [...(data.chat?.ok && data.chat.notes ? [chatNotesCard(data.chat.notes)] : []), ...(data.chat?.ok || data.chat?.reminders?.length ? [chatRemindersCard(data.chat.reminders ?? [])] : [])],
       };
@@ -1083,6 +1089,7 @@ export function renderSettings(main) {
       // Back and Forward within Settings, and links to it from Settings itself, without drawing it again
       main.followHash = follow;
       follow();
+      followUpdates('settings', main, showFresh);
     } catch (err) {
       loading.replaceWith(notice('error', err.message));
       throw err;

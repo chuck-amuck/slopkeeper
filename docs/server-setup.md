@@ -24,7 +24,7 @@ Then tell people to run `/steam link`, `/notify` and `/pings` (see [Getting star
 
 ## Server settings
 
-`/setup` is for people with **Manage Server**, and its replies are only shown to you. Other roles can be allowed in **Server Settings → Integrations → Slopkeeper**. Every setting has a default, so only the announce channel needs setting, and every setting can also be changed in the web UI's Settings.
+`/setup` is for people with **Manage Server**, and its replies are only shown to you. Other roles can be allowed in **Server Settings → Integrations → Slopkeeper**. Every setting has a default, so only the announce channel needs setting, and every setting can also be changed in the web UI's Settings. Settings keeps up without a reload: a change made with `/setup` or in another tab shows at once, except in a field you're typing in.
 
 | Command | What it does |
 | --- | --- |

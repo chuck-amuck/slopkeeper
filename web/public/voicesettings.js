@@ -53,7 +53,7 @@ function preview(voice, settings, line, button) {
   return player.preview(button, `voice-preview:${voice.id}:${JSON.stringify(settings)}:${text}`, () => fetchAudio(api(`/voices/${encodeURIComponent(voice.id)}/preview`), { text, ...settings }));
 }
 
-export function voicesCard(main, onChange) {
+export function voicesCard(main) {
   const body = el('div', {}, notice('loading', 'Loading voices…', { compact: true }));
   const message = el('div', { className: 'message', hidden: true });
   let voices = [];
@@ -70,13 +70,11 @@ export function voicesCard(main, onChange) {
   async function load() {
     clearTimeout(timer);
     const data = await request(api('/voices'));
-    const before = JSON.stringify(voices.map((v) => [v.id, v.state]));
     voices = data.voices;
     most = data.most;
     effects = data.effects ?? [];
+    // The page's other voice pickers hear of a voice that's ready from the bot
     paint();
-    // Every picker on the page lists the voices that are ready
-    if (before !== JSON.stringify(voices.map((v) => [v.id, v.state]))) onChange?.();
     if (voices.some((v) => !settled(v))) timer = setTimeout(() => card.isConnected && void attempt(load), POLL_MS);
   }
 
@@ -105,7 +103,6 @@ export function voicesCard(main, onChange) {
           ].filter(Boolean);
           toast([`Removed ${v.name}.`, ...after].join(' '));
           await load();
-          onChange?.();
         }),
       ),
     );
@@ -278,7 +275,6 @@ export function voicesCard(main, onChange) {
           toast(`Saved ${fields.name.value.trim()}.`);
           node.close();
           await load();
-          onChange?.();
         });
       },
     });
@@ -339,7 +335,6 @@ export function voicesCard(main, onChange) {
           toast(`Imported: ${[`${done.added.length} added`, `${done.changed.length} changed`, replace.checked && `${done.removed.length} removed`].filter(Boolean).join(', ')}.`);
           node.close();
           await load();
-          onChange?.();
         });
       },
     });

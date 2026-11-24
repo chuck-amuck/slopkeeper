@@ -131,10 +131,10 @@ export function summary(p, traits, voices, effects) {
 }
 
 /**
- * The card. `data` is the Settings page's, for the voices and effects; `onChange` redraws the page's fields after a
- * change here. The card has a `reload` for when the Profile setting is changed above it
+ * The card. `data` is the Settings page's, for the voices and effects. The fields above it hear of a change here from
+ * the bot. The card has a `reload` for when the Profile setting is changed above it
  */
-export function profilesCard(main, data, onChange) {
+export function profilesCard(main, data) {
   const body = el('div', {}, notice('loading', 'Loading profiles…', { compact: true }));
   const voices = data.voices ?? [];
   const effects = data.effects ?? [];
@@ -145,10 +145,9 @@ export function profilesCard(main, data, onChange) {
     paint();
   }
 
-  /** Saves, then redraws this card and the fields above it. A nickname the bot couldn't take is said */
+  /** Saves, then redraws this card. A nickname the bot couldn't take is said */
   const after = async (fresh) => {
     await load(fresh);
-    await onChange?.();
     if (fresh?.warning) toast(fresh.warning, true);
   };
 

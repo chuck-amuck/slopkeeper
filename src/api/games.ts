@@ -1,6 +1,7 @@
 import { type Guild } from 'discord.js';
 import { type IncomingMessage } from 'node:http';
 import { logActivity } from '../activity.ts';
+import { feeds } from '../changes.ts';
 import { config } from '../config.ts';
 import { reviewGiveaways } from '../features/freegames.ts';
 import { achievementProgress } from '../features/achievements.ts';
@@ -654,8 +655,9 @@ export async function gameRoutes({ client, guild, req, res, url, section, rest }
   if (section === 'hidden-games' && !rest.length && req.method === 'GET') return { games: hiddenGames(guild.id) };
   if (section === 'hidden-games' && rest.length === 1) return handleHidden(guild, req, rest[0]);
   if (section === 'game-pings' && !rest.length && req.method === 'GET') return gamePingList(guild);
-  if (section === 'game-pings' && !rest.length && req.method === 'POST') return addGamePing(guild, req);
-  if (section === 'game-pings' && rest.length === 1 && req.method === 'DELETE') return removeGamePing(guild, rest[0]);
+  // A ping can make or delete a role, which Settings' role pickers list
+  if (section === 'game-pings' && !rest.length && req.method === 'POST') return addGamePing(guild, req).finally(() => feeds.settings.changed(guild.id));
+  if (section === 'game-pings' && rest.length === 1 && req.method === 'DELETE') return removeGamePing(guild, rest[0]).finally(() => feeds.settings.changed(guild.id));
   if (section === 'steam-links' && !rest.length && req.method === 'GET') return steamAccountList(guild);
   if (section === 'steam-links' && rest.length === 1) return handleSteamAccount(guild, req, rest[0]);
   if (section === 'steam-links' && rest.length === 2 && rest[1] === 'family') return handleFamily(guild, req, rest[0]);

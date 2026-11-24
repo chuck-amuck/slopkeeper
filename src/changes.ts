@@ -54,7 +54,7 @@ export function changeFeed(): ChangeFeed {
 /**
  * What the web UI can keep up with: sounds and speech playing, the music, who's in which voice channel, game nights,
  * the activity log, the sound library with its groups, bin and Discord soundboard, the volumes, the health numbers, the deals,
- * the header's profiles and what the Say boxes offer
+ * the header's profiles, what the Say boxes offer and the settings
  */
 export const feeds = {
   playing: changeFeed(),
@@ -72,6 +72,8 @@ export const feeds = {
   profile: changeFeed(),
   /** What the Say boxes offer: whether speech is on, the voices ready, the server's voice and effect, and the lines kept */
   speech: changeFeed(),
+  /** Any setting, or what Settings' pickers choose from: the voices, profiles, sounds and the roles game pings make */
+  settings: changeFeed(),
 };
 
 export type FeedName = keyof typeof feeds;

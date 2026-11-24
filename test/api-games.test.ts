@@ -3,6 +3,7 @@ import { PermissionFlagsBits } from 'discord.js';
 import assert from 'node:assert/strict';
 import { beforeEach, mock, test, type TestContext } from 'node:test';
 import { candidatesFor } from '../src/features/games.ts';
+import { feeds } from '../src/changes.ts';
 import { config } from '../src/config.ts';
 import { db } from '../src/db.ts';
 import { noteGame } from '../src/gameNames.ts';
@@ -769,7 +770,11 @@ const addPing = (json: unknown) => ok(pingsUrl, { method: 'POST', json });
 const pingRows = () => db.prepare('SELECT role_id, guild_id, name, created FROM game_roles ORDER BY name').all() as any[];
 
 test('makes a role for a game, and removing it deletes the role', async () => {
+  // Settings' role pickers list the role it makes, so an open Settings tab hears of it, and of its going
+  let settings = feeds.settings.version(GUILD);
   assert.deepEqual(await addPing({ game: '  Valheim ' }), { warning: null });
+  assert.notEqual(feeds.settings.version(GUILD), settings);
+  settings = feeds.settings.version(GUILD);
   const [ping] = (await ok(pingsUrl)).pings;
   assert.deepEqual(ping, { id: ping.id, game: 'Valheim', role: 'Valheim', people: 0, made: true });
   assert.equal(roles.get(ping.id)!.mentionable, true);
@@ -779,6 +784,7 @@ test('makes a role for a game, and removing it deletes the role', async () => {
   assert.equal(roles.has(ping.id), false);
   assert.deepEqual(pingRows(), []);
   assert.equal(activityText().at(-1), 'Removed game pings for **Valheim**');
+  assert.notEqual(feeds.settings.version(GUILD), settings);
 });
 
 test('uses a role that’s picked, and leaves it in place when removed', async () => {

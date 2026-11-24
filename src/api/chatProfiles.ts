@@ -86,9 +86,12 @@ function rephoto(ask: Ask, guilds: Guild[]): Promise<string | null> {
 /** Both warnings, or either */
 const warnings = (...whys: (string | null | undefined)[]) => whys.filter(Boolean).join(' ') || undefined;
 
-/** Profiles are every server's, so the header's picker in each follows a change */
+/** Profiles are every server's, so the header's picker and Settings' Profile in each follow a change */
 const changed = (ask: Ask) => {
-  for (const guild of servedGuilds(ask.client)) feeds.profile.changed(guild.id);
+  for (const guild of servedGuilds(ask.client)) {
+    feeds.profile.changed(guild.id);
+    feeds.settings.changed(guild.id);
+  }
 };
 
 /** A profile's photo: shown, changed or taken away */

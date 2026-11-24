@@ -399,6 +399,15 @@ const PAGES: [string, string, Record<string, string>?, string?, string?, string?
     })()`,
   ],
   ['settings/pings', 'Settings: Voice and pings', {}, `!!document.querySelector('#settings-game-pings') && !document.querySelector('#settings-section-pings').hidden`],
+  // A setting changed elsewhere, as from another tab or /setup, shows without the page asking for them all again
+  [
+    'settings/pings',
+    'Settings: a change made elsewhere',
+    {},
+    `document.getElementById('setting-hopOnMinPeople').value === '7' && window.asked.length === 0`,
+    `(async () => { window.asked = []; const real = window.fetch; window.fetch = (u, i) => (/\\/settings$/.test(String(u)) && window.asked.push(String(u)), real(u, i)); await real('/api/guilds/${GUILD}/settings/hopOnMinPeople', { method: 'PUT', headers: { 'x-slopkeeper': '1', 'content-type': 'application/json' }, body: JSON.stringify({ value: 7 }) }); })()`,
+    `fetch('/api/guilds/${GUILD}/settings/hopOnMinPeople', { method: 'DELETE', headers: { 'x-slopkeeper': '1' } })`,
+  ],
   ['settings/games', 'Settings: Games'],
   ['settings/deals', 'Settings: Deals', {}, `!!document.querySelector('#settings-free-games') && [...document.querySelectorAll('#settings-section-deals details.preview')].length === 2`],
   // Join sounds with their list under them, and their delay and cooldown folded away
@@ -487,6 +496,15 @@ const PAGES: [string, string, Record<string, string>?, string?, string?, string?
   // And each voice's beside it, rather than a row of their own under every voice
   ['settings/speech', 'Settings: a voice’s buttons beside it', {}, `${BESIDE('#settings-voices .voice-row', '.control')} && ${ONE_LINE('#settings-voices .voice-row .control')}`],
   // Added voices: one ready with speakers, one downloading and one that failed, and the ready one's settings
+  // A switch turned off here: Saved beside it, and the settings that need it put away, from the update the bot sends back
+  [
+    'settings/speech',
+    'Settings: a switch turned off hides what needs it',
+    {},
+    `(() => { const field = (id) => document.getElementById(id).closest('.field'); return !document.getElementById('setting-tts').checked && /Saved/.test(field('setting-tts').querySelector('.status').textContent) && field('setting-ttsMaxChars').classList.contains('off'); })()`,
+    `document.getElementById('setting-tts').click()`,
+    `fetch('/api/guilds/${GUILD}/settings/tts', { method: 'DELETE', headers: { 'x-slopkeeper': '1' } })`,
+  ],
   [
     'settings/speech',
     'Settings: Edit a voice',

@@ -2,8 +2,8 @@ import { el, request, secondWindow, state } from './lib.js';
 
 /**
  * Keeps the page up with what's playing, the music, who's in voice, game nights, the activity log, the sounds, the
- * volumes, the health numbers, the deals, the header's profiles and what the Say boxes offer, through one request at a
- * time per tab. Each
+ * volumes, the health numbers, the deals, the header's profiles, what the Say boxes offer and the settings, through one
+ * request at a time per tab. Each
  * waits at the bot until something the page shows changes, then brings only what did. A hidden tab stops asking until
  * it's shown again
  */
@@ -16,7 +16,7 @@ const UNCHANGED_MS = 1000;
 const UNSEEN_MS = 5000;
 
 /** Who follows each part: { node, listener, since, seen } */
-const followers = { playing: new Set(), music: new Set(), voice: new Set(), nights: new Set(), activity: new Set(), sounds: new Set(), volumes: new Set(), health: new Set(), deals: new Set(), profile: new Set(), speech: new Set() };
+const followers = { playing: new Set(), music: new Set(), voice: new Set(), nights: new Set(), activity: new Set(), sounds: new Set(), volumes: new Set(), health: new Set(), deals: new Set(), profile: new Set(), speech: new Set(), settings: new Set() };
 /** The last of each part the bot sent for the server watched: { data, at } */
 let latest = new Map();
 /** The request loop for one server */

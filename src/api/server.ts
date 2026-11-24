@@ -95,9 +95,14 @@ export function activityList(guild: Guild, before?: number) {
   };
 }
 
+/** Every setting with its choices and problems, as Settings shows them */
+export async function settingsNow(guild: Guild) {
+  return { ...settingList(guild), loopBot: await loopBotStatus(guild.id) };
+}
+
 export async function handleSettings(guild: Guild, req: IncomingMessage, key?: string) {
   if (key === undefined) {
-    if (req.method === 'GET') return { ...settingList(guild), loopBot: await loopBotStatus(guild.id) };
+    if (req.method === 'GET') return settingsNow(guild);
     throw new Refused(405, 'Not here.');
   }
   if (!Object.hasOwn(DEFAULTS, key)) throw new Refused(404, 'No such setting.');

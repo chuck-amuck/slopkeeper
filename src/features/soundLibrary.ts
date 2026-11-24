@@ -98,11 +98,12 @@ export function listSounds(guildId: string): Sound[] {
 export const findSound = (guildId: string, name: string) => listSounds(guildId).find((s) => s.name === name);
 
 /**
- * Every change to the sounds, their groups or the bin comes through here, so an open Soundboard tab redraws. Links to
- * copies on Discord's soundboard say so in discordSounds.ts. A play isn't a change
+ * Every change to the sounds, their groups or the bin comes through here, so an open Soundboard tab redraws, and
+ * Settings' sound pickers. Links to copies on Discord's soundboard say so in discordSounds.ts. A play isn't a change
  */
 export function libraryChanged(guildId: string) {
   feeds.sounds.changed(guildId);
+  feeds.settings.changed(guildId);
 }
 
 function setEmoji(guildId: string, name: string, emoji: string | null) {

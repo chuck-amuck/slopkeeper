@@ -272,6 +272,8 @@ export function setSetting(guildId: string, key: SettingKey, value: string | num
       value === null ? '' : String(value),
     );
   }
+  // Settings itself, in every tab it's open in, and any other page that shows this one
+  feeds.settings.changed(guildId);
   for (const feed of SHOWN_ON[key] ?? []) feeds[feed].changed(guildId);
 }
 

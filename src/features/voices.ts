@@ -179,8 +179,9 @@ const listeners: (() => void)[] = [];
 
 function changed() {
   generation++;
-  // The Say boxes list the voices that are ready
+  // The Say boxes and Settings' voice pickers list the voices that are ready
   feeds.speech.changedEverywhere();
+  feeds.settings.changedEverywhere();
   for (const listener of listeners) listener();
 }
 
